@@ -257,11 +257,14 @@ fn setup_menu_event_handler(app: &App) {
                 }
             }
             "toggle-dev-tools" => {
+                #[cfg(debug_assertions)]
                 if let Some(window) = app.get_webview_window("main") {
-                    if window.is_devtools_open() {
-                        window.close_devtools();
-                    } else {
-                        window.open_devtools();
+                    {
+                        if window.is_devtools_open() {
+                            window.close_devtools();
+                        } else {
+                            window.open_devtools();
+                        }
                     }
                 }
             }

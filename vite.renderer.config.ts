@@ -7,7 +7,7 @@ import { viteStaticCopy } from 'vite-plugin-static-copy'
 
 const dirname = path.dirname(fileURLToPath(import.meta.url))
 const rootDir = path.resolve(dirname, 'src/renderer/pages/index')
-const outDir = path.resolve(dirname, 'dist/electron')
+const outDir = path.resolve(dirname, 'dist/outputs')
 
 export default defineConfig({
   root: rootDir,

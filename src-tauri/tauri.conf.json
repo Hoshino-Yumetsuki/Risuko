@@ -5,7 +5,7 @@
   "identifier": "app.motrix.native",
   "build": {
     "devUrl": "http://127.0.0.1:9080",
-    "frontendDist": "../../dist/electron",
+    "frontendDist": "../dist/outputs",
     "beforeDevCommand": "pnpm dev:renderer",
     "beforeBuildCommand": "pnpm pack:renderer"
   },
