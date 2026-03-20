@@ -29,8 +29,6 @@ export default defineConfig({
       '@': path.resolve(dirname, 'src/renderer'),
       '@shared': path.resolve(dirname, 'src/shared'),
       '@static': path.resolve(dirname, 'static'),
-      electron: path.resolve(dirname, 'src/renderer/shims/electron.ts'),
-      'electron-is': path.resolve(dirname, 'src/renderer/shims/electron-is.ts'),
     },
     extensions: ['.mjs', '.js', '.ts', '.jsx', '.tsx', '.json', '.vue'],
   },

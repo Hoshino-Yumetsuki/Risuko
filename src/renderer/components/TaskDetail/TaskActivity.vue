@@ -80,7 +80,7 @@
 </template>
 
 <script lang="ts">
-import is from "electron-is";
+import is from "@/shims/electron-is";
 import {
   bytesToSize,
   calcProgress,

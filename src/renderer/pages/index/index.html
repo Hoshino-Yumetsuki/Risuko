@@ -6,6 +6,23 @@
   </head>
 
   <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      overflow: hidden;
+      overscroll-behavior: none;
+      background-color: #fff;
+    }
+    @media (prefers-color-scheme: dark) {
+      html, body {
+        background-color: #343434;
+      }
+    }
+    .dark html, .dark body,
+    html.dark, body.dark {
+      background-color: #343434;
+    }
     .skeleton-aside {
       background-color: rgba(0, 0, 0, 0.8);
       width: 78px;

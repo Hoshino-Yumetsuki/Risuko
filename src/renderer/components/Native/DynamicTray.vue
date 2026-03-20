@@ -17,7 +17,7 @@ import trayIconDarkActive from "@static/mo-tray-dark-active@2x.png";
 import { getInverseTheme } from "@shared/utils";
 import { APP_THEME } from "@shared/constants";
 
-const cache = {};
+const cache: Record<string, ImageBitmap> = {};
 
 export default {
   name: "mo-dynamic-tray",
@@ -56,7 +56,6 @@ export default {
       if (theme === APP_THEME.DARK) {
         return theme;
       }
-
       return focused ? getInverseTheme(theme) : theme;
     },
     iconKey() {
@@ -67,10 +66,10 @@ export default {
     },
   },
   watch: {
-    async speed(val) {
+    async speed() {
       await this.drawTray();
     },
-    async iconKey(val) {
+    async iconKey() {
       await this.drawTray();
     },
   },
@@ -80,7 +79,7 @@ export default {
     }, 200);
   },
   methods: {
-    async getIcon(key) {
+    async getIcon(key: string): Promise<ImageBitmap | null> {
       if (cache[key]) {
         return cache[key];
       }
@@ -92,7 +91,6 @@ export default {
 
       const result = await createImageBitmap(iconImage);
       cache[key] = result;
-
       return result;
     },
     async drawTray() {
@@ -109,7 +107,7 @@ export default {
         return;
       }
 
-      (global.app as any).trayWorker.postMessage({
+      ;(window as any).__app.trayWorker.postMessage({
         type: "tray:draw",
         payload: {
           theme,

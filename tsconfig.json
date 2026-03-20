@@ -13,7 +13,7 @@
     "esModuleInterop": true,
     "resolveJsonModule": true,
     "useDefineForClassFields": true,
-    "types": ["node", "electron"],
+    "types": ["node"],
     "paths": {
       "@/*": ["./src/renderer/*"],
       "@shared/*": ["./src/shared/*"],
@@ -25,13 +25,12 @@
     "skipTemplateCodegen": true
   },
   "include": [
-    "src/**/*.ts",
-    "src/**/*.d.ts",
-    "src/**/*.tsx",
-    "src/**/*.vue",
-    "vite.renderer.config.ts",
-    ".electron-vue/**/*.js",
-    "build/**/*.js"
+    "src/renderer/**/*.ts",
+    "src/renderer/**/*.d.ts",
+    "src/renderer/**/*.tsx",
+    "src/renderer/**/*.vue",
+    "src/shared/**/*.ts",
+    "vite.renderer.config.ts"
   ],
-  "exclude": ["node_modules", "dist", "release"]
+  "exclude": ["node_modules", "dist", "release", "src-tauri"]
 }

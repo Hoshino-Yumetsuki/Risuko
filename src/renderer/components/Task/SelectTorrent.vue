@@ -60,16 +60,9 @@ import {
 import { buildFileList, listTorrentFiles, getAsBase64 } from "@shared/utils";
 
 function getParseTorrentRemote() {
-  if (typeof window === "undefined" || typeof window.require !== "function") {
-    return null;
-  }
-
-  try {
-    const parseTorrent = window.require("parse-torrent");
-    return parseTorrent.remote;
-  } catch (err) {
-    return null;
-  }
+  // parse-torrent depends on Node.js, so it cannot run in Tauri's webview.
+  // The backend handles torrent file listing.
+  return null;
 }
 
 export default {

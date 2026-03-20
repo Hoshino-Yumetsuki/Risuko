@@ -65,11 +65,15 @@ export default {
     Plus,
     Settings2,
   },
-  computed: {
-    appVersion() {
-      return getMotrixVersion();
-    },
+  data() {
+    return {
+      appVersion: '',
+    };
   },
+  async created() {
+    this.appVersion = await getMotrixVersion();
+  },
+  computed: {},
   methods: {
     showAddTask(taskType = ADD_TASK_TYPE.URI) {
       useAppStore().showAddTaskDialog(taskType);

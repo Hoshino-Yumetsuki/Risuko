@@ -4,7 +4,9 @@
       <router-view name="subnav" />
     </aside>
     <router-view name="form" v-slot="{ Component, route }">
-      <component :is="Component" :key="route.path" class="pref-form-view" />
+      <Transition name="page" mode="out-in">
+        <component :is="Component" :key="route.path" class="pref-form-view" />
+      </Transition>
     </router-view>
   </div>
 </template>

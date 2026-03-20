@@ -3,7 +3,7 @@ import { TRAY_CANVAS_CONFIG } from '@shared/constants'
 import { draw } from '@shared/utils/tray'
 
 let idx = 0
-let canvas
+let canvas: OffscreenCanvas | undefined
 
 const initCanvas = () => {
   if (canvas) {
@@ -14,7 +14,7 @@ const initCanvas = () => {
   return new OffscreenCanvas(WIDTH, HEIGHT)
 }
 
-const drawTray = async (payload) => {
+const drawTray = async (payload: any) => {
   self.postMessage({
     type: 'log',
     payload,
@@ -25,26 +25,32 @@ const drawTray = async (payload) => {
   }
 
   try {
-    const tray = await draw({
+    await draw({
       canvas,
       ...payload,
     })
+
+    // Read raw RGBA pixels for Tauri `Image::new_owned`.
+    const ctx = canvas.getContext('2d')!
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height)
 
     self.postMessage({
       type: 'tray:drawed',
       payload: {
         idx,
-        tray,
+        rgba: Array.from(imageData.data),
+        width: canvas.width,
+        height: canvas.height,
       },
     })
 
     idx += 1
-  } catch (error) {
+  } catch (error: any) {
     logger(error.message)
   }
 }
 
-const logger = (text) => {
+const logger = (text: string) => {
   self.postMessage({
     type: 'log',
     payload: text,

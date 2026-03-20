@@ -455,8 +455,9 @@
 
 <script lang="ts">
 import logger from "@shared/utils/logger";
-import is from "electron-is";
-import { dialog } from "@electron/remote";
+import { invoke } from "@tauri-apps/api/core";
+import is from "@/shims/electron-is";
+import { confirm } from "@/components/ui/confirm-dialog";
 import { cloneDeep, extend, isEmpty } from "lodash";
 import { useAppStore } from "@/store/app";
 import { usePreferenceStore } from "@/store/preference";
@@ -611,7 +612,7 @@ export default {
     };
   },
   created() {
-    this.appVersion = getMotrixVersion();
+    getMotrixVersion().then((v) => { this.appVersion = v; });
 
     const currentEngineVersion = this.engineInfo && this.engineInfo.version;
     if (!currentEngineVersion) {
@@ -817,17 +818,10 @@ export default {
           this.$msg.success(this.$t("preferences.save-success-message"));
           if (this.isRenderer) {
             if ("autoHideWindow" in data) {
-              this.$electron.ipcRenderer.send(
-                "command",
-                "application:auto-hide-window",
-                autoHideWindow,
-              );
+              invoke("auto_hide_window", { enabled: autoHideWindow }).catch(() => {});
             }
             if ("hideAppMenu" in data) {
-              this.$electron.ipcRenderer.send(
-                "command",
-                "application:relaunch",
-              );
+              invoke("relaunch_app").catch(() => {});
             }
           }
         })
@@ -850,14 +844,14 @@ export default {
     if (isEmpty(changedConfig.basic) && isEmpty(changedConfig.advanced)) {
       return true;
     }
-    const { response } = await dialog.showMessageBox({
-      type: "warning",
-      title: this.$t("preferences.not-saved"),
+    const { confirmed } = await confirm({
       message: this.$t("preferences.not-saved-confirm"),
-      buttons: [this.$t("app.yes"), this.$t("app.no")],
-      cancelId: 1,
+      title: this.$t("preferences.not-saved"),
+      kind: "warning",
+      confirmText: this.$t("app.yes"),
+      cancelText: this.$t("app.no"),
     });
-    if (response === 0) {
+    if (confirmed) {
       changedConfig.basic = {};
       changedConfig.advanced = {};
       return true;

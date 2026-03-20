@@ -237,8 +237,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import NumberInput from "@/components/ui/NumberInput.vue";
 import logger from "@shared/utils/logger";
-import is from "electron-is";
-import electron from "electron";
+import is from "@/shims/electron-is";
 import { useAppStore } from "@/store/app";
 import { useTaskStore } from "@/store/task";
 import { usePreferenceStore } from "@/store/preference";
@@ -254,6 +253,7 @@ import {
 } from "@/utils/task";
 import { ADD_TASK_TYPE } from "@shared/constants";
 import { detectResource } from "@shared/utils";
+import { readText } from "@tauri-apps/plugin-clipboard-manager";
 
 export default {
   name: "mo-add-task",
@@ -348,10 +348,7 @@ export default {
     async autofillResourceLink() {
       let content = "";
       try {
-        const nativeClipboard = electron && electron.clipboard;
-        if (nativeClipboard && typeof nativeClipboard.readText === "function") {
-          content = nativeClipboard.readText();
-        }
+        content = await readText();
       } catch (err) {
         return;
       }

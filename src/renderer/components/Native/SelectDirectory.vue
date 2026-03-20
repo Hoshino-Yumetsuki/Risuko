@@ -10,7 +10,7 @@
 </template>
 
 <script lang="ts">
-import { dialog } from "@electron/remote";
+import { open } from "@tauri-apps/plugin-dialog";
 import { Folder } from "lucide-vue-next";
 import UiButton from "@/components/ui/compat/UiButton.vue";
 
@@ -22,20 +22,15 @@ export default {
   },
   props: {},
   methods: {
-    onFolderClick() {
-      const self = this;
-      dialog
-        .showOpenDialog({
-          properties: ["openDirectory", "createDirectory"],
-        })
-        .then(({ canceled, filePaths }) => {
-          if (canceled || filePaths.length === 0) {
-            return;
-          }
+    async onFolderClick() {
+      const selected = await open({
+        directory: true,
+        multiple: false,
+      });
 
-          const [path] = filePaths;
-          self.$emit("selected", path);
-        });
+      if (selected) {
+        this.$emit("selected", selected);
+      }
     },
   },
 };

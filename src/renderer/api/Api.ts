@@ -1,5 +1,4 @@
-import { ipcRenderer } from 'electron'
-import is from 'electron-is'
+import { invoke } from '@tauri-apps/api/core'
 import { isEmpty, clone } from 'lodash'
 import { Aria2 } from '@shared/aria2'
 import logger from '@shared/utils/logger'
@@ -17,13 +16,11 @@ export default class Api {
   [key: string]: any
   constructor(options: any = {}) {
     this.options = options
-
     this.ready = this.init()
   }
 
   async init() {
     this.config = await this.loadConfig()
-
     this.client = this.initClient()
     this.client.open()
   }
@@ -33,22 +30,13 @@ export default class Api {
     return this.client
   }
 
-  loadConfigFromLocalStorage() {
-    // TODO
-    const result = {}
-    return result
-  }
-
   async loadConfigFromNativeStore() {
-    const result = await ipcRenderer.invoke('get-app-config')
+    const result = await invoke('get_app_config')
     return result
   }
 
   async loadConfig() {
-    let result = is.renderer()
-      ? await this.loadConfigFromNativeStore()
-      : this.loadConfigFromLocalStorage()
-
+    let result = await this.loadConfigFromNativeStore()
     result = changeKeysToCamelCase(result)
     return result
   }
@@ -82,16 +70,7 @@ export default class Api {
 
   savePreference(params: any = {}) {
     const kebabParams = changeKeysToKebabCase(params)
-    if (is.renderer()) {
-      return this.savePreferenceToNativeStore(kebabParams)
-    } else {
-      return this.savePreferenceToLocalStorage(kebabParams)
-    }
-  }
-
-  savePreferenceToLocalStorage(params: any = {}) {
-    // TODO
-    return params
+    return this.savePreferenceToNativeStore(kebabParams)
   }
 
   savePreferenceToNativeStore(params: any = {}) {
@@ -113,7 +92,7 @@ export default class Api {
       logger.info('[Motrix] save config found illegal key: ', others)
     }
 
-    ipcRenderer.send('command', 'application:save-preference', config)
+    return invoke('save_preference', { config })
   }
 
   getVersion() {
@@ -122,35 +101,26 @@ export default class Api {
 
   changeGlobalOption(options) {
     const args = formatOptionsForEngine(options)
-
     return this.ensureReady().then((client) => client.call('changeGlobalOption', args))
   }
 
   getGlobalOption() {
     return this.ensureReady()
       .then((client) => client.call('getGlobalOption'))
-      .then((data) => {
-        return changeKeysToCamelCase(data)
-      })
+      .then((data) => changeKeysToCamelCase(data))
   }
 
   getOption(params: any = {}) {
     const { gid } = params
     const args = compactUndefined([gid])
-
     return this.ensureReady()
       .then((client) => client.call('getOption', ...args))
-      .then((data) => {
-        return changeKeysToCamelCase(data)
-      })
+      .then((data) => changeKeysToCamelCase(data))
   }
 
   updateActiveTaskOption(options) {
     this.fetchTaskList({ type: 'active' }).then((data) => {
-      if (isEmpty(data)) {
-        return
-      }
-
+      if (isEmpty(data)) return
       const gids = data.map((task) => task.gid)
       this.batchChangeOption({ gids, options })
     })
@@ -158,10 +128,8 @@ export default class Api {
 
   changeOption(params: any = {}) {
     const { gid, options = {} } = params
-
     const engineOptions = formatOptionsForEngine(options)
     const args = compactUndefined([gid, engineOptions])
-
     return this.ensureReady().then((client) => client.call('changeOption', ...args))
   }
 
@@ -209,14 +177,10 @@ export default class Api {
           ]),
         )
         .then((data) => {
-          logger.log('[Motrix] fetch downloading task list data:', data)
           const result = mergeTaskResult(data)
           resolve(result)
         })
-        .catch((err) => {
-          logger.log('[Motrix] fetch downloading task list fail:', err)
-          reject(err)
-        })
+        .catch((err) => reject(err))
     })
   }
 
@@ -271,7 +235,6 @@ export default class Api {
           ]),
         )
         .then((data) => {
-          logger.log('[Motrix] fetchTaskItemWithPeers:', data)
           const result = data[0] && data[0][0]
           const peers = data[1] && data[1][0]
           if (!result) {
@@ -279,15 +242,9 @@ export default class Api {
             return
           }
           result.peers = peers || []
-          logger.log('[Motrix] fetchTaskItemWithPeers.result:', result)
-          logger.log('[Motrix] fetchTaskItemWithPeers.peers:', peers)
-
           resolve(result)
         })
-        .catch((err) => {
-          logger.log('[Motrix] fetch downloading task list fail:', err)
-          reject(err)
-        })
+        .catch((err) => reject(err))
     })
   }
 
@@ -299,65 +256,58 @@ export default class Api {
 
   pauseTask(params: any = {}) {
     const { gid } = params
-    const args = compactUndefined([gid])
-    return this.ensureReady().then((client) => client.call('pause', ...args))
+    return this.ensureReady().then((client) => client.call('pause', gid))
   }
 
-  pauseAllTask(params: any = {}) {
+  pauseAllTask() {
     return this.ensureReady().then((client) => client.call('pauseAll'))
   }
 
   forcePauseTask(params: any = {}) {
     const { gid } = params
-    const args = compactUndefined([gid])
-    return this.ensureReady().then((client) => client.call('forcePause', ...args))
+    return this.ensureReady().then((client) => client.call('forcePause', gid))
   }
 
-  forcePauseAllTask(params: any = {}) {
+  forcePauseAllTask() {
     return this.ensureReady().then((client) => client.call('forcePauseAll'))
   }
 
   resumeTask(params: any = {}) {
     const { gid } = params
-    const args = compactUndefined([gid])
-    return this.ensureReady().then((client) => client.call('unpause', ...args))
+    return this.ensureReady().then((client) => client.call('unpause', gid))
   }
 
-  resumeAllTask(params: any = {}) {
+  resumeAllTask() {
     return this.ensureReady().then((client) => client.call('unpauseAll'))
   }
 
   removeTask(params: any = {}) {
     const { gid } = params
-    const args = compactUndefined([gid])
-    return this.ensureReady().then((client) => client.call('remove', ...args))
+    return this.ensureReady().then((client) => client.call('remove', gid))
   }
 
   forceRemoveTask(params: any = {}) {
     const { gid } = params
-    const args = compactUndefined([gid])
-    return this.ensureReady().then((client) => client.call('forceRemove', ...args))
+    return this.ensureReady().then((client) => client.call('forceRemove', gid))
   }
 
-  saveSession(params: any = {}) {
+  saveSession() {
     return this.ensureReady().then((client) => client.call('saveSession'))
   }
 
-  purgeTaskRecord(params: any = {}) {
+  purgeTaskRecord() {
     return this.ensureReady().then((client) => client.call('purgeDownloadResult'))
   }
 
   removeTaskRecord(params: any = {}) {
     const { gid } = params
-    const args = compactUndefined([gid])
-    return this.ensureReady().then((client) => client.call('removeDownloadResult', ...args))
+    return this.ensureReady().then((client) => client.call('removeDownloadResult', gid))
   }
 
   multicall(method: string, params: any = {}) {
     let { gids, options = {} } = params
     options = formatOptionsForEngine(options)
-
-    const data = gids.map((gid, index) => {
+    const data = gids.map((gid) => {
       const _options = clone(options)
       const args = compactUndefined([gid, _options])
       return [method, ...args]

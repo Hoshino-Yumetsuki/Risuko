@@ -7,7 +7,7 @@
 </template>
 
 <script lang="ts">
-import is from "electron-is";
+import is from "@/shims/electron-is";
 import { Textarea } from "@/components/ui/textarea";
 import { checkTaskIsBT, checkTaskIsSeeder } from "@shared/utils";
 import { convertTrackerDataToLine } from "@shared/utils/tracker";

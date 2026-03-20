@@ -20,7 +20,7 @@
 </template>
 
 <script lang="ts">
-import is from "electron-is";
+import is from "@/shims/electron-is";
 import Logo from "@/components/Logo/Logo.vue";
 
 export default {

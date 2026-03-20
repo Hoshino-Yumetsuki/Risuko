@@ -2,11 +2,13 @@
   <div id="container" class="layout-root">
     <mo-aside />
     <router-view v-slot="{ Component, route }">
-      <component
-        :is="Component"
-        :key="route.path.startsWith('/preference') ? 'preference' : 'task'"
-        class="page-view"
-      />
+      <Transition name="page" mode="out-in">
+        <component
+          :is="Component"
+          :key="route.path.startsWith('/preference') ? 'preference' : 'task'"
+          class="page-view"
+        />
+      </Transition>
     </router-view>
     <mo-speedometer />
     <mo-add-task :visible="addTaskVisible" :type="addTaskType" />

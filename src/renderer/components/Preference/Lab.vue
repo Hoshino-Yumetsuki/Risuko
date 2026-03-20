@@ -13,7 +13,7 @@
 </template>
 
 <script lang="ts">
-import is from "electron-is";
+import is from "@/shims/electron-is";
 import { useAppStore } from "@/store/app";
 import { usePreferenceStore } from "@/store/preference";
 

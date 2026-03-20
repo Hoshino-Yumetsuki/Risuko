@@ -14,7 +14,7 @@ import { useAppStore } from "@/store/app";
 import { Dialog, DialogContent, DialogFooter } from "@/components/ui/dialog";
 import AppInfo from "@/components/About/AppInfo.vue";
 import Copyright from "@/components/About/Copyright.vue";
-import { app } from "@electron/remote";
+import { getVersion } from "@tauri-apps/api/app";
 
 export default {
   name: "mo-about-panel",
@@ -32,10 +32,16 @@ export default {
     },
   },
   data() {
-    const version = app.getVersion();
     return {
-      version,
+      version: '',
     };
+  },
+  async created() {
+    try {
+      this.version = await getVersion();
+    } catch {
+      this.version = '';
+    }
   },
   computed: {
     engineInfo() {

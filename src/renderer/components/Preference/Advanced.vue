@@ -648,8 +648,9 @@
 
 <script lang="ts">
 import logger from "@shared/utils/logger";
-import is from "electron-is";
-import { dialog } from "@electron/remote";
+import { invoke } from "@tauri-apps/api/core";
+import is from "@/shims/electron-is";
+import { confirm } from "@/components/ui/confirm-dialog";
 import { cloneDeep, extend, isEmpty } from "lodash";
 import randomize from "randomatic";
 import { useTaskStore } from "@/store/task";
@@ -715,6 +716,7 @@ import {
   reduceTrackerString,
 } from "@shared/utils/tracker";
 import { getLanguage } from "@shared/locales";
+import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { getLocaleManager } from "@/components/Locale";
 
 const initForm = (config) => {
@@ -869,14 +871,14 @@ export default {
         port: this.form.rpcListenPort,
         secret: val,
       });
-      navigator.clipboard.writeText(url);
+      writeText(url).catch(() => {});
     },
     "form.rpcSecret"(val) {
       const url = buildRpcUrl({
         port: this.form.rpcListenPort,
         secret: val,
       });
-      navigator.clipboard.writeText(url);
+      writeText(url).catch(() => {});
     },
   },
   methods: {
@@ -909,10 +911,7 @@ export default {
       getLocaleManager().changeLanguage(lng);
     },
     onCheckUpdateClick() {
-      this.$electron.ipcRenderer.send(
-        "command",
-        "application:check-for-updates",
-      );
+      invoke("check_for_updates").catch(() => {});
       this.$msg.info(this.$t("app.checking-for-updates"));
       usePreferenceStore()
         .fetchPreference()
@@ -1016,45 +1015,33 @@ export default {
         this.hideRpcSecret = true;
       }, 2000);
     },
-    onSessionResetClick() {
-      dialog
-        .showMessageBox({
-          type: "warning",
-          title: this.$t("preferences.session-reset"),
-          message: this.$t("preferences.session-reset-confirm"),
-          buttons: [this.$t("app.yes"), this.$t("app.no")],
-          cancelId: 1,
-        })
-        .then(({ response }) => {
-          if (response === 0) {
-            const taskStore = useTaskStore();
-            taskStore.purgeTaskRecord();
-            taskStore.pauseAllTask().then(() => {
-              this.$electron.ipcRenderer.send(
-                "command",
-                "application:reset-session",
-              );
-            });
-          }
+    async onSessionResetClick() {
+      const { confirmed } = await confirm({
+        message: this.$t("preferences.session-reset-confirm"),
+        title: this.$t("preferences.session-reset"),
+        kind: "warning",
+        confirmText: this.$t("app.yes"),
+        cancelText: this.$t("app.no"),
+      });
+      if (confirmed) {
+        const taskStore = useTaskStore();
+        taskStore.purgeTaskRecord();
+        taskStore.pauseAllTask().then(() => {
+          invoke("reset_session").catch(() => {});
         });
+      }
     },
-    onFactoryResetClick() {
-      dialog
-        .showMessageBox({
-          type: "warning",
-          title: this.$t("preferences.factory-reset"),
-          message: this.$t("preferences.factory-reset-confirm"),
-          buttons: [this.$t("app.yes"), this.$t("app.no")],
-          cancelId: 1,
-        })
-        .then(({ response }) => {
-          if (response === 0) {
-            this.$electron.ipcRenderer.send(
-              "command",
-              "application:factory-reset",
-            );
-          }
-        });
+    async onFactoryResetClick() {
+      const { confirmed } = await confirm({
+        message: this.$t("preferences.factory-reset-confirm"),
+        title: this.$t("preferences.factory-reset"),
+        kind: "warning",
+        confirmText: this.$t("app.yes"),
+        cancelText: this.$t("app.no"),
+      });
+      if (confirmed) {
+        invoke("factory_reset").catch(() => {});
+      }
     },
     syncFormConfig() {
       usePreferenceStore()
@@ -1100,17 +1087,10 @@ export default {
           this.$msg.success(this.$t("preferences.save-success-message"));
           if (this.isRenderer) {
             if ("autoHideWindow" in data) {
-              this.$electron.ipcRenderer.send(
-                "command",
-                "application:auto-hide-window",
-                autoHideWindow,
-              );
+              invoke("auto_hide_window", { enabled: autoHideWindow }).catch(() => {});
             }
             if ("hideAppMenu" in data) {
-              this.$electron.ipcRenderer.send(
-                "command",
-                "application:relaunch",
-              );
+              invoke("relaunch_app").catch(() => {});
             }
           }
         })
@@ -1133,14 +1113,14 @@ export default {
     if (isEmpty(changedConfig.basic) && isEmpty(changedConfig.advanced)) {
       return true;
     }
-    const { response } = await dialog.showMessageBox({
-      type: "warning",
-      title: this.$t("preferences.not-saved"),
+    const { confirmed } = await confirm({
       message: this.$t("preferences.not-saved-confirm"),
-      buttons: [this.$t("app.yes"), this.$t("app.no")],
-      cancelId: 1,
+      title: this.$t("preferences.not-saved"),
+      kind: "warning",
+      confirmText: this.$t("app.yes"),
+      cancelText: this.$t("app.no"),
     });
-    if (response === 0) {
+    if (confirmed) {
       changedConfig.basic = {};
       changedConfig.advanced = {};
       return true;

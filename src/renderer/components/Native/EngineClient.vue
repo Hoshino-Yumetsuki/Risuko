@@ -3,8 +3,8 @@
 </template>
 
 <script lang="ts">
+import { invoke } from "@tauri-apps/api/core";
 import logger from "@shared/utils/logger";
-import is from "electron-is";
 import { useAppStore } from "@/store/app";
 import { useTaskStore } from "@/store/task";
 import { usePreferenceStore } from "@/store/preference";
@@ -23,7 +23,6 @@ export default {
     };
   },
   computed: {
-    isRenderer: () => is.renderer(),
     uploadSpeed() {
       return useAppStore().stat.uploadSpeed;
     },
@@ -68,20 +67,22 @@ export default {
     },
   },
   watch: {
-    speed(val) {
+    speed() {
       const { uploadSpeed, downloadSpeed } = this;
-      this.$electron.ipcRenderer.send("event", "speed-change", {
+      invoke("on_speed_change", {
         uploadSpeed,
         downloadSpeed,
-      });
+      }).catch(() => {});
     },
     downloading(val, oldVal) {
-      if (val !== oldVal && this.isRenderer) {
-        this.$electron.ipcRenderer.send("event", "download-status-change", val);
+      if (val !== oldVal) {
+        invoke("on_download_status_change", { downloading: val }).catch(
+          () => {},
+        );
       }
     },
     progress(val) {
-      this.$electron.ipcRenderer.send("event", "progress-change", val);
+      invoke("on_progress_change", { progress: val }).catch(() => {});
     },
     interval() {
       if (this.timer) {
@@ -102,14 +103,10 @@ export default {
       taskStore.saveSession();
       const [{ gid }] = event;
       const { seedingList } = this;
-      if (seedingList.includes(gid)) {
-        return;
-      }
+      if (seedingList.includes(gid)) return;
 
       this.fetchTaskItem({ gid }).then((task) => {
-        if (!task) {
-          return;
-        }
+        if (!task) return;
         const { dir } = task;
         usePreferenceStore().recordHistoryDirectory(dir);
         const taskName = getTaskName(task);
@@ -120,14 +117,10 @@ export default {
     onDownloadPause(event) {
       const [{ gid }] = event;
       const { seedingList } = this;
-      if (seedingList.includes(gid)) {
-        return;
-      }
+      if (seedingList.includes(gid)) return;
 
       this.fetchTaskItem({ gid }).then((task) => {
-        if (!task) {
-          return;
-        }
+        if (!task) return;
         const taskName = getTaskName(task);
         const message = this.$t("task.download-pause-message", { taskName });
         this.$msg.info(message);
@@ -136,9 +129,7 @@ export default {
     onDownloadStop(event) {
       const [{ gid }] = event;
       this.fetchTaskItem({ gid }).then((task) => {
-        if (!task) {
-          return;
-        }
+        if (!task) return;
         const taskName = getTaskName(task);
         const message = this.$t("task.download-stop-message", { taskName });
         this.$msg.info(message);
@@ -147,9 +138,7 @@ export default {
     onDownloadError(event) {
       const [{ gid }] = event;
       this.fetchTaskItem({ gid }).then((task) => {
-        if (!task) {
-          return;
-        }
+        if (!task) return;
         const taskName = getTaskName(task);
         const { errorCode, errorMessage } = task;
         logger.error(
@@ -173,9 +162,7 @@ export default {
       taskStore.removeFromSeedingList(gid);
 
       this.fetchTaskItem({ gid }).then((task) => {
-        if (!task) {
-          return;
-        }
+        if (!task) return;
         this.handleDownloadComplete(task, false);
       });
     },
@@ -184,16 +171,12 @@ export default {
       taskStore.fetchList();
       const [{ gid }] = event;
       const { seedingList } = this;
-      if (seedingList.includes(gid)) {
-        return;
-      }
+      if (seedingList.includes(gid)) return;
 
       taskStore.addToSeedingList(gid);
 
       this.fetchTaskItem({ gid }).then((task) => {
-        if (!task) {
-          return;
-        }
+        if (!task) return;
         this.handleDownloadComplete(task, true);
       });
     },
@@ -202,25 +185,20 @@ export default {
 
       const path = getTaskFullPath(task);
       this.showTaskCompleteNotify(task, isBT, path);
-      this.$electron.ipcRenderer.send(
-        "event",
-        "task-download-complete",
-        task,
-        path,
-      );
+      invoke("on_task_download_complete", { path }).catch(() => {});
     },
     showTaskCompleteNotify(task, isBT, path) {
       const taskName = getTaskName(task);
       const message = isBT
         ? this.$t("task.bt-download-complete-message", { taskName })
         : this.$t("task.download-complete-message", { taskName });
-      const tips = isBT ? "\n" + this.$t("task.bt-download-complete-tips") : "";
+      const tips = isBT
+        ? "\n" + this.$t("task.bt-download-complete-tips")
+        : "";
 
       this.$msg.success(`${message}${tips}`);
 
-      if (!this.taskNotification) {
-        return;
-      }
+      if (!this.taskNotification) return;
 
       const notifyMessage = isBT
         ? this.$t("task.bt-download-complete-notify")
@@ -237,38 +215,32 @@ export default {
     },
     showTaskErrorNotify(task) {
       const taskName = getTaskName(task);
-
       const message = this.$t("task.download-fail-message", { taskName });
       this.$msg.success(message);
 
-      if (!this.taskNotification) {
-        return;
-      }
+      if (!this.taskNotification) return;
 
-      /* eslint-disable no-new */
+      // eslint-disable-next-line no-new
       new Notification(this.$t("task.download-fail-notify"), {
         body: taskName,
       });
     },
     bindEngineEvents() {
-      if (!api.client) {
-        return;
-      }
+      if (!api.client) return;
       api.client.on("onDownloadStart", this.onDownloadStart);
-      // api.client.on('onDownloadPause', this.onDownloadPause)
       api.client.on("onDownloadStop", this.onDownloadStop);
       api.client.on("onDownloadComplete", this.onDownloadComplete);
       api.client.on("onDownloadError", this.onDownloadError);
       api.client.on("onBtDownloadComplete", this.onBtDownloadComplete);
     },
     unbindEngineEvents() {
-      if (!api.client) {
-        return;
-      }
+      if (!api.client) return;
       api.client.removeListener("onDownloadStart", this.onDownloadStart);
-      // api.client.removeListener('onDownloadPause', this.onDownloadPause)
       api.client.removeListener("onDownloadStop", this.onDownloadStop);
-      api.client.removeListener("onDownloadComplete", this.onDownloadComplete);
+      api.client.removeListener(
+        "onDownloadComplete",
+        this.onDownloadComplete,
+      );
       api.client.removeListener("onDownloadError", this.onDownloadError);
       api.client.removeListener(
         "onBtDownloadComplete",
@@ -288,9 +260,7 @@ export default {
       this.timer = setTimeout(loop, this.interval);
     },
     async polling() {
-      if (this.isPolling) {
-        return;
-      }
+      if (this.isPolling) return;
       this.isPolling = true;
 
       try {
@@ -305,7 +275,9 @@ export default {
 
         if (this.taskDetailVisible && this.currentTaskGid) {
           if (this.currentTaskIsBT && this.enabledFetchPeers) {
-            jobs.push(useTaskStore().fetchItemWithPeers(this.currentTaskGid));
+            jobs.push(
+              useTaskStore().fetchItemWithPeers(this.currentTaskGid),
+            );
           } else {
             jobs.push(useTaskStore().fetchItem(this.currentTaskGid));
           }
@@ -347,7 +319,6 @@ export default {
     this.initTimer = null;
 
     this.unbindEngineEvents();
-
     this.stopPolling();
   },
 };

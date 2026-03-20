@@ -70,7 +70,7 @@
 </template>
 <script lang="ts">
 import { Magnet, Link } from "lucide-vue-next";
-import is from "electron-is";
+import is from "@/shims/electron-is";
 import { useAppStore } from "@/store/app";
 import { usePreferenceStore } from "@/store/preference";
 import {
@@ -82,6 +82,7 @@ import {
   localeDateTimeFormat,
 } from "@shared/utils";
 import { APP_THEME, TASK_STATUS } from "@shared/constants";
+import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { getTaskFullPath } from "@/utils/native";
 import ShowInFolder from "@/components/Native/ShowInFolder.vue";
 import TaskStatus from "@/components/Task/TaskStatus.vue";
@@ -141,7 +142,7 @@ export default {
   methods: {
     handleCopyClick() {
       const uri = getTaskUri(this.task);
-      navigator.clipboard.writeText(uri).then(() => {
+      writeText(uri).then(() => {
         this.$msg.success(this.$t("task.copy-link-success"));
       });
     },

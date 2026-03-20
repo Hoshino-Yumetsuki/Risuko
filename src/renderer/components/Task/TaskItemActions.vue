@@ -38,7 +38,7 @@
 </template>
 
 <script lang="ts">
-import is from "electron-is";
+import is from "@/shims/electron-is";
 
 import { commands } from "@/components/CommandManager/instance";
 import { TASK_STATUS } from "@shared/constants";

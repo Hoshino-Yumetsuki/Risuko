@@ -16,7 +16,7 @@
 </template>
 
 <script lang="ts">
-import is from "electron-is";
+import is from "@/shims/electron-is";
 import { Toaster } from "@/components/ui/sonner";
 import { useAppStore } from "@/store/app";
 import { usePreferenceStore } from "@/store/preference";
@@ -44,10 +44,7 @@ export default {
       return useAppStore().systemTheme;
     },
     showWindowActions() {
-      return (
-        (is.windows() || is.linux()) &&
-        !!(usePreferenceStore().config as any).hideAppMenu
-      );
+      return is.windows() || is.linux();
     },
     runMode() {
       return (usePreferenceStore().config as any).runMode;

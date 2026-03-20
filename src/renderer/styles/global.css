@@ -243,9 +243,6 @@
     flex: 1 1 auto;
     min-width: 0;
   }
-  .layout-root > .page-view {
-    animation: page-enter 0.5s ease;
-  }
   .panel-layout--h {
     flex-direction: row;
   }
@@ -291,7 +288,9 @@
     height: 100%;
   }
   .main.panel-layout--h > .pref-form-view {
-    animation: page-enter 0.35s ease;
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow-y: auto;
   }
   .main.panel-layout--h > .content.panel-layout--v > .panel-content {
     overflow-x: hidden;
@@ -329,6 +328,21 @@
       opacity: 1;
       transform: translateY(0);
     }
+  }
+  /* Transition styles for Vue `<Transition name="page">`. */
+  .page-enter-active,
+  .page-leave-active {
+    transition:
+      opacity 0.2s ease,
+      transform 0.2s ease;
+  }
+  .page-enter-from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  .page-leave-to {
+    opacity: 0;
+    transform: translateY(-4px);
   }
 }
 

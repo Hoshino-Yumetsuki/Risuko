@@ -64,7 +64,7 @@
 
 <script lang="ts">
 import { Activity, Files, Info, Radar, Users } from "lucide-vue-next";
-import is from "electron-is";
+import is from "@/shims/electron-is";
 import { debounce } from "lodash";
 import { useTaskStore } from "@/store/task";
 import { usePreferenceStore } from "@/store/preference";

@@ -22,7 +22,7 @@
 
 <script lang="ts">
 import logger from "@shared/utils/logger";
-import { dialog } from "@electron/remote";
+import { confirm } from "@/components/ui/confirm-dialog";
 import { useAppStore } from "@/store/app";
 import { useTaskStore } from "@/store/task";
 import { usePreferenceStore } from "@/store/preference";
@@ -34,6 +34,7 @@ import TaskActions from "@/components/Task/TaskActions.vue";
 import TaskList from "@/components/Task/TaskList.vue";
 import SubnavSwitcher from "@/components/Subnav/SubnavSwitcher.vue";
 import { getTaskUri, parseHeader } from "@shared/utils";
+import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import {
   delayDeleteTaskFiles,
   showItemInFolder,
@@ -295,7 +296,7 @@ export default {
         errorMsg: this.$t("task.file-not-exist"),
       });
     },
-    handleDeleteTask(payload) {
+    async handleDeleteTask(payload) {
       const { task, taskName, deleteWithFiles } = payload;
       const { noConfirmBeforeDelete } = this;
 
@@ -304,23 +305,20 @@ export default {
         return;
       }
 
-      dialog
-        .showMessageBox({
-          type: "warning",
-          title: this.$t("task.delete-task"),
-          message: this.$t("task.delete-task-confirm", { taskName }),
-          buttons: [this.$t("app.yes"), this.$t("app.no")],
-          cancelId: 1,
-          checkboxLabel: this.$t("task.delete-task-label"),
-          checkboxChecked: deleteWithFiles,
-        })
-        .then(({ response, checkboxChecked }) => {
-          if (response === 0) {
-            this.removeTask(task, taskName, checkboxChecked);
-          }
-        });
+      const { confirmed, checkboxChecked } = await confirm({
+        message: this.$t("task.delete-task-confirm", { taskName }),
+        title: this.$t("task.delete-task"),
+        kind: "warning",
+        confirmText: this.$t("app.yes"),
+        cancelText: this.$t("app.no"),
+        checkboxLabel: this.$t("task.delete-task-label"),
+        checkboxChecked: deleteWithFiles,
+      });
+      if (confirmed) {
+        this.removeTask(task, taskName, checkboxChecked);
+      }
     },
-    handleDeleteTaskRecord(payload) {
+    async handleDeleteTaskRecord(payload) {
       const { task, taskName, deleteWithFiles } = payload;
       const { noConfirmBeforeDelete } = this;
 
@@ -329,23 +327,20 @@ export default {
         return;
       }
 
-      dialog
-        .showMessageBox({
-          type: "warning",
-          title: this.$t("task.remove-record"),
-          message: this.$t("task.remove-record-confirm", { taskName }),
-          buttons: [this.$t("app.yes"), this.$t("app.no")],
-          cancelId: 1,
-          checkboxLabel: this.$t("task.remove-record-label"),
-          checkboxChecked: !!deleteWithFiles,
-        })
-        .then(({ response, checkboxChecked }) => {
-          if (response === 0) {
-            this.removeTaskRecord(task, taskName, checkboxChecked);
-          }
-        });
+      const { confirmed, checkboxChecked } = await confirm({
+        message: this.$t("task.remove-record-confirm", { taskName }),
+        title: this.$t("task.remove-record"),
+        kind: "warning",
+        confirmText: this.$t("app.yes"),
+        cancelText: this.$t("app.no"),
+        checkboxLabel: this.$t("task.remove-record-label"),
+        checkboxChecked: !!deleteWithFiles,
+      });
+      if (confirmed) {
+        this.removeTaskRecord(task, taskName, checkboxChecked);
+      }
     },
-    handleBatchDeleteTask(payload) {
+    async handleBatchDeleteTask(payload) {
       const { deleteWithFiles } = payload;
       const {
         noConfirmBeforeDelete,
@@ -367,26 +362,23 @@ export default {
       }
 
       const count = `${selectedGidListCount}`;
-      dialog
-        .showMessageBox({
-          type: "warning",
-          title: this.$t("task.delete-selected-task"),
-          message: this.$t("task.batch-delete-task-confirm", { count }),
-          buttons: [this.$t("app.yes"), this.$t("app.no")],
-          cancelId: 1,
-          checkboxLabel: this.$t("task.delete-task-label"),
-          checkboxChecked: deleteWithFiles,
-        })
-        .then(({ response, checkboxChecked }) => {
-          if (response === 0) {
-            this.removeTasks(selectedTaskList, checkboxChecked);
-          }
-        });
+      const { confirmed, checkboxChecked } = await confirm({
+        message: this.$t("task.batch-delete-task-confirm", { count }),
+        title: this.$t("task.delete-selected-task"),
+        kind: "warning",
+        confirmText: this.$t("app.yes"),
+        cancelText: this.$t("app.no"),
+        checkboxLabel: this.$t("task.delete-task-label"),
+        checkboxChecked: deleteWithFiles,
+      });
+      if (confirmed) {
+        this.removeTasks(selectedTaskList, checkboxChecked);
+      }
     },
     handleCopyTaskLink(payload) {
       const { task } = payload;
       const uri = getTaskUri(task);
-      navigator.clipboard.writeText(uri).then(() => {
+      writeText(uri).then(() => {
         this.$msg.success(this.$t("task.copy-link-success"));
       });
     },

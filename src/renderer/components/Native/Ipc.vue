@@ -3,29 +3,33 @@
 </template>
 
 <script lang="ts">
+import { listen } from "@tauri-apps/api/event";
+import type { UnlistenFn } from "@tauri-apps/api/event";
 import { commands } from "@/components/CommandManager/instance";
 
 export default {
   name: "mo-ipc",
   data() {
     return {
-      commandHandler: null,
+      unlisten: null as UnlistenFn | null,
     };
   },
   methods: {
-    bindIpcEvents() {
-      this.commandHandler = (event, command, ...args) => {
-        commands.execute(command, ...args);
-      };
-
-      this.$electron.ipcRenderer.on("command", this.commandHandler);
+    async bindIpcEvents() {
+      this.unlisten = await listen("command", (event) => {
+        const payload = event.payload as any;
+        if (payload && payload.command) {
+          commands.execute(payload.command, ...(payload.args || []));
+        } else if (typeof payload === "string") {
+          commands.execute(payload);
+        }
+      });
     },
     unbindIpcEvents() {
-      if (!this.commandHandler) {
-        return;
+      if (this.unlisten) {
+        this.unlisten();
+        this.unlisten = null;
       }
-      this.$electron.ipcRenderer.removeListener("command", this.commandHandler);
-      this.commandHandler = null;
     },
   },
   created() {

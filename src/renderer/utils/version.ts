@@ -1,14 +1,10 @@
-import { app as remoteApp } from '@electron/remote'
+import { getVersion } from '@tauri-apps/api/app'
 
-export const getMotrixVersion = () => {
+export const getMotrixVersion = async (): Promise<string> => {
   try {
-    if (typeof remoteApp?.getVersion !== 'function') {
-      return ''
-    }
-
-    const version = remoteApp.getVersion()
+    const version = await getVersion()
     return version ? `v${version}` : ''
-  } catch (error) {
+  } catch {
     return ''
   }
 }

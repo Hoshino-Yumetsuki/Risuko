@@ -1,11 +1,14 @@
 import logger from '@shared/utils/logger'
 import { toast } from 'vue-sonner'
 import { base64StringToBlob } from 'blob-util'
+import { invoke } from '@tauri-apps/api/core'
+import { listen } from '@tauri-apps/api/event'
 import router from '@/router'
 import { buildFileList } from '@shared/utils'
 import { ADD_TASK_TYPE } from '@shared/constants'
 import { getLocaleManager } from '@/components/Locale'
 import { commands } from '@/components/CommandManager/instance'
+import { confirm } from '@/components/ui/confirm-dialog'
 import { useAppStore, usePreferenceStore, useTaskStore } from '@/store'
 import { initTaskForm, buildUriPayload, buildTorrentPayload } from '@/utils/task'
 
@@ -192,3 +195,24 @@ commands.register('application:update-system-theme', updateSystemTheme)
 commands.register('application:update-theme', updateTheme)
 commands.register('application:update-locale', updateLocale)
 commands.register('application:update-tray-focused', updateTrayFocused)
+
+// Handle quit confirmation from Tauri (Cmd+Q, tray quit).
+listen('confirm-quit', async () => {
+  const numActive = getAppStore().stat?.numActive ?? 0
+  const message =
+    numActive > 0
+      ? i18n.t('app.quit-confirm-active', { count: numActive })
+      : i18n.t('app.quit-confirm')
+
+  const { confirmed } = await confirm({
+    title: i18n.t('app.quit'),
+    message,
+    kind: numActive > 0 ? 'warning' : 'info',
+    confirmText: i18n.t('app.yes'),
+    cancelText: i18n.t('app.no'),
+  })
+
+  if (confirmed) {
+    invoke('quit_app').catch(() => {})
+  }
+})

@@ -20,6 +20,8 @@ export default {
   unhide: '显示全部',
   show: '显示 Motrix',
   quit: '退出 Motrix',
+  'quit-confirm': '确定要退出 Motrix 吗？',
+  'quit-confirm-active': '还有 {{count}} 个下载任务正在进行中，确定要退出吗？',
   'under-development-message': '该功能开发中...',
   yes: '是',
   no: '否',

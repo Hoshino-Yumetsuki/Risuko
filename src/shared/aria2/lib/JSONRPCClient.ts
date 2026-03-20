@@ -1,17 +1,12 @@
 'use strict'
 
 import EventEmitter from 'eventemitter3'
-import defaultFetch from 'cross-fetch'
-import defaultWebSocket from 'isomorphic-ws'
 import { JSONRPCError } from './JSONRPCError'
 import Deferred from './Deferred'
 import promiseEvent from './promiseEvent'
 
-const runtimeGlobal: any = typeof globalThis !== 'undefined' ? globalThis : {}
-const defaultRuntimeWebSocket = runtimeGlobal.WebSocket || defaultWebSocket
-const defaultRuntimeFetch = runtimeGlobal.fetch
-  ? runtimeGlobal.fetch.bind(runtimeGlobal)
-  : defaultFetch
+const defaultRuntimeWebSocket = globalThis.WebSocket
+const defaultRuntimeFetch = globalThis.fetch.bind(globalThis)
 
 export class JSONRPCClient extends EventEmitter {
   [key: string]: any
@@ -38,7 +33,7 @@ export class JSONRPCClient extends EventEmitter {
         else resolve()
       }
       this.socket.send(JSON.stringify(message), cb)
-      if (runtimeGlobal.WebSocket && this.socket instanceof runtimeGlobal.WebSocket) cb()
+      if (globalThis.WebSocket && this.socket instanceof globalThis.WebSocket) cb()
     })
   }
 

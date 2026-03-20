@@ -1,6 +1,6 @@
+import { invoke } from '@tauri-apps/api/core'
+import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
 import logger from '@shared/utils/logger'
-import is from 'electron-is'
-import electron, { ipcRenderer } from 'electron'
 import { createApp } from 'vue'
 import axios from 'axios'
 import VueVirtualScroller from 'vue-virtual-scroller'
@@ -26,18 +26,14 @@ import '@/styles/app.css'
 import 'vue-virtual-scroller/dist/vue-virtual-scroller.css'
 import 'vue-sonner/style.css'
 
-const updateTray = is.renderer()
-  ? async (payload) => {
-      const { tray } = payload
-      if (!tray) {
-        return
-      }
+const updateTray = (payload: any) => {
+  const { rgba, width, height } = payload
+  if (!rgba) return
 
-      const ab = await tray.arrayBuffer()
-      ipcRenderer.send('command', 'application:update-tray', ab)
-    }
-  : () => {}
-
+  invoke('update_tray', { imageData: rgba, width, height }).catch((err) => {
+    logger.warn('[Motrix] update_tray failed:', err)
+  })
+}
 function initTrayWorker() {
   const worker = new TrayWorker()
 
@@ -60,7 +56,7 @@ function initTrayWorker() {
   return worker
 }
 
-function init(config) {
+function init(config: any) {
   const locale = (config && config.locale) || 'en-US'
   const localeManager = getLocaleManager()
   localeManager.changeLanguageByLocale(locale)
@@ -81,13 +77,15 @@ function init(config) {
   app.component('ui-switch', UiSwitch)
   app.component('ui-button', UiButton)
   app.config.globalProperties.$http = axios
-  app.config.globalProperties.$electron = electron
-  app.config.globalProperties.$t = (key, value) => i18n.t(key, value)
+  app.config.globalProperties.$t = (key: string, value?: any) => i18n.t(key, value)
 
   router.isReady().then(() => {
-    global.app = app.mount('#app') as any
-    ;(global.app as any).commands = commands
-    ;(global.app as any).trayWorker = initTrayWorker()
+    ;(window as any).__app = app.mount('#app') as any
+    ;(window as any).__app.commands = commands
+    ;(window as any).__app.trayWorker = initTrayWorker()
+
+    // Show the window after mount to avoid a white flash.
+    getCurrentWebviewWindow().show().catch(() => {})
   })
 }
 

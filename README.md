@@ -77,31 +77,11 @@ If you want to build from source code, please read the **Build** section.
 
 #### AppImage
 
-The latest version of Motrix AppImage requires you to manually perform desktop integration. Please check the documentation of [AppImageLauncher](https://github.com/TheAssassin/AppImageLauncher) .
-
-> Desktop Integration
-> Since electron-builder 21 desktop integration is not a part of produced AppImage file.
-> [AppImageLauncher](https://github.com/TheAssassin/AppImageLauncher) is the recommended way to integrate AppImages.
-
-Deepin 20 Beta users failed to install Motrix, please follow the steps below:
-
-Open the `Terminal`, paste and run the following command to install Motrix again.
-
-```bash
-sudo apt --fix-broken install
-```
+For desktop integration with AppImage, check [AppImageLauncher](https://github.com/TheAssassin/AppImageLauncher).
 
 #### Snap
 
-Motrix has been listed on [Snapcraft](https://snapcraft.io/motrix) , Ubuntu users recommend downloading from the Snap Store.
-
-Tips for v1.5.10
-
-The tray may not display the indicator normally, which makes it inconvenient to exit the application.
-
-Please unchecked Preferences--Basic Settings--Hide App Menu (Windows & Linux Only), click Save & Apply. Then click "Exit" in the File menu to exit the application.
-
-Please update to v1.5.12 and above, you can use the keyboard shortcut <kbd>Ctrl</kbd> + <kbd>q</kbd> to quickly exit the application.
+Motrix is on [Snapcraft](https://snapcraft.io/motrix). Ubuntu users can install from the Snap Store.
 
 #### AUR
 
@@ -137,7 +117,6 @@ flatpak run net.agalwood.Motrix
 - 🚥 Supports speed limit
 - 🕶 Mock User-Agent
 - 🔔 Download completed Notification
-- 💻 Ready for Touch Bar (Mac only)
 - 🤖 Resident system tray for quick operation
 - 📟 Tray speed meter displays real-time speed (Mac only)
 - 🌑 Dark mode
@@ -159,16 +138,12 @@ git clone git@github.com:agalwood/Motrix.git
 
 ### Install Dependencies
 
-Requires Node.js >= 22.
+Requires Node.js >= 22 and Rust >= 1.77.
 
 ```bash
 cd Motrix
 pnpm install
 ```
-
-> Error: Electron failed to install correctly, please delete node_modules/electron and try installing again
-
-`Electron` failed to install correctly, please refer to https://github.com/electron/electron/issues/8466#issuecomment-571425574
 
 ### Dev Mode
 
@@ -182,20 +157,15 @@ pnpm run dev
 pnpm run build
 ```
 
-#### Build for Apple Silicon
-
-```bash
-pnpm run build:applesilicon
-```
-
-After building, the application will be found in the project's `release` directory.
+After building, the application will be found in the project's `src-tauri/target/release/bundle` directory.
 
 ## 🛠 Technology Stack
 
-- [Electron](https://electronjs.org/)
+- [Tauri v2](https://v2.tauri.app/)
 - [Vue 3](https://vuejs.org/) + [Pinia](https://pinia.vuejs.org/) + [shadcn-vue](https://www.shadcn-vue.com/)
-- [Vite](https://vite.dev/) (renderer) + [webpack](https://webpack.js.org/) (main)
+- [Vite](https://vite.dev/)
 - [TypeScript](https://www.typescriptlang.org/)
+- [Tailwind CSS](https://tailwindcss.com/)
 - [Aria2](https://aria2.github.io/)
 
 ## ☑️ TODO

@@ -1,77 +1,60 @@
+import { invoke } from '@tauri-apps/api/core'
 import logger from '@shared/utils/logger'
-import { shell, nativeTheme } from '@electron/remote'
 import { toast } from 'vue-sonner'
 import { getFileNameFromFile, isMagnetTask } from '@shared/utils'
 import { APP_THEME, TASK_STATUS } from '@shared/constants'
 
-const { access, constants } = window.require('fs')
-const { resolve } = window.require('path')
+function joinPath(...parts: string[]): string {
+  const joined = parts.filter(Boolean).join('/')
+  return joined.replace(/[/\\]+/g, '/')
+}
 
-export const showItemInFolder = (fullPath, { errorMsg }) => {
-  if (!fullPath) {
-    return
-  }
+export const showItemInFolder = async (fullPath: string, { errorMsg }: { errorMsg?: string } = {}) => {
+  if (!fullPath) return
 
-  fullPath = resolve(fullPath)
-  access(fullPath, constants.F_OK, (err) => {
-    logger.warn(`[Motrix] ${fullPath} ${err ? 'does not exist' : 'exists'}`)
-    if (err && errorMsg) {
+  try {
+    await invoke('reveal_in_folder', { path: fullPath })
+  } catch (err) {
+    logger.warn(`[Motrix] showItemInFolder fail: ${err}`)
+    if (errorMsg) {
       toast.error(errorMsg)
-      return
     }
-
-    shell.showItemInFolder(fullPath)
-  })
-}
-
-export const openItem = async (fullPath) => {
-  if (!fullPath) {
-    return
   }
-
-  const result = await shell.openPath(fullPath)
-  return result
 }
 
-export const getTaskFullPath = (task) => {
-  const { dir, files, bittorrent } = task
-  let result = resolve(dir)
+export const openItem = async (fullPath: string) => {
+  if (!fullPath) return
+  return invoke('open_path', { path: fullPath })
+}
 
-  // Magnet link task
+export const getTaskFullPath = (task: any): string => {
+  const { dir, files, bittorrent } = task
+  let result = dir
+
   if (isMagnetTask(task)) {
     return result
   }
 
-  if (bittorrent && bittorrent.info && bittorrent.info.name) {
-    result = resolve(result, bittorrent.info.name)
-    return result
+  if (bittorrent?.info?.name) {
+    return joinPath(result, bittorrent.info.name)
   }
 
   const [file] = files
-  const path = file.path ? resolve(file.path) : ''
-  let fileName = ''
+  const path = file.path || ''
 
   if (path) {
     result = path
-  } else {
-    if (files && files.length === 1) {
-      fileName = getFileNameFromFile(file)
-      if (fileName) {
-        result = resolve(result, fileName)
-      }
+  } else if (files?.length === 1) {
+    const fileName = getFileNameFromFile(file)
+    if (fileName) {
+      result = joinPath(result, fileName)
     }
   }
 
   return result
 }
 
-export const moveTaskFilesToTrash = (task) => {
-  /**
-   * For magnet link tasks, there is bittorrent, but there is no bittorrent.info.
-   * The path is not a complete path before it becomes a BT task.
-   * In order to avoid accidentally deleting the directory
-   * where the task is located, it directly returns true when deleting.
-   */
+export const moveTaskFilesToTrash = async (task: any): Promise<boolean> => {
   if (isMagnetTask(task)) {
     return true
   }
@@ -82,44 +65,40 @@ export const moveTaskFilesToTrash = (task) => {
     throw new Error('task.file-path-error')
   }
 
-  let deleteResult1 = true
-  access(path, constants.F_OK, async (err) => {
-    logger.log(`[Motrix] ${path} ${err ? 'does not exist' : 'exists'}`)
-    if (!err) {
-      await shell.trashItem(path)
-      deleteResult1 = true
-    }
-  })
-
-  // There is no configuration file for the completed task.
-  if (status === TASK_STATUS.COMPLETE) {
-    return deleteResult1
+  try {
+    await invoke('trash_item', { path })
+  } catch (err) {
+    logger.warn(`[Motrix] trash ${path} failed: ${err}`)
   }
 
-  let deleteResult2 = true
+  if (status === TASK_STATUS.COMPLETE) {
+    return true
+  }
+
   const extraFilePath = `${path}.aria2`
-  access(extraFilePath, constants.F_OK, async (err) => {
-    logger.log(`[Motrix] ${extraFilePath} ${err ? 'does not exist' : 'exists'}`)
-    if (!err) {
-      await shell.trashItem(extraFilePath)
-      deleteResult2 = true
-    }
-  })
+  try {
+    await invoke('trash_item', { path: extraFilePath })
+  } catch (err) {
+    logger.warn(`[Motrix] trash ${extraFilePath} failed: ${err}`)
+  }
 
-  return deleteResult1 && deleteResult2
+  return true
 }
 
-export const getSystemTheme = () => {
-  return nativeTheme.shouldUseDarkColors ? APP_THEME.DARK : APP_THEME.LIGHT
+export const getSystemTheme = (): string => {
+  if (window.matchMedia?.('(prefers-color-scheme: dark)').matches) {
+    return APP_THEME.DARK
+  }
+  return APP_THEME.LIGHT
 }
 
-export const delayDeleteTaskFiles = (task, delay) => {
+export const delayDeleteTaskFiles = (task: any, delay: number): Promise<boolean> => {
   return new Promise((resolve, reject) => {
-    setTimeout(() => {
+    setTimeout(async () => {
       try {
-        const result = moveTaskFilesToTrash(task)
+        const result = await moveTaskFilesToTrash(task)
         resolve(result)
-      } catch (err) {
+      } catch (err: any) {
         reject(err.message)
       }
     }, delay)

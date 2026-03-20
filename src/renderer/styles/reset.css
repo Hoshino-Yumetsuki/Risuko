@@ -8,6 +8,10 @@
   body {
     height: 100%;
     padding: 0;
+    overscroll-behavior: none;
+  }
+  html {
+    overflow: hidden;
   }
   body {
     font-family:
@@ -27,6 +31,7 @@
     font-variant: tabular-nums;
     font-size: 14px;
     color: var(--foreground);
+    background-color: var(--background);
   }
   button {
     border-radius: calc(var(--radius) - 2px) !important;
