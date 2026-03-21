@@ -18,7 +18,7 @@ jobs:
       matrix:
         include:
           - platform: darwin/x64
-            os: macos-13
+            os: macos-latest
             target: x86_64-apple-darwin
           - platform: darwin/arm64
             os: macos-latest
