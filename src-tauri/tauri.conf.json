@@ -32,7 +32,6 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis"],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -40,7 +39,7 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "resources": ["../extra/win32/**/*"],
+    "resources": ["../extra/**/*"],
     "fileAssociations": [
       {
         "ext": ["torrent"],
@@ -50,11 +49,6 @@
     ],
     "macOS": {
       "minimumSystemVersion": "10.15"
-    },
-    "windows": {
-      "nsis": {
-        "installMode": "currentUser"
-      }
     }
   },
   "plugins": {
