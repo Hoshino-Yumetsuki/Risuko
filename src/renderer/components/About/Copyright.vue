@@ -1,11 +1,11 @@
 <template>
-  <el-row class="copyright">
-    <el-col :span="6" class="copyright-left">
+  <ui-row class="copyright">
+    <ui-col :span="6" class="copyright-left">
       <a target="_blank" rel="noopener noreferrer" href="https://motrix.app/">
         &copy;{{ year }} Motrix
       </a>
-    </el-col>
-    <el-col :span="18" class="copyright-right">
+    </ui-col>
+    <ui-col :span="18" class="copyright-right">
       <a target="_blank" rel="noopener noreferrer" href="https://motrix.app/license">
         {{ $t('about.license') }}
       </a>
@@ -18,39 +18,18 @@
       <a target="_blank" rel="noopener noreferrer" href="https://motrix.app/release">
         {{ $t('about.release') }}
       </a>
-    </el-col>
-  </el-row>
+    </ui-col>
+  </ui-row>
 </template>
 
-<script>
-  export default {
-    name: 'mo-copyright',
-    data () {
-      const year = new Date().getFullYear()
-      return {
-        year
-      }
+<script lang="ts">
+export default {
+  name: 'mo-copyright',
+  data() {
+    const year = new Date().getFullYear()
+    return {
+      year,
     }
-  }
+  },
+}
 </script>
-
-<style lang="scss">
-.copyright {
-  width: 100%;
-  font-size: $--font-size-small;
-  a {
-    color: $--app-copyright-color;
-    text-decoration: none;
-  }
-}
-.copyright-left {
-  text-align: left;
-}
-
-.copyright-right {
-  text-align: right;
-  a {
-    margin-left: 30px;
-  }
-}
-</style>

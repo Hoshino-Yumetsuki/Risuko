@@ -1,65 +1,72 @@
 <template>
-  <el-dialog
-    custom-class="app-about-dialog"
-    width="61.8vw"
-    :visible="visible"
-    @open="handleOpen"
-    :before-close="handleClose"
-    @closed="handleClosed">
-    <mo-app-info :version="version" :engine="engineInfo" />
-    <mo-copyright slot="footer" />
-  </el-dialog>
+  <Dialog :open="visible" @update:open="handleDialogOpenChange">
+    <DialogContent class="app-about-dialog" :show-close-button="true">
+      <mo-app-info :version="version" :engine="engineInfo" />
+      <DialogFooter>
+        <mo-copyright />
+      </DialogFooter>
+    </DialogContent>
+  </Dialog>
 </template>
 
-<script>
-  import { mapState } from 'vuex'
-  import AppInfo from '@/components/About/AppInfo'
-  import Copyright from '@/components/About/Copyright'
-  import { app } from '@electron/remote'
+<script lang="ts">
+import { useAppStore } from '@/store/app'
+import { Dialog, DialogContent, DialogFooter } from '@/components/ui/dialog'
+import AppInfo from '@/components/About/AppInfo.vue'
+import Copyright from '@/components/About/Copyright.vue'
+import { getVersion } from '@tauri-apps/api/app'
 
-  export default {
-    name: 'mo-about-panel',
-    components: {
-      [AppInfo.name]: AppInfo,
-      [Copyright.name]: Copyright
+export default {
+  name: 'mo-about-panel',
+  components: {
+    Dialog,
+    DialogContent,
+    DialogFooter,
+    [AppInfo.name]: AppInfo,
+    [Copyright.name]: Copyright,
+  },
+  props: {
+    visible: {
+      type: Boolean,
+      default: false,
     },
-    props: {
-      visible: {
-        type: Boolean,
-        default: false
-      }
-    },
-    data () {
-      const version = app.getVersion()
-      return {
-        version
-      }
-    },
-    computed: {
-      ...mapState('app', {
-        engineInfo: state => state.engineInfo
-      })
-    },
-    methods: {
-      handleOpen () {
-        this.$store.dispatch('app/fetchEngineInfo')
-      },
-      handleClose (done) {
-        this.$store.dispatch('app/hideAboutPanel')
-      },
-      handleClosed () {
-      }
+  },
+  data() {
+    return {
+      version: '',
     }
-  }
-</script>
-
-<style lang="scss">
-.app-about-dialog {
-  max-width: 632px;
-  min-width: 380px;
-  .el-dialog__header {
-    padding-top: 0;
-    padding-bottom: 0;
-  }
+  },
+  async created() {
+    try {
+      this.version = await getVersion()
+    } catch {
+      this.version = ''
+    }
+  },
+  computed: {
+    engineInfo() {
+      return useAppStore().engineInfo
+    },
+  },
+  watch: {
+    visible(val) {
+      if (val) {
+        this.handleOpen()
+      }
+    },
+  },
+  methods: {
+    handleOpen() {
+      useAppStore().fetchEngineInfo()
+    },
+    handleDialogOpenChange(open) {
+      if (!open) {
+        this.handleClose()
+      }
+    },
+    handleClose() {
+      useAppStore().hideAboutPanel()
+    },
+  },
 }
-</style>
+</script>

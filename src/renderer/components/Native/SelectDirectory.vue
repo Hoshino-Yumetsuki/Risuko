@@ -1,34 +1,32 @@
 <template>
-  <el-button
-    class="select-directory"
-    @click.stop="onFolderClick"
-  >
-    <mo-icon name="folder" width="10" height="10" />
-  </el-button>
+  <ui-button variant="ghost" size="sm" class="select-directory" @click.stop="onFolderClick">
+    <Folder :size="14" />
+  </ui-button>
 </template>
 
-<script>
-  import { dialog } from '@electron/remote'
-  import '@/components/Icons/folder'
+<script lang="ts">
+import { open } from '@tauri-apps/plugin-dialog'
+import { Folder } from 'lucide-vue-next'
+import UiButton from '@/components/ui/compat/UiButton.vue'
 
-  export default {
-    name: 'mo-select-directory',
-    props: {
-    },
-    methods: {
-      onFolderClick () {
-        const self = this
-        dialog.showOpenDialog({
-          properties: ['openDirectory', 'createDirectory']
-        }).then(({ canceled, filePaths }) => {
-          if (canceled || filePaths.length === 0) {
-            return
-          }
+export default {
+  name: 'mo-select-directory',
+  components: {
+    UiButton,
+    Folder,
+  },
+  props: {},
+  methods: {
+    async onFolderClick() {
+      const selected = await open({
+        directory: true,
+        multiple: false,
+      })
 
-          const [path] = filePaths
-          self.$emit('selected', path)
-        })
+      if (selected) {
+        this.$emit('selected', selected)
       }
-    }
-  }
+    },
+  },
+}
 </script>

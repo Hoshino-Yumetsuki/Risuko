@@ -1,16 +1,12 @@
 <template>
   <div class="task-actions">
-    <el-tooltip
-      class="item hidden-md-and-up"
-      effect="dark"
-      placement="bottom"
-      :content="$t('task.new-task')"
-    >
-      <i class="task-action" @click.stop="onAddClick">
-        <mo-icon name="menu-add" width="14" height="14" />
-      </i>
-    </el-tooltip>
-    <el-tooltip
+    <div class="task-total-progress" v-if="showTotalProgress">
+      <span class="task-total-progress-size">
+        {{ formatBytes(totalCompletedLength, 1) }} / {{ formatBytes(totalLength, 1) }}
+      </span>
+      <span class="task-total-progress-percent">{{ totalProgressPercent }}%</span>
+    </div>
+    <ui-tooltip
       class="item"
       effect="dark"
       placement="bottom"
@@ -20,41 +16,67 @@
       <i
         class="task-action"
         :class="{ disabled: selectedGidListCount === 0 }"
-        @click="onBatchDeleteClick">
-        <mo-icon name="delete" width="14" height="14" />
+        @click="onBatchDeleteClick"
+      >
+        <Trash2 :size="14" />
       </i>
-    </el-tooltip>
-    <el-tooltip
-      class="item"
-      effect="dark"
-      placement="bottom"
-      :content="$t('task.refresh-list')"
-    >
+    </ui-tooltip>
+    <ui-tooltip class="item" effect="dark" placement="bottom" :content="$t('task.refresh-list')">
       <i class="task-action" @click="onRefreshClick">
-        <mo-icon name="refresh" width="14" height="14" :spin="refreshing" />
+        <RefreshCw :size="14" :class="{ 'animate-spin': refreshing }" />
       </i>
-    </el-tooltip>
-    <el-tooltip
+    </ui-tooltip>
+    <ui-tooltip
       class="item"
       effect="dark"
       placement="bottom"
-      :content="$t('task.resume-all-task')"
+      :content="$t('task.move-task-up')"
+      v-if="currentList !== 'stopped'"
     >
-      <i class="task-action" @click="onResumeAllClick">
-        <mo-icon name="task-start-line" width="14" height="14" />
+      <i
+        class="task-action"
+        :class="{ disabled: selectedGidListCount === 0 }"
+        @click="onMoveUpClick"
+      >
+        <ArrowUp :size="14" />
       </i>
-    </el-tooltip>
-    <el-tooltip
+    </ui-tooltip>
+    <ui-tooltip
       class="item"
       effect="dark"
       placement="bottom"
-      :content="$t('task.pause-all-task')"
+      :content="$t('task.move-task-down')"
+      v-if="currentList !== 'stopped'"
     >
-      <i class="task-action" @click="onPauseAllClick">
-        <mo-icon name="task-pause-line" width="14" height="14" />
+      <i
+        class="task-action"
+        :class="{ disabled: selectedGidListCount === 0 }"
+        @click="onMoveDownClick"
+      >
+        <ArrowDown :size="14" />
       </i>
-    </el-tooltip>
-    <el-tooltip
+    </ui-tooltip>
+    <ui-tooltip
+      class="item"
+      effect="dark"
+      placement="bottom"
+      :content="hasSelection ? $t('task.resume-selected-tasks') : $t('task.resume-all-task')"
+    >
+      <i class="task-action" @click="onResumeClick">
+        <Play :size="14" />
+      </i>
+    </ui-tooltip>
+    <ui-tooltip
+      class="item"
+      effect="dark"
+      placement="bottom"
+      :content="hasSelection ? $t('task.pause-selected-tasks') : $t('task.pause-all-task')"
+    >
+      <i class="task-action" @click="onPauseClick">
+        <Pause :size="14" />
+      </i>
+    </ui-tooltip>
+    <ui-tooltip
       class="item"
       effect="dark"
       placement="bottom"
@@ -62,65 +84,99 @@
       v-if="currentList === 'stopped'"
     >
       <i class="task-action" @click="onPurgeRecordClick">
-        <mo-icon name="purge" width="14" height="14" />
+        <Eraser :size="14" />
       </i>
-    </el-tooltip>
+    </ui-tooltip>
   </div>
 </template>
 
-<script>
-  import { mapState } from 'vuex'
+<script lang="ts">
+import { toast } from 'vue-sonner'
+import { useAppStore } from '@/store/app'
+import { useTaskStore } from '@/store/task'
 
-  import { commands } from '@/components/CommandManager/instance'
-  import { ADD_TASK_TYPE } from '@shared/constants'
-  import { bytesToSize, timeFormat } from '@shared/utils'
-  import '@/components/Icons/menu-add'
-  import '@/components/Icons/refresh'
-  import '@/components/Icons/task-start-line'
-  import '@/components/Icons/task-pause-line'
-  import '@/components/Icons/delete'
-  import '@/components/Icons/purge'
-  import '@/components/Icons/more'
+import { commands } from '@/components/CommandManager/instance'
+import { ADD_TASK_TYPE } from '@shared/constants'
+import { bytesToSize, calcProgress } from '@shared/utils'
+import { Trash2, RefreshCw, Play, Pause, Eraser, ArrowUp, ArrowDown } from 'lucide-vue-next'
 
-  export default {
-    name: 'mo-task-actions',
-    components: {
+export default {
+  name: 'mo-task-actions',
+  components: {
+    Trash2,
+    RefreshCw,
+    Play,
+    Pause,
+    Eraser,
+    ArrowUp,
+    ArrowDown,
+  },
+  props: ['task'],
+  data() {
+    return {
+      refreshing: false,
+      t: null as any,
+    }
+  },
+  computed: {
+    currentList() {
+      return useTaskStore().currentList
     },
-    props: ['task'],
-    data () {
-      return {
-        refreshing: false
-      }
+    taskList() {
+      return useTaskStore().taskList
     },
-    computed: {
-      ...mapState('task', {
-        currentList: state => state.currentList,
-        selectedGidListCount: state => state.selectedGidList.length
-      })
+    selectedGidListCount() {
+      return useTaskStore().selectedGidList.length
     },
-    filters: {
-      bytesToSize,
-      timeFormat
+    hasSelection() {
+      return this.selectedGidListCount > 0
     },
-    methods: {
-      refreshSpin () {
-        this.t && clearTimeout(this.t)
+    showTotalProgress() {
+      return this.currentList !== 'stopped' && this.totalLength > 0
+    },
+    totalLength() {
+      return this.taskList.reduce((sum, task) => sum + Number(task.totalLength || 0), 0)
+    },
+    totalCompletedLength() {
+      return this.taskList.reduce((sum, task) => sum + Number(task.completedLength || 0), 0)
+    },
+    totalProgressPercent() {
+      const result = calcProgress(this.totalLength, this.totalCompletedLength, 1)
+      return `${result}`.replace(/\.0$/, '')
+    },
+  },
+  methods: {
+    refreshSpin() {
+      this.t && clearTimeout(this.t)
 
-        this.refreshing = true
-        this.t = setTimeout(() => {
-          this.refreshing = false
-        }, 500)
-      },
-      onBatchDeleteClick (event) {
-        const deleteWithFiles = !!event.shiftKey
-        commands.emit('batch-delete-task', { deleteWithFiles })
-      },
-      onRefreshClick () {
-        this.refreshSpin()
-        this.$store.dispatch('task/fetchList')
-      },
-      onResumeAllClick () {
-        this.$store.dispatch('task/resumeAllTask')
+      this.refreshing = true
+      this.t = setTimeout(() => {
+        this.refreshing = false
+      }, 500)
+    },
+    onBatchDeleteClick(event) {
+      const deleteWithFiles = !!event.shiftKey
+      commands.emit('batch-delete-task', { deleteWithFiles })
+    },
+    onRefreshClick() {
+      this.refreshSpin()
+      useTaskStore().fetchList()
+    },
+    onResumeClick() {
+      if (this.hasSelection) {
+        useTaskStore()
+          .batchResumeSelectedTasks()
+          ?.then(() => {
+            this.$msg.success(this.$t('task.resume-selected-tasks-success'))
+          })
+          .catch(({ code }) => {
+            if (code === 1) {
+              this.$msg.error(this.$t('task.resume-selected-tasks-fail'))
+            }
+          })
+      } else {
+        useTaskStore()
+          .resumeAllTask()
           .then(() => {
             this.$msg.success(this.$t('task.resume-all-task-success'))
           })
@@ -129,9 +185,23 @@
               this.$msg.error(this.$t('task.resume-all-task-fail'))
             }
           })
-      },
-      onPauseAllClick () {
-        this.$store.dispatch('task/pauseAllTask')
+      }
+    },
+    onPauseClick() {
+      if (this.hasSelection) {
+        useTaskStore()
+          .batchPauseSelectedTasks()
+          ?.then(() => {
+            this.$msg.success(this.$t('task.pause-selected-tasks-success'))
+          })
+          .catch(({ code }) => {
+            if (code === 1) {
+              this.$msg.error(this.$t('task.pause-selected-tasks-fail'))
+            }
+          })
+      } else {
+        useTaskStore()
+          .pauseAllTask()
           .then(() => {
             this.$msg.success(this.$t('task.pause-all-task-success'))
           })
@@ -140,51 +210,62 @@
               this.$msg.error(this.$t('task.pause-all-task-fail'))
             }
           })
-      },
-      onPurgeRecordClick () {
-        this.$store.dispatch('task/purgeTaskRecord')
-          .then(() => {
-            this.$msg.success(this.$t('task.purge-record-success'))
-          })
-          .catch(({ code }) => {
-            if (code === 1) {
-              this.$msg.error(this.$t('task.purge-record-fail'))
-            }
-          })
-      },
-      onAddClick () {
-        this.$store.dispatch('app/showAddTaskDialog', ADD_TASK_TYPE.URI)
       }
-    }
-  }
-</script>
-
-<style lang="scss">
-.task-actions {
-  position: absolute;
-  top: 44px;
-  right: 0;
-  height: 24px;
-  padding: 0;
-  overflow: hidden;
-  user-select: none;
-  cursor: default;
-  text-align: right;
-  color: $--task-action-color;
-  transition: all 0.25s;
-  .task-action {
-    display: inline-block;
-    padding: 5px;
-    margin: 0 4px;
-    font-size: 0;
-    cursor: pointer;
-    outline: none;
-    &:hover {
-      color: $--task-action-hover-color;
-    }
-    &.disabled {
-      color: $--task-action-disabled-color;
-    }
-  }
+    },
+    onMoveUpClick() {
+      useTaskStore()
+        .moveSelectedTasks('up', {
+          onSyncError: () => {
+            toast.error('Syncing priority failed', {
+              duration: 1800,
+            })
+          },
+        })
+        .then((movedCount) => {
+          if (movedCount > 0) {
+            this.$msg.success(this.$t('task.move-task-up'))
+          }
+        })
+        .catch(() => {
+          this.$msg.error(this.$t('task.move-task-up'))
+        })
+    },
+    onMoveDownClick() {
+      useTaskStore()
+        .moveSelectedTasks('down', {
+          onSyncError: () => {
+            toast.error('Syncing priority failed', {
+              duration: 1800,
+            })
+          },
+        })
+        .then((movedCount) => {
+          if (movedCount > 0) {
+            this.$msg.success(this.$t('task.move-task-down'))
+          }
+        })
+        .catch(() => {
+          this.$msg.error(this.$t('task.move-task-down'))
+        })
+    },
+    onPurgeRecordClick() {
+      useTaskStore()
+        .purgeTaskRecord()
+        .then(() => {
+          this.$msg.success(this.$t('task.purge-record-success'))
+        })
+        .catch(({ code }) => {
+          if (code === 1) {
+            this.$msg.error(this.$t('task.purge-record-fail'))
+          }
+        })
+    },
+    onAddClick() {
+      useAppStore().showAddTaskDialog(ADD_TASK_TYPE.URI)
+    },
+    formatBytes(value, precision = 1) {
+      return bytesToSize(value, precision)
+    },
+  },
 }
-</style>
+</script>

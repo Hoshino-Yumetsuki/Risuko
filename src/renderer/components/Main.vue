@@ -1,7 +1,15 @@
 <template>
-  <el-container id="container">
+  <div id="container" class="layout-root">
     <mo-aside />
-    <router-view />
+    <router-view v-slot="{ Component, route }">
+      <Transition name="page" mode="out-in">
+        <component
+          :is="Component"
+          :key="route.path.startsWith('/preference') ? 'preference' : 'task'"
+          class="page-view"
+        />
+      </Transition>
+    </router-view>
     <mo-speedometer />
     <mo-add-task :visible="addTaskVisible" :type="addTaskType" />
     <mo-about-panel :visible="aboutPanelVisible" />
@@ -13,52 +21,55 @@
       :peers="currentTaskPeers"
     />
     <mo-dragger />
-  </el-container>
+  </div>
 </template>
 
-<script>
-  import { mapState } from 'vuex'
-  import AboutPanel from '@/components/About/AboutPanel'
-  import Aside from '@/components/Aside/Index'
-  import Speedometer from '@/components/Speedometer/Speedometer'
-  import AddTask from '@/components/Task/AddTask'
-  import TaskDetail from '@/components/TaskDetail/Index'
-  import Dragger from '@/components/Dragger/Index'
+<script lang="ts">
+import { useAppStore } from '@/store/app'
+import { useTaskStore } from '@/store/task'
+import AboutPanel from '@/components/About/AboutPanel.vue'
+import Aside from '@/components/Aside/Index.vue'
+import Speedometer from '@/components/Speedometer/Speedometer.vue'
+import AddTask from '@/components/Task/AddTask.vue'
+import TaskDetail from '@/components/TaskDetail/Index.vue'
+import Dragger from '@/components/Dragger/Index.vue'
 
-  export default {
-    name: 'mo-main',
-    components: {
-      [AboutPanel.name]: AboutPanel,
-      [Aside.name]: Aside,
-      [Speedometer.name]: Speedometer,
-      [AddTask.name]: AddTask,
-      [TaskDetail.name]: TaskDetail,
-      [Dragger.name]: Dragger
+export default {
+  name: 'mo-main',
+  components: {
+    [AboutPanel.name]: AboutPanel,
+    [Aside.name]: Aside,
+    [Speedometer.name]: Speedometer,
+    [AddTask.name]: AddTask,
+    [TaskDetail.name]: TaskDetail,
+    [Dragger.name]: Dragger,
+  },
+  computed: {
+    aboutPanelVisible() {
+      return useAppStore().aboutPanelVisible
     },
-    computed: {
-      ...mapState('app', {
-        aboutPanelVisible: state => state.aboutPanelVisible,
-        addTaskVisible: state => state.addTaskVisible,
-        addTaskType: state => state.addTaskType
-      }),
-      ...mapState('task', {
-        taskDetailVisible: state => state.taskDetailVisible,
-        currentTaskGid: state => state.currentTaskGid,
-        currentTaskItem: state => state.currentTaskItem,
-        currentTaskFiles: state => state.currentTaskFiles,
-        currentTaskPeers: state => state.currentTaskPeers
-      })
+    addTaskVisible() {
+      return useAppStore().addTaskVisible
     },
-    methods: {
-    }
-  }
+    addTaskType() {
+      return useAppStore().addTaskType
+    },
+    taskDetailVisible() {
+      return useTaskStore().taskDetailVisible
+    },
+    currentTaskGid() {
+      return useTaskStore().currentTaskGid
+    },
+    currentTaskItem() {
+      return useTaskStore().currentTaskItem
+    },
+    currentTaskFiles() {
+      return useTaskStore().currentTaskFiles
+    },
+    currentTaskPeers() {
+      return useTaskStore().currentTaskPeers
+    },
+  },
+  methods: {},
+}
 </script>
-
-<style lang="scss">
-  .mo-speedometer {
-    position: fixed;
-    right: 16px;
-    bottom: 24px;
-    z-index: 20;
-  }
-</style>
