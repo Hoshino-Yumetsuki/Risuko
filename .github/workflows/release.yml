@@ -18,7 +18,7 @@ jobs:
       matrix:
         include:
           - platform: darwin/x64
-            os: macos-latest
+            os: macos-13
             target: x86_64-apple-darwin
           - platform: darwin/arm64
             os: macos-latest
@@ -120,3 +120,26 @@ jobs:
             exit 1
           fi
           find "$bundle_dir" -maxdepth 3 -type f | sed 's/^/built: /'
+
+      - name: Dump macOS DMG diagnostics on failure
+        if: failure() && startsWith(matrix.platform, 'darwin')
+        shell: bash
+        run: |
+          set -euxo pipefail
+          dmg_dir="src-tauri/target/${{ matrix.target }}/release/bundle/dmg"
+          if [ -d "$dmg_dir" ]; then
+            echo "== DMG bundle directory =="
+            ls -la "$dmg_dir" || true
+            if [ -f "$dmg_dir/bundle_dmg.sh" ]; then
+              echo "== bundle_dmg.sh =="
+              sed -n '1,260p' "$dmg_dir/bundle_dmg.sh" || true
+            fi
+            for f in "$dmg_dir"/*.log; do
+              if [ -f "$f" ]; then
+                echo "== log: $f =="
+                cat "$f" || true
+              fi
+            done
+          else
+            echo "DMG directory not found: $dmg_dir"
+          fi
