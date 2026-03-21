@@ -56,7 +56,7 @@ export default {
   props: {
     modelValue: {
       type: String,
-      default: APP_THEME.AUTO,
+      default: null,
     },
     // legacy v-model support
     value: {

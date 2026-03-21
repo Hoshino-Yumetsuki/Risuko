@@ -26,7 +26,9 @@ pub fn reveal_in_folder(path: String) -> Result<(), String> {
     #[cfg(target_os = "linux")]
     {
         if let Some(parent) = p.parent() {
-            let _ = open::that(parent.to_string_lossy().as_ref());
+            open::that(parent.to_string_lossy().as_ref()).map_err(|e| e.to_string())?;
+        } else {
+            return Err("Path has no parent directory".to_string());
         }
     }
 

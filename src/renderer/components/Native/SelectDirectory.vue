@@ -12,7 +12,7 @@ import UiButton from '@/components/ui/compat/UiButton.vue'
 export default {
   name: 'mo-select-directory',
   components: {
-    [UiButton.name]: UiButton,
+    UiButton,
     Folder,
   },
   props: {},

@@ -21,6 +21,11 @@ export default {
       isLoading: true,
     }
   },
+  watch: {
+    src() {
+      this.isLoading = true
+    },
+  },
   methods: {
     onLoad() {
       this.isLoading = false

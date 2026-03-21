@@ -9,18 +9,18 @@
         </div>
       </div>
       <ul class="menu top-menu">
-        <li @click="nav('/task')" class="non-draggable" style="--stagger-index: 0">
+        <li @click="nav('/task')" class="non-draggable" style="animation-delay: 0s">
           <ListTodo :size="20" />
         </li>
-        <li @click="showAddTask()" class="non-draggable" style="--stagger-index: 1">
+        <li @click="showAddTask()" class="non-draggable" style="animation-delay: 0.06s">
           <Plus :size="20" />
         </li>
       </ul>
       <ul class="menu bottom-menu">
-        <li @click="nav('/preference')" class="non-draggable" style="--stagger-index: 0">
+        <li @click="nav('/preference')" class="non-draggable" style="animation-delay: 0s">
           <Settings2 :size="20" />
         </li>
-        <li @click="showAboutPanel" class="non-draggable" style="--stagger-index: 1">
+        <li @click="showAboutPanel" class="non-draggable" style="animation-delay: 0.06s">
           <Info :size="20" />
         </li>
       </ul>
@@ -35,6 +35,7 @@ import { useAppStore } from '@/store/app'
 import { ADD_TASK_TYPE } from '@shared/constants'
 import LogoMini from '@/components/Logo/LogoMini.vue'
 import { getMotrixVersion } from '@/utils/version'
+import is from '@/shims/platform'
 
 export default {
   name: 'mo-aside',
@@ -53,7 +54,18 @@ export default {
   async created() {
     this.appVersion = await getMotrixVersion()
   },
-  computed: {},
+  computed: {
+    asideDraggable() {
+      return !is.macOS()
+    },
+    vibrancy() {
+      return is.macOS()
+        ? {
+            backdropFilter: 'saturate(120%) blur(10px)',
+          }
+        : {}
+    },
+  },
   methods: {
     showAddTask(taskType = ADD_TASK_TYPE.URI) {
       useAppStore().showAddTaskDialog(taskType)

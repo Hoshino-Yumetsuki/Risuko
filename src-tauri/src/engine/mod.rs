@@ -38,7 +38,9 @@ fn resolve_engine_file(
 
     for candidate in &candidates {
         if candidate.exists() {
-            let resolved = candidate.canonicalize().unwrap_or_else(|_| candidate.clone());
+            let resolved = candidate
+                .canonicalize()
+                .unwrap_or_else(|_| candidate.clone());
             log::info!("{} found at: {:?}", filename, resolved);
             return Ok(resolved);
         }
@@ -49,6 +51,27 @@ fn resolve_engine_file(
 
 pub async fn start_engine(handle: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     let state = handle.state::<AppState>();
+
+    {
+        let mut guard = ENGINE_PROCESS.lock().await;
+        if let Some(existing) = guard.as_mut() {
+            match existing.try_wait() {
+                Ok(None) => {
+                    log::info!("aria2c engine already running");
+                    *state.engine_running.lock().unwrap() = true;
+                    return Ok(());
+                }
+                Ok(Some(status)) => {
+                    log::warn!("Found exited aria2c process handle: {}", status);
+                    *guard = None;
+                }
+                Err(e) => {
+                    return Err(format!("Failed to inspect aria2c process: {}", e).into());
+                }
+            }
+        }
+    }
+
     let (bin_path, args) = {
         let config = state.config.lock().unwrap();
         let bin_path = resolve_engine_bin(handle)?;
@@ -111,10 +134,27 @@ pub async fn start_engine(handle: &AppHandle) -> Result<(), Box<dyn std::error::
         }
     }
 
-    // We can drop stderr now that aria2c is confirmed alive.
-    // If the child writes to stderr later it may hit a broken pipe, which is fine
-    // because aria2c mainly talks to us over RPC.
-    drop(stderr_handle);
+    if let Some(mut stderr) = stderr_handle.take() {
+        tauri::async_runtime::spawn(async move {
+            let mut buf = [0u8; 2048];
+            loop {
+                match stderr.read(&mut buf).await {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        let msg = String::from_utf8_lossy(&buf[..n]);
+                        let trimmed = msg.trim();
+                        if !trimmed.is_empty() {
+                            log::warn!("aria2c stderr: {}", trimmed);
+                        }
+                    }
+                    Err(e) => {
+                        log::warn!("Failed to read aria2c stderr: {}", e);
+                        break;
+                    }
+                }
+            }
+        });
+    }
 
     *ENGINE_PROCESS.lock().await = Some(child);
     *state.engine_running.lock().unwrap() = true;
@@ -182,7 +222,11 @@ fn build_engine_args(
         format!("--save-session={}", session_path_str),
     ];
 
-    if session_path.exists() && std::fs::metadata(&session_path).map(|m| m.len() > 0).unwrap_or(false) {
+    if session_path.exists()
+        && std::fs::metadata(&session_path)
+            .map(|m| m.len() > 0)
+            .unwrap_or(false)
+    {
         args.push(format!("--input-file={}", session_path_str));
     }
 
@@ -228,7 +272,10 @@ fn build_engine_args(
     }
 
     // aria2c caps max-connection-per-server at 16.
-    if let Some(pos) = args.iter().position(|a| a.starts_with("--max-connection-per-server=")) {
+    if let Some(pos) = args
+        .iter()
+        .position(|a| a.starts_with("--max-connection-per-server="))
+    {
         let val: u32 = args[pos]
             .trim_start_matches("--max-connection-per-server=")
             .parse()

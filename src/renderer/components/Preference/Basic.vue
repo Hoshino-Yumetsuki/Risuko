@@ -739,7 +739,7 @@ export default {
           }
         })
         .catch(() => {
-          this.$msg.success(this.$t('preferences.save-fail-message'))
+          this.$msg.error(this.$t('preferences.save-fail-message'))
         })
 
       changedConfig.basic = {}

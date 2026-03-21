@@ -12,11 +12,14 @@ export default {
   data() {
     return {
       unlisten: null as UnlistenFn | null,
+      alive: true,
+      bindToken: 0,
     }
   },
   methods: {
     async bindIpcEvents() {
-      this.unlisten = await listen('command', (event) => {
+      const token = ++this.bindToken
+      const unlisten = await listen('command', (event) => {
         const payload = event.payload as any
         if (payload && payload.command) {
           commands.execute(payload.command, ...(payload.args || []))
@@ -24,6 +27,13 @@ export default {
           commands.execute(payload)
         }
       })
+
+      if (!this.alive || token !== this.bindToken) {
+        unlisten()
+        return
+      }
+
+      this.unlisten = unlisten
     },
     unbindIpcEvents() {
       if (this.unlisten) {
@@ -33,9 +43,11 @@ export default {
     },
   },
   created() {
-    this.bindIpcEvents()
+    this.bindIpcEvents().catch(() => {})
   },
   beforeUnmount() {
+    this.alive = false
+    this.bindToken += 1
     this.unbindIpcEvents()
   },
 }

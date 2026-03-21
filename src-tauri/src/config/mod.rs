@@ -16,14 +16,9 @@ impl ConfigManager {
         let config_dir = get_config_dir(handle);
         fs::create_dir_all(&config_dir)?;
 
-        let system_config = load_or_default(
-            &config_dir.join("system.json"),
-            defaults::system_defaults(),
-        );
-        let user_config = load_or_default(
-            &config_dir.join("user.json"),
-            defaults::user_defaults(),
-        );
+        let system_config =
+            load_or_default(&config_dir.join("system.json"), defaults::system_defaults());
+        let user_config = load_or_default(&config_dir.join("user.json"), defaults::user_defaults());
 
         Ok(Self {
             system_config,
@@ -56,37 +51,40 @@ impl ConfigManager {
         Value::Object(merged)
     }
 
-    pub fn set_system_config_map(&mut self, map: &Map<String, Value>) {
+    pub fn set_system_config_map(&mut self, map: &Map<String, Value>) -> Result<(), String> {
         for (k, v) in map {
             self.system_config.insert(k.clone(), v.clone());
         }
-        self.save_system();
+        self.save_system()
     }
 
-    pub fn set_user_config_map(&mut self, map: &Map<String, Value>) {
+    pub fn set_user_config_map(&mut self, map: &Map<String, Value>) -> Result<(), String> {
         for (k, v) in map {
             self.user_config.insert(k.clone(), v.clone());
         }
-        self.save_user();
+        self.save_user()
     }
 
-    pub fn reset(&mut self) {
+    pub fn reset(&mut self) -> Result<(), String> {
         self.system_config = defaults::system_defaults();
         self.user_config = defaults::user_defaults();
-        self.save_system();
-        self.save_user();
+        self.save_system()?;
+        self.save_user()?;
+        Ok(())
     }
 
-    fn save_system(&self) {
+    fn save_system(&self) -> Result<(), String> {
         let path = self.config_dir.join("system.json");
-        let data = serde_json::to_string_pretty(&self.system_config).unwrap_or_default();
-        let _ = fs::write(path, data);
+        let data = serde_json::to_string_pretty(&self.system_config).map_err(|e| e.to_string())?;
+        fs::write(path, data).map_err(|e| e.to_string())?;
+        Ok(())
     }
 
-    fn save_user(&self) {
+    fn save_user(&self) -> Result<(), String> {
         let path = self.config_dir.join("user.json");
-        let data = serde_json::to_string_pretty(&self.user_config).unwrap_or_default();
-        let _ = fs::write(path, data);
+        let data = serde_json::to_string_pretty(&self.user_config).map_err(|e| e.to_string())?;
+        fs::write(path, data).map_err(|e| e.to_string())?;
+        Ok(())
     }
 }
 

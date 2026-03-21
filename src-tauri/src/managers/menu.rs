@@ -1,7 +1,5 @@
 use tauri::{
-    menu::{
-        AboutMetadataBuilder, MenuBuilder, MenuItemBuilder, Submenu, SubmenuBuilder,
-    },
+    menu::{AboutMetadataBuilder, MenuBuilder, MenuItemBuilder, Submenu, SubmenuBuilder},
     App, Emitter, Manager,
 };
 
@@ -31,10 +29,7 @@ fn setup_macos_menu(app: &App) -> Result<(), Box<dyn std::error::Error>> {
                 .accelerator("CmdOrCtrl+,")
                 .build(handle)?,
         )
-        .item(
-            &MenuItemBuilder::with_id("check-for-updates", "Check for Updates...")
-                .build(handle)?,
-        )
+        .item(&MenuItemBuilder::with_id("check-for-updates", "Check for Updates...").build(handle)?)
         .separator()
         .hide()
         .hide_others()
@@ -86,14 +81,8 @@ fn setup_default_menu(app: &App) -> Result<(), Box<dyn std::error::Error>> {
                 .accelerator("CmdOrCtrl+,")
                 .build(handle)?,
         )
-        .item(
-            &MenuItemBuilder::with_id("check-for-updates", "Check for Updates...")
-                .build(handle)?,
-        )
-        .item(
-            &MenuItemBuilder::with_id("show-window", "Show Motrix")
-                .build(handle)?,
-        )
+        .item(&MenuItemBuilder::with_id("check-for-updates", "Check for Updates...").build(handle)?)
+        .item(&MenuItemBuilder::with_id("show-window", "Show Motrix").build(handle)?)
         .separator()
         .item(
             &MenuItemBuilder::with_id("quit", "Quit Motrix")
@@ -157,9 +146,7 @@ fn build_task_submenu(
         .item(&MenuItemBuilder::with_id("resume-task", "Resume Task").build(handle)?)
         .item(&MenuItemBuilder::with_id("delete-task", "Delete Task").build(handle)?)
         .item(&MenuItemBuilder::with_id("move-task-up", "Move Task Up").build(handle)?)
-        .item(
-            &MenuItemBuilder::with_id("move-task-down", "Move Task Down").build(handle)?,
-        )
+        .item(&MenuItemBuilder::with_id("move-task-down", "Move Task Down").build(handle)?)
         .separator()
         .item(
             &MenuItemBuilder::with_id("pause-all-task", "Pause All Tasks")
@@ -173,17 +160,14 @@ fn build_task_submenu(
         )
         .item(
             &MenuItemBuilder::with_id("select-all-task", "Select All Tasks")
-                .accelerator("Ctrl+Shift+A")
+                .accelerator("CmdOrCtrl+Shift+A")
                 .build(handle)?,
         );
 
     if include_clear_recent {
-        builder = builder
-            .separator()
-            .item(
-                &MenuItemBuilder::with_id("clear-recent-tasks", "Clear Recent Tasks")
-                    .build(handle)?,
-            );
+        builder = builder.separator().item(
+            &MenuItemBuilder::with_id("clear-recent-tasks", "Clear Recent Tasks").build(handle)?,
+        );
     }
 
     Ok(builder.build()?)
@@ -206,19 +190,22 @@ fn build_edit_submenu(
 fn build_help_submenu(
     handle: &tauri::AppHandle,
 ) -> Result<Submenu<tauri::Wry>, Box<dyn std::error::Error>> {
-    Ok(SubmenuBuilder::new(handle, "Help")
+    let mut builder = SubmenuBuilder::new(handle, "Help")
         .item(&MenuItemBuilder::with_id("official-website", "Official Website").build(handle)?)
         .item(&MenuItemBuilder::with_id("manual", "Manual").build(handle)?)
         .item(&MenuItemBuilder::with_id("release-notes", "Release Notes").build(handle)?)
         .separator()
-        .item(&MenuItemBuilder::with_id("report-problem", "Report Problem").build(handle)?)
-        .separator()
-        .item(
+        .item(&MenuItemBuilder::with_id("report-problem", "Report Problem").build(handle)?);
+
+    if cfg!(debug_assertions) {
+        builder = builder.separator().item(
             &MenuItemBuilder::with_id("toggle-dev-tools", "Toggle Developer Tools")
                 .accelerator("F12")
                 .build(handle)?,
-        )
-        .build()?)
+        );
+    }
+
+    Ok(builder.build()?)
 }
 
 fn setup_menu_event_handler(app: &App) {
@@ -247,10 +234,18 @@ fn setup_menu_event_handler(app: &App) {
                     let _ = window.set_focus();
                 }
             }
-            "official-website" => { let _ = open::that("https://motrix.app"); }
-            "manual" => { let _ = open::that("https://github.com/agalwood/Motrix/wiki"); }
-            "release-notes" => { let _ = open::that("https://github.com/agalwood/Motrix/releases"); }
-            "report-problem" => { let _ = open::that("https://github.com/agalwood/Motrix/issues"); }
+            "official-website" => {
+                let _ = open::that("https://motrix.app");
+            }
+            "manual" => {
+                let _ = open::that("https://github.com/agalwood/Motrix/wiki");
+            }
+            "release-notes" => {
+                let _ = open::that("https://github.com/agalwood/Motrix/releases");
+            }
+            "report-problem" => {
+                let _ = open::that("https://github.com/agalwood/Motrix/issues");
+            }
             "reload" => {
                 if let Some(window) = app.get_webview_window("main") {
                     let _ = window.eval("window.location.reload()");
@@ -262,7 +257,8 @@ fn setup_menu_event_handler(app: &App) {
                     let _ = window.set_focus();
                 }
             }
-            "toggle-dev-tools" => {
+            "toggle-dev-tools" =>
+            {
                 #[cfg(debug_assertions)]
                 if let Some(window) = app.get_webview_window("main") {
                     {

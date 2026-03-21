@@ -1,7 +1,8 @@
 import { toast } from 'vue-sonner'
 
-const queue = []
+const queue: Array<() => void> = []
 const maxLength = 5
+let activeToasts = 0
 
 export default {
   install: function (target, defaultOption = {}) {
@@ -37,30 +38,43 @@ function showToast(type: string, arg, defaultOption) {
   const message = merged.message || ''
   const duration = merged.duration || 3000
 
-  const task = {
-    run() {
-      switch (type) {
-        case 'success':
-          toast.success(message, { duration })
-          break
-        case 'error':
-          toast.error(message, { duration })
-          break
-        case 'warning':
-          toast.warning(message, { duration })
-          break
-        default:
-          toast.info(message, { duration })
-      }
-    },
+  const task = () => {
+    switch (type) {
+      case 'success':
+        toast.success(message, { duration })
+        break
+      case 'error':
+        toast.error(message, { duration })
+        break
+      case 'warning':
+        toast.warning(message, { duration })
+        break
+      default:
+        toast.info(message, { duration })
+    }
+
+    const wait = Number(duration) || 3000
+    setTimeout(() => {
+      activeToasts = Math.max(0, activeToasts - 1)
+      flushQueue()
+    }, wait)
   }
 
   if (queue.length >= maxLength) {
-    queue.pop()
+    queue.shift()
   }
-  queue.unshift(task)
+  queue.push(task)
 
-  if (queue.length === 1) {
-    queue.pop().run()
+  flushQueue()
+}
+
+function flushQueue() {
+  while (activeToasts < maxLength && queue.length > 0) {
+    const task = queue.shift()
+    if (!task) {
+      break
+    }
+    activeToasts += 1
+    task()
   }
 }

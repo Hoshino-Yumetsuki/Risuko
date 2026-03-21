@@ -2,13 +2,17 @@ use tauri::{AppHandle, Manager};
 
 #[tauri::command]
 pub async fn relaunch_app(handle: AppHandle) -> Result<(), String> {
-    let _ = crate::engine::stop_engine(&handle).await;
+    crate::engine::stop_engine(&handle)
+        .await
+        .map_err(|e| e.to_string())?;
     handle.restart();
 }
 
 #[tauri::command]
 pub async fn quit_app(handle: AppHandle) -> Result<(), String> {
-    let _ = crate::engine::stop_engine(&handle).await;
+    crate::engine::stop_engine(&handle)
+        .await
+        .map_err(|e| e.to_string())?;
     handle.exit(0);
     Ok(())
 }
@@ -36,20 +40,21 @@ pub fn factory_reset(
     state: tauri::State<'_, crate::state::AppState>,
 ) -> Result<(), String> {
     let mut config = state.config.lock().map_err(|e| e.to_string())?;
-    config.reset();
+    config.reset()?;
     drop(config);
     handle.restart();
 }
 
 #[tauri::command]
 pub fn check_for_updates() -> Result<(), String> {
-    log::info!("check_for_updates called");
-    Ok(())
+    Err("Update checking is not implemented for this build".to_string())
 }
 
 #[tauri::command]
 pub async fn reset_session(handle: AppHandle) -> Result<(), String> {
-    let _ = crate::engine::stop_engine(&handle).await;
+    crate::engine::stop_engine(&handle)
+        .await
+        .map_err(|e| e.to_string())?;
     if let Ok(config_dir) = handle.path().app_config_dir() {
         let session_path = config_dir.join(crate::engine::SESSION_FILENAME);
         let _ = std::fs::remove_file(&session_path);

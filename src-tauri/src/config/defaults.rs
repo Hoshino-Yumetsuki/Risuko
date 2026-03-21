@@ -2,7 +2,9 @@ use serde_json::{json, Map, Value};
 
 pub fn system_defaults() -> Map<String, Value> {
     let downloads_dir = dirs::download_dir()
-        .unwrap_or_else(|| dirs::home_dir().unwrap_or_default().join("Downloads"))
+        .or_else(|| dirs::home_dir().map(|p| p.join("Downloads")))
+        .or_else(|| std::env::current_dir().ok().map(|p| p.join("Downloads")))
+        .unwrap_or_else(|| std::env::temp_dir().join("Downloads"))
         .to_string_lossy()
         .to_string();
 

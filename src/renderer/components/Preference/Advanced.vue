@@ -794,8 +794,10 @@ export default {
       getLocaleManager().changeLanguage(lng)
     },
     onCheckUpdateClick() {
-      invoke('check_for_updates').catch(() => {})
       this.$msg.info(this.$t('app.checking-for-updates'))
+      invoke('check_for_updates').catch(() => {
+        this.$msg.error(this.$t('app.update-error-message'))
+      })
       usePreferenceStore()
         .fetchPreference()
         .then((config) => {
@@ -980,13 +982,12 @@ export default {
               invoke('relaunch_app').catch(() => {})
             }
           }
+          changedConfig.basic = {}
+          changedConfig.advanced = {}
         })
         .catch((_e) => {
-          this.$msg.success(this.$t('preferences.save-fail-message'))
+          this.$msg.error(this.$t('preferences.save-fail-message'))
         })
-
-      changedConfig.basic = {}
-      changedConfig.advanced = {}
     },
     resetForm(_formName) {
       this.syncFormConfig()
