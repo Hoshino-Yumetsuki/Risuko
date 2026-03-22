@@ -21,6 +21,12 @@ const cache: Record<string, ImageBitmap> = {}
 
 export default {
   name: 'mo-dynamic-tray',
+  props: {
+    showSpeed: {
+      type: Boolean,
+      default: true,
+    },
+  },
   data() {
     return {
       trayIconLightNormal,
@@ -65,9 +71,15 @@ export default {
   },
   watch: {
     async speed() {
+      if (!this.showSpeed) {
+        return
+      }
       await this.drawTray()
     },
     async iconKey() {
+      await this.drawTray()
+    },
+    async showSpeed() {
       await this.drawTray()
     },
   },
@@ -92,7 +104,7 @@ export default {
       return result
     },
     async drawTray() {
-      const { currentTheme: theme, uploadSpeed, downloadSpeed, scale, iconKey } = this
+      const { currentTheme: theme, uploadSpeed, downloadSpeed, scale, iconKey, showSpeed } = this
 
       const icon = await this.getIcon(iconKey)
       if (!icon) {
@@ -106,6 +118,7 @@ export default {
           icon,
           uploadSpeed,
           downloadSpeed,
+          showSpeed,
           scale,
         },
       })

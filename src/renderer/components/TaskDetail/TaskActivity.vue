@@ -5,6 +5,8 @@
       <mo-task-graphic
         :outerWidth="graphicWidth"
         :bitfield="task.bitfield"
+        :cellCount="graphicCellCount"
+        :cellPercents="splitProgressPercents"
         v-if="graphicWidth > 0"
       />
     </div>
@@ -26,6 +28,19 @@
         :total="Number(task.totalLength)"
         :status="taskStatus"
       />
+      <div class="split-progress-list" v-if="splitProgressList.length > 0">
+        <div
+          class="split-progress-item"
+          v-for="item in splitProgressList"
+          :key="`split-${item.index}`"
+        >
+          <span class="split-progress-label">S{{ item.index + 1 }}</span>
+          <div class="split-progress-track">
+            <div class="split-progress-fill" :style="{ width: `${item.percent}%` }"></div>
+          </div>
+          <span class="split-progress-value">{{ item.percentText }}</span>
+        </div>
+      </div>
     </div>
 
     <!-- Stats grid -->
@@ -60,6 +75,7 @@
 
 <script lang="ts">
 import is from '@/shims/platform'
+import { usePreferenceStore } from '@/store/preference'
 import {
   bytesToSize,
   calcProgress,
@@ -72,6 +88,9 @@ import {
 import { TASK_STATUS } from '@shared/constants'
 import TaskGraphic from '@/components/TaskGraphic/Index.vue'
 import TaskProgress from '@/components/Task/TaskProgress.vue'
+
+const DEFAULT_SPLIT_SEGMENTS = 16
+const MAX_SPLIT_SEGMENTS = 16
 
 export default {
   name: 'mo-task-activity',
@@ -155,6 +174,70 @@ export default {
       const { totalLength, uploadLength } = this.task
       const ratio = calcRatio(totalLength, uploadLength)
       return ratio
+    },
+    graphicCellCount() {
+      const task = this.task || {}
+      const preferenceSplit = Number((usePreferenceStore().config as any)?.split || 0)
+      const taskSplit = Number(task.split || task.options?.split || task.option?.split || 0)
+      const picked =
+        Number.isFinite(preferenceSplit) && preferenceSplit > 0 ? preferenceSplit : taskSplit
+      if (Number.isFinite(picked) && picked > 0) {
+        return Math.max(1, Math.min(Math.trunc(picked), MAX_SPLIT_SEGMENTS))
+      }
+      return DEFAULT_SPLIT_SEGMENTS
+    },
+    splitProgressList() {
+      const segmentCount = this.graphicCellCount
+      if (!Number.isFinite(segmentCount) || segmentCount <= 0) {
+        return []
+      }
+
+      const totalLength = Number(this.task?.totalLength || 0)
+      const completedLength = Number(this.task?.completedLength || 0)
+      const isFullyCompleted = totalLength > 0 && completedLength >= totalLength
+      if (isFullyCompleted) {
+        return new Array(segmentCount).fill(0).map((_, index) => ({
+          index,
+          percent: 100,
+          percentText: '100%',
+        }))
+      }
+
+      const normalizedBitfield = `${this.task?.bitfield || ''}`.replace(/[^0-9a-fA-F]/g, '')
+      const rawBitLen = normalizedBitfield.length * 4
+      const numPieces = Number(this.task?.numPieces || 0)
+      const validBitLen =
+        Number.isFinite(numPieces) && numPieces > 0
+          ? Math.min(Math.trunc(numPieces), rawBitLen)
+          : rawBitLen
+      const sums = new Array(segmentCount).fill(0)
+      const counts = new Array(segmentCount).fill(0)
+
+      for (let bitIndex = 0; bitIndex < validBitLen; bitIndex++) {
+        const nibbleIndex = Math.trunc(bitIndex / 4)
+        const bitInNibble = 3 - (bitIndex % 4)
+        const nibble = parseInt(normalizedBitfield[nibbleIndex] || '0', 16)
+        const bit = Number.isNaN(nibble) ? 0 : (nibble >> bitInNibble) & 1
+        const bucket = Math.min(
+          Math.floor((bitIndex * segmentCount) / validBitLen),
+          segmentCount - 1,
+        )
+        sums[bucket] += bit
+        counts[bucket] += 1
+      }
+
+      return sums.map((sum, index) => {
+        const count = counts[index] || 1
+        const percent = validBitLen > 0 ? Math.round((sum / count) * 100) : 0
+        return {
+          index,
+          percent,
+          percentText: `${percent}%`,
+        }
+      })
+    },
+    splitProgressPercents() {
+      return this.splitProgressList.map((item) => item.percent)
     },
   },
   mounted() {

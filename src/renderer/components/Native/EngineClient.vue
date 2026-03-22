@@ -4,13 +4,14 @@
 
 <script lang="ts">
 import { invoke } from '@tauri-apps/api/core'
+import { block, NoSleepType, unblock } from 'tauri-plugin-nosleep-api'
 import logger from '@shared/utils/logger'
 import { useAppStore } from '@/store/app'
 import { useTaskStore } from '@/store/task'
 import { usePreferenceStore } from '@/store/preference'
 import api from '@/api'
 import { getTaskFullPath, showItemInFolder } from '@/utils/native'
-import { checkTaskIsBT, getTaskName } from '@shared/utils'
+import { checkTaskIsBT, getTaskName, parseBooleanConfig } from '@shared/utils'
 
 export default {
   name: 'mo-engine-client',
@@ -20,6 +21,11 @@ export default {
       initTimer: null,
       isPolling: false,
       isDestroyed: false,
+      noSleepDesired: false,
+      noSleepApplied: false,
+      noSleepSyncing: false,
+      noSleepResyncNeeded: false,
+      startupAutoResumeHandled: false,
     }
   },
   computed: {
@@ -62,25 +68,52 @@ export default {
     taskNotification() {
       return (usePreferenceStore().config as any).taskNotification
     },
+    traySpeedometer() {
+      return parseBooleanConfig((usePreferenceStore().config as any).traySpeedometer)
+    },
+    showProgressBar() {
+      return !!(usePreferenceStore().config as any).showProgressBar
+    },
+    resumeAllWhenAppLaunched() {
+      return parseBooleanConfig((usePreferenceStore().config as any).resumeAllWhenAppLaunched)
+    },
     currentTaskIsBT() {
       return checkTaskIsBT(this.currentTaskItem)
     },
   },
   watch: {
     speed() {
-      const { uploadSpeed, downloadSpeed } = this
+      const { uploadSpeed, downloadSpeed, traySpeedometer } = this
       invoke('on_speed_change', {
         uploadSpeed,
         downloadSpeed,
+        showTraySpeed: traySpeedometer,
+      }).catch(() => {})
+    },
+    traySpeedometer(val) {
+      invoke('on_speed_change', {
+        uploadSpeed: this.uploadSpeed,
+        downloadSpeed: this.downloadSpeed,
+        showTraySpeed: !!val,
       }).catch(() => {})
     },
     downloading(val, oldVal) {
       if (val !== oldVal) {
-        invoke('on_download_status_change', { downloading: val }).catch(() => {})
+        this.noSleepDesired = !!val
+        this.syncNoSleepState()
       }
     },
     progress(val) {
-      invoke('on_progress_change', { progress: val }).catch(() => {})
+      invoke('on_progress_change', {
+        progress: val,
+        showProgressBar: this.showProgressBar,
+      }).catch(() => {})
+    },
+    showProgressBar(val) {
+      invoke('on_progress_change', {
+        progress: this.progress,
+        showProgressBar: !!val,
+      }).catch(() => {})
     },
     interval() {
       if (this.timer) {
@@ -89,6 +122,55 @@ export default {
     },
   },
   methods: {
+    async setNoSleepState(downloading: boolean) {
+      if (!downloading) {
+        const results = await Promise.allSettled([
+          unblock(),
+          invoke('on_download_status_change', { downloading: false }),
+        ])
+        return results.some((item) => item.status === 'fulfilled')
+      }
+
+      try {
+        await block(NoSleepType.PreventUserIdleSystemSleep)
+        return true
+      } catch {
+        // Keep Rust-side fallback for environments where the plugin command is unavailable.
+        try {
+          await invoke('on_download_status_change', { downloading })
+          return true
+        } catch {
+          return false
+        }
+      }
+    },
+    async syncNoSleepState() {
+      if (this.noSleepSyncing) {
+        this.noSleepResyncNeeded = true
+        return
+      }
+
+      this.noSleepSyncing = true
+      do {
+        this.noSleepResyncNeeded = false
+        const target = this.noSleepDesired
+        if (target === this.noSleepApplied) continue
+
+        const ok = await this.setNoSleepState(target)
+        if (ok) {
+          this.noSleepApplied = target
+        } else {
+          // Stop retry loop on hard failure; next state transition will retry.
+          break
+        }
+      } while (this.noSleepResyncNeeded)
+      this.noSleepSyncing = false
+
+      if (this.noSleepResyncNeeded) {
+        // Catch race where another update arrived right after loop exit.
+        this.syncNoSleepState()
+      }
+    },
     async fetchTaskItem({ gid }) {
       return api.fetchTaskItem({ gid }).catch((e) => {
         logger.warn(`fetchTaskItem fail: ${e.message}`)
@@ -141,13 +223,10 @@ export default {
         const { errorCode, errorMessage } = task
         logger.error(`[Motrix] download error gid: ${gid}, #${errorCode}, ${errorMessage}`)
         const message = this.$t('task.download-error-message', { taskName })
-        const link = `<a target="_blank" href="https://github.com/agalwood/Motrix/wiki/Error#${errorCode}" rel="noopener noreferrer">${errorCode}</a>`
-        this.$msg({
-          type: 'error',
-          showClose: true,
+        const link = `https://github.com/agalwood/Motrix/wiki/Error#${errorCode}`
+        this.$msg.error({
           duration: 5000,
-          dangerouslyUseHTMLString: true,
-          message: `${message} ${link}`,
+          message: `${message} (${errorCode}) ${link}`,
         })
       })
     },
@@ -278,6 +357,22 @@ export default {
       clearTimeout(this.timer)
       this.timer = null
     },
+    autoResumeUnfinishedTasksOnLaunch() {
+      if (this.startupAutoResumeHandled) {
+        return
+      }
+      this.startupAutoResumeHandled = true
+
+      if (!this.resumeAllWhenAppLaunched) {
+        return
+      }
+
+      useTaskStore()
+        .resumeAllTask()
+        .catch((err) => {
+          logger.warn('[Motrix] auto resume unfinished tasks failed:', err?.message || err)
+        })
+    },
   },
   created() {
     api
@@ -294,6 +389,7 @@ export default {
       const appStore = useAppStore()
       appStore.fetchEngineInfo()
       appStore.fetchEngineOptions()
+      this.autoResumeUnfinishedTasksOnLaunch()
 
       this.startPolling()
     }, 100)
@@ -306,6 +402,10 @@ export default {
 
     this.unbindEngineEvents()
     this.stopPolling()
+
+    // Best effort release in case component is torn down while downloads were active.
+    this.noSleepDesired = false
+    this.syncNoSleepState()
   },
 }
 </script>

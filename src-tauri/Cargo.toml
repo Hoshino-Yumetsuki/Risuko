@@ -32,3 +32,4 @@ dirs = "6"
 open = "5"
 trash = "5"
 tauri-plugin-clipboard-manager = "2.3.2"
+tauri-plugin-nosleep = { git = "https://github.com/pevers/tauri-plugin-nosleep", branch = "v2" }

@@ -3676,6 +3676,33 @@
       "title": "FsScopeEntry"
     }
   },
+  "nosleep": {
+    "default_permission": null,
+    "permissions": {
+      "allow-block": {
+        "identifier": "allow-block",
+        "description": "Enables the block command without any pre-configured scope.",
+        "commands": { "allow": ["block"], "deny": [] }
+      },
+      "allow-unblock": {
+        "identifier": "allow-unblock",
+        "description": "Enables the unblock command without any pre-configured scope.",
+        "commands": { "allow": ["unblock"], "deny": [] }
+      },
+      "deny-block": {
+        "identifier": "deny-block",
+        "description": "Denies the block command without any pre-configured scope.",
+        "commands": { "allow": [], "deny": ["block"] }
+      },
+      "deny-unblock": {
+        "identifier": "deny-unblock",
+        "description": "Denies the unblock command without any pre-configured scope.",
+        "commands": { "allow": [], "deny": ["unblock"] }
+      }
+    },
+    "permission_sets": {},
+    "global_scope_schema": null
+  },
   "notification": {
     "default_permission": {
       "identifier": "default",

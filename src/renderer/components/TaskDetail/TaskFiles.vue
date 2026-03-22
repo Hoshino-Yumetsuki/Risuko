@@ -5,7 +5,7 @@
         <TableHeader>
           <TableRow>
             <TableHead class="w-[42px]">
-              <Checkbox :checked="allSelected" @update:checked="toggleAll" />
+              <Checkbox :model-value="allSelected" @update:model-value="toggleAll" />
             </TableHead>
             <TableHead class="min-w-[200px]">{{ $t('task.file-name') }}</TableHead>
             <TableHead class="w-[80px]">{{ $t('task.file-extension') }}</TableHead>
@@ -25,8 +25,8 @@
           >
             <TableCell>
               <Checkbox
-                :checked="isSelected(row)"
-                @update:checked="(val: boolean) => toggleRow(row, val)"
+                :model-value="isSelected(row)"
+                @update:model-value="(val: boolean) => toggleRow(row, val)"
               />
             </TableCell>
             <TableCell class="truncate max-w-[200px]">{{ row.name }}</TableCell>
@@ -162,12 +162,13 @@ export default {
     isSelected(row: any) {
       return this.selectedIndices.has(row.idx)
     },
-    toggleAll(checked: boolean) {
-      this.selectedIndices = checked ? new Set((this.files as any[]).map((f) => f.idx)) : new Set()
+    toggleAll(checked: boolean | 'indeterminate') {
+      this.selectedIndices =
+        checked === true ? new Set((this.files as any[]).map((f) => f.idx)) : new Set()
     },
-    toggleRow(row: any, selected: boolean) {
+    toggleRow(row: any, selected: boolean | 'indeterminate') {
       const next = new Set(this.selectedIndices)
-      selected ? next.add(row.idx) : next.delete(row.idx)
+      selected === true ? next.add(row.idx) : next.delete(row.idx)
       this.selectedIndices = next
     },
     toggleAllSelection() {

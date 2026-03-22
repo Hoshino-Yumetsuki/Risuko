@@ -4,7 +4,7 @@
     <router-view />
     <mo-engine-client :secret="rpcSecret" />
     <mo-ipc v-if="isRenderer" />
-    <mo-dynamic-tray v-if="enableTraySpeedometer" />
+    <mo-dynamic-tray v-if="enableDynamicTray" :show-speed="traySpeedometer" />
     <Teleport to="body">
       <Toaster
         position="top-center"
@@ -27,6 +27,7 @@ import Ipc from '@/components/Native/Ipc.vue'
 import TitleBar from '@/components/Native/TitleBar.vue'
 import { getLanguage } from '@shared/locales'
 import { getLocaleManager } from '@/components/Locale'
+import { parseBooleanConfig } from '@shared/utils'
 
 export default {
   name: 'motrix-app',
@@ -50,7 +51,7 @@ export default {
       return (usePreferenceStore().config as any).runMode
     },
     traySpeedometer() {
-      return (usePreferenceStore().config as any).traySpeedometer
+      return parseBooleanConfig((usePreferenceStore().config as any).traySpeedometer)
     },
     rpcSecret() {
       return (usePreferenceStore().config as any).rpcSecret
@@ -74,9 +75,9 @@ export default {
     directionClass() {
       return `dir-${this.direction}`
     },
-    enableTraySpeedometer() {
-      const { isMac, isRenderer, traySpeedometer, runMode } = this
-      return isMac && isRenderer && traySpeedometer && runMode !== APP_RUN_MODE.HIDE_TRAY
+    enableDynamicTray() {
+      const { isMac, isRenderer, runMode } = this
+      return isMac && isRenderer && runMode !== APP_RUN_MODE.HIDE_TRAY
     },
   },
   methods: {

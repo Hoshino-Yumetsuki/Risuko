@@ -89,6 +89,47 @@
     color: var(--muted-foreground);
     font-size: 12px;
   }
+  .split-progress-list {
+    margin-top: 10px;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px 10px;
+  }
+  .split-progress-item {
+    display: grid;
+    grid-template-columns: 28px 1fr 40px;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+  }
+  .split-progress-label {
+    font-size: 11px;
+    color: var(--muted-foreground);
+    font-variant-numeric: tabular-nums;
+  }
+  .split-progress-track {
+    height: 5px;
+    border-radius: 999px;
+    background-color: var(--border);
+    overflow: hidden;
+  }
+  .split-progress-fill {
+    height: 100%;
+    border-radius: 999px;
+    background: linear-gradient(
+      90deg,
+      var(--mo-graphic-atom-color-2),
+      var(--mo-graphic-atom-color-4)
+    );
+    transition: width 0.2s ease;
+    min-width: 0;
+  }
+  .split-progress-value {
+    text-align: right;
+    font-size: 11px;
+    color: var(--muted-foreground);
+    font-variant-numeric: tabular-nums;
+  }
   .activity-stats {
     display: grid;
     grid-template-columns: 1fr 1fr;

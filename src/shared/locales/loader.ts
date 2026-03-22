@@ -29,7 +29,7 @@ const localeLoaders = {
   'zh-TW': () => import('@shared/locales/zh-TW'),
 } as const
 
-export type LocaleKey = keyof typeof localeLoaders
+type LocaleKey = keyof typeof localeLoaders
 
 export const getInitialLocaleResources = () => {
   return {

@@ -107,23 +107,41 @@
   .mo-number-input-wrap {
     position: relative;
     display: flex;
-    align-items: center;
+    align-items: stretch;
     width: 100%;
+    height: 36px;
+    border: 1px solid var(--border);
+    border-radius: calc(var(--radius) - 2px);
+    background: transparent;
+    overflow: hidden;
+    transition:
+      border-color 0.15s,
+      box-shadow 0.15s;
+  }
+  .mo-number-input-wrap:focus-within {
+    border-color: var(--ring);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 50%, transparent);
   }
   .mo-number-input-wrap .mo-input-number {
-    padding-right: 32px;
+    flex: 1 1 0;
+    min-width: 0;
+    height: 100%;
+    border: none;
+    border-radius: 0;
+    box-shadow: none !important;
+    padding-right: 10px;
+  }
+  .mo-number-input-wrap .mo-input-number:focus {
+    border: none;
+    box-shadow: none;
   }
   .mo-number-input-wrap .mo-number-btns {
-    position: absolute;
-    right: 1px;
-    top: 1px;
-    bottom: 1px;
+    position: static;
     display: flex;
     flex-direction: column;
-    width: 26px;
+    width: 34px;
     border-left: 1px solid var(--border);
-    overflow: hidden;
-    border-radius: calc(var(--radius) - 2px);
+    border-radius: 0;
   }
   .mo-number-btn {
     flex: 1;
@@ -139,6 +157,9 @@
     transition:
       background 0.12s,
       color 0.12s;
+    border-radius: 0 !important;
+    -webkit-appearance: none;
+    appearance: none;
   }
   .mo-number-btn:hover {
     background: var(--mo-input-number-btn-hover-bg);
@@ -147,6 +168,9 @@
   .mo-number-btn:active {
     background: var(--mo-input-number-btn-hover-bg);
   }
+  .mo-number-btn.is-clicked {
+    animation: mo-number-btn-click 180ms;
+  }
   .mo-number-btn:first-child {
     border-bottom: 1px solid var(--border);
   }
@@ -154,6 +178,17 @@
     width: 10px;
     height: 10px;
     stroke-width: 2.5;
+  }
+  @keyframes mo-number-btn-click {
+    0% {
+      filter: brightness(1);
+    }
+    45% {
+      filter: brightness(1.3);
+    }
+    100% {
+      filter: brightness(1);
+    }
   }
   .dark .mo-input-group--bordered {
     border-color: rgba(255, 255, 255, 0.12);

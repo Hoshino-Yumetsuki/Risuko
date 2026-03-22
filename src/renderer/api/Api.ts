@@ -10,9 +10,11 @@ import {
   changeKeysToCamelCase,
   changeKeysToKebabCase,
 } from '@shared/utils'
+import { startupOnlyKeys } from '@shared/configKeys'
 import { ENGINE_RPC_HOST, ENGINE_RPC_PORT, EMPTY_STRING } from '@shared/constants'
 
 const RPC_CONFIG_KEYS = ['rpc-host', 'rpc-listen-port', 'rpc-secret']
+const TASK_LIST_FETCH_SIZE = 10000
 
 export default class Api {
   [key: string]: any
@@ -121,16 +123,25 @@ export default class Api {
 
   async savePreference(params: any = {}) {
     const kebabParams = changeKeysToKebabCase(params)
+    const { system } = separateConfig(kebabParams)
+    const hasStartupOnlySystemChanges = Object.keys(system).some((key) =>
+      startupOnlyKeys.includes(key),
+    )
+
     await this.savePreferenceToNativeStore(kebabParams)
 
     const shouldReconnect = Object.keys(kebabParams).some((key) => RPC_CONFIG_KEYS.includes(key))
-    if (shouldReconnect) {
+    if (hasStartupOnlySystemChanges) {
+      await invoke('restart_engine')
+    }
+
+    if (shouldReconnect || hasStartupOnlySystemChanges) {
       this.config = await this.loadConfig()
       await this.reconnectClient(this.config)
     }
   }
 
-  savePreferenceToNativeStore(params: any = {}) {
+  async savePreferenceToNativeStore(params: any = {}) {
     const { user, system, others } = separateConfig(params)
     const config: any = {}
 
@@ -142,7 +153,18 @@ export default class Api {
     if (!isEmpty(system)) {
       logger.info('[Motrix] save system config: ', system)
       config.system = system
-      this.updateActiveTaskOption(system)
+
+      // Startup-only keys cannot be applied to active tasks via changeOption.
+      const runtimeSystemEntries = Object.entries(system).filter(
+        ([key]) => !startupOnlyKeys.includes(key),
+      )
+      const runtimeSystem = Object.fromEntries(runtimeSystemEntries)
+      if (!isEmpty(runtimeSystem)) {
+        await this.changeGlobalOption(runtimeSystem).catch((err) => {
+          logger.warn('[Motrix] changeGlobalOption failed:', err?.message || err)
+        })
+        this.updateActiveTaskOption(runtimeSystem)
+      }
     }
 
     if (!isEmpty(others)) {
@@ -204,7 +226,35 @@ export default class Api {
       const args = compactUndefined([[uri], engineOptions])
       return ['aria2.addUri', ...args]
     })
-    return this.ensureReady().then((client) => client.multicall(tasks))
+    return this.ensureReady()
+      .then((client) => client.multicall(tasks))
+      .then((result: any[] = []) => {
+        const isErrorObject = (value: any) =>
+          value && typeof value === 'object' && ('code' in value || 'message' in value)
+
+        const hasItemError = (item: any) => {
+          if (isErrorObject(item)) {
+            return item
+          }
+          if (Array.isArray(item)) {
+            return item.find((entry) => isErrorObject(entry))
+          }
+          return null
+        }
+
+        const failedItem = result.find((item) => !!hasItemError(item))
+        if (failedItem) {
+          const err = hasItemError(failedItem) || {}
+          const error: any = new Error(err.message || 'task.new-task-fail')
+          if (err.code !== undefined) {
+            error.code = err.code
+          }
+          error.data = err
+          throw error
+        }
+
+        return result
+      })
   }
 
   addTorrent(params: any) {
@@ -222,7 +272,7 @@ export default class Api {
   }
 
   fetchDownloadingTaskList(params: any = {}) {
-    const { offset = 0, num = 20, keys } = params
+    const { offset = 0, num = TASK_LIST_FETCH_SIZE, keys } = params
     const activeArgs = compactUndefined([keys])
     const waitingArgs = compactUndefined([offset, num, keys])
     return new Promise((resolve, reject) => {
@@ -242,13 +292,13 @@ export default class Api {
   }
 
   fetchWaitingTaskList(params: any = {}) {
-    const { offset = 0, num = 20, keys } = params
+    const { offset = 0, num = TASK_LIST_FETCH_SIZE, keys } = params
     const args = compactUndefined([offset, num, keys])
     return this.ensureReady().then((client) => client.call('tellWaiting', ...args))
   }
 
   fetchStoppedTaskList(params: any = {}) {
-    const { offset = 0, num = 20, keys } = params
+    const { offset = 0, num = TASK_LIST_FETCH_SIZE, keys } = params
     const args = compactUndefined([offset, num, keys])
     return this.ensureReady().then((client) => client.call('tellStopped', ...args))
   }

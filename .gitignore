@@ -11,6 +11,7 @@ thumbs.db
 # npm package
 .npmrc
 npm-debug.log.*
+.pnpm-store
 
 # Eslint Cache
 .eslintcache*

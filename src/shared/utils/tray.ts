@@ -15,6 +15,7 @@ const bytesToSize = (bytes) => {
 
 const { WIDTH, HEIGHT, ICON_WIDTH, ICON_HEIGHT, TEXT_WIDTH, TEXT_FONT_SIZE } = TRAY_CANVAS_CONFIG
 const fontFamily = 'Arial'
+const ICON_SCALE = 0.85
 
 export const draw = async ({
   canvas,
@@ -22,6 +23,7 @@ export const draw = async ({
   icon,
   uploadSpeed,
   downloadSpeed,
+  showSpeed = true,
   scale,
   resultType,
 }) => {
@@ -29,12 +31,14 @@ export const draw = async ({
     throw new Error('canvas is required')
   }
 
-  const width = WIDTH * scale
+  const width = (showSpeed ? WIDTH : ICON_WIDTH) * scale
   const height = HEIGHT * scale
   const textColor = theme === APP_THEME.LIGHT ? '#000' : '#fff'
   const fontSize = TEXT_FONT_SIZE * scale + 1
-  const iconWidth = ICON_WIDTH * scale
-  const iconHeight = ICON_HEIGHT * scale
+  const iconWidth = Math.round(ICON_WIDTH * scale * ICON_SCALE)
+  const iconHeight = Math.round(ICON_HEIGHT * scale * ICON_SCALE)
+  const iconX = 0
+  const iconY = Math.round((height - iconHeight) / 2)
   const textWidth = TEXT_WIDTH * scale
 
   if (canvas.width !== width) {
@@ -49,7 +53,7 @@ export const draw = async ({
   ctx.clearRect(0, 0, canvas.width, canvas.height)
 
   if (icon) {
-    ctx.drawImage(icon, 0, 0, iconWidth, iconHeight)
+    ctx.drawImage(icon, iconX, iconY, iconWidth, iconHeight)
   }
 
   ctx.font = `${fontSize}px "${fontFamily}"`
@@ -57,8 +61,10 @@ export const draw = async ({
   ctx.textAlign = 'right'
   ctx.fillStyle = textColor
 
-  ctx.fillText(`${bytesToSize(uploadSpeed)}/s`, width, 0, textWidth)
-  ctx.fillText(`${bytesToSize(downloadSpeed)}/s`, width, TEXT_FONT_SIZE * scale + 0.5, textWidth)
+  if (showSpeed) {
+    ctx.fillText(`${bytesToSize(uploadSpeed)}/s`, width, 0, textWidth)
+    ctx.fillText(`${bytesToSize(downloadSpeed)}/s`, width, TEXT_FONT_SIZE * scale + 0.5, textWidth)
+  }
 
   return transferCanvasTo(canvas, resultType)
 }

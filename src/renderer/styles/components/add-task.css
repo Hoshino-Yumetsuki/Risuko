@@ -15,6 +15,24 @@
     overflow-y: auto;
     min-height: 0;
   }
+  .add-task-dialog--advanced-open .atd-form {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  .add-task-dialog--advanced-open .atd-form::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+    display: none;
+  }
+  .add-task-dialog--advanced-open {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  .add-task-dialog--advanced-open::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+    display: none;
+  }
   .atd-header {
     display: flex;
     flex-direction: row !important;

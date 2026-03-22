@@ -57,6 +57,28 @@ export const extractSpeedUnit = (speed = '') => {
   return match[2]
 }
 
+export const parseBooleanConfig = (value: unknown, fallback = false) => {
+  if (typeof value === 'boolean') {
+    return value
+  }
+
+  if (typeof value === 'number') {
+    return value !== 0
+  }
+
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase()
+    if (['true', '1', 'yes', 'on'].includes(normalized)) {
+      return true
+    }
+    if (['false', '0', 'no', 'off', ''].includes(normalized)) {
+      return false
+    }
+  }
+
+  return fallback
+}
+
 export const bitfieldToPercent = (text) => {
   const len = text.length - 1
   let p
