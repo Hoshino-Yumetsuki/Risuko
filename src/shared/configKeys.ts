@@ -1,5 +1,3 @@
-/* eslint-disable no-unused-vars */
-
 const userKeys = [
   'auto-check-update',
   'auto-hide-window',
@@ -178,4 +176,4 @@ const startupOnlyKeys = [
   'pause',
 ]
 
-export { userKeys, systemKeys, needRestartKeys }
+export { userKeys, systemKeys, needRestartKeys, startupOnlyKeys }

@@ -14,17 +14,26 @@ export const initTaskForm = (state: any) => {
   const { addTaskUrl, addTaskOptions } = state.app
   const {
     allProxy,
+    cookie,
     dir,
     engineMaxConnectionPerServer,
     followMetalink,
     followTorrent,
     maxConnectionPerServer,
     newTaskShowDownloading,
+    referer,
     split,
+    userAgent,
   } = state.preference.config
+  const splitNumber = Number(split)
+  const normalizedSplit =
+    Number.isFinite(splitNumber) && splitNumber > 0
+      ? Math.max(1, Math.min(Math.trunc(splitNumber), 16))
+      : 16
+
   const result = {
     allProxy,
-    cookie: '',
+    cookie: cookie || '',
     dir,
     engineMaxConnectionPerServer,
     followMetalink,
@@ -32,12 +41,12 @@ export const initTaskForm = (state: any) => {
     maxConnectionPerServer,
     newTaskShowDownloading,
     out: '',
-    referer: '',
+    referer: referer || '',
     selectFile: NONE_SELECTED_FILES,
-    split,
+    split: normalizedSplit,
     torrent: '',
     uris: addTaskUrl,
-    userAgent: '',
+    userAgent: userAgent || '',
     authorization: '',
     ...addTaskOptions,
   }
@@ -45,15 +54,8 @@ export const initTaskForm = (state: any) => {
 }
 
 const buildHeader = (form: any) => {
-  const { userAgent, referer, cookie, authorization } = form
+  const { cookie, authorization } = form
   const result = []
-
-  if (!isEmpty(userAgent)) {
-    result.push(`User-Agent: ${userAgent}`)
-  }
-  if (!isEmpty(referer)) {
-    result.push(`Referer: ${referer}`)
-  }
   if (!isEmpty(cookie)) {
     result.push(`Cookie: ${cookie}`)
   }
@@ -65,7 +67,7 @@ const buildHeader = (form: any) => {
 }
 
 const buildOption = (type: string, form: any) => {
-  const { allProxy, dir, out, selectFile, split } = form
+  const { allProxy, dir, out, referer, selectFile, split, userAgent } = form
   const result: any = {}
 
   if (!isEmpty(allProxy)) {
@@ -82,6 +84,14 @@ const buildOption = (type: string, form: any) => {
 
   if (split > 0) {
     result.split = split
+  }
+
+  if (!isEmpty(userAgent)) {
+    result.userAgent = userAgent
+  }
+
+  if (!isEmpty(referer)) {
+    result.referer = referer
   }
 
   if (type === ADD_TASK_TYPE.TORRENT) {

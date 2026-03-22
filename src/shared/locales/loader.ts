@@ -6,7 +6,6 @@ const localeLoaders = {
   ca: () => import('@shared/locales/ca'),
   de: () => import('@shared/locales/de'),
   el: () => import('@shared/locales/el'),
-  'en-US': () => import('@shared/locales/en-US'),
   es: () => import('@shared/locales/es'),
   fa: () => import('@shared/locales/fa'),
   fr: () => import('@shared/locales/fr'),
@@ -29,7 +28,7 @@ const localeLoaders = {
   'zh-TW': () => import('@shared/locales/zh-TW'),
 } as const
 
-export type LocaleKey = keyof typeof localeLoaders
+type LocaleKey = keyof typeof localeLoaders
 
 export const getInitialLocaleResources = () => {
   return {
@@ -40,9 +39,15 @@ export const getInitialLocaleResources = () => {
 }
 
 export const loadLocaleResource = async (locale: string) => {
-  const lng = locale in localeLoaders ? (locale as LocaleKey) : 'en-US'
-  const loader = localeLoaders[lng]
-  const mod = await loader()
+  if (locale === 'en-US') {
+    return {
+      translation: { ...appLocaleEnUS },
+    }
+  }
+
+  const hasLocaleLoader = Object.prototype.hasOwnProperty.call(localeLoaders, locale)
+  const lng = hasLocaleLoader ? (locale as LocaleKey) : null
+  const mod = lng ? await localeLoaders[lng]() : { default: appLocaleEnUS }
   return {
     translation: { ...mod.default },
   }

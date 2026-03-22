@@ -33,7 +33,7 @@
     color: var(--foreground);
     background-color: var(--background);
   }
-  button {
+  button:not(.mo-number-btn) {
     border-radius: calc(var(--radius) - 2px) !important;
   }
   * {

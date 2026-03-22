@@ -58,31 +58,55 @@ export const getTaskFullPath = (task: any): string => {
 }
 
 export const moveTaskFilesToTrash = async (task: any): Promise<boolean> => {
-  if (isMagnetTask(task)) {
-    return true
+  const { dir, status, infoHash } = task
+  const normalizedDir = `${dir || ''}`.trim()
+  const filesToCleanup = new Set<string>()
+  const addCleanupPath = (candidate = '') => {
+    const value = `${candidate || ''}`.trim()
+    if (!value) return
+    filesToCleanup.add(value)
   }
 
-  const { dir, status } = task
-  const path = getTaskFullPath(task)
-  if (!path || dir === path) {
-    throw new Error('task.file-path-error')
+  if (!isMagnetTask(task)) {
+    const path = getTaskFullPath(task)
+    if (!path || dir === path) {
+      throw new Error('task.file-path-error')
+    }
+
+    let removedMainFile = true
+    try {
+      await invoke('trash_item', { path })
+    } catch (err) {
+      logger.warn(`[Motrix] trash ${path} failed: ${err}`)
+      removedMainFile = false
+    }
+
+    if (!removedMainFile) {
+      return false
+    }
+
+    if (status !== TASK_STATUS.COMPLETE) {
+      addCleanupPath(`${path}.aria2`)
+    }
   }
 
-  try {
-    await invoke('trash_item', { path })
-  } catch (err) {
-    logger.warn(`[Motrix] trash ${path} failed: ${err}`)
+  for (const cleanupPath of filesToCleanup) {
+    try {
+      await invoke('trash_item', { path: cleanupPath })
+    } catch (err) {
+      logger.warn(`[Motrix] trash ${cleanupPath} failed: ${err}`)
+    }
   }
 
-  if (status === TASK_STATUS.COMPLETE) {
-    return true
-  }
-
-  const extraFilePath = `${path}.aria2`
-  try {
-    await invoke('trash_item', { path: extraFilePath })
-  } catch (err) {
-    logger.warn(`[Motrix] trash ${extraFilePath} failed: ${err}`)
+  if (normalizedDir && infoHash) {
+    try {
+      await invoke('trash_generated_torrent_sidecars', {
+        dir: normalizedDir,
+        infoHash: `${infoHash}`,
+      })
+    } catch (err) {
+      logger.warn(`[Motrix] cleanup generated torrent sidecars failed: ${err}`)
+    }
   }
 
   return true

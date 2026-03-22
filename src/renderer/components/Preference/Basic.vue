@@ -27,7 +27,10 @@
                 <span class="settings-row-title">{{ $t('preferences.hide-app-menu') }}</span>
               </div>
               <div class="settings-row-action">
-                <ui-checkbox v-model="form.hideAppMenu" />
+                <ui-checkbox
+                  :model-value="!!form.hideAppMenu"
+                  @change="(val) => setBasicBoolean('hideAppMenu', val)"
+                />
               </div>
             </div>
             <div class="settings-row">
@@ -35,7 +38,10 @@
                 <span class="settings-row-title">{{ $t('preferences.auto-hide-window') }}</span>
               </div>
               <div class="settings-row-action">
-                <ui-checkbox v-model="form.autoHideWindow" />
+                <ui-checkbox
+                  :model-value="!!form.autoHideWindow"
+                  @change="(val) => setBasicBoolean('autoHideWindow', val)"
+                />
               </div>
             </div>
             <div v-if="isMac" class="settings-row">
@@ -43,15 +49,10 @@
                 <span class="settings-row-title">{{ $t('preferences.tray-speedometer') }}</span>
               </div>
               <div class="settings-row-action">
-                <ui-checkbox v-model="form.traySpeedometer" />
-              </div>
-            </div>
-            <div class="settings-row">
-              <div class="settings-row-content">
-                <span class="settings-row-title">{{ $t('preferences.show-progress-bar') }}</span>
-              </div>
-              <div class="settings-row-action">
-                <ui-checkbox v-model="form.showProgressBar" />
+                <ui-checkbox
+                  :model-value="!!form.traySpeedometer"
+                  @change="(val) => setBasicBoolean('traySpeedometer', val)"
+                />
               </div>
             </div>
           </div>
@@ -97,12 +98,15 @@
                 </Select>
               </div>
             </div>
-            <div v-if="!isLinux" class="settings-row">
+            <div class="settings-row">
               <div class="settings-row-content">
                 <span class="settings-row-title">{{ $t('preferences.open-at-login') }}</span>
               </div>
               <div class="settings-row-action">
-                <ui-checkbox v-model="form.openAtLogin" />
+                <ui-checkbox
+                  :model-value="!!form.openAtLogin"
+                  @change="(val) => setBasicBoolean('openAtLogin', val)"
+                />
               </div>
             </div>
             <div class="settings-row">
@@ -110,7 +114,10 @@
                 <span class="settings-row-title">{{ $t('preferences.keep-window-state') }}</span>
               </div>
               <div class="settings-row-action">
-                <ui-checkbox v-model="form.keepWindowState" />
+                <ui-checkbox
+                  :model-value="!!form.keepWindowState"
+                  @change="(val) => setBasicBoolean('keepWindowState', val)"
+                />
               </div>
             </div>
             <div class="settings-row">
@@ -118,7 +125,10 @@
                 <span class="settings-row-title">{{ $t('preferences.auto-resume-all') }}</span>
               </div>
               <div class="settings-row-action">
-                <ui-checkbox v-model="form.resumeAllWhenAppLaunched" />
+                <ui-checkbox
+                  :model-value="!!form.resumeAllWhenAppLaunched"
+                  @change="(val) => setBasicBoolean('resumeAllWhenAppLaunched', val)"
+                />
               </div>
             </div>
           </div>
@@ -231,7 +241,10 @@
                 <span class="settings-row-title">{{ $t('preferences.bt-save-metadata') }}</span>
               </div>
               <div class="settings-row-action">
-                <ui-checkbox v-model="form.btSaveMetadata" />
+                <ui-checkbox
+                  :model-value="!!form.btSaveMetadata"
+                  @change="(val) => setBasicBoolean('btSaveMetadata', val)"
+                />
               </div>
             </div>
             <div class="settings-row">
@@ -241,7 +254,10 @@
                 }}</span>
               </div>
               <div class="settings-row-action">
-                <ui-checkbox v-model="form.btAutoDownloadContent" />
+                <ui-checkbox
+                  :model-value="!!form.btAutoDownloadContent"
+                  @change="(val) => setBasicBoolean('btAutoDownloadContent', val)"
+                />
               </div>
             </div>
             <div class="settings-row">
@@ -249,7 +265,10 @@
                 <span class="settings-row-title">{{ $t('preferences.bt-force-encryption') }}</span>
               </div>
               <div class="settings-row-action">
-                <ui-checkbox v-model="form.btForceEncryption" />
+                <ui-checkbox
+                  :model-value="!!form.btForceEncryption"
+                  @change="(val) => setBasicBoolean('btForceEncryption', val)"
+                />
               </div>
             </div>
             <div class="settings-row">
@@ -257,7 +276,7 @@
                 <span class="settings-row-title">{{ $t('preferences.keep-seeding') }}</span>
               </div>
               <div class="settings-row-action">
-                <ui-checkbox v-model="form.keepSeeding" @change="onKeepSeedingChange" />
+                <ui-checkbox :model-value="!!form.keepSeeding" @change="onKeepSeedingToggle" />
               </div>
             </div>
             <div v-if="!form.keepSeeding" class="settings-select-group">
@@ -307,7 +326,10 @@
                 <span class="settings-row-title">{{ $t('preferences.continue') }}</span>
               </div>
               <div class="settings-row-action">
-                <ui-checkbox v-model="form.continue" />
+                <ui-checkbox
+                  :model-value="!!form.continue"
+                  @change="(val) => setBasicBoolean('continue', val)"
+                />
               </div>
             </div>
             <div class="settings-row">
@@ -317,7 +339,10 @@
                 }}</span>
               </div>
               <div class="settings-row-action">
-                <ui-checkbox v-model="form.newTaskShowDownloading" />
+                <ui-checkbox
+                  :model-value="!!form.newTaskShowDownloading"
+                  @change="(val) => setBasicBoolean('newTaskShowDownloading', val)"
+                />
               </div>
             </div>
             <div class="settings-row">
@@ -327,7 +352,10 @@
                 }}</span>
               </div>
               <div class="settings-row-action">
-                <ui-checkbox v-model="form.taskNotification" />
+                <ui-checkbox
+                  :model-value="!!form.taskNotification"
+                  @change="(val) => setBasicBoolean('taskNotification', val)"
+                />
               </div>
             </div>
             <div class="settings-row">
@@ -337,7 +365,10 @@
                 }}</span>
               </div>
               <div class="settings-row-action">
-                <ui-checkbox v-model="form.noConfirmBeforeDeleteTask" />
+                <ui-checkbox
+                  :model-value="!!form.noConfirmBeforeDeleteTask"
+                  @change="(val) => setBasicBoolean('noConfirmBeforeDeleteTask', val)"
+                />
               </div>
             </div>
           </div>
@@ -402,14 +433,13 @@ import {
   ArrowUp,
   ArrowDown,
 } from 'lucide-vue-next'
-import { availableLanguages, getLanguage } from '@shared/locales'
-import { getLocaleManager } from '@/components/Locale'
+import { availableLanguages } from '@shared/locales'
 import {
-  calcFormLabelWidth,
   changedConfig,
   convertLineToComma,
   diffConfig,
   extractSpeedUnit,
+  parseBooleanConfig,
 } from '@shared/utils'
 import {
   APP_RUN_MODE,
@@ -454,35 +484,35 @@ const initForm = (config) => {
   const btAutoDownloadContent = followTorrent && followMetalink && !pauseMetadata
 
   const result = {
-    autoHideWindow,
+    autoHideWindow: parseBooleanConfig(autoHideWindow),
     btAutoDownloadContent,
-    btForceEncryption,
-    btSaveMetadata,
-    continue: config.continue,
+    btForceEncryption: parseBooleanConfig(btForceEncryption),
+    btSaveMetadata: parseBooleanConfig(btSaveMetadata),
+    continue: parseBooleanConfig(config.continue),
     dir,
     engineMaxConnectionPerServer,
     followMetalink,
     followTorrent,
-    hideAppMenu,
-    keepSeeding,
-    keepWindowState,
+    hideAppMenu: parseBooleanConfig(hideAppMenu),
+    keepSeeding: parseBooleanConfig(keepSeeding),
+    keepWindowState: parseBooleanConfig(keepWindowState),
     locale,
     maxConcurrentDownloads,
     maxConnectionPerServer,
     maxOverallDownloadLimit,
     maxOverallUploadLimit,
-    newTaskShowDownloading,
-    noConfirmBeforeDeleteTask,
-    openAtLogin,
+    newTaskShowDownloading: parseBooleanConfig(newTaskShowDownloading),
+    noConfirmBeforeDeleteTask: parseBooleanConfig(noConfirmBeforeDeleteTask),
+    openAtLogin: parseBooleanConfig(openAtLogin),
     pauseMetadata,
-    resumeAllWhenAppLaunched,
+    resumeAllWhenAppLaunched: parseBooleanConfig(resumeAllWhenAppLaunched),
     runMode,
     seedRatio,
     seedTime,
-    showProgressBar,
-    taskNotification,
+    showProgressBar: parseBooleanConfig(showProgressBar),
+    taskNotification: parseBooleanConfig(taskNotification),
     theme,
-    traySpeedometer,
+    traySpeedometer: parseBooleanConfig(traySpeedometer),
   }
   return result
 }
@@ -513,7 +543,6 @@ export default {
   },
   data() {
     const preferenceStore = usePreferenceStore()
-    const locale = ((preferenceStore.config as any) || {}).locale || 'en-US'
     const formOriginal = initForm(preferenceStore.config)
     let form = {}
     form = initForm(extend(form, formOriginal, changedConfig.basic))
@@ -521,10 +550,8 @@ export default {
     return {
       appVersion: '',
       form,
-      formLabelWidth: calcFormLabelWidth(locale),
       formOriginal,
       locales: availableLanguages,
-      rules: {},
     }
   },
   created() {
@@ -541,9 +568,6 @@ export default {
     isRenderer: () => is.renderer(),
     isMac: () => is.macOS(),
     isMas: () => is.mas(),
-    isLinux() {
-      return is.linux()
-    },
     title() {
       return this.$t('preferences.basic')
     },
@@ -654,14 +678,10 @@ export default {
     engineInfo() {
       return useAppStore().engineInfo
     },
-    config() {
-      return usePreferenceStore().config
-    },
   },
   methods: {
-    handleLocaleChange(locale) {
-      const lng = getLanguage(locale)
-      getLocaleManager().changeLanguage(lng)
+    setBasicBoolean(key, enable) {
+      this.form[key] = !!enable
     },
     handleThemeChange(theme) {
       this.form.theme = theme
@@ -682,15 +702,16 @@ export default {
       this.form.seedRatio = enable ? 0 : 1
       this.form.seedTime = enable ? 525600 : 60
     },
+    onKeepSeedingToggle(enable) {
+      this.form.keepSeeding = !!enable
+      this.onKeepSeedingChange(this.form.keepSeeding)
+    },
     handleHistoryDirectorySelected(dir) {
       this.form.dir = dir
     },
     handleNativeDirectorySelected(dir) {
       this.form.dir = dir
       usePreferenceStore().recordHistoryDirectory(dir)
-    },
-    onDirectorySelected(dir) {
-      this.form.dir = dir
     },
     syncFormConfig() {
       usePreferenceStore()
@@ -704,6 +725,28 @@ export default {
       const data = {
         ...diffConfig(this.formOriginal, this.form),
         ...changedConfig.advanced,
+      }
+      const booleanKeys = [
+        'hideAppMenu',
+        'autoHideWindow',
+        'traySpeedometer',
+        'showProgressBar',
+        'openAtLogin',
+        'keepWindowState',
+        'resumeAllWhenAppLaunched',
+        'btSaveMetadata',
+        'btAutoDownloadContent',
+        'btForceEncryption',
+        'keepSeeding',
+        'continue',
+        'newTaskShowDownloading',
+        'taskNotification',
+        'noConfirmBeforeDeleteTask',
+      ]
+      for (const key of booleanKeys) {
+        if (key in data) {
+          data[key] = !!this.form[key]
+        }
       }
 
       const { autoHideWindow, btAutoDownloadContent, btTracker, rpcListenPort } = data

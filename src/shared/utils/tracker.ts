@@ -113,11 +113,6 @@ export const fetchBtTrackerFromSource = async (source, proxyConfig: any = {}) =>
   return requestPromise
 }
 
-export const clearTrackerSourceCache = () => {
-  trackerSourceCache.clear()
-  trackerSourceInFlight.clear()
-}
-
 export const convertTrackerDataToLine = (arr = []) => {
   return arr
     .join('\r\n')

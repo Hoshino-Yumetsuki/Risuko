@@ -35,25 +35,28 @@
     line-height: 16px;
   }
   .selective-torrent .torrent-name {
+    flex: 1;
+    min-width: 0;
     overflow: hidden;
     white-space: nowrap;
     text-overflow: ellipsis;
   }
   .selective-torrent .torrent-info {
+    display: flex;
+    align-items: center;
+    gap: 8px;
     margin-bottom: 15px;
+    padding-inline: 2px;
     font-size: 12px;
     line-height: 16px;
   }
   .selective-torrent .torrent-actions {
-    text-align: right;
-    line-height: 16px;
-  }
-  .selective-torrent .torrent-actions > span {
     cursor: pointer;
     display: inline-block;
     vertical-align: middle;
     height: 14px;
     padding: 1px;
+    flex-shrink: 0;
   }
   .dark .upload-torrent-drop {
     border-color: rgba(255, 255, 255, 0.12);

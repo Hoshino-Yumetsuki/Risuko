@@ -1,6 +1,9 @@
 <template>
   <Dialog :open="visible" @update:open="handleDialogOpenChange">
-    <DialogContent :show-close-button="false" class="add-task-dialog">
+    <DialogContent
+      :show-close-button="false"
+      :class="['add-task-dialog', { 'add-task-dialog--advanced-open': showAdvanced }]"
+    >
       <DialogHeader class="atd-header">
         <div class="atd-header-left">
           <div class="atd-header-icon">
@@ -66,7 +69,7 @@
           </div>
           <div class="atd-field atd-field--narrow">
             <label class="atd-field-label">{{ $t('task.task-split') }}</label>
-            <NumberInput v-model="form.split" :min="1" :max="64" />
+            <NumberInput v-model="form.split" :min="1" :max="16" />
           </div>
           <div class="atd-field atd-field--full">
             <label class="atd-field-label">{{ $t('task.task-dir') }}</label>
@@ -147,7 +150,10 @@
                 <Input placeholder="[http://][USER:PASSWORD@]HOST[:PORT]" v-model="form.allProxy" />
               </div>
               <div class="atd-field atd-field--full atd-field--checkbox">
-                <ui-checkbox v-model="form.newTaskShowDownloading">
+                <ui-checkbox
+                  :model-value="!!form.newTaskShowDownloading"
+                  @change="onNewTaskShowDownloadingChange"
+                >
                   {{ $t('task.navigate-to-downloading') }}
                 </ui-checkbox>
               </div>
@@ -172,8 +178,8 @@
           />
         </button>
         <div class="atd-footer-actions">
-          <ui-button @click="handleCancel('taskForm')">{{ $t('app.cancel') }}</ui-button>
-          <ui-button variant="primary" @click="submitForm('taskForm')">
+          <ui-button @click="handleCancel">{{ $t('app.cancel') }}</ui-button>
+          <ui-button variant="primary" @click="submitForm">
             <Download :size="14" style="margin-right: 6px" />
             {{ $t('app.submit') }}
           </ui-button>
@@ -205,6 +211,7 @@ import { Textarea } from '@/components/ui/textarea'
 import NumberInput from '@/components/ui/NumberInput.vue'
 import logger from '@shared/utils/logger'
 import is from '@/shims/platform'
+import api from '@/api'
 import { useAppStore } from '@/store/app'
 import { useTaskStore } from '@/store/task'
 import { usePreferenceStore } from '@/store/preference'
@@ -215,7 +222,7 @@ import SelectTorrent from '@/components/Task/SelectTorrent.vue'
 import UiButton from '@/components/ui/compat/UiButton.vue'
 import { initTaskForm, buildUriPayload, buildTorrentPayload } from '@/utils/task'
 import { ADD_TASK_TYPE } from '@shared/constants'
-import { detectResource } from '@shared/utils'
+import { detectResource, getTaskName } from '@shared/utils'
 import { readText } from '@tauri-apps/plugin-clipboard-manager'
 
 export default {
@@ -253,24 +260,16 @@ export default {
   },
   data() {
     return {
-      formLabelWidth: '110px',
       showAdvanced: false,
       form: {},
-      rules: {},
     }
   },
   computed: {
     isRenderer: () => is.renderer(),
     isMas: () => is.mas(),
-    config() {
-      return usePreferenceStore().config
-    },
-    taskType() {
-      return this.type
-    },
   },
   watch: {
-    taskType(current, previous) {
+    type(current, previous) {
       if (this.visible && previous === ADD_TASK_TYPE.URI) {
         return
       }
@@ -281,15 +280,12 @@ export default {
         }, 300)
       }
     },
-    visible(current, previous) {
+    visible(current) {
       if (current === true) {
         document.addEventListener('keydown', this.handleHotkey)
         this.handleOpen()
       } else {
         document.removeEventListener('keydown', this.handleHotkey)
-        if (previous === true) {
-          this.handleClosed()
-        }
       }
     },
   },
@@ -339,7 +335,7 @@ export default {
         this.focusUriInput()
       }, 100)
 
-      if (this.taskType === ADD_TASK_TYPE.URI && isEmpty(this.form.uris)) {
+      if (this.type === ADD_TASK_TYPE.URI && isEmpty(this.form.uris)) {
         setTimeout(() => {
           this.autofillResourceLink()
         }, 0)
@@ -357,13 +353,10 @@ export default {
       appStore.hideAddTaskDialog()
       appStore.updateAddTaskOptions({})
     },
-    handleClosed() {
-      // Reset state
-    },
     handleHotkey(event) {
       if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
         event.preventDefault()
-        this.submitForm('taskForm')
+        this.submitForm()
       }
     },
     handleTabClick(tab) {
@@ -380,8 +373,7 @@ export default {
     },
     detectThunderResource(uris = '') {
       if (uris.includes('thunder://')) {
-        this.$msg({
-          type: 'warning',
+        this.$msg.warning({
           message: this.$t('task.thunder-link-tips'),
           duration: 6000,
         })
@@ -390,6 +382,9 @@ export default {
     handleTorrentChange(torrent, selectedFileIndex) {
       this.form.torrent = torrent
       this.form.selectFile = selectedFileIndex
+    },
+    onNewTaskShowDownloadingChange(enable) {
+      this.form.newTaskShowDownloading = !!enable
     },
     handleHistoryDirectorySelected(dir) {
       this.form.dir = dir
@@ -402,9 +397,11 @@ export default {
       let payload = null
       if (type === ADD_TASK_TYPE.URI) {
         payload = buildUriPayload(form)
+        await this.ensureNoTaskNameConflict(payload, type)
         return useTaskStore().addUri(payload)
       } else if (type === ADD_TASK_TYPE.TORRENT) {
         payload = buildTorrentPayload(form)
+        await this.ensureNoTaskNameConflict(payload, type)
         return useTaskStore().addTorrent(payload)
       } else if (type === 'metalink') {
         // @TODO addMetalink
@@ -413,26 +410,79 @@ export default {
         throw new Error('task.new-task-unsupported-type')
       }
     },
-    submitForm() {
+    async ensureNoTaskNameConflict(payload, type) {
+      if (!(await this.hasTaskNameConflict(payload, type))) {
+        return
+      }
+
+      const err: any = new Error('task.new-task-name-conflict')
+      err.rawMessage = 'Task with the same name already exists in target directory'
+      throw err
+    },
+    normalizePath(value = '') {
+      return `${value}`.trim().replace(/[\\/]+$/, '')
+    },
+    buildConflictKey(dir = '', name = '') {
+      const normalizedName = `${name}`.trim()
+      if (!normalizedName) {
+        return ''
+      }
+      const normalizedDir = this.normalizePath(dir)
+      const key = `${normalizedDir}\u0000${normalizedName}`
+      const platform = `${(usePreferenceStore().config as any).platform || ''}`.toLowerCase()
+      const isWindows = is.windows() || platform === 'windows' || platform === 'win32'
+      return isWindows ? key.toLowerCase() : key
+    },
+    async hasTaskNameConflict(payload, type) {
+      const targetDir = this.normalizePath(payload?.options?.dir || this.form?.dir || '')
+      let newNames: string[] = []
+
+      if (type === ADD_TASK_TYPE.URI) {
+        newNames = (payload?.outs || []).map((item) => `${item || ''}`.trim()).filter(Boolean)
+      } else if (type === ADD_TASK_TYPE.TORRENT) {
+        const out = `${payload?.options?.out || this.form?.out || ''}`.trim()
+        if (out) {
+          newNames = [out]
+        }
+      }
+
+      if (newNames.length === 0) {
+        return false
+      }
+
+      const [active, waiting, stopped] = await Promise.all([
+        api.fetchActiveTaskList(),
+        api.fetchWaitingTaskList(),
+        api.fetchStoppedTaskList(),
+      ])
+
+      const allTasks = [...(active || []), ...(waiting || []), ...(stopped || [])]
+      const existing = new Set(
+        allTasks
+          .map((task) => {
+            const existingName = task?.out || getTaskName(task, { defaultName: '', maxLen: -1 })
+            return this.buildConflictKey(task?.dir || '', existingName)
+          })
+          .filter(Boolean),
+      )
+
+      return newNames.some((name) => existing.has(this.buildConflictKey(targetDir, name)))
+    },
+    async submitForm() {
       try {
-        this.addTask(this.type, this.form)
-          .then(() => {
-            useAppStore().hideAddTaskDialog()
-            if (this.form.newTaskShowDownloading) {
-              this.$router
-                .push({
-                  path: '/task/active',
-                })
-                .catch((err) => {
-                  logger.log(err)
-                })
-            }
-          })
-          .catch((err) => {
-            this.$msg.error(this.$t(err.message || 'task.new-task-fail'))
-          })
+        await this.addTask(this.type, this.form)
+        useAppStore().hideAddTaskDialog()
+        if (this.form.newTaskShowDownloading) {
+          this.$router
+            .push({
+              path: '/task/active',
+            })
+            .catch((err) => {
+              logger.log(err)
+            })
+        }
       } catch (err) {
-        this.$msg.error(this.$t(err.message || 'task.new-task-fail'))
+        this.$msg.error(err?.rawMessage || this.$t(err?.message || 'task.new-task-fail'))
       }
     },
   },

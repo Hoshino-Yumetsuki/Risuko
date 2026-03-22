@@ -37,6 +37,9 @@ importers:
       tailwind-merge:
         specifier: ^3.5.0
         version: 3.5.0
+      tauri-plugin-nosleep-api:
+        specifier: ^0.1.1
+        version: 0.1.1
       tw-animate-css:
         specifier: ^1.4.0
         version: 1.4.0
@@ -1326,6 +1329,13 @@ packages:
       }
     peerDependencies:
       vue: ^2.7.0 || ^3.0.0
+
+  '@tauri-apps/api@1.0.0-rc.4':
+    resolution:
+      {
+        integrity: sha512-1HaUsx8+TzFHDoQ+Mmd6RWaMsPyZlurQHgACDt+il5e/ui6pDkumVXaS92SnY5XOcS4gBC0BkgjVfkWgcm/Oww==,
+      }
+    engines: { node: '>= 12.13.0', npm: '>= 6.6.0', yarn: '>= 1.19.1' }
 
   '@tauri-apps/api@2.10.1':
     resolution:
@@ -4132,6 +4142,12 @@ packages:
       }
     engines: { node: '>=6' }
 
+  tauri-plugin-nosleep-api@0.1.1:
+    resolution:
+      {
+        integrity: sha512-LN/coT6i2MDDFCVLFfUD6g+qDyosjG8xVFED76NKZYzdAxgrYVCr4v6zrQaDoShP0P1J58WJ45Yv47Hv0Z3+1A==,
+      }
+
   terser@5.46.1:
     resolution:
       {
@@ -4189,6 +4205,13 @@ packages:
         integrity: sha512-XleUoc9uwGXqjWwXaUTZAmzMcFZ5858QA2vvx1Ur5xIcixXIP+8LnFDgRplU30us6teqdlskFfu+ae4K79Ooew==,
       }
     engines: { node: '>= 0.8.0' }
+
+  type-fest@2.12.2:
+    resolution:
+      {
+        integrity: sha512-qt6ylCGpLjZ7AaODxbpyBZSs9fCI9SkL3Z9q2oxMBQhs/uyY+VD8jHA8ULCGmWQJlBgqvO3EJeAngOHD8zQCrQ==,
+      }
+    engines: { node: '>=12.20' }
 
   type-fest@4.41.0:
     resolution:
@@ -5030,6 +5053,10 @@ snapshots:
     dependencies:
       '@tanstack/virtual-core': 3.13.23
       vue: 3.5.30(typescript@5.9.3)
+
+  '@tauri-apps/api@1.0.0-rc.4':
+    dependencies:
+      type-fest: 2.12.2
 
   '@tauri-apps/api@2.10.1': {}
 
@@ -6676,6 +6703,11 @@ snapshots:
 
   tapable@2.3.0: {}
 
+  tauri-plugin-nosleep-api@0.1.1:
+    dependencies:
+      '@tauri-apps/api': 1.0.0-rc.4
+      tslib: 2.8.1
+
   terser@5.46.1:
     dependencies:
       '@jridgewell/source-map': 0.3.11
@@ -6709,6 +6741,8 @@ snapshots:
   type-check@0.4.0:
     dependencies:
       prelude-ls: 1.2.1
+
+  type-fest@2.12.2: {}
 
   type-fest@4.41.0: {}
 

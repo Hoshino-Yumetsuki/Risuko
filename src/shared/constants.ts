@@ -38,7 +38,7 @@ export const MAX_NUM_OF_DIRECTORIES = 5
 export const ENGINE_RPC_HOST = '127.0.0.1'
 export const ENGINE_RPC_PORT = 16800
 export const ENGINE_MAX_CONCURRENT_DOWNLOADS = 10
-const ENGINE_MAX_CONNECTION_PER_SERVER = 64
+const ENGINE_MAX_CONNECTION_PER_SERVER = 16
 
 export const UNKNOWN_PEERID = '%00%00%00%00%00%00%00%00%00%00%00%00%00%00%00%00%00%00%00%00'
 export const UNKNOWN_PEERID_NAME = 'unknown'
@@ -210,7 +210,7 @@ export const TRAY_CANVAS_CONFIG = {
   TEXT_FONT_SIZE: 8,
 }
 
-const COMMON_RESOURCE_TAGS = ['http://', 'https://', 'ftp://', 'magnet:']
+const COMMON_RESOURCE_TAGS = ['http://', 'https://', 'ftp://', 'file://', 'magnet:']
 const THUNDER_RESOURCE_TAGS = ['thunder://']
 
 export const RESOURCE_TAGS = [...COMMON_RESOURCE_TAGS, ...THUNDER_RESOURCE_TAGS]

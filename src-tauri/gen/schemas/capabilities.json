@@ -59,6 +59,8 @@
       "notification:allow-notify",
       "autostart:default",
       "deep-link:default",
+      "nosleep:allow-block",
+      "nosleep:allow-unblock",
       "clipboard-manager:default",
       "clipboard-manager:allow-read-text",
       "clipboard-manager:allow-write-text"

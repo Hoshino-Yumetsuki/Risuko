@@ -94,8 +94,8 @@ function onOpenChange(val: boolean) {
           class="flex items-center gap-2 pt-1 cursor-pointer select-none"
         >
           <Checkbox
-            :checked="checked"
-            @update:checked="(val: boolean) => (checked = val)"
+            :model-value="checked"
+            @update:model-value="(val: boolean) => (checked = val)"
           />
           <Label class="text-[13px] font-normal cursor-pointer">
             {{ checkboxLabel }}

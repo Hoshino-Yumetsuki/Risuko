@@ -33,7 +33,10 @@
                 </div>
               </div>
               <div class="settings-row-action">
-                <ui-checkbox v-model="form.autoCheckUpdate" />
+                <ui-checkbox
+                  :model-value="!!form.autoCheckUpdate"
+                  @change="(val) => setAdvancedBoolean('autoCheckUpdate', val)"
+                />
               </div>
             </div>
           </div>
@@ -219,7 +222,10 @@
                 </div>
               </div>
               <div class="settings-row-action">
-                <ui-checkbox v-model="form.autoSyncTracker" />
+                <ui-checkbox
+                  :model-value="!!form.autoSyncTracker"
+                  @change="(val) => setAdvancedBoolean('autoSyncTracker', val)"
+                />
               </div>
             </div>
             <div class="settings-row">
@@ -232,7 +238,10 @@
                 </div>
               </div>
               <div class="settings-row-action">
-                <ui-checkbox v-model="form.idleBtNetworkGuard" />
+                <ui-checkbox
+                  :model-value="!!form.idleBtNetworkGuard"
+                  @change="(val) => setAdvancedBoolean('idleBtNetworkGuard', val)"
+                />
               </div>
             </div>
           </div>
@@ -314,7 +323,10 @@
                 <div class="settings-row-title">UPnP/NAT-PMP</div>
               </div>
               <div class="settings-row-action">
-                <ui-checkbox v-model="form.enableUpnp" />
+                <ui-checkbox
+                  :model-value="!!form.enableUpnp"
+                  @change="(val) => setAdvancedBoolean('enableUpnp', val)"
+                />
               </div>
             </div>
             <div class="settings-select-group" style="margin-top: 14px">
@@ -362,7 +374,7 @@
               </div>
               <div class="settings-row-action">
                 <ui-checkbox
-                  v-model="form.protocols.magnet"
+                  :model-value="!!form.protocols.magnet"
                   @change="(val) => onProtocolsChange('magnet', val)"
                 />
               </div>
@@ -375,7 +387,7 @@
               </div>
               <div class="settings-row-action">
                 <ui-checkbox
-                  v-model="form.protocols.thunder"
+                  :model-value="!!form.protocols.thunder"
                   @change="(val) => onProtocolsChange('thunder', val)"
                 />
               </div>
@@ -408,6 +420,9 @@
               >
               <ui-button size="sm" variant="outline" @click="() => changeUA('chrome')"
                 >Chrome</ui-button
+              >
+              <ui-button size="sm" variant="outline" @click="() => changeUA('firefox')"
+                >Firefox</ui-button
               >
               <ui-button size="sm" variant="outline" @click="() => changeUA('du')">du</ui-button>
             </div>
@@ -588,17 +603,15 @@ import {
 } from '@shared/constants'
 import {
   buildRpcUrl,
-  calcFormLabelWidth,
   changedConfig,
   convertCommaToLine,
   convertLineToComma,
   diffConfig,
   generateRandomInt,
+  parseBooleanConfig,
 } from '@shared/utils'
 import { convertTrackerDataToLine, reduceTrackerString } from '@shared/utils/tracker'
-import { getLanguage } from '@shared/locales'
 import { writeText } from '@tauri-apps/plugin-clipboard-manager'
-import { getLocaleManager } from '@/components/Locale'
 
 const initForm = (config) => {
   const {
@@ -622,13 +635,13 @@ const initForm = (config) => {
     userAgent,
   } = config
   const result = {
-    autoCheckUpdate,
-    autoSyncTracker,
+    autoCheckUpdate: parseBooleanConfig(autoCheckUpdate),
+    autoSyncTracker: parseBooleanConfig(autoSyncTracker),
     btTracker: convertCommaToLine(btTracker),
     dhtListenPort,
-    enableUpnp,
+    enableUpnp: parseBooleanConfig(enableUpnp),
     hideAppMenu,
-    idleBtNetworkGuard: idleBtNetworkGuard !== false,
+    idleBtNetworkGuard: parseBooleanConfig(idleBtNetworkGuard, true),
     lastCheckUpdateTime,
     lastSyncTrackerTime,
     listenPort,
@@ -639,7 +652,10 @@ const initForm = (config) => {
       bypass: '',
       scope: [],
     },
-    protocols: { ...protocols },
+    protocols: {
+      magnet: parseBooleanConfig((protocols || {}).magnet, true),
+      thunder: parseBooleanConfig((protocols || {}).thunder, false),
+    },
     rpcHost: rpcHost || ENGINE_RPC_HOST,
     rpcListenPort,
     rpcSecret,
@@ -688,18 +704,15 @@ export default {
   },
   data() {
     const preferenceStore = usePreferenceStore()
-    const locale = ((preferenceStore.config as any) || {}).locale || 'en-US'
     const formOriginal = initForm(preferenceStore.config)
     let form = {}
     form = initForm(extend(form, formOriginal, changedConfig.advanced))
 
     return {
       form,
-      formLabelWidth: calcFormLabelWidth(locale),
       formOriginal,
       hideRpcSecret: true,
       proxyScopeOptions: PROXY_SCOPE_OPTIONS,
-      rules: {},
       trackerSourceOptions: TRACKER_SOURCE_OPTIONS,
       trackerSourceOpen: false,
       trackerSyncing: false,
@@ -738,9 +751,6 @@ export default {
     logLevels() {
       return LOG_LEVELS
     },
-    config() {
-      return usePreferenceStore().config
-    },
     aria2ConfPath() {
       return (usePreferenceStore().config as any).aria2ConfPath
     },
@@ -757,6 +767,9 @@ export default {
     'form.rpcSecret': 'syncRpcUrlToClipboard',
   },
   methods: {
+    setAdvancedBoolean(key, enable) {
+      this.form[key] = !!enable
+    },
     syncRpcUrlToClipboard() {
       const url = buildRpcUrl({
         host: this.form.rpcHost,
@@ -789,10 +802,6 @@ export default {
         this.form.trackerSource.splice(idx, 1)
       }
     },
-    handleLocaleChange(locale) {
-      const lng = getLanguage(locale)
-      getLocaleManager().changeLanguage(lng)
-    },
     onCheckUpdateClick() {
       this.$msg.info(this.$t('app.checking-for-updates'))
       invoke('check_for_updates').catch(() => {
@@ -824,13 +833,13 @@ export default {
       const { protocols } = this.form
       this.form.protocols = {
         ...protocols,
-        [protocol]: enabled,
+        [protocol]: !!enabled,
       }
     },
     onProxyEnableChange(enable) {
       this.form.proxy = {
         ...this.form.proxy,
-        enable,
+        enable: !!enable,
       }
     },
     onProxyServerChange(server) {
@@ -852,11 +861,12 @@ export default {
       }
     },
     onProxyScopeToggle(item, checked) {
+      const isChecked = !!checked
       const scope = [...this.form.proxy.scope]
       const idx = scope.indexOf(item)
-      if (checked && idx < 0) {
+      if (isChecked && idx < 0) {
         scope.push(item)
-      } else if (!checked && idx >= 0) {
+      } else if (!isChecked && idx >= 0) {
         scope.splice(idx, 1)
       }
       this.form.proxy = {
@@ -943,6 +953,18 @@ export default {
       const data = {
         ...diffConfig(this.formOriginal, this.form),
         ...changedConfig.basic,
+      }
+      const booleanKeys = ['autoCheckUpdate', 'autoSyncTracker', 'idleBtNetworkGuard', 'enableUpnp']
+      for (const key of booleanKeys) {
+        if (key in data) {
+          data[key] = !!this.form[key]
+        }
+      }
+      if ('protocols' in data) {
+        data.protocols = {
+          magnet: !!this.form.protocols.magnet,
+          thunder: !!this.form.protocols.thunder,
+        }
       }
 
       const { autoHideWindow, btAutoDownloadContent, btTracker, rpcHost, rpcListenPort } = data

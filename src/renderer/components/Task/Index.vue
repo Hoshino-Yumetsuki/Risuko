@@ -123,38 +123,45 @@ export default {
       appStore.updateAddTaskOptions(newOptions)
       appStore.showAddTaskDialog(ADD_TASK_TYPE.URI)
     },
-    deleteTaskFiles(task) {
+    async deleteTaskFiles(task) {
       try {
-        const result = moveTaskFilesToTrash(task)
+        const result = await moveTaskFilesToTrash(task)
 
         if (!result) {
           throw new Error('task.remove-task-file-fail')
         }
+        return true
       } catch (err) {
         this.$msg.error(this.$t(err.message))
+        return false
       }
     },
-    removeTask(task, taskName, isRemoveWithFiles = false) {
-      useTaskStore()
-        .forcePauseTask(task)
-        .finally(() => {
-          if (isRemoveWithFiles) {
-            this.deleteTaskFiles(task)
-          }
-
-          return this.removeTaskItem(task, taskName)
-        })
+    async prepareTaskRemoval(task, isRemoveWithFiles = false, context = 'removeTask') {
+      try {
+        await useTaskStore().forcePauseTask(task)
+      } catch (err) {
+        logger.warn(`[Motrix] forcePauseTask before ${context} failed:`, err)
+      }
+      if (!isRemoveWithFiles) {
+        return true
+      }
+      return this.deleteTaskFiles(task)
     },
-    removeTaskRecord(task, taskName, isRemoveWithFiles = false) {
-      useTaskStore()
-        .forcePauseTask(task)
-        .finally(() => {
-          if (isRemoveWithFiles) {
-            this.deleteTaskFiles(task)
-          }
+    async removeTask(task, taskName, isRemoveWithFiles = false) {
+      const ready = await this.prepareTaskRemoval(task, isRemoveWithFiles, 'removeTask')
+      if (!ready) {
+        return
+      }
 
-          return this.removeTaskRecordItem(task, taskName)
-        })
+      return this.removeTaskItem(task, taskName)
+    },
+    async removeTaskRecord(task, taskName, isRemoveWithFiles = false) {
+      const ready = await this.prepareTaskRemoval(task, isRemoveWithFiles, 'removeTaskRecord')
+      if (!ready) {
+        return
+      }
+
+      return this.removeTaskRecordItem(task, taskName)
     },
     async removeTaskItem(task, taskName) {
       try {
@@ -192,23 +199,37 @@ export default {
         }
       }
     },
-    removeTasks(taskList, isRemoveWithFiles = false) {
+    async removeTasks(taskList, isRemoveWithFiles = false) {
       const gids = taskList.map((task) => task.gid)
-      useTaskStore()
-        .batchForcePauseTask(gids)
-        .finally(() => {
-          if (isRemoveWithFiles) {
-            this.batchDeleteTaskFiles(taskList)
-          }
+      try {
+        await useTaskStore().batchForcePauseTask(gids)
+      } catch (err) {
+        logger.warn('[Motrix] batchForcePauseTask before removeTasks failed:', err)
+      }
+      if (isRemoveWithFiles) {
+        const deleted = await this.batchDeleteTaskFiles(taskList)
+        if (!deleted) {
+          return
+        }
+      }
 
-          this.removeTaskItems(gids)
-        })
+      this.removeTaskItems(gids)
     },
-    batchDeleteTaskFiles(taskList) {
+    async batchDeleteTaskFiles(taskList) {
       const promises = taskList.map((task, index) => delayDeleteTaskFiles(task, index * 200))
-      Promise.allSettled(promises).then((results) => {
-        logger.log('[Motrix] batch delete task files: ', results)
+      const results = await Promise.allSettled(promises)
+      logger.log('[Motrix] batch delete task files: ', results)
+      const failed = results.some((item) => {
+        if (item.status === 'rejected') {
+          return true
+        }
+        return item.value !== true
       })
+      if (failed) {
+        this.$msg.error(this.$t('task.remove-task-file-fail'))
+        return false
+      }
+      return true
     },
     removeTaskItems(gids) {
       useTaskStore()

@@ -39,7 +39,7 @@ pub fn system_defaults() -> Map<String, Value> {
     m.insert("rpc-secret".into(), json!(""));
     m.insert("seed-ratio".into(), json!(2));
     m.insert("seed-time".into(), json!(2880));
-    m.insert("split".into(), json!(64));
+    m.insert("split".into(), json!(16));
     m.insert(
         "user-agent".into(),
         json!("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"),
@@ -57,7 +57,7 @@ pub fn user_defaults() -> Map<String, Value> {
     m.insert("auto-sync-tracker".into(), json!(true));
     m.insert("enable-upnp".into(), json!(true));
     m.insert("idle-bt-network-guard".into(), json!(true));
-    m.insert("engine-max-connection-per-server".into(), json!(64));
+    m.insert("engine-max-connection-per-server".into(), json!(16));
     m.insert("favorite-directories".into(), json!([]));
     m.insert("hide-app-menu".into(), json!(is_not_macos));
     m.insert("history-directories".into(), json!([]));

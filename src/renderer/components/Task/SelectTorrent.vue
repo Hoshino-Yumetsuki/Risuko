@@ -18,18 +18,14 @@
     </div>
   </div>
   <div class="selective-torrent" v-else>
-    <ui-row class="torrent-info" :gutter="12">
-      <ui-col class="torrent-name" :span="20">
-        <ui-tooltip class="item" effect="dark" :content="name" placement="top">
-          <span>{{ name }}</span>
-        </ui-tooltip>
-      </ui-col>
-      <ui-col class="torrent-actions" :span="4">
-        <span @click="handleTrashClick">
-          <Trash :size="14" />
-        </span>
-      </ui-col>
-    </ui-row>
+    <div class="torrent-info">
+      <ui-tooltip class="item torrent-name" effect="dark" :content="name" placement="top">
+        <span>{{ name }}</span>
+      </ui-tooltip>
+      <span class="torrent-actions" @click="handleTrashClick">
+        <Trash :size="14" />
+      </span>
+    </div>
     <mo-task-files
       ref="torrentFileList"
       mode="ADD"
@@ -43,17 +39,10 @@
 <script lang="ts">
 import logger from '@shared/utils/logger'
 import { useAppStore } from '@/store/app'
-import { usePreferenceStore } from '@/store/preference'
 import TaskFiles from '@/components/TaskDetail/TaskFiles.vue'
 import { Inbox, Trash } from 'lucide-vue-next'
 import { EMPTY_STRING, NONE_SELECTED_FILES, SELECTED_ALL_FILES } from '@shared/constants'
-import { buildFileList, listTorrentFiles, getAsBase64 } from '@shared/utils'
-
-function getParseTorrentRemote() {
-  // parse-torrent depends on Node.js, so it cannot run in Tauri's webview.
-  // The backend handles torrent file listing.
-  return null
-}
+import { listTorrentFiles, getAsBase64 } from '@shared/utils'
 
 export default {
   name: 'mo-select-torrent',
@@ -62,13 +51,11 @@ export default {
     Inbox,
     Trash,
   },
-  props: {},
   data() {
     return {
       name: EMPTY_STRING,
       currentTorrent: EMPTY_STRING,
       files: [],
-      selectedFiles: [],
       isDragOver: false,
     }
   },
@@ -76,46 +63,185 @@ export default {
     torrents() {
       return useAppStore().addTaskTorrents
     },
-    config() {
-      return usePreferenceStore().config
-    },
     isTorrentsEmpty() {
       return this.torrents.length === 0
     },
   },
   watch: {
-    torrents(fileList) {
-      if (fileList.length === 0) {
+    torrents: {
+      immediate: true,
+      async handler(fileList) {
+        await this.processTorrents(fileList)
+      },
+    },
+  },
+  methods: {
+    async processTorrents(fileList = []) {
+      if (!Array.isArray(fileList) || fileList.length === 0) {
         this.reset()
         return
       }
 
       const file = fileList[0]
-      if (!file.raw) {
+      if (!file?.raw) {
+        this.reset()
         return
       }
 
-      const parseTorrentRemote = getParseTorrentRemote()
-      if (!parseTorrentRemote) {
-        logger.warn('[Motrix] parse-torrent is unavailable in renderer process.')
-        return
-      }
-
-      parseTorrentRemote(file.raw, { timeout: 60 * 1000 }, (err, parsedTorrent) => {
-        if (err) throw err
-        logger.log('[Motrix] parsed torrent: ', parsedTorrent)
-        this.files = listTorrentFiles(parsedTorrent.files)
-        this.$refs.torrentFileList.toggleAllSelection()
-
+      try {
+        const parsedFiles = await this.parseTorrentFiles(file.raw)
+        this.files = listTorrentFiles(parsedFiles)
         getAsBase64(file.raw, (torrent) => {
           this.name = file.name
           this.currentTorrent = torrent
           this.$emit('change', torrent, SELECTED_ALL_FILES)
+          this.$nextTick(() => {
+            this.$refs.torrentFileList?.toggleAllSelection()
+          })
         })
-      })
+      } catch (err: any) {
+        logger.warn('[Motrix] parse torrent failed:', err?.message || err)
+        this.reset()
+        this.$msg.error(this.$t('task.new-task-torrent-required'))
+      }
     },
-  },
-  methods: {
+    decodeUtf8(bytes) {
+      try {
+        return new TextDecoder('utf-8').decode(bytes)
+      } catch {
+        return ''
+      }
+    },
+    decodeBencode(bytes, offset = 0) {
+      const ch = bytes[offset]
+      // integer: i123e
+      if (ch === 0x69) {
+        let cursor = offset + 1
+        while (cursor < bytes.length && bytes[cursor] !== 0x65) {
+          cursor += 1
+        }
+        const text = this.decodeUtf8(bytes.slice(offset + 1, cursor))
+        const value = Number(text)
+        return {
+          value: Number.isFinite(value) ? value : 0,
+          next: cursor + 1,
+        }
+      }
+
+      // list: l...e
+      if (ch === 0x6c) {
+        const value = []
+        let cursor = offset + 1
+        while (cursor < bytes.length && bytes[cursor] !== 0x65) {
+          const parsed = this.decodeBencode(bytes, cursor)
+          value.push(parsed.value)
+          cursor = parsed.next
+        }
+        return {
+          value,
+          next: cursor + 1,
+        }
+      }
+
+      // dictionary: d...e
+      if (ch === 0x64) {
+        const value = {}
+        let cursor = offset + 1
+        while (cursor < bytes.length && bytes[cursor] !== 0x65) {
+          const keyParsed = this.decodeBencode(bytes, cursor)
+          const key =
+            keyParsed.value instanceof Uint8Array
+              ? this.decodeUtf8(keyParsed.value)
+              : `${keyParsed.value || ''}`
+          cursor = keyParsed.next
+          const valParsed = this.decodeBencode(bytes, cursor)
+          value[key] = valParsed.value
+          cursor = valParsed.next
+        }
+        return {
+          value,
+          next: cursor + 1,
+        }
+      }
+
+      // byte string: <len>:<bytes>
+      let cursor = offset
+      while (cursor < bytes.length && bytes[cursor] !== 0x3a) {
+        cursor += 1
+      }
+      const lenText = this.decodeUtf8(bytes.slice(offset, cursor))
+      const len = Number(lenText)
+      const start = cursor + 1
+      const end = start + (Number.isFinite(len) ? len : 0)
+      return {
+        value: bytes.slice(start, end),
+        next: end,
+      }
+    },
+    asString(value) {
+      if (value instanceof Uint8Array) {
+        return this.decodeUtf8(value)
+      }
+      if (typeof value === 'string') {
+        return value
+      }
+      if (typeof value === 'number') {
+        return `${value}`
+      }
+      return ''
+    },
+    pickKey(obj, keys = []) {
+      for (const key of keys) {
+        if (obj && Object.prototype.hasOwnProperty.call(obj, key)) {
+          return obj[key]
+        }
+      }
+      return null
+    },
+    normalizeTorrentPath(path) {
+      return `${path || ''}`.replace(/\\/g, '/').replace(/^\/+/, '')
+    },
+    async parseTorrentFiles(rawFile) {
+      const buffer = await rawFile.arrayBuffer()
+      const bytes = new Uint8Array(buffer)
+      const parsed = this.decodeBencode(bytes, 0)
+      const root = parsed.value || {}
+      const info = root.info || {}
+
+      const rootName = this.asString(this.pickKey(info, ['name.utf-8', 'name'])) || rawFile.name
+      const files = this.pickKey(info, ['files'])
+      if (Array.isArray(files) && files.length > 0) {
+        return files
+          .map((item) => {
+            const length = Number(item.length || 0)
+            const pathList = this.pickKey(item, ['path.utf-8', 'path'])
+            const segments = Array.isArray(pathList)
+              ? pathList.map((segment) => this.asString(segment)).filter(Boolean)
+              : []
+            const relativePath = this.normalizeTorrentPath(segments.join('/'))
+            const fullPath = relativePath
+              ? this.normalizeTorrentPath(`${rootName}/${relativePath}`)
+              : this.normalizeTorrentPath(rootName)
+            const name = segments.length > 0 ? segments[segments.length - 1] : rootName
+            return {
+              path: fullPath,
+              length,
+              name,
+            }
+          })
+          .filter((item) => item.path)
+      }
+
+      const length = Number(info.length || 0)
+      const singlePath = this.normalizeTorrentPath(rootName)
+      return [
+        {
+          path: singlePath,
+          length,
+          name: rootName,
+        },
+      ]
+    },
     reset() {
       this.name = EMPTY_STRING
       this.currentTorrent = EMPTY_STRING
@@ -133,22 +259,18 @@ export default {
       if (!files || files.length === 0) return
       const file = files[0]
       const fileList = [{ name: file.name, raw: file }]
-      this.handleChange(fileList[0], fileList)
+      this.handleChange(fileList)
     },
     onDrop(event) {
       this.isDragOver = false
       const files = event.dataTransfer?.files
       if (!files || files.length === 0) return
       const file = files[0]
-      if (!file.name.endsWith('.torrent')) return
+      if (!/\.torrent$/i.test(file.name)) return
       const fileList = [{ name: file.name, raw: file }]
-      this.handleChange(fileList[0], fileList)
+      this.handleChange(fileList)
     },
-    handleChange(file, fileList) {
-      useAppStore().addTaskAddTorrents({ fileList })
-    },
-    handleExceed(files) {
-      const fileList = buildFileList(files[0])
+    handleChange(fileList) {
       useAppStore().addTaskAddTorrents({ fileList })
     },
     handleTrashClick() {

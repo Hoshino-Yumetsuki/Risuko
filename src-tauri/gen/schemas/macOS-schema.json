@@ -6089,6 +6089,30 @@
           "markdownDescription": "This enables all file write related commands without any pre-configured accessible paths."
         },
         {
+          "description": "Enables the block command without any pre-configured scope.",
+          "type": "string",
+          "const": "nosleep:allow-block",
+          "markdownDescription": "Enables the block command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the unblock command without any pre-configured scope.",
+          "type": "string",
+          "const": "nosleep:allow-unblock",
+          "markdownDescription": "Enables the unblock command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the block command without any pre-configured scope.",
+          "type": "string",
+          "const": "nosleep:deny-block",
+          "markdownDescription": "Denies the block command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the unblock command without any pre-configured scope.",
+          "type": "string",
+          "const": "nosleep:deny-unblock",
+          "markdownDescription": "Denies the unblock command without any pre-configured scope."
+        },
+        {
           "description": "This permission set configures which\nnotification features are by default exposed.\n\n#### Granted Permissions\n\nIt allows all notification related features.\n\n\n#### This default permission set includes:\n\n- `allow-is-permission-granted`\n- `allow-request-permission`\n- `allow-notify`\n- `allow-register-action-types`\n- `allow-register-listener`\n- `allow-cancel`\n- `allow-get-pending`\n- `allow-remove-active`\n- `allow-get-active`\n- `allow-check-permissions`\n- `allow-show`\n- `allow-batch`\n- `allow-list-channels`\n- `allow-delete-channel`\n- `allow-create-channel`\n- `allow-permission-state`",
           "type": "string",
           "const": "notification:default",
