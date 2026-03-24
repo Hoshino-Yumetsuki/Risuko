@@ -84,19 +84,10 @@ export default {
   },
   watch: {
     speed() {
-      const { uploadSpeed, downloadSpeed, traySpeedometer } = this
-      invoke('on_speed_change', {
-        uploadSpeed,
-        downloadSpeed,
-        showTraySpeed: traySpeedometer,
-      }).catch(() => {})
+      this.syncTraySpeedTooltip()
     },
     traySpeedometer(val) {
-      invoke('on_speed_change', {
-        uploadSpeed: this.uploadSpeed,
-        downloadSpeed: this.downloadSpeed,
-        showTraySpeed: !!val,
-      }).catch(() => {})
+      this.syncTraySpeedTooltip(!!val)
     },
     downloading(val, oldVal) {
       if (val !== oldVal) {
@@ -123,6 +114,24 @@ export default {
     },
   },
   methods: {
+    getTraySpeedLabelPayload() {
+      return {
+        appName: this.$t('menu.app'),
+        downloadLabel: this.$t('task.task-download-speed'),
+        uploadLabel: this.$t('task.task-upload-speed'),
+      }
+    },
+    syncTraySpeedTooltip(showTraySpeed = this.traySpeedometer) {
+      const { appName, downloadLabel, uploadLabel } = this.getTraySpeedLabelPayload()
+      invoke('on_speed_change', {
+        uploadSpeed: this.uploadSpeed,
+        downloadSpeed: this.downloadSpeed,
+        showTraySpeed: !!showTraySpeed,
+        appName,
+        downloadLabel,
+        uploadLabel,
+      }).catch(() => {})
+    },
     async setNoSleepState(downloading: boolean) {
       if (!downloading) {
         if (this.noSleepSource === 'plugin') {
@@ -409,6 +418,7 @@ export default {
       appStore.fetchEngineInfo()
       appStore.fetchEngineOptions()
       this.autoResumeUnfinishedTasksOnLaunch()
+      this.syncTraySpeedTooltip()
 
       this.startPolling()
     }, 100)

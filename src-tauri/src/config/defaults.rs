@@ -55,7 +55,6 @@ pub fn user_defaults() -> Map<String, Value> {
     m.insert("auto-check-update".into(), json!(is_macos));
     m.insert("auto-hide-window".into(), json!(false));
     m.insert("auto-sync-tracker".into(), json!(true));
-    m.insert("enable-upnp".into(), json!(true));
     m.insert("idle-bt-network-guard".into(), json!(true));
     m.insert("engine-max-connection-per-server".into(), json!(16));
     m.insert("favorite-directories".into(), json!([]));

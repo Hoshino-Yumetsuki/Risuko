@@ -318,18 +318,7 @@
             </div>
           </div>
           <div class="settings-section-content">
-            <div class="settings-row">
-              <div class="settings-row-content">
-                <div class="settings-row-title">UPnP/NAT-PMP</div>
-              </div>
-              <div class="settings-row-action">
-                <ui-checkbox
-                  :model-value="!!form.enableUpnp"
-                  @change="(val) => setAdvancedBoolean('enableUpnp', val)"
-                />
-              </div>
-            </div>
-            <div class="settings-select-group" style="margin-top: 14px">
+            <div class="settings-select-group">
               <div class="settings-select-item">
                 <label class="settings-select-item-label">{{ $t('preferences.bt-port') }}</label>
                 <div class="mo-input-group">
@@ -619,7 +608,6 @@ const initForm = (config) => {
     autoSyncTracker,
     btTracker,
     dhtListenPort,
-    enableUpnp,
     hideAppMenu,
     idleBtNetworkGuard,
     lastCheckUpdateTime,
@@ -639,7 +627,6 @@ const initForm = (config) => {
     autoSyncTracker: parseBooleanConfig(autoSyncTracker),
     btTracker: convertCommaToLine(btTracker),
     dhtListenPort,
-    enableUpnp: parseBooleanConfig(enableUpnp),
     hideAppMenu,
     idleBtNetworkGuard: parseBooleanConfig(idleBtNetworkGuard, true),
     lastCheckUpdateTime,
@@ -954,7 +941,7 @@ export default {
         ...diffConfig(this.formOriginal, this.form),
         ...changedConfig.basic,
       }
-      const booleanKeys = ['autoCheckUpdate', 'autoSyncTracker', 'idleBtNetworkGuard', 'enableUpnp']
+      const booleanKeys = ['autoCheckUpdate', 'autoSyncTracker', 'idleBtNetworkGuard']
       for (const key of booleanKeys) {
         if (key in data) {
           data[key] = !!this.form[key]

@@ -11,9 +11,10 @@ import {
   changeKeysToKebabCase,
 } from '@shared/utils'
 import { startupOnlyKeys } from '@shared/configKeys'
-import { ENGINE_RPC_HOST, ENGINE_RPC_PORT, EMPTY_STRING } from '@shared/constants'
+import { ENGINE_RPC_HOST, ENGINE_RPC_PORT, EMPTY_STRING, PROXY_SCOPES } from '@shared/constants'
 
 const RPC_CONFIG_KEYS = ['rpc-host', 'rpc-listen-port', 'rpc-secret']
+const ENGINE_RESTART_USER_KEYS = ['idle-bt-network-guard', 'rpc-host']
 const DEFAULT_TASK_LIST_FETCH_SIZE = 1000
 const MAX_TASK_LIST_FETCH_SIZE = 2000
 
@@ -42,6 +43,18 @@ const clampTaskListFetchSize = (value: unknown) => {
     return MAX_TASK_LIST_FETCH_SIZE
   }
   return normalized
+}
+
+const normalizeProxyBypass = (value: any) => {
+  if (typeof value !== 'string') {
+    return ''
+  }
+
+  return value
+    .split(/[\r\n,]+/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .join(',')
 }
 
 export default class Api {
@@ -150,22 +163,49 @@ export default class Api {
   }
 
   async savePreference(params: any = {}) {
-    const kebabParams = changeKeysToKebabCase(params)
-    const { system } = separateConfig(kebabParams)
+    let kebabParams = changeKeysToKebabCase(params)
+    kebabParams = this.patchProxySystemConfig(kebabParams)
+
+    const { user, system } = separateConfig(kebabParams)
     const hasStartupOnlySystemChanges = Object.keys(system).some((key) =>
       startupOnlyKeys.includes(key),
+    )
+    const hasEngineRestartUserChanges = ENGINE_RESTART_USER_KEYS.some((key) =>
+      Object.prototype.hasOwnProperty.call(user, key),
     )
 
     await this.savePreferenceToNativeStore(kebabParams)
 
     const shouldReconnect = Object.keys(kebabParams).some((key) => RPC_CONFIG_KEYS.includes(key))
-    if (hasStartupOnlySystemChanges) {
+    if (hasStartupOnlySystemChanges || hasEngineRestartUserChanges) {
       await invoke('restart_engine')
     }
 
-    if (shouldReconnect || hasStartupOnlySystemChanges) {
+    if (shouldReconnect || hasStartupOnlySystemChanges || hasEngineRestartUserChanges) {
       this.config = await this.loadConfig()
       await this.reconnectClient(this.config)
+    }
+  }
+
+  patchProxySystemConfig(params: Record<string, any>) {
+    if (!Object.prototype.hasOwnProperty.call(params, 'proxy')) {
+      return params
+    }
+
+    const proxy = params.proxy || {}
+    const proxyServer = `${proxy.server || ''}`.trim()
+    const proxyScope = Array.isArray(proxy.scope) ? proxy.scope : []
+    const useDownloadProxy =
+      !!proxy.enable && !!proxyServer && proxyScope.includes(PROXY_SCOPES.DOWNLOAD)
+
+    const systemProxyConfig = {
+      'all-proxy': useDownloadProxy ? proxyServer : '',
+      'no-proxy': useDownloadProxy ? normalizeProxyBypass(proxy.bypass) : '',
+    }
+
+    return {
+      ...params,
+      ...systemProxyConfig,
     }
   }
 

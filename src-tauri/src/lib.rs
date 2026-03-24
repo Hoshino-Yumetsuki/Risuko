@@ -78,6 +78,8 @@ pub fn run() {
             commands::event_cmds::on_progress_change,
             commands::event_cmds::on_task_download_complete,
             commands::event_cmds::update_tray,
+            commands::event_cmds::update_tray_menu_labels,
+            commands::event_cmds::update_app_menu_labels,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Motrix");

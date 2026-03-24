@@ -1,22 +1,54 @@
+use std::collections::HashMap;
+
 use tauri::{
-    menu::{AboutMetadataBuilder, MenuBuilder, MenuItemBuilder, Submenu, SubmenuBuilder},
-    App, Emitter, Manager,
+    menu::{AboutMetadataBuilder, Menu, MenuBuilder, MenuItemBuilder, Submenu, SubmenuBuilder},
+    App, AppHandle, Emitter, Manager,
 };
 
 use super::{emit_command, show_and_emit};
 
+fn get_menu_text(labels: &HashMap<String, String>, id: &str, fallback: &str) -> String {
+    labels
+        .get(id)
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+        .unwrap_or(fallback)
+        .to_string()
+}
+
 pub fn setup_menu(app: &App) -> Result<(), Box<dyn std::error::Error>> {
+    let handle = app.handle();
+    let menu = build_menu(handle, &HashMap::new())?;
+    app.set_menu(menu)?;
+    setup_menu_event_handler(app);
+    Ok(())
+}
+
+pub fn update_menu_labels(
+    handle: &AppHandle,
+    labels: &HashMap<String, String>,
+) -> Result<(), String> {
+    let menu = build_menu(handle, labels).map_err(|e| e.to_string())?;
+    handle.set_menu(menu).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+fn build_menu(
+    handle: &AppHandle,
+    labels: &HashMap<String, String>,
+) -> Result<Menu<tauri::Wry>, Box<dyn std::error::Error>> {
     if cfg!(target_os = "macos") {
-        setup_macos_menu(app)
+        build_macos_menu(handle, labels)
     } else {
-        setup_default_menu(app)
+        build_default_menu(handle, labels)
     }
 }
 
-fn setup_macos_menu(app: &App) -> Result<(), Box<dyn std::error::Error>> {
-    let handle = app.handle();
-
-    let app_menu = SubmenuBuilder::new(handle, "Motrix")
+fn build_macos_menu(
+    handle: &AppHandle,
+    labels: &HashMap<String, String>,
+) -> Result<Menu<tauri::Wry>, Box<dyn std::error::Error>> {
+    let app_menu = SubmenuBuilder::new(handle, get_menu_text(labels, "menu-app", "Motrix"))
         .about(Some(
             AboutMetadataBuilder::new()
                 .name(Some("Motrix"))
@@ -25,29 +57,38 @@ fn setup_macos_menu(app: &App) -> Result<(), Box<dyn std::error::Error>> {
         ))
         .separator()
         .item(
-            &MenuItemBuilder::with_id("preferences", "Preferences...")
-                .accelerator("CmdOrCtrl+,")
-                .build(handle)?,
+            &MenuItemBuilder::with_id(
+                "preferences",
+                get_menu_text(labels, "preferences", "Preferences..."),
+            )
+            .accelerator("CmdOrCtrl+,")
+            .build(handle)?,
         )
-        .item(&MenuItemBuilder::with_id("check-for-updates", "Check for Updates...").build(handle)?)
+        .item(
+            &MenuItemBuilder::with_id(
+                "check-for-updates",
+                get_menu_text(labels, "check-for-updates", "Check for Updates..."),
+            )
+            .build(handle)?,
+        )
         .separator()
         .hide()
         .hide_others()
         .show_all()
         .separator()
         .item(
-            &MenuItemBuilder::with_id("quit", "Quit Motrix")
+            &MenuItemBuilder::with_id("quit", get_menu_text(labels, "quit", "Quit Motrix"))
                 .accelerator("CmdOrCtrl+Q")
                 .build(handle)?,
         )
         .build()?;
 
-    let task_menu = build_task_submenu(handle, true)?;
-    let edit_menu = build_edit_submenu(handle)?;
+    let task_menu = build_task_submenu(handle, true, labels)?;
+    let edit_menu = build_edit_submenu(handle, labels)?;
 
-    let window_menu = SubmenuBuilder::new(handle, "Window")
+    let window_menu = SubmenuBuilder::new(handle, get_menu_text(labels, "menu-window", "Window"))
         .item(
-            &MenuItemBuilder::with_id("reload", "Reload")
+            &MenuItemBuilder::with_id("reload", get_menu_text(labels, "reload", "Reload"))
                 .accelerator("CmdOrCtrl+R")
                 .build(handle)?,
         )
@@ -56,47 +97,70 @@ fn setup_macos_menu(app: &App) -> Result<(), Box<dyn std::error::Error>> {
         .maximize()
         .fullscreen()
         .separator()
-        .item(&MenuItemBuilder::with_id("front", "Bring All to Front").build(handle)?)
+        .item(
+            &MenuItemBuilder::with_id(
+                "front",
+                get_menu_text(labels, "front", "Bring All to Front"),
+            )
+            .build(handle)?,
+        )
         .build()?;
 
-    let help_menu = build_help_submenu(handle)?;
+    let help_menu = build_help_submenu(handle, labels)?;
 
     let menu = MenuBuilder::new(handle)
         .items(&[&app_menu, &task_menu, &edit_menu, &window_menu, &help_menu])
         .build()?;
 
-    app.set_menu(menu)?;
-    setup_menu_event_handler(app);
-    Ok(())
+    Ok(menu)
 }
 
-fn setup_default_menu(app: &App) -> Result<(), Box<dyn std::error::Error>> {
-    let handle = app.handle();
-
-    let file_menu = SubmenuBuilder::new(handle, "File")
-        .item(&MenuItemBuilder::with_id("about", "About Motrix").build(handle)?)
-        .separator()
+fn build_default_menu(
+    handle: &AppHandle,
+    labels: &HashMap<String, String>,
+) -> Result<Menu<tauri::Wry>, Box<dyn std::error::Error>> {
+    let file_menu = SubmenuBuilder::new(handle, get_menu_text(labels, "menu-file", "File"))
         .item(
-            &MenuItemBuilder::with_id("preferences", "Preferences...")
-                .accelerator("CmdOrCtrl+,")
+            &MenuItemBuilder::with_id("about", get_menu_text(labels, "about", "About Motrix"))
                 .build(handle)?,
         )
-        .item(&MenuItemBuilder::with_id("check-for-updates", "Check for Updates...").build(handle)?)
-        .item(&MenuItemBuilder::with_id("show-window", "Show Motrix").build(handle)?)
         .separator()
         .item(
-            &MenuItemBuilder::with_id("quit", "Quit Motrix")
+            &MenuItemBuilder::with_id(
+                "preferences",
+                get_menu_text(labels, "preferences", "Preferences..."),
+            )
+            .accelerator("CmdOrCtrl+,")
+            .build(handle)?,
+        )
+        .item(
+            &MenuItemBuilder::with_id(
+                "check-for-updates",
+                get_menu_text(labels, "check-for-updates", "Check for Updates..."),
+            )
+            .build(handle)?,
+        )
+        .item(
+            &MenuItemBuilder::with_id(
+                "show-window",
+                get_menu_text(labels, "show-window", "Show Motrix"),
+            )
+            .build(handle)?,
+        )
+        .separator()
+        .item(
+            &MenuItemBuilder::with_id("quit", get_menu_text(labels, "quit", "Quit Motrix"))
                 .accelerator("CmdOrCtrl+Q")
                 .build(handle)?,
         )
         .build()?;
 
-    let task_menu = build_task_submenu(handle, false)?;
-    let edit_menu = build_edit_submenu(handle)?;
+    let task_menu = build_task_submenu(handle, false, labels)?;
+    let edit_menu = build_edit_submenu(handle, labels)?;
 
-    let window_menu = SubmenuBuilder::new(handle, "Window")
+    let window_menu = SubmenuBuilder::new(handle, get_menu_text(labels, "menu-window", "Window"))
         .item(
-            &MenuItemBuilder::with_id("reload", "Reload")
+            &MenuItemBuilder::with_id("reload", get_menu_text(labels, "reload", "Reload"))
                 .accelerator("CmdOrCtrl+R")
                 .build(handle)?,
         )
@@ -105,68 +169,116 @@ fn setup_default_menu(app: &App) -> Result<(), Box<dyn std::error::Error>> {
         .fullscreen()
         .build()?;
 
-    let help_menu = build_help_submenu(handle)?;
+    let help_menu = build_help_submenu(handle, labels)?;
 
     let menu = MenuBuilder::new(handle)
         .items(&[&file_menu, &task_menu, &edit_menu, &window_menu, &help_menu])
         .build()?;
 
-    app.set_menu(menu)?;
-    setup_menu_event_handler(app);
-    Ok(())
+    Ok(menu)
 }
 
 fn build_task_submenu(
     handle: &tauri::AppHandle,
     include_clear_recent: bool,
+    labels: &HashMap<String, String>,
 ) -> Result<Submenu<tauri::Wry>, Box<dyn std::error::Error>> {
-    let mut builder = SubmenuBuilder::new(handle, "Task")
+    let mut builder = SubmenuBuilder::new(handle, get_menu_text(labels, "menu-task", "Task"))
         .item(
-            &MenuItemBuilder::with_id("new-task", "New Task")
+            &MenuItemBuilder::with_id("new-task", get_menu_text(labels, "new-task", "New Task"))
                 .accelerator("CmdOrCtrl+N")
                 .build(handle)?,
         )
         .item(
-            &MenuItemBuilder::with_id("new-bt-task", "New BT Task")
-                .accelerator("CmdOrCtrl+Shift+N")
-                .build(handle)?,
+            &MenuItemBuilder::with_id(
+                "new-bt-task",
+                get_menu_text(labels, "new-bt-task", "New BT Task"),
+            )
+            .accelerator("CmdOrCtrl+Shift+N")
+            .build(handle)?,
         )
         .item(
-            &MenuItemBuilder::with_id("open-file", "Open Torrent File...")
-                .accelerator("CmdOrCtrl+O")
-                .build(handle)?,
+            &MenuItemBuilder::with_id(
+                "open-file",
+                get_menu_text(labels, "open-file", "Open Torrent File..."),
+            )
+            .accelerator("CmdOrCtrl+O")
+            .build(handle)?,
         )
         .separator()
         .item(
-            &MenuItemBuilder::with_id("task-list", "Task List")
+            &MenuItemBuilder::with_id("task-list", get_menu_text(labels, "task-list", "Task List"))
                 .accelerator("CmdOrCtrl+L")
                 .build(handle)?,
         )
-        .item(&MenuItemBuilder::with_id("pause-task", "Pause Task").build(handle)?)
-        .item(&MenuItemBuilder::with_id("resume-task", "Resume Task").build(handle)?)
-        .item(&MenuItemBuilder::with_id("delete-task", "Delete Task").build(handle)?)
-        .item(&MenuItemBuilder::with_id("move-task-up", "Move Task Up").build(handle)?)
-        .item(&MenuItemBuilder::with_id("move-task-down", "Move Task Down").build(handle)?)
+        .item(
+            &MenuItemBuilder::with_id(
+                "pause-task",
+                get_menu_text(labels, "pause-task", "Pause Task"),
+            )
+            .build(handle)?,
+        )
+        .item(
+            &MenuItemBuilder::with_id(
+                "resume-task",
+                get_menu_text(labels, "resume-task", "Resume Task"),
+            )
+            .build(handle)?,
+        )
+        .item(
+            &MenuItemBuilder::with_id(
+                "delete-task",
+                get_menu_text(labels, "delete-task", "Delete Task"),
+            )
+            .build(handle)?,
+        )
+        .item(
+            &MenuItemBuilder::with_id(
+                "move-task-up",
+                get_menu_text(labels, "move-task-up", "Move Task Up"),
+            )
+            .build(handle)?,
+        )
+        .item(
+            &MenuItemBuilder::with_id(
+                "move-task-down",
+                get_menu_text(labels, "move-task-down", "Move Task Down"),
+            )
+            .build(handle)?,
+        )
         .separator()
         .item(
-            &MenuItemBuilder::with_id("pause-all-task", "Pause All Tasks")
-                .accelerator("CmdOrCtrl+Shift+P")
-                .build(handle)?,
+            &MenuItemBuilder::with_id(
+                "pause-all-task",
+                get_menu_text(labels, "pause-all-task", "Pause All Tasks"),
+            )
+            .accelerator("CmdOrCtrl+Shift+P")
+            .build(handle)?,
         )
         .item(
-            &MenuItemBuilder::with_id("resume-all-task", "Resume All Tasks")
-                .accelerator("CmdOrCtrl+Shift+R")
-                .build(handle)?,
+            &MenuItemBuilder::with_id(
+                "resume-all-task",
+                get_menu_text(labels, "resume-all-task", "Resume All Tasks"),
+            )
+            .accelerator("CmdOrCtrl+Shift+R")
+            .build(handle)?,
         )
         .item(
-            &MenuItemBuilder::with_id("select-all-task", "Select All Tasks")
-                .accelerator("CmdOrCtrl+Shift+A")
-                .build(handle)?,
+            &MenuItemBuilder::with_id(
+                "select-all-task",
+                get_menu_text(labels, "select-all-task", "Select All Tasks"),
+            )
+            .accelerator("CmdOrCtrl+Shift+A")
+            .build(handle)?,
         );
 
     if include_clear_recent {
         builder = builder.separator().item(
-            &MenuItemBuilder::with_id("clear-recent-tasks", "Clear Recent Tasks").build(handle)?,
+            &MenuItemBuilder::with_id(
+                "clear-recent-tasks",
+                get_menu_text(labels, "clear-recent-tasks", "Clear Recent Tasks"),
+            )
+            .build(handle)?,
         );
     }
 
@@ -175,33 +287,61 @@ fn build_task_submenu(
 
 fn build_edit_submenu(
     handle: &tauri::AppHandle,
+    labels: &HashMap<String, String>,
 ) -> Result<Submenu<tauri::Wry>, Box<dyn std::error::Error>> {
-    Ok(SubmenuBuilder::new(handle, "Edit")
-        .undo()
-        .redo()
-        .separator()
-        .cut()
-        .copy()
-        .paste()
-        .select_all()
-        .build()?)
+    Ok(
+        SubmenuBuilder::new(handle, get_menu_text(labels, "menu-edit", "Edit"))
+            .undo()
+            .redo()
+            .separator()
+            .cut()
+            .copy()
+            .paste()
+            .select_all()
+            .build()?,
+    )
 }
 
 fn build_help_submenu(
     handle: &tauri::AppHandle,
+    labels: &HashMap<String, String>,
 ) -> Result<Submenu<tauri::Wry>, Box<dyn std::error::Error>> {
-    let mut builder = SubmenuBuilder::new(handle, "Help")
-        .item(&MenuItemBuilder::with_id("official-website", "Official Website").build(handle)?)
-        .item(&MenuItemBuilder::with_id("manual", "Manual").build(handle)?)
-        .item(&MenuItemBuilder::with_id("release-notes", "Release Notes").build(handle)?)
+    let mut builder = SubmenuBuilder::new(handle, get_menu_text(labels, "menu-help", "Help"))
+        .item(
+            &MenuItemBuilder::with_id(
+                "official-website",
+                get_menu_text(labels, "official-website", "Official Website"),
+            )
+            .build(handle)?,
+        )
+        .item(
+            &MenuItemBuilder::with_id("manual", get_menu_text(labels, "manual", "Manual"))
+                .build(handle)?,
+        )
+        .item(
+            &MenuItemBuilder::with_id(
+                "release-notes",
+                get_menu_text(labels, "release-notes", "Release Notes"),
+            )
+            .build(handle)?,
+        )
         .separator()
-        .item(&MenuItemBuilder::with_id("report-problem", "Report Problem").build(handle)?);
+        .item(
+            &MenuItemBuilder::with_id(
+                "report-problem",
+                get_menu_text(labels, "report-problem", "Report Problem"),
+            )
+            .build(handle)?,
+        );
 
     if cfg!(debug_assertions) {
         builder = builder.separator().item(
-            &MenuItemBuilder::with_id("toggle-dev-tools", "Toggle Developer Tools")
-                .accelerator("F12")
-                .build(handle)?,
+            &MenuItemBuilder::with_id(
+                "toggle-dev-tools",
+                get_menu_text(labels, "toggle-dev-tools", "Toggle Developer Tools"),
+            )
+            .accelerator("F12")
+            .build(handle)?,
         );
     }
 
