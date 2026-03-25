@@ -348,9 +348,10 @@ export default {
         })
     },
     handleRevealInFolder(payload) {
-      const { path } = payload
+      const { path, fallbackPath } = payload
       showItemInFolder(path, {
         errorMsg: this.$t('task.file-not-exist'),
+        fallbackPath,
       })
     },
     async handleDeleteTask(payload) {

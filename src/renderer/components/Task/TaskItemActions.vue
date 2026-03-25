@@ -44,7 +44,7 @@ import { useTaskStore } from '@/store/task'
 import { commands } from '@/components/CommandManager/instance'
 import { TASK_STATUS } from '@shared/constants'
 import { checkTaskIsSeeder, getTaskName } from '@shared/utils'
-import { getTaskFullPath } from '@/utils/native'
+import { getTaskFullPath, getTaskRevealPath } from '@/utils/native'
 import { Play, Pause, Square, RotateCcw, Trash2, Trash, Folder, Link, Info } from 'lucide-vue-next'
 
 const taskActionsMap = {
@@ -88,7 +88,11 @@ export default {
       return getTaskName(this.task)
     },
     path() {
-      return getTaskFullPath(this.task)
+      return getTaskRevealPath(this.task)
+    },
+    fallbackPath() {
+      const dir = `${this.task?.dir || ''}`.trim()
+      return dir || getTaskFullPath(this.task)
     },
     isSeeder() {
       return checkTaskIsSeeder(this.task)
@@ -175,8 +179,8 @@ export default {
       })
     },
     onFolderClick() {
-      const { path } = this
-      commands.emit('reveal-in-folder', { path })
+      const { path, fallbackPath } = this
+      commands.emit('reveal-in-folder', { path, fallbackPath })
     },
     onLinkClick() {
       const { task } = this
