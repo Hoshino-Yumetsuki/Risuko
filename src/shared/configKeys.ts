@@ -1,6 +1,10 @@
 const userKeys = [
+  'auto-detect-low-speed-tasks',
   'auto-check-update',
   'auto-hide-window',
+  'auto-retry',
+  'auto-retry-interval',
+  'auto-retry-strategy',
   'auto-sync-tracker',
   'cookie',
   'engine-bin-path',
@@ -28,6 +32,7 @@ const userKeys = [
   'theme',
   'tracker-source',
   'tray-speedometer',
+  'low-speed-threshold',
 ]
 
 const systemKeys = [

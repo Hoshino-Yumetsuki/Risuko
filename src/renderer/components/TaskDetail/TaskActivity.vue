@@ -45,13 +45,13 @@
 
     <!-- Stats grid -->
     <div class="activity-stats">
-      <div class="activity-stat-item">
+      <div class="activity-stat-item" v-if="showDownloadSpeed">
         <span class="activity-stat-label">{{ $t('task.task-download-speed') }}</span>
-        <span class="activity-stat-value">{{ formatBytes(task.downloadSpeed) }}/s</span>
+        <span class="activity-stat-value">{{ formatBytes(displayDownloadSpeed) }}/s</span>
       </div>
       <div class="activity-stat-item" v-if="isBT">
         <span class="activity-stat-label">{{ $t('task.task-upload-speed') }}</span>
-        <span class="activity-stat-value">{{ formatBytes(task.uploadSpeed) }}/s</span>
+        <span class="activity-stat-value">{{ formatBytes(displayUploadSpeed) }}/s</span>
       </div>
       <div class="activity-stat-item">
         <span class="activity-stat-label">{{ $t('task.task-connections') }}</span>
@@ -135,6 +135,18 @@ export default {
     isSeeder() {
       return checkTaskIsSeeder(this.task)
     },
+    displayUploadSpeed() {
+      return Number(this.task?.uploadSpeed || 0)
+    },
+    displayDownloadSpeed() {
+      if (this.isSeeder) {
+        return 0
+      }
+      return Number(this.task?.downloadSpeed || 0)
+    },
+    showDownloadSpeed() {
+      return !this.isSeeder
+    },
     taskStatus() {
       const { task, isSeeder } = this
       if (isSeeder) {
@@ -152,8 +164,8 @@ export default {
       return `${percent}%`
     },
     remaining() {
-      const { totalLength, completedLength, downloadSpeed } = this.task
-      return timeRemaining(totalLength, completedLength, downloadSpeed)
+      const { totalLength, completedLength } = this.task
+      return timeRemaining(totalLength, completedLength, this.displayDownloadSpeed)
     },
     remainingText() {
       return timeFormat(this.remaining, {

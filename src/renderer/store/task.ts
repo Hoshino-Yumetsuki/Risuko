@@ -5,6 +5,26 @@ import { useAppStore } from '@/store/app'
 import { EMPTY_STRING, TASK_STATUS } from '@shared/constants'
 import { checkTaskIsBT, intersection } from '@shared/utils'
 
+const DEFAULT_TASKS_PER_PAGE = 20
+const MAX_TASKS_PER_PAGE = 50
+const TASKS_PER_PAGE_STORAGE_KEY = 'motrix.tasks-per-page'
+
+const clampTasksPerPage = (value: number) => {
+  const normalized = Number(value)
+  if (!Number.isFinite(normalized)) {
+    return DEFAULT_TASKS_PER_PAGE
+  }
+  return Math.min(Math.max(Math.floor(normalized), 1), MAX_TASKS_PER_PAGE)
+}
+
+const loadTasksPerPage = () => {
+  if (typeof window === 'undefined' || !window.localStorage) {
+    return DEFAULT_TASKS_PER_PAGE
+  }
+  const saved = window.localStorage.getItem(TASKS_PER_PAGE_STORAGE_KEY)
+  return clampTasksPerPage(Number(saved))
+}
+
 export const useTaskStore = defineStore('task', {
   state: () => ({
     currentList: 'active',
@@ -22,7 +42,27 @@ export const useTaskStore = defineStore('task', {
       waiting: [],
       stopped: [],
     },
+    tasksPerPage: loadTasksPerPage(),
+    currentPageMap: {
+      active: 1,
+      waiting: 1,
+      stopped: 1,
+    },
   }),
+  getters: {
+    currentPage(state) {
+      return state.currentPageMap[state.currentList] || 1
+    },
+    totalPages(state) {
+      return Math.max(1, Math.ceil(state.taskList.length / state.tasksPerPage))
+    },
+    paginatedTaskList(state) {
+      const currentPage = state.currentPageMap[state.currentList] || 1
+      const start = (currentPage - 1) * state.tasksPerPage
+      const end = start + state.tasksPerPage
+      return state.taskList.slice(start, end)
+    },
+  },
   actions: {
     applyTaskOrder(type, tasks = []) {
       const order = this.taskOrderMap[type]
@@ -55,12 +95,43 @@ export const useTaskStore = defineStore('task', {
       this.selectedGidList = []
       this.fetchList()
     },
+    updateCurrentPage(listType, page) {
+      const maxPage = Math.max(1, Math.ceil(this.taskList.length / this.tasksPerPage))
+      const normalizedPage = Math.min(Math.max(Math.floor(Number(page) || 1), 1), maxPage)
+      this.currentPageMap = {
+        ...this.currentPageMap,
+        [listType]: normalizedPage,
+      }
+      this.selectedGidList = []
+    },
+    ensurePageInRange(listType = this.currentList) {
+      const currentPage = this.currentPageMap[listType] || 1
+      const maxPage = Math.max(1, Math.ceil(this.taskList.length / this.tasksPerPage))
+      if (currentPage > maxPage) {
+        this.updateCurrentPage(listType, maxPage)
+      }
+      if (currentPage < 1) {
+        this.updateCurrentPage(listType, 1)
+      }
+    },
+    changeCurrentPage(page) {
+      this.updateCurrentPage(this.currentList, page)
+    },
+    setTasksPerPage(value) {
+      const next = clampTasksPerPage(value)
+      this.tasksPerPage = next
+      this.ensurePageInRange(this.currentList)
+      if (typeof window !== 'undefined' && window.localStorage) {
+        window.localStorage.setItem(TASKS_PER_PAGE_STORAGE_KEY, `${next}`)
+      }
+    },
     async fetchList() {
       try {
         const type = this.currentList
         const data = await api.fetchTaskList({ type })
         const orderedData = this.applyTaskOrder(type, data)
         this.taskList = orderedData
+        this.ensurePageInRange(type)
         this.updateTaskOrder(
           type,
           orderedData.map((task) => task.gid),
@@ -80,7 +151,7 @@ export const useTaskStore = defineStore('task', {
       this.selectedGidList = list
     },
     selectAllTask() {
-      this.selectedGidList = this.taskList.map((task) => task.gid)
+      this.selectedGidList = this.paginatedTaskList.map((task) => task.gid)
     },
     async fetchItem(gid) {
       try {
@@ -156,8 +227,8 @@ export const useTaskStore = defineStore('task', {
       })
     },
     addTorrent(data) {
-      const { torrent, options } = data
-      return api.addTorrent({ torrent, options }).then(() => {
+      const { torrentPath, options } = data
+      return api.addTorrent({ torrentPath, options }).then(() => {
         this.fetchList()
         const appStore = useAppStore()
         appStore.updateAddTaskOptions({})

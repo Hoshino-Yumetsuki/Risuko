@@ -3,7 +3,7 @@
     <recycle-scroller
       v-if="useVirtualList"
       class="task-list task-list-virtual"
-      :items="taskList"
+      :items="paginatedTaskList"
       :item-size="112"
       key-field="gid"
     >
@@ -15,7 +15,7 @@
     </recycle-scroller>
     <mo-drag-select v-else class="task-list" attribute="attr" @change="handleDragSelectChange">
       <div
-        v-for="(item, index) in taskList"
+        v-for="(item, index) in paginatedTaskList"
         :key="item.gid"
         :attr="item.gid"
         :class="getItemClass(item)"
@@ -25,6 +25,25 @@
         <mo-task-item :task="item" />
       </div>
     </mo-drag-select>
+    <footer class="task-pagination">
+      <button
+        class="task-pagination-btn"
+        type="button"
+        :disabled="currentPage <= 1"
+        @click="onPrevPageClick"
+      >
+        {{ $t('task.pagination-prev') }}
+      </button>
+      <span class="task-pagination-text">{{ currentPage }} / {{ totalPages }}</span>
+      <button
+        class="task-pagination-btn"
+        type="button"
+        :disabled="currentPage >= totalPages"
+        @click="onNextPageClick"
+      >
+        {{ $t('task.pagination-next') }}
+      </button>
+    </footer>
   </div>
   <div class="no-task" v-else>
     <div class="no-task-inner">
@@ -57,14 +76,35 @@ export default {
     taskList() {
       return useTaskStore().taskList
     },
+    paginatedTaskList() {
+      return useTaskStore().paginatedTaskList
+    },
     selectedGidList() {
       return useTaskStore().selectedGidList
     },
+    currentPage() {
+      return useTaskStore().currentPage
+    },
+    totalPages() {
+      return useTaskStore().totalPages
+    },
     useVirtualList() {
-      return this.taskList.length >= VIRTUAL_LIST_THRESHOLD
+      return this.paginatedTaskList.length >= VIRTUAL_LIST_THRESHOLD
     },
   },
   methods: {
+    onPrevPageClick() {
+      if (this.currentPage <= 1) {
+        return
+      }
+      useTaskStore().changeCurrentPage(this.currentPage - 1)
+    },
+    onNextPageClick() {
+      if (this.currentPage >= this.totalPages) {
+        return
+      }
+      useTaskStore().changeCurrentPage(this.currentPage + 1)
+    },
     handleItemClick(item, event) {
       const gid = item.gid
       const isMulti = event.metaKey || event.ctrlKey

@@ -1,5 +1,17 @@
 <template>
   <div class="task-actions">
+    <div class="task-page-size">
+      <Select :model-value="`${tasksPerPage}`" @update:model-value="onTasksPerPageChange">
+        <SelectTrigger size="sm" class="task-page-size-trigger">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent align="end">
+          <SelectItem v-for="size in tasksPerPageOptions" :key="size" :value="`${size}`">
+            {{ $t('task.tasks-per-page', { count: size }) }}
+          </SelectItem>
+        </SelectContent>
+      </Select>
+    </div>
     <div class="task-total-progress" v-if="showTotalProgress">
       <span class="task-total-progress-size">
         {{ formatBytes(totalCompletedLength, 1) }} / {{ formatBytes(totalLength, 1) }}
@@ -98,11 +110,23 @@ import { useTaskStore } from '@/store/task'
 import { commands } from '@/components/CommandManager/instance'
 import { ADD_TASK_TYPE } from '@shared/constants'
 import { bytesToSize, calcProgress } from '@shared/utils'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { Trash2, RefreshCw, Play, Pause, Eraser, ArrowUp, ArrowDown } from 'lucide-vue-next'
 
 export default {
   name: 'mo-task-actions',
   components: {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
     Trash2,
     RefreshCw,
     Play,
@@ -119,6 +143,12 @@ export default {
     }
   },
   computed: {
+    tasksPerPage() {
+      return useTaskStore().tasksPerPage
+    },
+    tasksPerPageOptions() {
+      return [10, 20, 30, 40, 50]
+    },
     currentList() {
       return useTaskStore().currentList
     },
@@ -146,6 +176,9 @@ export default {
     },
   },
   methods: {
+    onTasksPerPageChange(value) {
+      useTaskStore().setTasksPerPage(value)
+    },
     refreshSpin() {
       this.t && clearTimeout(this.t)
 

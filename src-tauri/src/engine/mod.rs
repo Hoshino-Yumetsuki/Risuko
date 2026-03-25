@@ -369,6 +369,15 @@ fn build_engine_args(
         args.push(format!("--{}={}", k, val_str));
     }
 
+    // Large torrents can generate large RPC payloads when submitted via addTorrent.
+    // Ensure aria2 won't reject valid requests with default small request-size limits.
+    if !args
+        .iter()
+        .any(|arg| arg.starts_with("--rpc-max-request-size="))
+    {
+        args.push("--rpc-max-request-size=128M".to_string());
+    }
+
     // aria2c caps max-connection-per-server at 16.
     if let Some(pos) = args
         .iter()

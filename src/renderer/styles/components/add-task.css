@@ -2,13 +2,16 @@
 @layer components {
   .add-task-dialog {
     max-width: 580px !important;
-    min-width: 360px;
-    min-height: 500px;
+    width: min(580px, calc(100vw - 2rem));
+    min-width: min(360px, calc(100vw - 2rem));
+    min-height: min(500px, calc(100vh - 2rem));
+    max-height: calc(100vh - 2rem);
     padding: 0 !important;
     gap: 0 !important;
     border-radius: calc(var(--radius) - 2px);
     display: flex !important;
     flex-direction: column;
+    overflow: hidden;
   }
   .add-task-dialog .atd-form {
     flex: 1 1 0;
