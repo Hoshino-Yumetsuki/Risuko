@@ -701,7 +701,7 @@ export default {
       },
     },
     runModes() {
-      let result = [
+      const result = [
         {
           label: this.$t('preferences.run-mode-standard'),
           value: APP_RUN_MODE.STANDARD,
@@ -711,17 +711,6 @@ export default {
           value: APP_RUN_MODE.TRAY,
         },
       ]
-
-      if (this.isMac) {
-        result = [
-          ...result,
-          {
-            label: this.$t('preferences.run-mode-hide-tray'),
-            value: APP_RUN_MODE.HIDE_TRAY,
-          },
-        ]
-      }
-
       return result
     },
     speedUnits() {

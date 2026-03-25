@@ -47,11 +47,11 @@ export default {
     showWindowActions() {
       return is.windows() || is.linux()
     },
-    runMode() {
-      return (usePreferenceStore().config as any).runMode
-    },
     traySpeedometer() {
       return parseBooleanConfig((usePreferenceStore().config as any).traySpeedometer)
+    },
+    runMode() {
+      return Number((usePreferenceStore().config as any).runMode) || APP_RUN_MODE.STANDARD
     },
     rpcSecret() {
       return (usePreferenceStore().config as any).rpcSecret
@@ -76,8 +76,7 @@ export default {
       return `dir-${this.direction}`
     },
     enableDynamicTray() {
-      const { isMac, isRenderer, runMode } = this
-      return isMac && isRenderer && runMode !== APP_RUN_MODE.HIDE_TRAY
+      return this.isMac && this.isRenderer && this.runMode !== APP_RUN_MODE.HIDE_TRAY
     },
   },
   methods: {

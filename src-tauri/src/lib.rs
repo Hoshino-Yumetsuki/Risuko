@@ -52,7 +52,7 @@ pub fn run() {
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
-                let _ = window.hide();
+                let _ = commands::app_cmds::hide_main_window(&window.app_handle());
             }
         })
         .invoke_handler(tauri::generate_handler![
