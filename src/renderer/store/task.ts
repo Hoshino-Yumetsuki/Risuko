@@ -22,6 +22,9 @@ const loadTasksPerPage = () => {
     return DEFAULT_TASKS_PER_PAGE
   }
   const saved = window.localStorage.getItem(TASKS_PER_PAGE_STORAGE_KEY)
+  if (saved === null) {
+    return DEFAULT_TASKS_PER_PAGE
+  }
   return clampTasksPerPage(Number(saved))
 }
 

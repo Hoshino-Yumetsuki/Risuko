@@ -79,7 +79,11 @@ export const getTaskFullPath = (
 }
 
 export const finalizeCompletedDownloadPath = async (task: any): Promise<string> => {
-  if (!task || isMagnetTask(task)) {
+  if (!task) {
+    return ''
+  }
+
+  if (isMagnetTask(task)) {
     return getTaskFullPath(task)
   }
 
