@@ -269,13 +269,35 @@ pub async fn start_engine(handle: &AppHandle) -> Result<(), Box<dyn std::error::
     {
         if let Some(pid) = child.id() {
             if let Err(e) = win_process_guard::bind_pid(pid) {
-                log::warn!(
-                    "Failed to bind aria2c into process job; continuing without job guard: {}",
-                    e
-                );
+                let kill_err = child.kill().await.err();
+                let msg = if let Some(kill_err) = kill_err {
+                    format!(
+                        "Failed to bind aria2c into process job: {}; also failed to kill child: {}",
+                        e, kill_err
+                    )
+                } else {
+                    format!(
+                        "Failed to bind aria2c into process job: {}; startup aborted to avoid orphan process",
+                        e
+                    )
+                };
+                log::error!("{}", msg);
+                *state.engine_running.lock().unwrap() = false;
+                return Err(msg.into());
             }
         } else {
-            log::warn!("Failed to get aria2c process id after spawn; continuing startup");
+            let kill_err = child.kill().await.err();
+            let msg = if let Some(kill_err) = kill_err {
+                format!(
+                    "Failed to get aria2c process id after spawn; startup aborted and kill failed: {}",
+                    kill_err
+                )
+            } else {
+                "Failed to get aria2c process id after spawn; startup aborted".to_string()
+            };
+            log::error!("{}", msg);
+            *state.engine_running.lock().unwrap() = false;
+            return Err(msg.into());
         }
     }
 
