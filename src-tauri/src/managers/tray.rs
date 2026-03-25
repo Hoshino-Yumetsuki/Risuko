@@ -13,10 +13,9 @@ fn toggle_main_window(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let is_visible = window.is_visible().unwrap_or(false);
         if is_visible {
-            let _ = window.hide();
+            let _ = crate::commands::app_cmds::hide_main_window(app);
         } else {
-            let _ = window.show();
-            let _ = window.set_focus();
+            let _ = crate::commands::app_cmds::show_main_window(app);
         }
     }
 }
@@ -131,10 +130,7 @@ pub fn setup_tray(app: &App) -> Result<(), Box<dyn std::error::Error>> {
                 "tray-new-bt-task" => show_and_emit(app, "application:new-bt-task"),
                 "tray-open-file" => show_and_emit(app, "application:open-file"),
                 "tray-show" => {
-                    if let Some(window) = app.get_webview_window("main") {
-                        let _ = window.show();
-                        let _ = window.set_focus();
-                    }
+                    let _ = crate::commands::app_cmds::show_main_window(app);
                 }
                 "tray-manual" => {
                     let _ = open::that("https://github.com/agalwood/Motrix/wiki");
