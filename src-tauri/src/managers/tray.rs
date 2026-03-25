@@ -3,11 +3,23 @@ use std::collections::HashMap;
 use tauri::{
     image::Image,
     menu::{Menu, MenuBuilder, MenuItemBuilder, PredefinedMenuItem},
-    tray::TrayIconBuilder,
+    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     App, AppHandle, Emitter, Manager,
 };
 
 use super::{emit_command, show_and_emit};
+
+fn toggle_main_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let is_visible = window.is_visible().unwrap_or(false);
+        if is_visible {
+            let _ = window.hide();
+        } else {
+            let _ = window.show();
+            let _ = window.set_focus();
+        }
+    }
+}
 
 fn get_tray_menu_text(labels: &HashMap<String, String>, id: &str, fallback: &str) -> String {
     labels
@@ -101,7 +113,17 @@ pub fn setup_tray(app: &App) -> Result<(), Box<dyn std::error::Error>> {
         .menu(&menu)
         .tooltip("Motrix")
         .icon_as_template(true)
-        .show_menu_on_left_click(true)
+        .show_menu_on_left_click(false)
+        .on_tray_icon_event(|tray, event| {
+            if let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } = event
+            {
+                toggle_main_window(tray.app_handle());
+            }
+        })
         .on_menu_event(move |app, event| {
             let id = event.id().as_ref();
             match id {
