@@ -20,7 +20,7 @@ import is from '@/shims/platform'
 import { Toaster } from '@/components/ui/sonner'
 import { useAppStore } from '@/store/app'
 import { usePreferenceStore } from '@/store/preference'
-import { APP_THEME } from '@shared/constants'
+import { APP_RUN_MODE, APP_THEME } from '@shared/constants'
 import DynamicTray from '@/components/Native/DynamicTray.vue'
 import EngineClient from '@/components/Native/EngineClient.vue'
 import Ipc from '@/components/Native/Ipc.vue'
@@ -50,6 +50,9 @@ export default {
     traySpeedometer() {
       return parseBooleanConfig((usePreferenceStore().config as any).traySpeedometer)
     },
+    runMode() {
+      return Number((usePreferenceStore().config as any).runMode) || APP_RUN_MODE.STANDARD
+    },
     rpcSecret() {
       return (usePreferenceStore().config as any).rpcSecret
     },
@@ -73,7 +76,7 @@ export default {
       return `dir-${this.direction}`
     },
     enableDynamicTray() {
-      return this.isMac && this.isRenderer
+      return this.isMac && this.isRenderer && this.runMode !== APP_RUN_MODE.HIDE_TRAY
     },
   },
   methods: {
