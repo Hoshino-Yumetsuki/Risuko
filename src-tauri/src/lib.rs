@@ -73,6 +73,7 @@ pub fn run() {
             commands::app_cmds::check_for_updates,
             commands::app_cmds::reset_session,
             commands::app_cmds::auto_hide_window,
+            commands::app_cmds::is_opened_at_login,
             commands::file_cmds::reveal_in_folder,
             commands::file_cmds::open_path,
             commands::file_cmds::trash_item,
