@@ -31,7 +31,7 @@ export default {
       const unlistenFile = await listen('open-file', (event) => {
         const path = event.payload as string
         if (path && path.endsWith('.torrent')) {
-          commands.execute('application:new-bt-task-with-file', path)
+          commands.execute('application:new-bt-task-with-file', { path })
         }
       })
 
