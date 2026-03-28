@@ -227,6 +227,9 @@ export default {
       return this.taskStatus === TASK_STATUS.ACTIVE
     },
     shouldSampleSpeed() {
+      if (!this.task) {
+        return false
+      }
       return this.taskStatus === TASK_STATUS.ACTIVE || this.taskStatus === TASK_STATUS.SEEDING
     },
     percent() {
