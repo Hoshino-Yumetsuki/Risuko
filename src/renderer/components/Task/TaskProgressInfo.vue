@@ -13,11 +13,11 @@
       <div class="task-speed-info">
         <div class="task-speed-text" v-if="isBT">
           <i><ArrowUp :size="10" /></i>
-          <span>{{ formatBytes(task.uploadSpeed) }}/s</span>
+          <span>{{ formatBytes(displayUploadSpeed) }}/s</span>
         </div>
-        <div class="task-speed-text">
+        <div class="task-speed-text" v-if="showDownloadSpeed">
           <i><ArrowDown :size="10" /></i>
-          <span>{{ formatBytes(task.downloadSpeed) }}/s</span>
+          <span>{{ formatBytes(displayDownloadSpeed) }}/s</span>
         </div>
         <div class="task-speed-text hidden-sm-and-down" v-if="remaining > 0">
           <span>{{ remainingText }}</span>
@@ -70,9 +70,21 @@ export default {
     isSeeder() {
       return checkTaskIsSeeder(this.task)
     },
+    displayUploadSpeed() {
+      return Number(this.task?.uploadSpeed || 0)
+    },
+    displayDownloadSpeed() {
+      if (this.isSeeder) {
+        return 0
+      }
+      return Number(this.task?.downloadSpeed || 0)
+    },
+    showDownloadSpeed() {
+      return !this.isSeeder
+    },
     remaining() {
-      const { totalLength, completedLength, downloadSpeed } = this.task
-      return timeRemaining(totalLength, completedLength, downloadSpeed)
+      const { totalLength, completedLength } = this.task
+      return timeRemaining(totalLength, completedLength, this.displayDownloadSpeed)
     },
     remainingText() {
       return timeFormat(this.remaining, {

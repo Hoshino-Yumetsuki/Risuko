@@ -9,8 +9,113 @@ use tokio::sync::Mutex;
 
 use crate::state::AppState;
 
+#[cfg(target_os = "windows")]
+mod win_process_guard {
+    use std::io;
+    use std::mem::{size_of, zeroed};
+    use std::ptr;
+    use std::sync::LazyLock;
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::Foundation::HANDLE;
+    use windows_sys::Win32::System::JobObjects::AssignProcessToJobObject;
+    use windows_sys::Win32::System::JobObjects::CreateJobObjectW;
+    use windows_sys::Win32::System::JobObjects::JobObjectExtendedLimitInformation;
+    use windows_sys::Win32::System::JobObjects::SetInformationJobObject;
+    use windows_sys::Win32::System::JobObjects::JOBOBJECT_EXTENDED_LIMIT_INFORMATION;
+    use windows_sys::Win32::System::JobObjects::JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+    use windows_sys::Win32::System::Threading::OpenProcess;
+    use windows_sys::Win32::System::Threading::PROCESS_QUERY_LIMITED_INFORMATION;
+    use windows_sys::Win32::System::Threading::PROCESS_SET_QUOTA;
+    use windows_sys::Win32::System::Threading::PROCESS_TERMINATE;
+
+    struct JobHandle(HANDLE);
+
+    unsafe impl Send for JobHandle {}
+    unsafe impl Sync for JobHandle {}
+
+    impl Drop for JobHandle {
+        fn drop(&mut self) {
+            if !self.0.is_null() {
+                unsafe {
+                    let _ = CloseHandle(self.0);
+                }
+            }
+        }
+    }
+
+    static ENGINE_JOB: LazyLock<Result<JobHandle, String>> = LazyLock::new(|| unsafe {
+        let job = CreateJobObjectW(ptr::null(), ptr::null());
+        if job.is_null() {
+            return Err(format!(
+                "CreateJobObjectW failed: {}",
+                io::Error::last_os_error()
+            ));
+        }
+
+        let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = zeroed();
+        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+
+        let ok = SetInformationJobObject(
+            job,
+            JobObjectExtendedLimitInformation,
+            &info as *const _ as *const _,
+            size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+        );
+        if ok == 0 {
+            let err = io::Error::last_os_error();
+            let _ = CloseHandle(job);
+            return Err(format!("SetInformationJobObject failed: {}", err));
+        }
+
+        Ok(JobHandle(job))
+    });
+
+    pub fn bind_pid(pid: u32) -> Result<(), String> {
+        let job = ENGINE_JOB
+            .as_ref()
+            .map_err(|e| format!("Engine job unavailable: {}", e))?;
+
+        unsafe {
+            let process = OpenProcess(
+                PROCESS_SET_QUOTA | PROCESS_TERMINATE | PROCESS_QUERY_LIMITED_INFORMATION,
+                0,
+                pid,
+            );
+            if process.is_null() {
+                return Err(format!(
+                    "OpenProcess({pid}) failed: {}",
+                    io::Error::last_os_error()
+                ));
+            }
+
+            let ok = AssignProcessToJobObject(job.0, process);
+            let _ = CloseHandle(process);
+            if ok == 0 {
+                return Err(format!(
+                    "AssignProcessToJobObject({pid}) failed: {}",
+                    io::Error::last_os_error()
+                ));
+            }
+        }
+
+        Ok(())
+    }
+}
+
 pub const SESSION_FILENAME: &str = "download.session";
 pub const LOG_FILENAME: &str = "aria2.log";
+const PROTECTED_EXTRA_ARG_KEYS: &[&str] = &[
+    "conf-path",
+    "save-session",
+    "input-file",
+    "log",
+    "no-conf",
+    "enable-rpc",
+    "rpc-listen-all",
+    "rpc-allow-origin-all",
+    "rpc-listen-port",
+    "rpc-secret",
+];
 
 static ENGINE_PROCESS: std::sync::LazyLock<Mutex<Option<Child>>> =
     std::sync::LazyLock::new(|| Mutex::new(None));
@@ -28,35 +133,33 @@ fn resolve_engine_file(
 
     for arch_dir in arch_dirs {
         for rel_path in engine_rel_paths(platform_dir, arch_dir, filename) {
-            // Resolve paths the same way Tauri resource bundling does.
-            if let Ok(candidate) = handle.path().resolve(&rel_path, BaseDirectory::Resource) {
-                attempted.push(candidate.to_string_lossy().to_string());
-                if candidate.exists() {
-                    let resolved = candidate
-                        .canonicalize()
-                        .unwrap_or_else(|_| candidate.clone());
-                    if arch_dir != primary_arch {
-                        log::warn!(
-                            "{} for {}/{} not found; using fallback arch {}/{}",
-                            filename,
-                            platform_dir,
-                            primary_arch,
-                            platform_dir,
-                            arch_dir
-                        );
-                    }
-                    log::info!("{} found at: {:?}", filename, resolved);
-                    return Ok(resolved);
-                }
+            let dev_candidate = PathBuf::from(&rel_path);
+            let resource_candidate = handle
+                .path()
+                .resolve(&rel_path, BaseDirectory::Resource)
+                .ok();
+
+            let prefer_dev = cfg!(debug_assertions);
+            let mut candidates = Vec::new();
+            if prefer_dev {
+                candidates.push(dev_candidate.clone());
+            }
+            if let Some(ref candidate) = resource_candidate {
+                candidates.push(candidate.clone());
+            }
+            if !prefer_dev {
+                candidates.push(dev_candidate.clone());
             }
 
-            // Dev fallback when running from repository checkout.
-            let dev_candidate = PathBuf::from(&rel_path);
-            attempted.push(dev_candidate.to_string_lossy().to_string());
-            if dev_candidate.exists() {
-                let resolved = dev_candidate
+            for candidate in candidates {
+                attempted.push(candidate.to_string_lossy().to_string());
+                if !candidate.exists() {
+                    continue;
+                }
+
+                let resolved = candidate
                     .canonicalize()
-                    .unwrap_or_else(|_| dev_candidate.clone());
+                    .unwrap_or_else(|_| candidate.clone());
                 if arch_dir != primary_arch {
                     log::warn!(
                         "{} for {}/{} not found; using fallback arch {}/{}",
@@ -168,8 +271,45 @@ pub async fn start_engine(handle: &AppHandle) -> Result<(), Box<dyn std::error::
         .args(&args)
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
+    command.kill_on_drop(true);
     configure_engine_spawn(&mut command);
     let mut child = command.spawn()?;
+
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(pid) = child.id() {
+            if let Err(e) = win_process_guard::bind_pid(pid) {
+                let kill_err = child.kill().await.err();
+                let msg = if let Some(kill_err) = kill_err {
+                    format!(
+                        "Failed to bind aria2c into process job: {}; also failed to kill child: {}",
+                        e, kill_err
+                    )
+                } else {
+                    format!(
+                        "Failed to bind aria2c into process job: {}; startup aborted to avoid orphan process",
+                        e
+                    )
+                };
+                log::error!("{}", msg);
+                *state.engine_running.lock().unwrap() = false;
+                return Err(msg.into());
+            }
+        } else {
+            let kill_err = child.kill().await.err();
+            let msg = if let Some(kill_err) = kill_err {
+                format!(
+                    "Failed to get aria2c process id after spawn; startup aborted and kill failed: {}",
+                    kill_err
+                )
+            } else {
+                "Failed to get aria2c process id after spawn; startup aborted".to_string()
+            };
+            log::error!("{}", msg);
+            *state.engine_running.lock().unwrap() = false;
+            return Err(msg.into());
+        }
+    }
 
     // Grab stderr so we can read startup errors if the process exits early.
     // Keep this handle until after the liveness check; dropping it too early
@@ -369,22 +509,175 @@ fn build_engine_args(
         args.push(format!("--{}={}", k, val_str));
     }
 
-    // aria2c caps max-connection-per-server at 16.
-    if let Some(pos) = args
+    // Large torrents can generate large RPC payloads when submitted via addTorrent.
+    // Ensure aria2 won't reject valid requests with default small request-size limits.
+    if !args
         .iter()
-        .position(|a| a.starts_with("--max-connection-per-server="))
+        .any(|arg| arg.starts_with("--rpc-max-request-size="))
     {
-        let val: u32 = args[pos]
-            .trim_start_matches("--max-connection-per-server=")
-            .parse()
-            .unwrap_or(16);
-        if val > 16 {
-            args[pos] = format!("--max-connection-per-server={}", 16);
-            log::warn!("Clamped max-connection-per-server from {} to 16", val);
+        args.push("--rpc-max-request-size=128M".to_string());
+    }
+
+    if let Some(extra_args) = user.get("aria2-extra-args").and_then(|v| v.as_str()) {
+        merge_custom_args(&mut args, extra_args);
+    }
+    clamp_max_connection_per_server(&mut args);
+
+    Ok(args)
+}
+
+fn merge_custom_args(base_args: &mut Vec<String>, extra_args: &str) {
+    let tokens = split_command_line_args(extra_args);
+    if tokens.is_empty() {
+        return;
+    }
+
+    let mut merged_extra = Vec::new();
+    let mut i = 0usize;
+
+    while i < tokens.len() {
+        let token = &tokens[i];
+        if token.trim().is_empty() {
+            i += 1;
+            continue;
+        }
+
+        let key = parse_long_option_key(token).map(str::to_string);
+        let has_separate_value = key.is_some()
+            && !token.contains('=')
+            && i + 1 < tokens.len()
+            && !tokens[i + 1].starts_with('-');
+        let span = if has_separate_value { 2 } else { 1 };
+
+        if let Some(ref key) = key {
+            if PROTECTED_EXTRA_ARG_KEYS.contains(&key.as_str()) {
+                log::warn!("Ignoring protected aria2-extra-args option: --{}", key);
+                i += span;
+                continue;
+            }
+
+            base_args.retain(|arg| !arg_matches_option_key(arg, key));
+        }
+
+        merged_extra.push(token.clone());
+        if span == 2 {
+            merged_extra.push(tokens[i + 1].clone());
+        }
+        i += span;
+    }
+
+    base_args.extend(merged_extra);
+}
+
+fn parse_long_option_key(token: &str) -> Option<&str> {
+    if !token.starts_with("--") || token == "--" {
+        return None;
+    }
+
+    let body = &token[2..];
+    if body.is_empty() {
+        return None;
+    }
+
+    Some(body.split('=').next().unwrap_or(body))
+}
+
+fn arg_matches_option_key(arg: &str, key: &str) -> bool {
+    arg == format!("--{}", key) || arg.starts_with(&format!("--{}=", key))
+}
+
+fn clamp_max_connection_per_server(args: &mut [String]) {
+    let mut i = 0usize;
+    while i < args.len() {
+        if let Some(raw) = args[i].strip_prefix("--max-connection-per-server=") {
+            let val = raw.parse::<u32>().unwrap_or(16);
+            if val > 16 {
+                args[i] = "--max-connection-per-server=16".to_string();
+                log::warn!("Clamped max-connection-per-server from {} to 16", val);
+            }
+        } else if args[i] == "--max-connection-per-server" && i + 1 < args.len() {
+            let val = args[i + 1].parse::<u32>().unwrap_or(16);
+            if val > 16 {
+                args[i + 1] = "16".to_string();
+                log::warn!("Clamped max-connection-per-server from {} to 16", val);
+            }
+            i += 1;
+        }
+
+        i += 1;
+    }
+}
+
+fn split_command_line_args(input: &str) -> Vec<String> {
+    #[derive(Copy, Clone, Eq, PartialEq)]
+    enum QuoteMode {
+        None,
+        Single,
+        Double,
+    }
+
+    let mut result = Vec::new();
+    let mut current = String::new();
+    let mut quote_mode = QuoteMode::None;
+    let mut escaping = false;
+
+    for ch in input.chars() {
+        match quote_mode {
+            QuoteMode::None => {
+                if escaping {
+                    current.push(ch);
+                    escaping = false;
+                    continue;
+                }
+
+                match ch {
+                    '\\' => escaping = true,
+                    '\'' => quote_mode = QuoteMode::Single,
+                    '"' => quote_mode = QuoteMode::Double,
+                    c if c.is_whitespace() => {
+                        if !current.is_empty() {
+                            result.push(std::mem::take(&mut current));
+                        }
+                    }
+                    _ => current.push(ch),
+                }
+            }
+            QuoteMode::Single => {
+                if ch == '\'' {
+                    quote_mode = QuoteMode::None;
+                } else {
+                    current.push(ch);
+                }
+            }
+            QuoteMode::Double => {
+                if escaping {
+                    current.push(ch);
+                    escaping = false;
+                    continue;
+                }
+
+                match ch {
+                    '\\' => escaping = true,
+                    '"' => quote_mode = QuoteMode::None,
+                    _ => current.push(ch),
+                }
+            }
         }
     }
 
-    Ok(args)
+    if escaping {
+        current.push('\\');
+    }
+    if !current.is_empty() {
+        result.push(current);
+    }
+    if quote_mode != QuoteMode::None {
+        log::warn!(
+            "aria2-extra-args contains an unmatched quote; parsed arguments may be incomplete"
+        );
+    }
+
+    result
 }
 
 fn get_platform_dir() -> &'static str {
@@ -425,3 +718,113 @@ fn configure_engine_spawn(command: &mut Command) {
 
 #[cfg(not(target_os = "windows"))]
 fn configure_engine_spawn(_command: &mut Command) {}
+
+#[cfg(test)]
+mod tests {
+    use super::{clamp_max_connection_per_server, merge_custom_args, split_command_line_args};
+
+    #[test]
+    fn split_command_line_args_splits_flags() {
+        let args = split_command_line_args("--summary-interval=0 --disk-cache=64M");
+        assert_eq!(args, vec!["--summary-interval=0", "--disk-cache=64M"]);
+    }
+
+    #[test]
+    fn split_command_line_args_supports_quoted_values() {
+        let args = split_command_line_args("--header=\"User-Agent: Test UA\" '--out=hello world'");
+        assert_eq!(
+            args,
+            vec!["--header=User-Agent: Test UA", "--out=hello world"]
+        );
+    }
+
+    #[test]
+    fn split_command_line_args_supports_escaped_spaces() {
+        let args = split_command_line_args("--out=hello\\ world --check-integrity=true");
+        assert_eq!(args, vec!["--out=hello world", "--check-integrity=true"]);
+    }
+
+    #[test]
+    fn merge_custom_args_overrides_same_key_from_base() {
+        let mut base = vec!["--dir=/downloads".to_string(), "--split=5".to_string()];
+        merge_custom_args(&mut base, "--split=16 --disk-cache=64M");
+        assert_eq!(
+            base,
+            vec![
+                "--dir=/downloads".to_string(),
+                "--split=16".to_string(),
+                "--disk-cache=64M".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn merge_custom_args_keeps_protected_keys_from_base() {
+        let mut base = vec![
+            "--rpc-listen-port=16800".to_string(),
+            "--rpc-secret=abc".to_string(),
+            "--dir=/downloads".to_string(),
+        ];
+        merge_custom_args(
+            &mut base,
+            "--rpc-listen-port=17000 --rpc-secret=override --dir=/tmp",
+        );
+        assert_eq!(
+            base,
+            vec![
+                "--rpc-listen-port=16800".to_string(),
+                "--rpc-secret=abc".to_string(),
+                "--dir=/tmp".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn merge_custom_args_blocks_rpc_disabling_flags() {
+        let mut base = vec![
+            "--conf-path=/tmp/aria2.conf".to_string(),
+            "--rpc-listen-port=16800".to_string(),
+            "--rpc-secret=abc".to_string(),
+            "--enable-rpc=true".to_string(),
+            "--rpc-listen-all=true".to_string(),
+            "--rpc-allow-origin-all=true".to_string(),
+            "--dir=/downloads".to_string(),
+        ];
+
+        merge_custom_args(
+            &mut base,
+            "--no-conf --enable-rpc=false --rpc-listen-all=false --rpc-allow-origin-all=false --dir=/tmp",
+        );
+
+        assert_eq!(
+            base,
+            vec![
+                "--conf-path=/tmp/aria2.conf".to_string(),
+                "--rpc-listen-port=16800".to_string(),
+                "--rpc-secret=abc".to_string(),
+                "--enable-rpc=true".to_string(),
+                "--rpc-listen-all=true".to_string(),
+                "--rpc-allow-origin-all=true".to_string(),
+                "--dir=/tmp".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn clamp_max_connection_per_server_handles_custom_override() {
+        let mut args = vec![
+            "--max-connection-per-server=20".to_string(),
+            "--max-connection-per-server".to_string(),
+            "99".to_string(),
+        ];
+        clamp_max_connection_per_server(&mut args);
+        assert_eq!(
+            args,
+            vec![
+                "--max-connection-per-server=16".to_string(),
+                "--max-connection-per-server".to_string(),
+                "16".to_string(),
+            ]
+        );
+    }
+}

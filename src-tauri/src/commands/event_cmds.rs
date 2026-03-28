@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 use std::process::{Child, Command};
 #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -27,21 +28,40 @@ pub fn on_speed_change(
     upload_speed: u64,
     download_speed: u64,
     show_tray_speed: bool,
+    app_name: Option<String>,
+    download_label: Option<String>,
+    upload_label: Option<String>,
 ) -> Result<(), String> {
+    let app_name = app_name
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "Motrix".to_string());
+    let download_label = download_label
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "Download".to_string());
+    let upload_label = upload_label
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "Upload".to_string());
+
     if let Some(tray) = handle.tray_by_id("main") {
         if !show_tray_speed {
-            let _ = tray.set_tooltip(Some("Motrix"));
+            let _ = tray.set_tooltip(Some(&app_name));
             return Ok(());
         }
 
         let tooltip = if upload_speed > 0 || download_speed > 0 {
             format!(
-                "Motrix\nDL: {}/s  UL: {}/s",
+                "{}\n{}: {}/s  {}: {}/s",
+                app_name,
+                download_label,
                 format_speed(download_speed),
+                upload_label,
                 format_speed(upload_speed)
             )
         } else {
-            "Motrix".to_string()
+            app_name.clone()
         };
         let _ = tray.set_tooltip(Some(&tooltip));
     }
@@ -89,6 +109,22 @@ pub fn update_tray(
         let _ = tray.set_icon(Some(image));
     }
     Ok(())
+}
+
+#[tauri::command]
+pub fn update_tray_menu_labels(
+    handle: AppHandle,
+    labels: HashMap<String, String>,
+) -> Result<(), String> {
+    crate::managers::tray::update_tray_menu_labels(&handle, &labels)
+}
+
+#[tauri::command]
+pub fn update_app_menu_labels(
+    handle: AppHandle,
+    labels: HashMap<String, String>,
+) -> Result<(), String> {
+    crate::managers::menu::update_menu_labels(&handle, &labels)
 }
 
 fn format_speed(bytes: u64) -> String {

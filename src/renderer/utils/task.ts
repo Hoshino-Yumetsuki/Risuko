@@ -44,7 +44,7 @@ export const initTaskForm = (state: any) => {
     referer: referer || '',
     selectFile: NONE_SELECTED_FILES,
     split: normalizedSplit,
-    torrent: '',
+    torrentPath: '',
     uris: addTaskUrl,
     userAgent: userAgent || '',
     authorization: '',
@@ -95,8 +95,13 @@ const buildOption = (type: string, form: any) => {
   }
 
   if (type === ADD_TASK_TYPE.TORRENT) {
-    if (selectFile !== SELECTED_ALL_FILES && selectFile !== NONE_SELECTED_FILES) {
-      result.selectFile = selectFile
+    const normalizedSelectFile = `${selectFile || ''}`.trim()
+    const hasExplicitSelection =
+      normalizedSelectFile &&
+      normalizedSelectFile !== SELECTED_ALL_FILES &&
+      normalizedSelectFile !== NONE_SELECTED_FILES
+    if (hasExplicitSelection) {
+      result.selectFile = normalizedSelectFile
     }
   }
 
@@ -131,14 +136,14 @@ export const buildUriPayload = (form: any) => {
 }
 
 export const buildTorrentPayload = (form: any) => {
-  const { torrent } = form
-  if (isEmpty(torrent)) {
+  const { torrentPath } = form
+  if (isEmpty(torrentPath)) {
     throw new Error('task.new-task-torrent-required')
   }
 
   const options = buildOption(ADD_TASK_TYPE.TORRENT, form)
   const result = {
-    torrent,
+    torrentPath,
     options,
   }
   return result

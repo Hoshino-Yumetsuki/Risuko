@@ -27,6 +27,8 @@ import {
   SUPPORT_RTL_LOCALES,
   UNKNOWN_PEERID_NAME,
   DOCUMENT_SUFFIXES,
+  TASK_STATUS,
+  TEMP_DOWNLOAD_SUFFIX,
 } from '@shared/constants'
 
 export const bytesToSize = (bytes, precision = 1) => {
@@ -213,6 +215,14 @@ const ellipsis = (str = '', maxLen = 64) => {
   return maxLen > 0 ? `${str.substring(0, maxLen)}...` : str
 }
 
+const stripTempDownloadSuffix = (name = '') => {
+  const value = `${name || ''}`
+  if (!value.toLowerCase().endsWith(TEMP_DOWNLOAD_SUFFIX)) {
+    return value
+  }
+  return value.slice(0, value.length - TEMP_DOWNLOAD_SUFFIX.length)
+}
+
 export const getTaskName = (task, options = {}) => {
   const o = {
     defaultName: '',
@@ -231,7 +241,18 @@ export const getTaskName = (task, options = {}) => {
     result = ellipsis(bittorrent.info.name, maxLen)
   } else if (files.length === 1) {
     result = getFileNameFromFile(files[0])
+    if (task.status === TASK_STATUS.COMPLETE) {
+      result = stripTempDownloadSuffix(result)
+    }
     result = ellipsis(result, maxLen)
+  }
+
+  if (
+    task.status === TASK_STATUS.COMPLETE &&
+    !(bittorrent && bittorrent.info) &&
+    files.length !== 1
+  ) {
+    result = stripTempDownloadSuffix(result)
   }
 
   return result

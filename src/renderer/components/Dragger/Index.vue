@@ -3,7 +3,6 @@
 </template>
 
 <script lang="ts">
-import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
 import { useAppStore } from '@/store/app'
 import { ADD_TASK_TYPE } from '@shared/constants'
@@ -25,31 +24,18 @@ export default {
         return
       }
 
-      const fileList: Array<{ raw: File; name: string }> = []
-      for (const path of torrentPaths) {
-        try {
-          const bytes = await invoke<number[]>('read_binary_file', { path })
-          const segs = `${path}`.split(/[/\\]/)
-          const name = segs[segs.length - 1] || 'task.torrent'
-          const uint8 = new Uint8Array(bytes)
-          const file = new File([uint8], name, { type: 'application/x-bittorrent' })
-          fileList.push({ raw: file, name: file.name })
-        } catch {
-          // skip broken path and continue remaining files
-        }
-      }
-
-      if (!fileList.length) {
-        this.$msg.error(this.$t('task.select-torrent'))
-        return
-      }
+      const fileList = torrentPaths.map((path) => {
+        const segs = `${path}`.split(/[/\\]/)
+        const name = segs[segs.length - 1] || 'task.torrent'
+        return { name, path }
+      })
 
       useAppStore().showAddTaskDialog(ADD_TASK_TYPE.TORRENT)
       useAppStore().addTaskAddTorrents({ fileList })
     }
     this.handleFileList = (files) => {
       const fileList = (files || [])
-        .map((item) => ({ raw: item, name: item.name }))
+        .map((item) => ({ raw: item, name: item.name, path: item.path || '' }))
         .filter((item) => /\.torrent$/i.test(item.name))
       if (!fileList.length) {
         this.$msg.error(this.$t('task.select-torrent'))

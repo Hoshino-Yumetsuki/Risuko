@@ -1,9 +1,13 @@
 const userKeys = [
+  'auto-detect-low-speed-tasks',
   'auto-check-update',
   'auto-hide-window',
+  'auto-retry',
+  'auto-retry-interval',
+  'auto-retry-strategy',
   'auto-sync-tracker',
+  'aria2-extra-args',
   'cookie',
-  'enable-upnp',
   'engine-bin-path',
   'engine-max-connection-per-server',
   'favorite-directories',
@@ -29,6 +33,7 @@ const userKeys = [
   'theme',
   'tracker-source',
   'tray-speedometer',
+  'low-speed-threshold',
 ]
 
 const systemKeys = [

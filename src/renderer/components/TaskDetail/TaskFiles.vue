@@ -29,7 +29,9 @@
                 @update:model-value="(val) => toggleRow(row, val)"
               />
             </TableCell>
-            <TableCell class="truncate max-w-[200px]">{{ row.name }}</TableCell>
+            <TableCell class="truncate max-w-[200px]" :title="row.path || row.name">
+              {{ row.name }}
+            </TableCell>
             <TableCell>{{ formatExtension(row.extension) }}</TableCell>
             <TableCell v-if="mode === 'DETAIL'" class="text-right">{{
               calcProgress(row.length, row.completedLength, 1)

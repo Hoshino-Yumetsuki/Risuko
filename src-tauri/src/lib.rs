@@ -4,7 +4,9 @@ mod engine;
 mod managers;
 mod state;
 
-use tauri::Manager;
+use std::sync::atomic::Ordering;
+
+use tauri::{Emitter, Manager};
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 
 pub fn run() {
@@ -24,6 +26,19 @@ pub fn run() {
             Some(vec!["--opened-at-login=1"]),
         ))
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.set_focus();
+
+                if let Some(path) = args.get(1) {
+                    if std::path::Path::new(path).exists() {
+                        log::info!("Single instance received file: {}", path);
+                        let _ = window.emit("open-file", path);
+                    }
+                }
+            }
+        }))
         .plugin(tauri_plugin_deep_link::init())
         .setup(|app| {
             let app_state = state::AppState::new(app.handle())?;
@@ -35,6 +50,13 @@ pub fn run() {
             #[cfg(not(target_os = "macos"))]
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.set_decorations(false);
+            }
+
+            let opened_at_login = std::env::args().any(|arg| arg == "--opened-at-login=1");
+            if opened_at_login {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.hide();
+                }
             }
 
             let handle = app.handle().clone();
@@ -51,8 +73,16 @@ pub fn run() {
         })
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                let quitting = window
+                    .app_handle()
+                    .state::<state::AppState>()
+                    .is_quitting
+                    .load(Ordering::SeqCst);
+                if quitting {
+                    return;
+                }
                 api.prevent_close();
-                let _ = window.hide();
+                let _ = commands::app_cmds::hide_main_window(&window.app_handle());
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -66,18 +96,24 @@ pub fn run() {
             commands::app_cmds::check_for_updates,
             commands::app_cmds::reset_session,
             commands::app_cmds::auto_hide_window,
+            commands::app_cmds::is_opened_at_login,
             commands::file_cmds::reveal_in_folder,
             commands::file_cmds::open_path,
             commands::file_cmds::trash_item,
+            commands::file_cmds::rename_path,
             commands::file_cmds::read_binary_file,
+            commands::file_cmds::resolve_torrent_path,
             commands::file_cmds::trash_generated_torrent_sidecars,
             commands::engine_cmds::restart_engine,
             commands::engine_cmds::get_engine_status,
+            commands::engine_cmds::add_torrent_by_path,
             commands::event_cmds::on_download_status_change,
             commands::event_cmds::on_speed_change,
             commands::event_cmds::on_progress_change,
             commands::event_cmds::on_task_download_complete,
             commands::event_cmds::update_tray,
+            commands::event_cmds::update_tray_menu_labels,
+            commands::event_cmds::update_app_menu_labels,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Motrix");

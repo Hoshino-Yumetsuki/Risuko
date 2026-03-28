@@ -60,8 +60,11 @@ pub fn save_preference(
         let mut mgr = state.config.lock().map_err(|e| e.to_string())?;
 
         if let Some(system) = config.get("system").and_then(|v| v.as_object()) {
-            mgr.set_system_config_map(system)?;
+            let mut system = system.clone();
+            system.remove("enable-upnp");
+            mgr.set_system_config_map(&system)?;
         }
+        mgr.remove_system_config_key("enable-upnp")?;
 
         if !user.is_empty() {
             mgr.set_user_config_map(&user)?;

@@ -34,6 +34,65 @@ const updateTray = (payload: any) => {
     logger.warn('[Motrix] update_tray failed:', err)
   })
 }
+
+const updateTrayMenuLabels = (i18n: any) => {
+  const labels = {
+    'tray-new-task': i18n.t('task.new-task'),
+    'tray-new-bt-task': i18n.t('task.new-bt-task'),
+    'tray-open-file': i18n.t('task.open-file'),
+    'tray-show': i18n.t('app.show'),
+    'tray-manual': i18n.t('help.manual'),
+    'tray-check-updates': i18n.t('app.check-for-updates'),
+    'tray-task-list': i18n.t('app.task-list'),
+    'tray-preferences': i18n.t('app.preferences'),
+    'tray-quit': i18n.t('app.quit'),
+  }
+
+  invoke('update_tray_menu_labels', { labels }).catch((err) => {
+    logger.warn('[Motrix] update_tray_menu_labels failed:', err)
+  })
+}
+
+const updateAppMenuLabels = (i18n: any) => {
+  const labels = {
+    'menu-app': i18n.t('menu.app'),
+    'menu-file': i18n.t('menu.file'),
+    'menu-task': i18n.t('menu.task'),
+    'menu-edit': i18n.t('menu.edit'),
+    'menu-window': i18n.t('menu.window'),
+    'menu-help': i18n.t('menu.help'),
+    about: i18n.t('app.about'),
+    preferences: i18n.t('app.preferences'),
+    'check-for-updates': i18n.t('app.check-for-updates'),
+    'show-window': i18n.t('app.show'),
+    quit: i18n.t('app.quit'),
+    reload: i18n.t('window.reload'),
+    front: i18n.t('window.front'),
+    'new-task': i18n.t('task.new-task'),
+    'new-bt-task': i18n.t('task.new-bt-task'),
+    'open-file': i18n.t('task.open-file'),
+    'task-list': i18n.t('app.task-list'),
+    'pause-task': i18n.t('task.pause-task'),
+    'resume-task': i18n.t('task.resume-task'),
+    'delete-task': i18n.t('task.delete-task'),
+    'move-task-up': i18n.t('task.move-task-up'),
+    'move-task-down': i18n.t('task.move-task-down'),
+    'pause-all-task': i18n.t('task.pause-all-task'),
+    'resume-all-task': i18n.t('task.resume-all-task'),
+    'select-all-task': i18n.t('task.select-all-task'),
+    'clear-recent-tasks': i18n.t('task.clear-recent-tasks'),
+    'official-website': i18n.t('help.official-website'),
+    manual: i18n.t('help.manual'),
+    'release-notes': i18n.t('help.release-notes'),
+    'report-problem': i18n.t('help.report-problem'),
+    'toggle-dev-tools': i18n.t('help.toggle-dev-tools'),
+  }
+
+  invoke('update_app_menu_labels', { labels }).catch((err) => {
+    logger.warn('[Motrix] update_app_menu_labels failed:', err)
+  })
+}
+
 function initTrayWorker() {
   const worker = new TrayWorker()
 
@@ -61,6 +120,8 @@ async function init(config: any) {
   const localeManager = getLocaleManager()
   await localeManager.changeLanguageByLocale(locale)
   const i18n = localeManager.getI18n()
+  updateAppMenuLabels(i18n)
+  updateTrayMenuLabels(i18n)
 
   const app = createApp(App)
   app.use(store)
@@ -79,15 +140,19 @@ async function init(config: any) {
   app.config.globalProperties.$http = axios
   app.config.globalProperties.$t = (key: string, value?: any) => i18n.t(key, value)
 
-  router.isReady().then(() => {
+  router.isReady().then(async () => {
     ;(window as any).__app = app.mount('#app') as any
     ;(window as any).__app.commands = commands
     ;(window as any).__app.trayWorker = initTrayWorker()
 
     // Show the window after mount to avoid a white flash.
-    getCurrentWebviewWindow()
-      .show()
-      .catch(() => {})
+    // Skip showing if launched at login (auto-start).
+    const isOpenedAtLogin = await invoke('is_opened_at_login').catch(() => false)
+    if (!isOpenedAtLogin) {
+      getCurrentWebviewWindow()
+        .show()
+        .catch(() => {})
+    }
   })
 }
 

@@ -1,6 +1,7 @@
 /* eslint-disable no-unused-vars */
 
 export const EMPTY_STRING = ''
+export const TEMP_DOWNLOAD_SUFFIX = '.part'
 const PORTABLE_EXECUTABLE_DIR = process.env.PORTABLE_EXECUTABLE_DIR
 const IS_PORTABLE = PORTABLE_EXECUTABLE_DIR && PORTABLE_EXECUTABLE_DIR !== EMPTY_STRING
 

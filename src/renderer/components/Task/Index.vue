@@ -3,7 +3,7 @@
     <aside class="subnav hidden-xs-only subnav-pane">
       <mo-task-subnav :current="status" />
     </aside>
-    <div class="content panel panel-layout panel-layout--v">
+    <div class="content panel panel-layout panel-layout--v relative">
       <header class="panel-header">
         <h4 class="task-title hidden-xs-only">{{ title }}</h4>
         <mo-subnav-switcher :title="title" :subnavs="subnavs" class="hidden-sm-and-up" />
@@ -12,6 +12,7 @@
       <main class="panel-content">
         <mo-task-list />
       </main>
+      <mo-loading-overlay :show="taskActionLoading" :text="taskActionLoadingText" />
     </div>
   </div>
 </template>
@@ -22,6 +23,7 @@ import { confirm } from '@/components/ui/confirm-dialog'
 import { useAppStore } from '@/store/app'
 import { useTaskStore } from '@/store/task'
 import { usePreferenceStore } from '@/store/preference'
+import api from '@/api'
 
 import { commands } from '@/components/CommandManager/instance'
 import { ADD_TASK_TYPE } from '@shared/constants'
@@ -29,9 +31,10 @@ import TaskSubnav from '@/components/Subnav/TaskSubnav.vue'
 import TaskActions from '@/components/Task/TaskActions.vue'
 import TaskList from '@/components/Task/TaskList.vue'
 import SubnavSwitcher from '@/components/Subnav/SubnavSwitcher.vue'
+import LoadingOverlay from '@/components/ui/LoadingOverlay.vue'
 import { getTaskUri, parseHeader } from '@shared/utils'
 import { writeText } from '@tauri-apps/plugin-clipboard-manager'
-import { delayDeleteTaskFiles, showItemInFolder, moveTaskFilesToTrash } from '@/utils/native'
+import { showItemInFolder, moveTaskFilesToTrash } from '@/utils/native'
 
 export default {
   name: 'mo-content-task',
@@ -40,6 +43,7 @@ export default {
     [TaskActions.name]: TaskActions,
     [TaskList.name]: TaskList,
     [SubnavSwitcher.name]: SubnavSwitcher,
+    [LoadingOverlay.name]: LoadingOverlay,
   },
   props: {
     status: {
@@ -87,7 +91,28 @@ export default {
   watch: {
     status: 'onStatusChange',
   },
+  data() {
+    return {
+      taskActionLoading: false,
+      taskActionLoadingText: '',
+    }
+  },
   methods: {
+    async withTaskActionLoading(loadingText, action: () => Promise<any>) {
+      if (this.taskActionLoading) {
+        return false
+      }
+
+      this.taskActionLoading = true
+      this.taskActionLoadingText = `${loadingText || ''}`
+      try {
+        await action()
+        return true
+      } finally {
+        this.taskActionLoading = false
+        this.taskActionLoadingText = ''
+      }
+    },
     onStatusChange() {
       this.changeCurrentList()
     },
@@ -125,7 +150,19 @@ export default {
     },
     async deleteTaskFiles(task) {
       try {
-        const result = await moveTaskFilesToTrash(task)
+        let targetTask = task
+        if (!targetTask?.infoHash && targetTask?.gid) {
+          try {
+            const fullTask = await api.fetchTaskItem({ gid: targetTask.gid })
+            if (fullTask) {
+              targetTask = fullTask
+            }
+          } catch (err) {
+            logger.warn('[Motrix] fetch full task before delete files failed:', err)
+          }
+        }
+
+        const result = await moveTaskFilesToTrash(targetTask)
 
         if (!result) {
           throw new Error('task.remove-task-file-fail')
@@ -148,20 +185,28 @@ export default {
       return this.deleteTaskFiles(task)
     },
     async removeTask(task, taskName, isRemoveWithFiles = false) {
-      const ready = await this.prepareTaskRemoval(task, isRemoveWithFiles, 'removeTask')
-      if (!ready) {
-        return
-      }
-
-      return this.removeTaskItem(task, taskName)
+      const loadingText = this.$t(
+        isRemoveWithFiles ? 'task.loading-delete-task-files' : 'task.loading-delete-task',
+      )
+      return this.withTaskActionLoading(loadingText, async () => {
+        const ready = await this.prepareTaskRemoval(task, isRemoveWithFiles, 'removeTask')
+        if (!ready) {
+          return
+        }
+        await this.removeTaskItem(task, taskName)
+      })
     },
     async removeTaskRecord(task, taskName, isRemoveWithFiles = false) {
-      const ready = await this.prepareTaskRemoval(task, isRemoveWithFiles, 'removeTaskRecord')
-      if (!ready) {
-        return
-      }
-
-      return this.removeTaskRecordItem(task, taskName)
+      const loadingText = this.$t(
+        isRemoveWithFiles ? 'task.loading-remove-record-files' : 'task.loading-remove-record',
+      )
+      return this.withTaskActionLoading(loadingText, async () => {
+        const ready = await this.prepareTaskRemoval(task, isRemoveWithFiles, 'removeTaskRecord')
+        if (!ready) {
+          return
+        }
+        await this.removeTaskRecordItem(task, taskName)
+      })
     },
     async removeTaskItem(task, taskName) {
       try {
@@ -200,24 +245,40 @@ export default {
       }
     },
     async removeTasks(taskList, isRemoveWithFiles = false) {
-      const gids = taskList.map((task) => task.gid)
-      try {
-        await useTaskStore().batchForcePauseTask(gids)
-      } catch (err) {
-        logger.warn('[Motrix] batchForcePauseTask before removeTasks failed:', err)
-      }
-      if (isRemoveWithFiles) {
-        const deleted = await this.batchDeleteTaskFiles(taskList)
-        if (!deleted) {
-          return
+      const loadingText = this.$t('task.loading-batch-delete-task')
+      return this.withTaskActionLoading(loadingText, async () => {
+        const gids = taskList.map((task) => task.gid)
+        try {
+          await useTaskStore().batchForcePauseTask(gids)
+        } catch (err) {
+          logger.warn('[Motrix] batchForcePauseTask before removeTasks failed:', err)
         }
-      }
+        if (isRemoveWithFiles) {
+          const deleted = await this.batchDeleteTaskFiles(taskList)
+          if (!deleted) {
+            return
+          }
+        }
 
-      this.removeTaskItems(gids)
+        await this.removeTaskItems(gids)
+      })
     },
     async batchDeleteTaskFiles(taskList) {
-      const promises = taskList.map((task, index) => delayDeleteTaskFiles(task, index * 200))
-      const results = await Promise.allSettled(promises)
+      const results = []
+      for (const task of taskList) {
+        try {
+          const value = await this.deleteTaskFiles(task)
+          results.push({
+            status: 'fulfilled',
+            value,
+          })
+        } catch (reason) {
+          results.push({
+            status: 'rejected',
+            reason,
+          })
+        }
+      }
       logger.log('[Motrix] batch delete task files: ', results)
       const failed = results.some((item) => {
         if (item.status === 'rejected') {
@@ -231,17 +292,15 @@ export default {
       }
       return true
     },
-    removeTaskItems(gids) {
-      useTaskStore()
-        .batchRemoveTask(gids)
-        .then(() => {
-          this.$msg.success(this.$t('task.batch-delete-task-success'))
-        })
-        .catch(({ code }) => {
-          if (code === 1) {
-            this.$msg.error(this.$t('task.batch-delete-task-fail'))
-          }
-        })
+    async removeTaskItems(gids) {
+      try {
+        await useTaskStore().batchRemoveTask(gids)
+        this.$msg.success(this.$t('task.batch-delete-task-success'))
+      } catch ({ code }) {
+        if (code === 1) {
+          this.$msg.error(this.$t('task.batch-delete-task-fail'))
+        }
+      }
     },
     handlePauseTask(payload) {
       const { task, taskName } = payload
@@ -302,9 +361,10 @@ export default {
         })
     },
     handleRevealInFolder(payload) {
-      const { path } = payload
+      const { path, fallbackPath } = payload
       showItemInFolder(path, {
         errorMsg: this.$t('task.file-not-exist'),
+        fallbackPath,
       })
     },
     async handleDeleteTask(payload) {

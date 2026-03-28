@@ -1,10 +1,8 @@
 import logger from '@shared/utils/logger'
 import { toast } from 'vue-sonner'
-import { base64StringToBlob } from 'blob-util'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import router from '@/router'
-import { buildFileList } from '@shared/utils'
 import { ADD_TASK_TYPE } from '@shared/constants'
 import { getLocaleManager } from '@/components/Locale'
 import { commands } from '@/components/CommandManager/instance'
@@ -94,14 +92,14 @@ const showAddBtTask = () => {
 }
 
 const showAddBtTaskWithFile = (payload: any = {}) => {
-  const { name, dataURL = '' } = payload
-  if (!dataURL) {
+  const { path = '' } = payload
+  if (!path) {
     return
   }
 
-  const blob = base64StringToBlob(dataURL, 'application/x-bittorrent')
-  const file = new File([blob], name, { type: 'application/x-bittorrent' })
-  const fileList = buildFileList(file)
+  const segs = `${path}`.split(/[/\\]/)
+  const name = segs[segs.length - 1] || 'task.torrent'
+  const fileList = [{ name, path }]
 
   getAppStore().showAddTaskDialog(ADD_TASK_TYPE.TORRENT)
   setTimeout(() => {

@@ -10,8 +10,29 @@ import { useAppStore } from '@/store/app'
 import { useTaskStore } from '@/store/task'
 import { usePreferenceStore } from '@/store/preference'
 import api from '@/api'
-import { getTaskFullPath, showItemInFolder } from '@/utils/native'
+import { finalizeCompletedDownloadPath, showItemInFolder } from '@/utils/native'
 import { checkTaskIsBT, getTaskName, parseBooleanConfig } from '@shared/utils'
+import { TASK_STATUS } from '@shared/constants'
+
+const RETRY_STRATEGY_STATIC = 'static'
+const RETRY_STRATEGY_EXPONENTIAL = 'exponential'
+const AUTO_RETRY_MAX_DELAY_MS = 15 * 60 * 1000
+const LOW_SPEED_STRIKE_THRESHOLD = 3
+const LOW_SPEED_RECOVERY_COOLDOWN_MS = 30 * 1000
+const LOW_SPEED_RESTART_WAIT_MS = 500
+
+const normalizePositiveNumber = (
+  value: any,
+  fallback: number,
+  min = 0,
+  max = Number.MAX_SAFE_INTEGER,
+) => {
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed)) {
+    return fallback
+  }
+  return Math.min(Math.max(parsed, min), max)
+}
 
 export default {
   name: 'mo-engine-client',
@@ -27,6 +48,11 @@ export default {
       noSleepSyncing: false,
       noSleepResyncNeeded: false,
       startupAutoResumeHandled: false,
+      autoRetryTimerMap: {} as Record<string, ReturnType<typeof setTimeout>>,
+      autoRetryAttemptMap: {} as Record<string, number>,
+      lowSpeedStrikeMap: {} as Record<string, number>,
+      lowSpeedRecoverAtMap: {} as Record<string, number>,
+      lowSpeedRecoveringMap: {} as Record<string, boolean>,
     }
   },
   computed: {
@@ -78,25 +104,37 @@ export default {
     resumeAllWhenAppLaunched() {
       return parseBooleanConfig((usePreferenceStore().config as any).resumeAllWhenAppLaunched)
     },
+    autoRetryEnabled() {
+      return parseBooleanConfig((usePreferenceStore().config as any).autoRetry)
+    },
+    autoRetryStrategy() {
+      const value = (usePreferenceStore().config as any).autoRetryStrategy
+      return value === RETRY_STRATEGY_EXPONENTIAL
+        ? RETRY_STRATEGY_EXPONENTIAL
+        : RETRY_STRATEGY_STATIC
+    },
+    autoRetryIntervalSeconds() {
+      const raw = (usePreferenceStore().config as any).autoRetryInterval
+      return Math.floor(normalizePositiveNumber(raw, 5, 1, 300))
+    },
+    autoDetectLowSpeedTasks() {
+      return parseBooleanConfig((usePreferenceStore().config as any).autoDetectLowSpeedTasks)
+    },
+    lowSpeedThresholdBytes() {
+      const raw = (usePreferenceStore().config as any).lowSpeedThreshold
+      const kb = normalizePositiveNumber(raw, 20, 1, 10240)
+      return Math.floor(kb * 1024)
+    },
     currentTaskIsBT() {
       return checkTaskIsBT(this.currentTaskItem)
     },
   },
   watch: {
     speed() {
-      const { uploadSpeed, downloadSpeed, traySpeedometer } = this
-      invoke('on_speed_change', {
-        uploadSpeed,
-        downloadSpeed,
-        showTraySpeed: traySpeedometer,
-      }).catch(() => {})
+      this.syncTraySpeedTooltip()
     },
     traySpeedometer(val) {
-      invoke('on_speed_change', {
-        uploadSpeed: this.uploadSpeed,
-        downloadSpeed: this.downloadSpeed,
-        showTraySpeed: !!val,
-      }).catch(() => {})
+      this.syncTraySpeedTooltip(!!val)
     },
     downloading(val, oldVal) {
       if (val !== oldVal) {
@@ -121,8 +159,163 @@ export default {
         this.startPolling()
       }
     },
+    autoRetryEnabled(val) {
+      if (val) {
+        return
+      }
+      this.clearAllAutoRetryTimers()
+    },
+    autoDetectLowSpeedTasks(val) {
+      if (val) {
+        return
+      }
+      this.lowSpeedStrikeMap = {}
+      this.lowSpeedRecoverAtMap = {}
+      this.lowSpeedRecoveringMap = {}
+    },
   },
   methods: {
+    clearAutoRetryTimer(gid: string) {
+      const timer = this.autoRetryTimerMap[gid]
+      if (timer) {
+        clearTimeout(timer)
+      }
+      delete this.autoRetryTimerMap[gid]
+    },
+    clearAutoRetryState(gid: string) {
+      this.clearAutoRetryTimer(gid)
+      delete this.autoRetryAttemptMap[gid]
+    },
+    clearAllAutoRetryTimers() {
+      for (const gid of Object.keys(this.autoRetryTimerMap)) {
+        this.clearAutoRetryTimer(gid)
+      }
+      this.autoRetryAttemptMap = {}
+    },
+    scheduleAutoRetry(gid: string) {
+      if (!this.autoRetryEnabled || !gid) {
+        return
+      }
+
+      this.clearAutoRetryTimer(gid)
+
+      const nextAttempt = (this.autoRetryAttemptMap[gid] || 0) + 1
+      this.autoRetryAttemptMap[gid] = nextAttempt
+
+      const baseDelayMs = this.autoRetryIntervalSeconds * 1000
+      const computedDelayMs =
+        this.autoRetryStrategy === RETRY_STRATEGY_EXPONENTIAL
+          ? baseDelayMs * 2 ** (nextAttempt - 1)
+          : baseDelayMs
+      const delayMs = Math.min(Math.max(computedDelayMs, 1000), AUTO_RETRY_MAX_DELAY_MS)
+
+      this.autoRetryTimerMap[gid] = setTimeout(() => {
+        const taskStore = useTaskStore()
+        taskStore
+          .resumeTask({ gid })
+          .then(() => {
+            logger.info(
+              `[Motrix] auto retry resume requested for gid: ${gid}, attempt: ${nextAttempt}`,
+            )
+          })
+          .catch((err) => {
+            logger.warn(
+              `[Motrix] auto retry resume failed for gid: ${gid}, attempt: ${nextAttempt}, ${err?.message || err}`,
+            )
+          })
+          .finally(() => {
+            delete this.autoRetryTimerMap[gid]
+          })
+      }, delayMs)
+    },
+    resetLowSpeedStateForGid(gid: string) {
+      delete this.lowSpeedStrikeMap[gid]
+      delete this.lowSpeedRecoverAtMap[gid]
+      delete this.lowSpeedRecoveringMap[gid]
+    },
+    async recoverLowSpeedTask(gid: string) {
+      if (!gid || this.lowSpeedRecoveringMap[gid]) {
+        return
+      }
+
+      this.lowSpeedRecoveringMap[gid] = true
+      try {
+        await api.forcePauseTask({ gid })
+        await new Promise((resolve) => setTimeout(resolve, LOW_SPEED_RESTART_WAIT_MS))
+        await api.resumeTask({ gid })
+        useTaskStore().saveSession()
+        logger.info(`[Motrix] auto recovered low speed task: ${gid}`)
+      } catch (err) {
+        logger.warn(`[Motrix] auto recover low speed task failed: ${gid}, ${err?.message || err}`)
+      } finally {
+        this.lowSpeedRecoveringMap[gid] = false
+      }
+    },
+    handleLowSpeedTasks(tasks: any[] = []) {
+      if (!this.autoDetectLowSpeedTasks) {
+        return
+      }
+
+      const now = Date.now()
+      const activeGids = new Set<string>()
+
+      for (const task of tasks) {
+        const gid = `${task?.gid || ''}`
+        if (!gid || task?.status !== TASK_STATUS.ACTIVE) {
+          continue
+        }
+
+        activeGids.add(gid)
+
+        const speed = normalizePositiveNumber(task?.downloadSpeed, 0, 0)
+        if (speed >= this.lowSpeedThresholdBytes) {
+          this.resetLowSpeedStateForGid(gid)
+          continue
+        }
+
+        const strike = (this.lowSpeedStrikeMap[gid] || 0) + 1
+        this.lowSpeedStrikeMap[gid] = strike
+
+        if (strike < LOW_SPEED_STRIKE_THRESHOLD) {
+          continue
+        }
+        if ((this.lowSpeedRecoverAtMap[gid] || 0) > now) {
+          continue
+        }
+
+        this.lowSpeedStrikeMap[gid] = 0
+        this.lowSpeedRecoverAtMap[gid] = now + LOW_SPEED_RECOVERY_COOLDOWN_MS
+        this.recoverLowSpeedTask(gid)
+      }
+
+      const knownGids = new Set([
+        ...Object.keys(this.lowSpeedStrikeMap),
+        ...Object.keys(this.lowSpeedRecoverAtMap),
+      ])
+      for (const gid of knownGids) {
+        if (!activeGids.has(gid)) {
+          this.resetLowSpeedStateForGid(gid)
+        }
+      }
+    },
+    getTraySpeedLabelPayload() {
+      return {
+        appName: this.$t('menu.app'),
+        downloadLabel: this.$t('task.task-download-speed'),
+        uploadLabel: this.$t('task.task-upload-speed'),
+      }
+    },
+    syncTraySpeedTooltip(showTraySpeed = this.traySpeedometer) {
+      const { appName, downloadLabel, uploadLabel } = this.getTraySpeedLabelPayload()
+      invoke('on_speed_change', {
+        uploadSpeed: this.uploadSpeed,
+        downloadSpeed: this.downloadSpeed,
+        showTraySpeed: !!showTraySpeed,
+        appName,
+        downloadLabel,
+        uploadLabel,
+      }).catch(() => {})
+    },
     async setNoSleepState(downloading: boolean) {
       if (!downloading) {
         if (this.noSleepSource === 'plugin') {
@@ -201,6 +394,7 @@ export default {
       useAppStore().resetInterval()
       taskStore.saveSession()
       const [{ gid }] = event
+      this.clearAutoRetryState(gid)
       const { seedingList } = this
       if (seedingList.includes(gid)) return
 
@@ -215,6 +409,7 @@ export default {
     },
     onDownloadPause(event) {
       const [{ gid }] = event
+      this.clearAutoRetryState(gid)
       const { seedingList } = this
       if (seedingList.includes(gid)) return
 
@@ -227,6 +422,7 @@ export default {
     },
     onDownloadStop(event) {
       const [{ gid }] = event
+      this.clearAutoRetryState(gid)
       this.fetchTaskItem({ gid }).then((task) => {
         if (!task) return
         const taskName = getTaskName(task)
@@ -236,6 +432,7 @@ export default {
     },
     onDownloadError(event) {
       const [{ gid }] = event
+      this.scheduleAutoRetry(gid)
       this.fetchTaskItem({ gid }).then((task) => {
         if (!task) return
         const taskName = getTaskName(task)
@@ -253,6 +450,7 @@ export default {
       const taskStore = useTaskStore()
       taskStore.fetchList()
       const [{ gid }] = event
+      this.clearAutoRetryState(gid)
       taskStore.removeFromSeedingList(gid)
 
       this.fetchTaskItem({ gid }).then((task) => {
@@ -264,6 +462,7 @@ export default {
       const taskStore = useTaskStore()
       taskStore.fetchList()
       const [{ gid }] = event
+      this.clearAutoRetryState(gid)
       const { seedingList } = this
       if (seedingList.includes(gid)) return
 
@@ -274,10 +473,10 @@ export default {
         this.handleDownloadComplete(task, true)
       })
     },
-    handleDownloadComplete(task, isBT) {
+    async handleDownloadComplete(task, isBT) {
       useTaskStore().saveSession()
 
-      const path = getTaskFullPath(task)
+      const path = await finalizeCompletedDownloadPath(task)
       this.showTaskCompleteNotify(task, isBT, path)
       invoke('on_task_download_complete', { path }).catch(() => {})
     },
@@ -354,9 +553,28 @@ export default {
           useAppStore().fetchGlobalStat(),
           useAppStore().fetchProgress(),
         ]
+        let activeTasksForLowSpeedCheck: any[] = []
 
         if (!document.hidden || this.taskDetailVisible) {
           jobs.push(useTaskStore().fetchList())
+        }
+
+        if (this.autoDetectLowSpeedTasks) {
+          jobs.push(
+            api
+              .fetchActiveTaskList({
+                keys: ['gid', 'status', 'downloadSpeed'],
+              })
+              .then((tasks) => {
+                activeTasksForLowSpeedCheck = Array.isArray(tasks) ? tasks : []
+              })
+              .catch((err) => {
+                logger.warn(
+                  '[Motrix] low speed detection fetch active tasks failed:',
+                  err?.message || err,
+                )
+              }),
+          )
         }
 
         if (this.taskDetailVisible && this.currentTaskGid) {
@@ -368,6 +586,9 @@ export default {
         }
 
         await Promise.allSettled(jobs)
+        if (this.autoDetectLowSpeedTasks) {
+          this.handleLowSpeedTasks(activeTasksForLowSpeedCheck)
+        }
       } finally {
         this.isPolling = false
       }
@@ -409,6 +630,7 @@ export default {
       appStore.fetchEngineInfo()
       appStore.fetchEngineOptions()
       this.autoResumeUnfinishedTasksOnLaunch()
+      this.syncTraySpeedTooltip()
 
       this.startPolling()
     }, 100)
@@ -421,6 +643,7 @@ export default {
 
     this.unbindEngineEvents()
     this.stopPolling()
+    this.clearAllAutoRetryTimers()
 
     // Best effort release in case component is torn down while downloads were active.
     this.noSleepDesired = false

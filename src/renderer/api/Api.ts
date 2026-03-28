@@ -11,9 +11,16 @@ import {
   changeKeysToKebabCase,
 } from '@shared/utils'
 import { startupOnlyKeys } from '@shared/configKeys'
-import { ENGINE_RPC_HOST, ENGINE_RPC_PORT, EMPTY_STRING } from '@shared/constants'
+import {
+  ENGINE_RPC_HOST,
+  ENGINE_RPC_PORT,
+  EMPTY_STRING,
+  PROXY_SCOPES,
+  TEMP_DOWNLOAD_SUFFIX,
+} from '@shared/constants'
 
 const RPC_CONFIG_KEYS = ['rpc-host', 'rpc-listen-port', 'rpc-secret']
+const ENGINE_RESTART_USER_KEYS = ['idle-bt-network-guard', 'rpc-host', 'aria2-extra-args']
 const DEFAULT_TASK_LIST_FETCH_SIZE = 1000
 const MAX_TASK_LIST_FETCH_SIZE = 2000
 
@@ -42,6 +49,72 @@ const clampTaskListFetchSize = (value: unknown) => {
     return MAX_TASK_LIST_FETCH_SIZE
   }
   return normalized
+}
+
+const normalizeProxyBypass = (value: any) => {
+  if (typeof value !== 'string') {
+    return ''
+  }
+
+  return value
+    .split(/[\r\n,]+/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .join(',')
+}
+
+const hasTempDownloadSuffix = (value = '') => {
+  return value.toLowerCase().endsWith(TEMP_DOWNLOAD_SUFFIX)
+}
+
+const ensureTempDownloadSuffix = (value = '') => {
+  const normalized = `${value || ''}`.trim()
+  if (!normalized) {
+    return ''
+  }
+  if (hasTempDownloadSuffix(normalized)) {
+    return normalized
+  }
+  return `${normalized}${TEMP_DOWNLOAD_SUFFIX}`
+}
+
+const decodeUriPathSegment = (value = '') => {
+  try {
+    return decodeURIComponent(value)
+  } catch {
+    return value
+  }
+}
+
+const inferOutFromUri = (uri = '') => {
+  const raw = `${uri || ''}`.trim()
+  if (!raw) {
+    return ''
+  }
+
+  const pickName = (path = '') => {
+    const segments = `${path || ''}`.split('/').filter(Boolean)
+    if (segments.length === 0) {
+      return ''
+    }
+    const candidate = decodeUriPathSegment(segments[segments.length - 1]).trim()
+    if (!candidate || !candidate.includes('.')) {
+      return ''
+    }
+    if (candidate.startsWith('.') || candidate.endsWith('.')) {
+      return ''
+    }
+    return candidate
+  }
+
+  try {
+    const parsed = new URL(raw)
+    return pickName(parsed.pathname)
+  } catch {
+    const withoutHash = raw.split('#')[0]
+    const withoutQuery = withoutHash.split('?')[0]
+    return pickName(withoutQuery)
+  }
 }
 
 export default class Api {
@@ -150,22 +223,49 @@ export default class Api {
   }
 
   async savePreference(params: any = {}) {
-    const kebabParams = changeKeysToKebabCase(params)
-    const { system } = separateConfig(kebabParams)
+    let kebabParams = changeKeysToKebabCase(params)
+    kebabParams = this.patchProxySystemConfig(kebabParams)
+
+    const { user, system } = separateConfig(kebabParams)
     const hasStartupOnlySystemChanges = Object.keys(system).some((key) =>
       startupOnlyKeys.includes(key),
+    )
+    const hasEngineRestartUserChanges = ENGINE_RESTART_USER_KEYS.some((key) =>
+      Object.prototype.hasOwnProperty.call(user, key),
     )
 
     await this.savePreferenceToNativeStore(kebabParams)
 
     const shouldReconnect = Object.keys(kebabParams).some((key) => RPC_CONFIG_KEYS.includes(key))
-    if (hasStartupOnlySystemChanges) {
+    if (hasStartupOnlySystemChanges || hasEngineRestartUserChanges) {
       await invoke('restart_engine')
     }
 
-    if (shouldReconnect || hasStartupOnlySystemChanges) {
+    if (shouldReconnect || hasStartupOnlySystemChanges || hasEngineRestartUserChanges) {
       this.config = await this.loadConfig()
       await this.reconnectClient(this.config)
+    }
+  }
+
+  patchProxySystemConfig(params: Record<string, any>) {
+    if (!Object.prototype.hasOwnProperty.call(params, 'proxy')) {
+      return params
+    }
+
+    const proxy = params.proxy || {}
+    const proxyServer = `${proxy.server || ''}`.trim()
+    const proxyScope = Array.isArray(proxy.scope) ? proxy.scope : []
+    const useDownloadProxy =
+      !!proxy.enable && !!proxyServer && proxyScope.includes(PROXY_SCOPES.DOWNLOAD)
+
+    const systemProxyConfig = {
+      'all-proxy': useDownloadProxy ? proxyServer : '',
+      'no-proxy': useDownloadProxy ? normalizeProxyBypass(proxy.bypass) : '',
+    }
+
+    return {
+      ...params,
+      ...systemProxyConfig,
     }
   }
 
@@ -248,8 +348,10 @@ export default class Api {
     const { uris, outs, options } = params
     const tasks = uris.map((uri, index) => {
       const engineOptions: any = formatOptionsForEngine(options)
-      if (outs && outs[index]) {
-        engineOptions.out = outs[index]
+      const preferredOut = (outs && outs[index]) || engineOptions.out || inferOutFromUri(uri)
+      const tempOut = ensureTempDownloadSuffix(preferredOut)
+      if (tempOut) {
+        engineOptions.out = tempOut
       }
       const args = compactUndefined([[uri], engineOptions])
       return ['aria2.addUri', ...args]
@@ -286,10 +388,17 @@ export default class Api {
   }
 
   addTorrent(params: any) {
-    const { torrent, options } = params
+    const { torrentPath, options } = params
     const engineOptions = formatOptionsForEngine(options)
-    const args = compactUndefined([torrent, [], engineOptions])
-    return this.ensureReady().then((client) => client.call('addTorrent', ...args))
+
+    if (typeof torrentPath !== 'string' || !torrentPath.trim()) {
+      throw new Error('task.new-task-torrent-required')
+    }
+
+    return invoke('add_torrent_by_path', {
+      path: torrentPath,
+      options: engineOptions,
+    })
   }
 
   addMetalink(params: any) {

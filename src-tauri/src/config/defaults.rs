@@ -52,10 +52,14 @@ pub fn user_defaults() -> Map<String, Value> {
     let is_not_macos = !is_macos;
 
     let mut m = Map::new();
+    m.insert("auto-detect-low-speed-tasks".into(), json!(false));
     m.insert("auto-check-update".into(), json!(is_macos));
     m.insert("auto-hide-window".into(), json!(false));
+    m.insert("auto-retry".into(), json!(false));
+    m.insert("auto-retry-interval".into(), json!(5));
+    m.insert("auto-retry-strategy".into(), json!("static"));
     m.insert("auto-sync-tracker".into(), json!(true));
-    m.insert("enable-upnp".into(), json!(true));
+    m.insert("aria2-extra-args".into(), json!(""));
     m.insert("idle-bt-network-guard".into(), json!(true));
     m.insert("engine-max-connection-per-server".into(), json!(16));
     m.insert("favorite-directories".into(), json!([]));
@@ -67,6 +71,7 @@ pub fn user_defaults() -> Map<String, Value> {
     m.insert("last-sync-tracker-time".into(), json!(0));
     m.insert("locale".into(), json!("en-US"));
     m.insert("log-level".into(), json!("warn"));
+    m.insert("low-speed-threshold".into(), json!(20));
     m.insert("new-task-show-downloading".into(), json!(true));
     m.insert("no-confirm-before-delete-task".into(), json!(false));
     m.insert("open-at-login".into(), json!(false));

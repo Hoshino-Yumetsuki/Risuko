@@ -151,7 +151,7 @@
                 placeholder=""
                 v-model="form.dir"
                 :readonly="isMas"
-                class="flex-1 border-0 shadow-none rounded-none"
+                class="flex-1 shadow-none rounded-none"
               />
               <span class="mo-input-append" v-if="isRenderer">
                 <mo-select-directory @selected="handleNativeDirectorySelected" />
@@ -282,13 +282,13 @@
             <div v-if="!form.keepSeeding" class="settings-select-group">
               <div class="settings-select-item">
                 <label class="settings-select-item-label">{{ $t('preferences.seed-ratio') }}</label>
-                <NumberInput v-model="form.seedRatio" :min="1" :max="100" :step="0.1" />
+                <NumberInput v-model="form.seedRatio" :min="0" :max="100" :step="0.1" />
               </div>
               <div class="settings-select-item">
                 <label class="settings-select-item-label"
                   >{{ $t('preferences.seed-time') }} ({{ $t('preferences.seed-time-unit') }})</label
                 >
-                <NumberInput v-model="form.seedTime" :min="60" :max="525600" :step="1" />
+                <NumberInput v-model="form.seedTime" :min="0" :max="525600" :step="1" />
               </div>
             </div>
           </div>
@@ -330,6 +330,72 @@
                   :model-value="!!form.continue"
                   @change="(val) => setBasicBoolean('continue', val)"
                 />
+              </div>
+            </div>
+            <div class="settings-row">
+              <div class="settings-row-content">
+                <span class="settings-row-title">{{ $t('preferences.auto-retry') }}</span>
+              </div>
+              <div class="settings-row-action">
+                <ui-checkbox
+                  :model-value="!!form.autoRetry"
+                  @change="(val) => setBasicBoolean('autoRetry', val)"
+                />
+              </div>
+            </div>
+            <div v-if="form.autoRetry" class="settings-select-group">
+              <div class="settings-select-item">
+                <label class="settings-select-item-label">{{
+                  $t('preferences.auto-retry-strategy')
+                }}</label>
+                <Select v-model="form.autoRetryStrategy" class="settings-select-control">
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem
+                      v-for="item in retryStrategies"
+                      :key="item.value"
+                      :value="item.value"
+                    >
+                      {{ item.label }}
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div class="settings-select-item">
+                <label class="settings-select-item-label">
+                  {{ $t('preferences.auto-retry-interval') }} ({{
+                    $t('preferences.auto-retry-interval-unit')
+                  }})
+                </label>
+                <NumberInput v-model="form.autoRetryInterval" :min="1" :max="300" :step="1" />
+              </div>
+            </div>
+            <div class="settings-row">
+              <div class="settings-row-content">
+                <div class="settings-row-title">
+                  {{ $t('preferences.auto-detect-low-speed-tasks') }}
+                </div>
+                <div class="settings-row-description">
+                  {{ $t('preferences.auto-detect-low-speed-tasks-tips') }}
+                </div>
+              </div>
+              <div class="settings-row-action">
+                <ui-checkbox
+                  :model-value="!!form.autoDetectLowSpeedTasks"
+                  @change="(val) => setBasicBoolean('autoDetectLowSpeedTasks', val)"
+                />
+              </div>
+            </div>
+            <div v-if="form.autoDetectLowSpeedTasks" class="settings-select-group">
+              <div class="settings-select-item">
+                <label class="settings-select-item-label">
+                  {{ $t('preferences.low-speed-threshold') }} ({{
+                    $t('preferences.low-speed-threshold-unit')
+                  }})
+                </label>
+                <NumberInput v-model="form.lowSpeedThreshold" :min="1" :max="10240" :step="1" />
               </div>
             </div>
             <div class="settings-row">
@@ -450,8 +516,23 @@ import {
 import { reduceTrackerString } from '@shared/utils/tracker'
 import { getMotrixVersion } from '@/utils/version'
 
+const RETRY_STRATEGY_STATIC = 'static'
+const RETRY_STRATEGY_EXPONENTIAL = 'exponential'
+
+const normalizePositiveInt = (value, fallback, min = 1, max = Number.MAX_SAFE_INTEGER) => {
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed)) {
+    return fallback
+  }
+  return Math.min(Math.max(Math.floor(parsed), min), max)
+}
+
 const initForm = (config) => {
   const {
+    autoDetectLowSpeedTasks,
+    autoRetry,
+    autoRetryInterval,
+    autoRetryStrategy,
     autoHideWindow,
     btForceEncryption,
     btSaveMetadata,
@@ -479,11 +560,19 @@ const initForm = (config) => {
     taskNotification,
     theme,
     traySpeedometer,
+    lowSpeedThreshold,
   } = config
 
   const btAutoDownloadContent = followTorrent && followMetalink && !pauseMetadata
 
   const result = {
+    autoDetectLowSpeedTasks: parseBooleanConfig(autoDetectLowSpeedTasks),
+    autoRetry: parseBooleanConfig(autoRetry),
+    autoRetryInterval: normalizePositiveInt(autoRetryInterval, 5, 1, 300),
+    autoRetryStrategy:
+      autoRetryStrategy === RETRY_STRATEGY_EXPONENTIAL
+        ? RETRY_STRATEGY_EXPONENTIAL
+        : RETRY_STRATEGY_STATIC,
     autoHideWindow: parseBooleanConfig(autoHideWindow),
     btAutoDownloadContent,
     btForceEncryption: parseBooleanConfig(btForceEncryption),
@@ -497,6 +586,7 @@ const initForm = (config) => {
     keepSeeding: parseBooleanConfig(keepSeeding),
     keepWindowState: parseBooleanConfig(keepWindowState),
     locale,
+    lowSpeedThreshold: normalizePositiveInt(lowSpeedThreshold, 20, 1, 10240),
     maxConcurrentDownloads,
     maxConnectionPerServer,
     maxOverallDownloadLimit,
@@ -611,7 +701,7 @@ export default {
       },
     },
     runModes() {
-      let result = [
+      const result = [
         {
           label: this.$t('preferences.run-mode-standard'),
           value: APP_RUN_MODE.STANDARD,
@@ -621,17 +711,6 @@ export default {
           value: APP_RUN_MODE.TRAY,
         },
       ]
-
-      if (this.isMac) {
-        result = [
-          ...result,
-          {
-            label: this.$t('preferences.run-mode-hide-tray'),
-            value: APP_RUN_MODE.HIDE_TRAY,
-          },
-        ]
-      }
-
       return result
     },
     speedUnits() {
@@ -643,6 +722,18 @@ export default {
         {
           label: 'MB/s',
           value: 'M',
+        },
+      ]
+    },
+    retryStrategies() {
+      return [
+        {
+          label: this.$t('preferences.auto-retry-strategy-static'),
+          value: RETRY_STRATEGY_STATIC,
+        },
+        {
+          label: this.$t('preferences.auto-retry-strategy-exponential'),
+          value: RETRY_STRATEGY_EXPONENTIAL,
         },
       ]
     },
@@ -699,8 +790,10 @@ export default {
       this.form.maxOverallUploadLimit = limit
     },
     onKeepSeedingChange(enable) {
-      this.form.seedRatio = enable ? 0 : 1
-      this.form.seedTime = enable ? 525600 : 60
+      if (!enable) {
+        this.form.seedRatio = 0
+      }
+      this.form.seedTime = enable ? 525600 : 0
     },
     onKeepSeedingToggle(enable) {
       this.form.keepSeeding = !!enable
@@ -739,6 +832,8 @@ export default {
         'btForceEncryption',
         'keepSeeding',
         'continue',
+        'autoRetry',
+        'autoDetectLowSpeedTasks',
         'newTaskShowDownloading',
         'taskNotification',
         'noConfirmBeforeDeleteTask',
@@ -763,6 +858,21 @@ export default {
 
       if (rpcListenPort === EMPTY_STRING) {
         data.rpcListenPort = this.rpcDefaultPort
+      }
+
+      if ('autoRetryInterval' in data) {
+        data.autoRetryInterval = normalizePositiveInt(this.form.autoRetryInterval, 5, 1, 300)
+      }
+
+      if ('lowSpeedThreshold' in data) {
+        data.lowSpeedThreshold = normalizePositiveInt(this.form.lowSpeedThreshold, 20, 1, 10240)
+      }
+
+      if ('autoRetryStrategy' in data) {
+        data.autoRetryStrategy =
+          this.form.autoRetryStrategy === RETRY_STRATEGY_EXPONENTIAL
+            ? RETRY_STRATEGY_EXPONENTIAL
+            : RETRY_STRATEGY_STATIC
       }
 
       logger.log('[Motrix] preference changed data:', data)

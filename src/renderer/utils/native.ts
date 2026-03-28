@@ -2,23 +2,47 @@ import { invoke } from '@tauri-apps/api/core'
 import logger from '@shared/utils/logger'
 import { toast } from 'vue-sonner'
 import { getFileNameFromFile, isMagnetTask } from '@shared/utils'
-import { APP_THEME, TASK_STATUS } from '@shared/constants'
+import { APP_THEME, TASK_STATUS, TEMP_DOWNLOAD_SUFFIX } from '@shared/constants'
 
 function joinPath(...parts: string[]): string {
   const joined = parts.filter(Boolean).join('/')
   return joined.replace(/[/\\]+/g, '/')
 }
 
+export const hasTempDownloadSuffix = (fullPath = ''): boolean => {
+  return `${fullPath || ''}`.toLowerCase().endsWith(TEMP_DOWNLOAD_SUFFIX)
+}
+
+export const stripTempDownloadSuffix = (fullPath = ''): string => {
+  const value = `${fullPath || ''}`
+  if (!hasTempDownloadSuffix(value)) {
+    return value
+  }
+  return value.slice(0, value.length - TEMP_DOWNLOAD_SUFFIX.length)
+}
+
 export const showItemInFolder = async (
   fullPath: string,
-  { errorMsg }: { errorMsg?: string } = {},
+  { errorMsg, fallbackPath }: { errorMsg?: string; fallbackPath?: string } = {},
 ) => {
-  if (!fullPath) return
+  const revealPath = `${fullPath || ''}`.trim()
+  const fallback = `${fallbackPath || ''}`.trim()
+  if (!revealPath && !fallback) return
 
   try {
-    await invoke('reveal_in_folder', { path: fullPath })
+    await invoke('reveal_in_folder', { path: revealPath || fallback })
   } catch (err) {
     logger.warn(`[Motrix] showItemInFolder fail: ${err}`)
+
+    if (fallback && fallback !== revealPath) {
+      try {
+        await invoke('reveal_in_folder', { path: fallback })
+        return
+      } catch (fallbackErr) {
+        logger.warn(`[Motrix] showItemInFolder fallback fail: ${fallbackErr}`)
+      }
+    }
+
     if (errorMsg) {
       toast.error(errorMsg)
     }
@@ -30,7 +54,11 @@ export const openItem = async (fullPath: string) => {
   return invoke('open_path', { path: fullPath })
 }
 
-export const getTaskFullPath = (task: any): string => {
+export const getTaskFullPath = (
+  task: any,
+  options: { normalizeCompletedPath?: boolean } = {},
+): string => {
+  const { normalizeCompletedPath = true } = options
   const { dir, files, bittorrent } = task
   let result = dir
 
@@ -38,7 +66,8 @@ export const getTaskFullPath = (task: any): string => {
     return result
   }
 
-  if (bittorrent?.info?.name) {
+  const isBtMultiFile = !!bittorrent?.info?.name && Array.isArray(files) && files.length > 1
+  if (isBtMultiFile) {
     return joinPath(result, bittorrent.info.name)
   }
 
@@ -54,12 +83,72 @@ export const getTaskFullPath = (task: any): string => {
     }
   }
 
+  if (normalizeCompletedPath && task?.status === TASK_STATUS.COMPLETE) {
+    return stripTempDownloadSuffix(result)
+  }
+
   return result
 }
 
+export const getTaskRevealPath = (task: any): string => {
+  if (!task) {
+    return ''
+  }
+
+  if (isMagnetTask(task)) {
+    return `${task?.dir || ''}`.trim()
+  }
+
+  const files = Array.isArray(task?.files) ? task.files : []
+  const candidate = `${files.find((file: any) => `${file?.path || ''}`.trim())?.path || ''}`.trim()
+  if (!candidate) {
+    return getTaskFullPath(task)
+  }
+
+  if (task?.status === TASK_STATUS.COMPLETE) {
+    return stripTempDownloadSuffix(candidate)
+  }
+
+  return candidate
+}
+
+export const finalizeCompletedDownloadPath = async (task: any): Promise<string> => {
+  if (!task) {
+    return ''
+  }
+
+  if (isMagnetTask(task)) {
+    return getTaskFullPath(task)
+  }
+
+  const sourcePath = getTaskFullPath(task, {
+    normalizeCompletedPath: false,
+  })
+  if (!hasTempDownloadSuffix(sourcePath)) {
+    return sourcePath
+  }
+
+  const targetPath = stripTempDownloadSuffix(sourcePath)
+  if (!targetPath || targetPath === sourcePath) {
+    return sourcePath
+  }
+
+  try {
+    await invoke('rename_path', {
+      fromPath: sourcePath,
+      toPath: targetPath,
+    })
+    return targetPath
+  } catch (err) {
+    logger.warn(`[Motrix] rename completed temp file failed: ${err}`)
+    return sourcePath
+  }
+}
+
 export const moveTaskFilesToTrash = async (task: any): Promise<boolean> => {
-  const { dir, status, infoHash } = task
+  const { dir, status } = task
   const normalizedDir = `${dir || ''}`.trim()
+  const normalizedInfoHash = `${task?.infoHash || task?.bittorrent?.infoHash || ''}`.trim()
   const filesToCleanup = new Set<string>()
   const addCleanupPath = (candidate = '') => {
     const value = `${candidate || ''}`.trim()
@@ -98,11 +187,25 @@ export const moveTaskFilesToTrash = async (task: any): Promise<boolean> => {
     }
   }
 
-  if (normalizedDir && infoHash) {
+  const sidecarDir = (() => {
+    if (normalizedDir) {
+      return normalizedDir
+    }
+    const fullPath = getTaskFullPath(task)
+    const normalizedPath = `${fullPath || ''}`.trim()
+    if (!normalizedPath) {
+      return ''
+    }
+    const segments = normalizedPath.split(/[/\\]/)
+    segments.pop()
+    return segments.join('/')
+  })()
+
+  if (sidecarDir && normalizedInfoHash) {
     try {
       await invoke('trash_generated_torrent_sidecars', {
-        dir: normalizedDir,
-        infoHash: `${infoHash}`,
+        dir: sidecarDir,
+        infoHash: normalizedInfoHash,
       })
     } catch (err) {
       logger.warn(`[Motrix] cleanup generated torrent sidecars failed: ${err}`)

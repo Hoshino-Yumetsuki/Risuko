@@ -11,7 +11,13 @@
           </div>
           <DialogTitle class="atd-header-title">{{ $t('task.new-task') }}</DialogTitle>
         </div>
-        <button type="button" class="atd-close-btn" aria-label="Close" @click="handleClose">
+        <button
+          type="button"
+          class="atd-close-btn"
+          aria-label="Close"
+          :disabled="submitting"
+          @click="handleClose"
+        >
           <X :size="14" />
         </button>
       </DialogHeader>
@@ -23,6 +29,7 @@
             type="button"
             class="atd-source-tab"
             :class="{ 'atd-source-tab--active': type === 'uri' }"
+            :disabled="submitting"
             @click="handleTabClick({ props: { name: 'uri' } })"
           >
             <Link2 :size="14" />
@@ -32,6 +39,7 @@
             type="button"
             class="atd-source-tab"
             :class="{ 'atd-source-tab--active': type === 'torrent' }"
+            :disabled="submitting"
             @click="handleTabClick({ props: { name: 'torrent' } })"
           >
             <FileArchive :size="14" />
@@ -81,7 +89,7 @@
                 placeholder=""
                 v-model="form.dir"
                 :readonly="isMas"
-                class="flex-1 border-0 shadow-none rounded-none"
+                class="flex-1 shadow-none rounded-none"
               />
               <span class="mo-input-append" v-if="isRenderer">
                 <mo-select-directory @selected="handleNativeDirectorySelected" />
@@ -167,6 +175,7 @@
           type="button"
           class="atd-advanced-toggle"
           :class="{ 'atd-advanced-toggle--active': showAdvanced }"
+          :disabled="submitting"
           @click="showAdvanced = !showAdvanced"
         >
           <SlidersHorizontal :size="13" />
@@ -178,13 +187,14 @@
           />
         </button>
         <div class="atd-footer-actions">
-          <ui-button @click="handleCancel">{{ $t('app.cancel') }}</ui-button>
-          <ui-button variant="primary" @click="submitForm">
+          <ui-button :disabled="submitting" @click="handleCancel">{{ $t('app.cancel') }}</ui-button>
+          <ui-button variant="primary" :disabled="submitting" @click="submitForm">
             <Download :size="14" style="margin-right: 6px" />
-            {{ $t('app.submit') }}
+            {{ submitting ? $t('task.loading-add-task') : $t('app.submit') }}
           </ui-button>
         </div>
       </DialogFooter>
+      <mo-loading-overlay :show="submitting" :text="$t('task.loading-add-task')" />
     </DialogContent>
   </Dialog>
 </template>
@@ -220,8 +230,14 @@ import HistoryDirectory from '@/components/Preference/HistoryDirectory.vue'
 import SelectDirectory from '@/components/Native/SelectDirectory.vue'
 import SelectTorrent from '@/components/Task/SelectTorrent.vue'
 import UiButton from '@/components/ui/compat/UiButton.vue'
+import LoadingOverlay from '@/components/ui/LoadingOverlay.vue'
 import { initTaskForm, buildUriPayload, buildTorrentPayload } from '@/utils/task'
-import { ADD_TASK_TYPE } from '@shared/constants'
+import {
+  ADD_TASK_TYPE,
+  NONE_SELECTED_FILES,
+  SELECTED_ALL_FILES,
+  TEMP_DOWNLOAD_SUFFIX,
+} from '@shared/constants'
 import { detectResource, getTaskName } from '@shared/utils'
 import { readText } from '@tauri-apps/plugin-clipboard-manager'
 
@@ -231,6 +247,7 @@ export default {
     [HistoryDirectory.name]: HistoryDirectory,
     [SelectDirectory.name]: SelectDirectory,
     [SelectTorrent.name]: SelectTorrent,
+    [LoadingOverlay.name]: LoadingOverlay,
     UiButton,
     NumberInput,
     Dialog,
@@ -262,6 +279,7 @@ export default {
     return {
       showAdvanced: false,
       form: {},
+      submitting: false,
     }
   },
   computed: {
@@ -300,7 +318,7 @@ export default {
       }
     },
     handleDialogOpenChange(open) {
-      if (!open) {
+      if (!open && !this.submitting) {
         this.handleClose()
       }
     },
@@ -346,9 +364,15 @@ export default {
       }, 150)
     },
     handleCancel() {
+      if (this.submitting) {
+        return
+      }
       useAppStore().hideAddTaskDialog()
     },
     handleClose() {
+      if (this.submitting) {
+        return
+      }
       const appStore = useAppStore()
       appStore.hideAddTaskDialog()
       appStore.updateAddTaskOptions({})
@@ -379,9 +403,17 @@ export default {
         })
       }
     },
-    handleTorrentChange(torrent, selectedFileIndex) {
-      this.form.torrent = torrent
-      this.form.selectFile = selectedFileIndex
+    handleTorrentChange(torrentPath = '', selectedFileIndex) {
+      const normalizedPath = `${torrentPath || ''}`.trim()
+      this.form.torrentPath = normalizedPath
+      if (!normalizedPath) {
+        this.form.selectFile = NONE_SELECTED_FILES
+        return
+      }
+      this.form.selectFile =
+        selectedFileIndex === undefined || selectedFileIndex === null
+          ? SELECTED_ALL_FILES
+          : selectedFileIndex
     },
     onNewTaskShowDownloadingChange(enable) {
       this.form.newTaskShowDownloading = !!enable
@@ -433,6 +465,22 @@ export default {
       const isWindows = is.windows() || platform === 'windows' || platform === 'win32'
       return isWindows ? key.toLowerCase() : key
     },
+    normalizeConflictTaskName(task, name = '') {
+      const normalized = `${name || ''}`.trim()
+      if (!normalized) {
+        return ''
+      }
+
+      if (task?.bittorrent?.info) {
+        return normalized
+      }
+
+      if (normalized.toLowerCase().endsWith(TEMP_DOWNLOAD_SUFFIX)) {
+        return normalized.slice(0, normalized.length - TEMP_DOWNLOAD_SUFFIX.length)
+      }
+
+      return normalized
+    },
     async hasTaskNameConflict(payload, type) {
       const targetDir = this.normalizePath(payload?.options?.dir || this.form?.dir || '')
       let newNames: string[] = []
@@ -460,7 +508,10 @@ export default {
       const existing = new Set(
         allTasks
           .map((task) => {
-            const existingName = task?.out || getTaskName(task, { defaultName: '', maxLen: -1 })
+            const existingName = this.normalizeConflictTaskName(
+              task,
+              task?.out || getTaskName(task, { defaultName: '', maxLen: -1 }),
+            )
             return this.buildConflictKey(task?.dir || '', existingName)
           })
           .filter(Boolean),
@@ -469,6 +520,10 @@ export default {
       return newNames.some((name) => existing.has(this.buildConflictKey(targetDir, name)))
     },
     async submitForm() {
+      if (this.submitting) {
+        return
+      }
+      this.submitting = true
       try {
         await this.addTask(this.type, this.form)
         useAppStore().hideAddTaskDialog()
@@ -482,7 +537,11 @@ export default {
             })
         }
       } catch (err) {
-        this.$msg.error(err?.rawMessage || this.$t(err?.message || 'task.new-task-fail'))
+        const raw = typeof err === 'string' ? err : err?.rawMessage
+        const key = typeof err === 'string' ? '' : err?.message
+        this.$msg.error(raw || this.$t(key || 'task.new-task-fail'))
+      } finally {
+        this.submitting = false
       }
     },
   },
