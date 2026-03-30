@@ -50,6 +50,7 @@ export default {
       startupAutoResumeHandled: false,
       autoRetryTimerMap: {} as Record<string, ReturnType<typeof setTimeout>>,
       autoRetryAttemptMap: {} as Record<string, number>,
+      autoRetryPlanTicketMap: {} as Record<string, number>,
       lowSpeedStrikeMap: {} as Record<string, number>,
       lowSpeedRecoverAtMap: {} as Record<string, number>,
       lowSpeedRecoveringMap: {} as Record<string, boolean>,
@@ -185,46 +186,123 @@ export default {
     clearAutoRetryState(gid: string) {
       this.clearAutoRetryTimer(gid)
       delete this.autoRetryAttemptMap[gid]
+      delete this.autoRetryPlanTicketMap[gid]
     },
     clearAllAutoRetryTimers() {
       for (const gid of Object.keys(this.autoRetryTimerMap)) {
         this.clearAutoRetryTimer(gid)
       }
       this.autoRetryAttemptMap = {}
+      this.autoRetryPlanTicketMap = {}
     },
-    scheduleAutoRetry(gid: string) {
-      if (!this.autoRetryEnabled || !gid) {
-        return
+    normalizeAutoRetryAttemptMap(raw: any = {}) {
+      const result: Record<string, number> = {}
+      if (!raw || typeof raw !== 'object') {
+        return result
       }
 
-      this.clearAutoRetryTimer(gid)
+      for (const [gid, value] of Object.entries(raw)) {
+        const key = `${gid || ''}`.trim()
+        if (!key) {
+          continue
+        }
 
-      const nextAttempt = (this.autoRetryAttemptMap[gid] || 0) + 1
-      this.autoRetryAttemptMap[gid] = nextAttempt
-
+        result[key] = Math.floor(normalizePositiveNumber(value, 0, 0, Number.MAX_SAFE_INTEGER))
+      }
+      return result
+    },
+    computeAutoRetryDelayMs(nextAttempt: number) {
       const baseDelayMs = this.autoRetryIntervalSeconds * 1000
       const computedDelayMs =
         this.autoRetryStrategy === RETRY_STRATEGY_EXPONENTIAL
           ? baseDelayMs * 2 ** (nextAttempt - 1)
           : baseDelayMs
-      const delayMs = Math.min(Math.max(computedDelayMs, 1000), AUTO_RETRY_MAX_DELAY_MS)
+      return Math.min(Math.max(computedDelayMs, 1000), AUTO_RETRY_MAX_DELAY_MS)
+    },
+    async scheduleAutoRetry(gid: string) {
+      const taskGid = `${gid || ''}`.trim()
+      if (!this.autoRetryEnabled || !taskGid) {
+        return
+      }
 
-      this.autoRetryTimerMap[gid] = setTimeout(() => {
+      this.clearAutoRetryTimer(taskGid)
+      const ticket = (this.autoRetryPlanTicketMap[taskGid] || 0) + 1
+      this.autoRetryPlanTicketMap[taskGid] = ticket
+
+      const planFallback = () => {
+        const nextAttempt = (this.autoRetryAttemptMap[taskGid] || 0) + 1
+        this.autoRetryAttemptMap[taskGid] = nextAttempt
+        return {
+          nextAttempt,
+          delayMs: this.computeAutoRetryDelayMs(nextAttempt),
+        }
+      }
+
+      let nextAttempt = 1
+      let delayMs = 1000
+
+      try {
+        const result: any = await api.planAutoRetry({
+          gid: taskGid,
+          strategy: this.autoRetryStrategy,
+          intervalSeconds: this.autoRetryIntervalSeconds,
+          maxDelayMs: AUTO_RETRY_MAX_DELAY_MS,
+          attemptMap: this.autoRetryAttemptMap,
+        })
+
+        if (this.autoRetryPlanTicketMap[taskGid] !== ticket) {
+          return
+        }
+
+        const plannedAttemptMap = this.normalizeAutoRetryAttemptMap(result?.attemptMap)
+        const plannedAttempt = Number(result?.nextAttempt)
+        if (plannedAttemptMap[taskGid] && Number.isFinite(plannedAttempt) && plannedAttempt > 0) {
+          this.autoRetryAttemptMap = plannedAttemptMap
+          nextAttempt = Math.floor(plannedAttempt)
+          const plannedDelay = Number(result?.delayMs)
+          delayMs =
+            Number.isFinite(plannedDelay) && plannedDelay > 0
+              ? Math.min(Math.max(Math.floor(plannedDelay), 1000), AUTO_RETRY_MAX_DELAY_MS)
+              : this.computeAutoRetryDelayMs(nextAttempt)
+        } else {
+          const fallbackPlan = planFallback()
+          nextAttempt = fallbackPlan.nextAttempt
+          delayMs = fallbackPlan.delayMs
+        }
+      } catch (err) {
+        if (this.autoRetryPlanTicketMap[taskGid] !== ticket) {
+          return
+        }
+
+        logger.warn('[Motrix] planAutoRetry failed, fallback to renderer:', err?.message || err)
+        const fallbackPlan = planFallback()
+        nextAttempt = fallbackPlan.nextAttempt
+        delayMs = fallbackPlan.delayMs
+      }
+
+      if (!this.autoRetryEnabled || this.autoRetryPlanTicketMap[taskGid] !== ticket) {
+        return
+      }
+
+      this.autoRetryTimerMap[taskGid] = setTimeout(() => {
         const taskStore = useTaskStore()
         taskStore
-          .resumeTask({ gid })
+          .resumeTask({ gid: taskGid })
           .then(() => {
             logger.info(
-              `[Motrix] auto retry resume requested for gid: ${gid}, attempt: ${nextAttempt}`,
+              `[Motrix] auto retry resume requested for gid: ${taskGid}, attempt: ${nextAttempt}`,
             )
           })
           .catch((err) => {
             logger.warn(
-              `[Motrix] auto retry resume failed for gid: ${gid}, attempt: ${nextAttempt}, ${err?.message || err}`,
+              `[Motrix] auto retry resume failed for gid: ${taskGid}, attempt: ${nextAttempt}, ${err?.message || err}`,
             )
           })
           .finally(() => {
-            delete this.autoRetryTimerMap[gid]
+            delete this.autoRetryTimerMap[taskGid]
+            if (this.autoRetryPlanTicketMap[taskGid] === ticket) {
+              delete this.autoRetryPlanTicketMap[taskGid]
+            }
           })
       }, delayMs)
     },
@@ -232,6 +310,17 @@ export default {
       delete this.lowSpeedStrikeMap[gid]
       delete this.lowSpeedRecoverAtMap[gid]
       delete this.lowSpeedRecoveringMap[gid]
+    },
+    syncLowSpeedRecoveringMapWithState() {
+      const stateGids = new Set([
+        ...Object.keys(this.lowSpeedStrikeMap),
+        ...Object.keys(this.lowSpeedRecoverAtMap),
+      ])
+      for (const gid of Object.keys(this.lowSpeedRecoveringMap)) {
+        if (!stateGids.has(gid)) {
+          delete this.lowSpeedRecoveringMap[gid]
+        }
+      }
     },
     async recoverLowSpeedTask(gid: string) {
       if (!gid || this.lowSpeedRecoveringMap[gid]) {
@@ -251,7 +340,7 @@ export default {
         this.lowSpeedRecoveringMap[gid] = false
       }
     },
-    handleLowSpeedTasks(tasks: any[] = []) {
+    handleLowSpeedTasksFallback(tasks: any[] = []) {
       if (!this.autoDetectLowSpeedTasks) {
         return
       }
@@ -296,6 +385,47 @@ export default {
         if (!activeGids.has(gid)) {
           this.resetLowSpeedStateForGid(gid)
         }
+      }
+    },
+    async handleLowSpeedTasks(tasks: any[] = []) {
+      if (!this.autoDetectLowSpeedTasks) {
+        return
+      }
+
+      try {
+        const result: any = await api.evaluateLowSpeedTasks({
+          tasks: tasks.map((task) => {
+            return {
+              gid: `${task?.gid || ''}`,
+              status: `${task?.status || ''}`,
+              downloadSpeed: task?.downloadSpeed,
+            }
+          }),
+          thresholdBytes: this.lowSpeedThresholdBytes,
+          strikeThreshold: LOW_SPEED_STRIKE_THRESHOLD,
+          cooldownMs: LOW_SPEED_RECOVERY_COOLDOWN_MS,
+          nowMs: Date.now(),
+          strikeMap: this.lowSpeedStrikeMap,
+          recoverAtMap: this.lowSpeedRecoverAtMap,
+        })
+
+        const strikeMap = result?.strikeMap
+        const recoverAtMap = result?.recoverAtMap
+        this.lowSpeedStrikeMap = strikeMap && typeof strikeMap === 'object' ? strikeMap : {}
+        this.lowSpeedRecoverAtMap =
+          recoverAtMap && typeof recoverAtMap === 'object' ? recoverAtMap : {}
+        this.syncLowSpeedRecoveringMapWithState()
+
+        const recoverGids = Array.isArray(result?.recoverGids) ? result.recoverGids : []
+        for (const gid of recoverGids) {
+          this.recoverLowSpeedTask(`${gid || ''}`)
+        }
+      } catch (err) {
+        logger.warn(
+          '[Motrix] evaluateLowSpeedTasks failed, fallback to renderer:',
+          err?.message || err,
+        )
+        this.handleLowSpeedTasksFallback(tasks)
       }
     },
     getTraySpeedLabelPayload() {
@@ -587,7 +717,7 @@ export default {
 
         await Promise.allSettled(jobs)
         if (this.autoDetectLowSpeedTasks) {
-          this.handleLowSpeedTasks(activeTasksForLowSpeedCheck)
+          await this.handleLowSpeedTasks(activeTasksForLowSpeedCheck)
         }
       } finally {
         this.isPolling = false

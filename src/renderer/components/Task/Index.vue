@@ -284,7 +284,7 @@ export default {
         if (item.status === 'rejected') {
           return true
         }
-        return item.value !== true
+        return !item.value
       })
       if (failed) {
         this.$msg.error(this.$t('task.remove-task-file-fail'))

@@ -2,13 +2,46 @@ use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::path::Path;
 use std::time::Duration;
+use std::{collections::HashMap, collections::HashSet};
 
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use tauri::AppHandle;
 use tokio::task::spawn_blocking;
 use tokio::time::sleep;
 
 const TEMP_DOWNLOAD_SUFFIX: &str = ".part";
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ActiveTaskProgressInput {
+    pub total_length: Value,
+    pub completed_length: Value,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LowSpeedTaskInput {
+    pub gid: String,
+    pub status: String,
+    pub download_speed: Value,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LowSpeedEvaluationResult {
+    pub strike_map: HashMap<String, u32>,
+    pub recover_at_map: HashMap<String, u64>,
+    pub recover_gids: Vec<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AutoRetryPlanResult {
+    pub attempt_map: HashMap<String, u32>,
+    pub next_attempt: u32,
+    pub delay_ms: u64,
+}
 
 fn encode_base64(input: &[u8]) -> String {
     const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -159,6 +192,235 @@ fn parse_add_torrent_response(response: Value) -> Result<String, String> {
         .and_then(|value| value.as_str())
         .map(|value| value.to_string())
         .ok_or_else(|| "task.new-task-fail".to_string())
+}
+
+fn normalize_non_negative(value: f64) -> u64 {
+    if !value.is_finite() || value <= 0.0 {
+        return 0;
+    }
+
+    let floored = value.floor();
+    if floored >= u64::MAX as f64 {
+        u64::MAX
+    } else {
+        floored as u64
+    }
+}
+
+fn parse_length_like(value: &Value) -> u64 {
+    match value {
+        Value::Number(number) => {
+            if let Some(parsed) = number.as_u64() {
+                return parsed;
+            }
+            if let Some(parsed) = number.as_i64() {
+                return u64::try_from(parsed).unwrap_or(0);
+            }
+            number.as_f64().map(normalize_non_negative).unwrap_or(0)
+        }
+        Value::String(text) => {
+            let trimmed = text.trim();
+            if trimmed.is_empty() {
+                return 0;
+            }
+
+            if let Ok(parsed) = trimmed.parse::<u64>() {
+                return parsed;
+            }
+
+            trimmed
+                .parse::<f64>()
+                .map(normalize_non_negative)
+                .unwrap_or(0)
+        }
+        Value::Bool(flag) => {
+            if *flag {
+                1
+            } else {
+                0
+            }
+        }
+        _ => 0,
+    }
+}
+
+fn parse_counter_like(value: &Value) -> u32 {
+    let parsed = parse_length_like(value);
+    if parsed >= u32::MAX as u64 {
+        u32::MAX
+    } else {
+        parsed as u32
+    }
+}
+
+fn parse_retry_attempt_map(values: HashMap<String, Value>) -> HashMap<String, u32> {
+    let mut result = HashMap::with_capacity(values.len());
+    for (gid, value) in values {
+        let key = gid.trim().to_string();
+        if key.is_empty() {
+            continue;
+        }
+        result.insert(key, parse_counter_like(&value));
+    }
+    result
+}
+
+fn compute_auto_retry_delay_ms(
+    strategy: &str,
+    base_delay_ms: u64,
+    next_attempt: u32,
+    max_delay_ms: u64,
+) -> u64 {
+    let min_delay_ms = 1000u64;
+    let base_delay_ms = base_delay_ms.max(min_delay_ms);
+    let max_delay_ms = max_delay_ms.max(min_delay_ms);
+
+    let computed = if strategy.eq_ignore_ascii_case("exponential") {
+        let exponent = next_attempt.saturating_sub(1).min(62);
+        (base_delay_ms as u128).saturating_mul(1u128 << exponent)
+    } else {
+        base_delay_ms as u128
+    };
+
+    computed.min(max_delay_ms as u128).max(min_delay_ms as u128) as u64
+}
+
+#[tauri::command]
+pub fn calculate_active_task_progress(tasks: Vec<ActiveTaskProgressInput>) -> Result<f64, String> {
+    if tasks.is_empty() {
+        return Ok(-1.0);
+    }
+
+    let mut total = 0u128;
+    let mut completed = 0u128;
+    for task in tasks {
+        let total_length = parse_length_like(&task.total_length) as u128;
+        if total_length == 0 {
+            continue;
+        }
+
+        total += total_length;
+        completed += parse_length_like(&task.completed_length) as u128;
+    }
+
+    if total == 0 {
+        return Ok(2.0);
+    }
+
+    Ok(completed as f64 / total as f64)
+}
+
+#[tauri::command]
+pub fn evaluate_low_speed_tasks(
+    tasks: Vec<LowSpeedTaskInput>,
+    threshold_bytes: Value,
+    strike_threshold: u32,
+    cooldown_ms: u64,
+    now_ms: u64,
+    strike_map: HashMap<String, Value>,
+    recover_at_map: HashMap<String, Value>,
+) -> Result<LowSpeedEvaluationResult, String> {
+    let threshold = parse_length_like(&threshold_bytes);
+    let strike_threshold = strike_threshold.max(1);
+
+    let mut next_strike_map = HashMap::with_capacity(strike_map.len());
+    for (gid, value) in strike_map {
+        let key = gid.trim();
+        if key.is_empty() {
+            continue;
+        }
+        next_strike_map.insert(key.to_string(), parse_counter_like(&value));
+    }
+
+    let mut next_recover_at_map = HashMap::with_capacity(recover_at_map.len());
+    for (gid, value) in recover_at_map {
+        let key = gid.trim();
+        if key.is_empty() {
+            continue;
+        }
+        next_recover_at_map.insert(key.to_string(), parse_length_like(&value));
+    }
+
+    let mut recover_gids = Vec::new();
+    let mut active_gids = HashSet::new();
+
+    for task in tasks {
+        let gid = task.gid.trim().to_string();
+        if gid.is_empty() || !task.status.eq_ignore_ascii_case("active") {
+            continue;
+        }
+
+        active_gids.insert(gid.clone());
+
+        let speed = parse_length_like(&task.download_speed);
+        if speed >= threshold {
+            next_strike_map.remove(&gid);
+            next_recover_at_map.remove(&gid);
+            continue;
+        }
+
+        let strike = next_strike_map
+            .get(&gid)
+            .copied()
+            .unwrap_or(0)
+            .saturating_add(1);
+        next_strike_map.insert(gid.clone(), strike);
+
+        if strike < strike_threshold {
+            continue;
+        }
+        if next_recover_at_map.get(&gid).copied().unwrap_or(0) > now_ms {
+            continue;
+        }
+
+        next_strike_map.insert(gid.clone(), 0);
+        next_recover_at_map.insert(gid.clone(), now_ms.saturating_add(cooldown_ms));
+        recover_gids.push(gid);
+    }
+
+    next_strike_map.retain(|gid, _| active_gids.contains(gid));
+    next_recover_at_map.retain(|gid, _| active_gids.contains(gid));
+
+    Ok(LowSpeedEvaluationResult {
+        strike_map: next_strike_map,
+        recover_at_map: next_recover_at_map,
+        recover_gids,
+    })
+}
+
+#[tauri::command]
+pub fn plan_auto_retry(
+    gid: String,
+    strategy: String,
+    interval_seconds: Value,
+    max_delay_ms: Value,
+    attempt_map: HashMap<String, Value>,
+) -> Result<AutoRetryPlanResult, String> {
+    let gid = gid.trim().to_string();
+    if gid.is_empty() {
+        return Err("Invalid task gid".to_string());
+    }
+
+    let mut next_attempt_map = parse_retry_attempt_map(attempt_map);
+    let next_attempt = next_attempt_map
+        .get(&gid)
+        .copied()
+        .unwrap_or(0)
+        .saturating_add(1)
+        .max(1);
+    next_attempt_map.insert(gid, next_attempt);
+
+    let interval_seconds = parse_length_like(&interval_seconds).max(1);
+    let base_delay_ms = interval_seconds.saturating_mul(1000);
+    let max_delay_ms = parse_length_like(&max_delay_ms).max(1000);
+    let delay_ms =
+        compute_auto_retry_delay_ms(&strategy, base_delay_ms, next_attempt, max_delay_ms);
+
+    Ok(AutoRetryPlanResult {
+        attempt_map: next_attempt_map,
+        next_attempt,
+        delay_ms,
+    })
 }
 
 #[tauri::command]

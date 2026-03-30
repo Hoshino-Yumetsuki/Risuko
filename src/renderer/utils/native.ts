@@ -4,6 +4,9 @@ import { toast } from 'vue-sonner'
 import { getFileNameFromFile, isMagnetTask } from '@shared/utils'
 import { APP_THEME, TASK_STATUS, TEMP_DOWNLOAD_SUFFIX } from '@shared/constants'
 
+const GENERATED_TORRENT_HASH_LENGTHS = new Set([40, 64])
+const GENERATED_TORRENT_CLEANUP_RETRY_DELAYS = [0, 250, 500] as const
+
 function joinPath(...parts: string[]): string {
   const joined = parts.filter(Boolean).join('/')
   return joined.replace(/[/\\]+/g, '/')
@@ -147,8 +150,6 @@ export const finalizeCompletedDownloadPath = async (task: any): Promise<string> 
 
 export const moveTaskFilesToTrash = async (task: any): Promise<boolean> => {
   const { dir, status } = task
-  const normalizedDir = `${dir || ''}`.trim()
-  const normalizedInfoHash = `${task?.infoHash || task?.bittorrent?.infoHash || ''}`.trim()
   const filesToCleanup = new Set<string>()
   const addCleanupPath = (candidate = '') => {
     const value = `${candidate || ''}`.trim()
@@ -187,6 +188,31 @@ export const moveTaskFilesToTrash = async (task: any): Promise<boolean> => {
     }
   }
 
+  await cleanupGeneratedTorrentSidecars(task)
+
+  return true
+}
+
+const resolveGeneratedTorrentSidecarPayload = (task: any) => {
+  const normalizeInfoHash = (value = '') => {
+    const normalized = `${value || ''}`
+      .trim()
+      .toLowerCase()
+      .replace(/^urn:btih:/, '')
+    return normalized.replace(/[^a-f0-9]/g, '')
+  }
+
+  const normalizedInfoHash = normalizeInfoHash(
+    `${task?.infoHash || task?.bittorrent?.infoHash || ''}`,
+  )
+  if (!normalizedInfoHash) {
+    return null
+  }
+  if (!GENERATED_TORRENT_HASH_LENGTHS.has(normalizedInfoHash.length)) {
+    return null
+  }
+
+  const normalizedDir = `${task?.dir || ''}`.trim()
   const sidecarDir = (() => {
     if (normalizedDir) {
       return normalizedDir
@@ -201,18 +227,105 @@ export const moveTaskFilesToTrash = async (task: any): Promise<boolean> => {
     return segments.join('/')
   })()
 
-  if (sidecarDir && normalizedInfoHash) {
-    try {
-      await invoke('trash_generated_torrent_sidecars', {
-        dir: sidecarDir,
-        infoHash: normalizedInfoHash,
-      })
-    } catch (err) {
-      logger.warn(`[Motrix] cleanup generated torrent sidecars failed: ${err}`)
+  if (!sidecarDir) {
+    return null
+  }
+
+  return {
+    dir: sidecarDir,
+    infoHash: normalizedInfoHash,
+  }
+}
+
+const getParentPath = (fullPath = '') => {
+  const normalizedPath = `${fullPath || ''}`.trim()
+  if (!normalizedPath) {
+    return ''
+  }
+  const segments = normalizedPath.split(/[/\\]/)
+  segments.pop()
+  return segments.join('/')
+}
+
+const buildGeneratedTorrentCandidatePaths = (
+  task: any,
+  payload: { dir: string; infoHash: string },
+) => {
+  const candidates = new Set<string>()
+  const normalizedHash = payload.infoHash.toLowerCase()
+  const fileNames = [`${normalizedHash}.torrent`, `${normalizedHash.toUpperCase()}.torrent`]
+
+  const baseDirs = new Set<string>()
+  baseDirs.add(`${payload.dir || ''}`.trim())
+  baseDirs.add(`${task?.dir || ''}`.trim())
+  baseDirs.add(getParentPath(getTaskFullPath(task, { normalizeCompletedPath: false })))
+  baseDirs.add(getParentPath(getTaskFullPath(task)))
+
+  for (const baseDir of baseDirs) {
+    if (!baseDir) {
+      continue
+    }
+    for (const fileName of fileNames) {
+      candidates.add(joinPath(baseDir, fileName))
     }
   }
 
-  return true
+  return [...candidates]
+}
+
+const fallbackTrashGeneratedTorrentByExactPath = async (
+  task: any,
+  payload: { dir: string; infoHash: string },
+): Promise<number> => {
+  const candidatePaths = buildGeneratedTorrentCandidatePaths(task, payload)
+  if (candidatePaths.length === 0) {
+    return 0
+  }
+
+  let deleted = 0
+  for (const path of candidatePaths) {
+    try {
+      await invoke('trash_item', { path })
+      deleted += 1
+    } catch {
+      // Ignore candidate misses; this is best-effort fallback cleanup.
+    }
+  }
+  return deleted
+}
+
+export const cleanupGeneratedTorrentSidecars = async (task: any): Promise<number> => {
+  const payload = resolveGeneratedTorrentSidecarPayload(task)
+  if (!payload) {
+    return 0
+  }
+
+  let deleted = 0
+
+  for (const delayMs of GENERATED_TORRENT_CLEANUP_RETRY_DELAYS) {
+    if (delayMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, delayMs))
+    }
+
+    try {
+      const result = await invoke<number>('trash_generated_torrent_sidecars', payload)
+      const deletedByScan = Number.isFinite(result) ? Number(result) : 0
+      deleted += deletedByScan
+    } catch (err) {
+      logger.warn(`[Motrix] cleanup generated torrent sidecars failed: ${err}`)
+    }
+
+    if (deleted > 0) {
+      return deleted
+    }
+
+    const deletedByFallback = await fallbackTrashGeneratedTorrentByExactPath(task, payload)
+    deleted += deletedByFallback
+    if (deleted > 0) {
+      return deleted
+    }
+  }
+  return deleted
 }
 
 export const getSystemTheme = (): string => {

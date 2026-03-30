@@ -344,6 +344,49 @@ export default class Api {
     return this.ensureReady().then((client) => client.call('getGlobalStat'))
   }
 
+  calculateActiveTaskProgress(params: any = {}) {
+    const { tasks = [] } = params
+    return invoke('calculate_active_task_progress', { tasks })
+  }
+
+  evaluateLowSpeedTasks(params: any = {}) {
+    const {
+      tasks = [],
+      thresholdBytes = 0,
+      strikeThreshold = 3,
+      cooldownMs = 30000,
+      nowMs = Date.now(),
+      strikeMap = {},
+      recoverAtMap = {},
+    } = params
+    return invoke('evaluate_low_speed_tasks', {
+      tasks,
+      thresholdBytes,
+      strikeThreshold,
+      cooldownMs,
+      nowMs,
+      strikeMap,
+      recoverAtMap,
+    })
+  }
+
+  planAutoRetry(params: any = {}) {
+    const {
+      gid = '',
+      strategy = 'static',
+      intervalSeconds = 5,
+      maxDelayMs = 15 * 60 * 1000,
+      attemptMap = {},
+    } = params
+    return invoke('plan_auto_retry', {
+      gid,
+      strategy,
+      intervalSeconds,
+      maxDelayMs,
+      attemptMap,
+    })
+  }
+
   addUri(params: any) {
     const { uris, outs, options } = params
     const tasks = uris.map((uri, index) => {

@@ -2,6 +2,8 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
+use sha1::{Digest, Sha1};
+use sha2::Sha256;
 use tauri::AppHandle;
 
 const MAX_TORRENT_PREVIEW_FILES: usize = 2_000;
@@ -787,23 +789,67 @@ fn normalize_info_hash(raw: &str) -> String {
     stripped.chars().filter(|c| c.is_ascii_hexdigit()).collect()
 }
 
-fn matches_generated_torrent_sidecar(file_name: &str, normalized_info_hash: &str) -> bool {
-    if normalized_info_hash.len() != 40 && normalized_info_hash.len() != 64 {
-        return false;
-    }
-
+fn generated_torrent_hex_stem(file_name: &str) -> Option<String> {
     let lower = file_name.to_ascii_lowercase();
     if !lower.ends_with(".torrent") {
-        return false;
+        return None;
     }
 
-    let stem = lower.strip_suffix(".torrent").unwrap_or(&lower);
-    if stem.contains(normalized_info_hash) {
-        return true;
+    let stem = lower.strip_suffix(".torrent")?;
+    let is_hex = stem.chars().all(|c| c.is_ascii_hexdigit());
+    if !is_hex {
+        return None;
+    }
+    if stem.len() != 40 && stem.len() != 64 {
+        return None;
     }
 
-    let is_hex_stem = stem.chars().all(|c| c.is_ascii_hexdigit());
-    is_hex_stem && (stem.len() == 40 || stem.len() == 64) && stem == normalized_info_hash
+    Some(stem.to_string())
+}
+
+fn extract_info_dict_slice(input: &[u8]) -> Result<&[u8], String> {
+    if input.is_empty() || input[0] != b'd' {
+        return Err("Invalid torrent metadata".to_string());
+    }
+
+    let mut cursor = 1usize; // skip root `d`
+    while cursor < input.len() && input[cursor] != b'e' {
+        let key = parse_bencode_bytes(input, &mut cursor)?;
+        let BencodeValue::Bytes(key_bytes) = key else {
+            return Err("Invalid torrent metadata".to_string());
+        };
+
+        let value_start = cursor;
+        parse_bencode_value(input, &mut cursor)?;
+        if key_bytes.as_slice() == b"info" {
+            return Ok(&input[value_start..cursor]);
+        }
+    }
+
+    Err("Invalid torrent metadata".to_string())
+}
+
+fn matches_generated_torrent_sidecar_by_content(path: &Path, normalized_info_hash: &str) -> bool {
+    let bytes = match std::fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(_) => return false,
+    };
+    let info_slice = match extract_info_dict_slice(&bytes) {
+        Ok(slice) => slice,
+        Err(_) => return false,
+    };
+
+    match normalized_info_hash.len() {
+        40 => {
+            let digest = Sha1::digest(info_slice);
+            format!("{:x}", digest) == normalized_info_hash
+        }
+        64 => {
+            let digest = Sha256::digest(info_slice);
+            format!("{:x}", digest) == normalized_info_hash
+        }
+        _ => false,
+    }
 }
 
 #[tauri::command]
@@ -836,7 +882,17 @@ pub fn trash_generated_torrent_sidecars(
         let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
             continue;
         };
-        if !matches_generated_torrent_sidecar(file_name, &normalized) {
+        // Only clean up generated sidecars (hex-stem torrents) to avoid removing
+        // user-provided source torrent files with descriptive names.
+        let Some(stem) = generated_torrent_hex_stem(file_name) else {
+            continue;
+        };
+
+        let matched_by_name = stem == normalized;
+        let matched_by_content = !matched_by_name
+            && stem.len() != normalized.len()
+            && matches_generated_torrent_sidecar_by_content(&path, &normalized);
+        if !matched_by_name && !matched_by_content {
             continue;
         }
 
