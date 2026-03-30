@@ -45,6 +45,7 @@ import { useTaskStore } from '@/store/task'
 import { commands } from '@/components/CommandManager/instance'
 import { TASK_STATUS } from '@shared/constants'
 import { checkTaskIsSeeder, getTaskName } from '@shared/utils'
+import logger from '@shared/utils/logger'
 import { getTaskFullPath, getTaskRevealPath } from '@/utils/native'
 import { Play, Pause, Square, RotateCcw, Trash2, Trash, Folder, Link, Info } from 'lucide-vue-next'
 
@@ -212,7 +213,7 @@ export default {
     },
     onFolderClick() {
       const { path, fallbackPath } = this
-      console.log('[TaskItemActions] onFolderClick:', {
+      logger.log('[TaskItemActions] onFolderClick:', {
         path,
         fallbackPath,
         taskDir: this.task?.dir,
