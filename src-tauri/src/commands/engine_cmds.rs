@@ -287,6 +287,9 @@ fn infer_out_from_uri(uri: &str) -> String {
     if decoded_candidate.is_empty() || !decoded_candidate.contains('.') {
         return String::new();
     }
+    if decoded_candidate.contains('/') || decoded_candidate.contains('\\') {
+        return String::new();
+    }
     if decoded_candidate.starts_with('.') || decoded_candidate.ends_with('.') {
         return String::new();
     }
