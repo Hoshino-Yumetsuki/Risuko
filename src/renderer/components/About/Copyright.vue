@@ -6,16 +6,32 @@
       </a>
     </ui-col>
     <ui-col :span="18" class="copyright-right">
-      <a target="_blank" rel="noopener noreferrer" href="https://motrix.app/license">
+      <a
+        target="_blank"
+        rel="noopener noreferrer"
+        href="https://github.com/YueMiyuki/Motrix-NEXT/blob/master/LICENSE"
+      >
         {{ $t('about.license') }}
       </a>
-      <a target="_blank" rel="noopener noreferrer" href="https://motrix.app/about">
+      <a
+        target="_blank"
+        rel="noopener noreferrer"
+        href="https://github.com/YueMiyuki/Motrix-NEXT/blob/master/README.md"
+      >
         {{ $t('about.about') }}
       </a>
-      <a target="_blank" rel="noopener noreferrer" href="https://motrix.app/support">
+      <a
+        target="_blank"
+        rel="noopener noreferrer"
+        href="https://github.com/YueMiyuki/Motrix-NEXT/issues"
+      >
         {{ $t('about.support') }}
       </a>
-      <a target="_blank" rel="noopener noreferrer" href="https://motrix.app/release">
+      <a
+        target="_blank"
+        rel="noopener noreferrer"
+        href="https://github.com/YueMiyuki/Motrix-NEXT/releases"
+      >
         {{ $t('about.release') }}
       </a>
     </ui-col>

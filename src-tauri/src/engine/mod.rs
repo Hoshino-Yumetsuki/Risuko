@@ -729,7 +729,7 @@ mod tests {
             base,
             vec![
                 "--dir=/downloads".to_string(),
-                "--split=64".to_string(),
+                "--split=16".to_string(),
                 "--disk-cache=64M".to_string(),
             ]
         );

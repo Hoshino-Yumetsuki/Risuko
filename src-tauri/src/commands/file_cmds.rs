@@ -138,7 +138,7 @@ pub fn reveal_in_folder(path: String) -> Result<(), String> {
         } else {
             let normalized_path = path.replace('/', "\\");
             std::process::Command::new("explorer")
-                .arg(format!("/select,{}", normalized_path))
+                .arg(format!("/select,\"{}\"", normalized_path))
                 .spawn()
                 .map_err(|e| e.to_string())?;
         }
@@ -833,11 +833,16 @@ fn normalize_info_hash(raw: &str) -> String {
     }
 
     let value = raw.trim();
-    let stripped = value
-        .strip_prefix("urn:btih:")
-        .or_else(|| value.strip_prefix("URN:BTIH:"))
-        .unwrap_or(value)
-        .trim();
+    const URN_BTIH_PREFIX: &str = "urn:btih:";
+    let stripped = if value
+        .get(..URN_BTIH_PREFIX.len())
+        .map(|prefix| prefix.eq_ignore_ascii_case(URN_BTIH_PREFIX))
+        .unwrap_or(false)
+    {
+        value.get(URN_BTIH_PREFIX.len()..).unwrap_or("").trim()
+    } else {
+        value
+    };
 
     let normalized_hex = stripped.to_ascii_lowercase();
     if (normalized_hex.len() == 40 || normalized_hex.len() == 64)

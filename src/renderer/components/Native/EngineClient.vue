@@ -240,7 +240,6 @@ export default {
         const plannedAttempt = Number(result?.nextAttempt)
         const plannedDelay = Number(result?.delayMs)
         if (
-          !plannedAttemptMap[taskGid] ||
           !Number.isFinite(plannedAttempt) ||
           plannedAttempt <= 0 ||
           !Number.isFinite(plannedDelay) ||
@@ -253,8 +252,20 @@ export default {
           return
         }
 
-        this.autoRetryAttemptMap = plannedAttemptMap
-        nextAttempt = Math.floor(plannedAttempt)
+        const safeAttempt = Math.floor(
+          normalizePositiveNumber(
+            plannedAttemptMap[taskGid],
+            plannedAttempt,
+            1,
+            Number.MAX_SAFE_INTEGER,
+          ),
+        )
+        // Only update the planned gid to avoid clobbering concurrent retry updates for other tasks.
+        this.autoRetryAttemptMap = {
+          ...this.autoRetryAttemptMap,
+          [taskGid]: safeAttempt,
+        }
+        nextAttempt = safeAttempt
         delayMs = Math.min(Math.max(Math.floor(plannedDelay), 1000), AUTO_RETRY_MAX_DELAY_MS)
       } catch (err) {
         if (this.autoRetryPlanTicketMap[taskGid] !== ticket) {

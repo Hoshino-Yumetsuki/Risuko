@@ -27,9 +27,12 @@ impl ConfigManager {
         };
 
         if manager.migrate_legacy_keep_seeding_defaults() {
-            manager
-                .save_system()
-                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+            if let Err(err) = manager.save_system() {
+                log::warn!(
+                    "Failed to persist legacy keep-seeding migration; continuing startup: {}",
+                    err
+                );
+            }
         }
 
         Ok(manager)

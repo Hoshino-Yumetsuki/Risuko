@@ -746,7 +746,36 @@ pub async fn add_uri(
         .map_err(|e| format!("add_uri RPC failed: {e}"))?;
 
     let result = parse_rpc_result(response)?;
-    if let Some(error_item) = find_multicall_item_error(&result) {
+
+    if let Value::Array(items) = &result {
+        let mut failed_count = 0usize;
+        let mut first_error_message: Option<String> = None;
+
+        for item in items {
+            if let Some(error_item) = find_multicall_item_error(item) {
+                failed_count = failed_count.saturating_add(1);
+                if first_error_message.is_none() {
+                    first_error_message = error_item
+                        .get("message")
+                        .and_then(|value| value.as_str())
+                        .map(|value| value.to_string());
+                }
+            }
+        }
+
+        if failed_count > 0 {
+            let success_count = items.len().saturating_sub(failed_count);
+            if success_count == 0 {
+                return Err(first_error_message.unwrap_or_else(|| "task.new-task-fail".to_string()));
+            }
+
+            log::warn!(
+                "[Motrix] add_uri multicall partially failed: {} succeeded, {} failed",
+                success_count,
+                failed_count
+            );
+        }
+    } else if let Some(error_item) = find_multicall_item_error(&result) {
         let message = error_item
             .get("message")
             .and_then(|value| value.as_str())

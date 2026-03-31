@@ -406,19 +406,25 @@ export const useTaskStore = defineStore('task', {
         gid: task.gid,
         status: task.status,
       }))
-      const moved = Number(
-        await api.syncSelectedTaskOrder({
-          direction,
-          selectedTasks: selectedTaskPayload,
-        }),
-      )
+      try {
+        const moved = Number(
+          await api.syncSelectedTaskOrder({
+            direction,
+            selectedTasks: selectedTaskPayload,
+          }),
+        )
 
-      if (moved > 0 || selectedTaskPayload.some((task) => task.status === TASK_STATUS.ACTIVE)) {
+        if (moved > 0 || selectedTaskPayload.some((task) => task.status === TASK_STATUS.ACTIVE)) {
+          await this.fetchList()
+          this.saveSession()
+        }
+
+        return moved
+      } catch (err) {
         await this.fetchList()
         this.saveSession()
+        throw err
       }
-
-      return moved
     },
     async moveSelectedTasks(
       direction: 'up' | 'down',
