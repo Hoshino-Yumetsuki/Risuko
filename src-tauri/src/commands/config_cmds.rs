@@ -2,7 +2,7 @@ use serde_json::{Map, Value};
 use tauri::{AppHandle, State};
 use tauri_plugin_autostart::ManagerExt;
 
-use crate::state::AppState;
+use crate::{config::parse_keep_seeding_option, state::AppState};
 
 #[tauri::command]
 pub fn get_app_config(handle: AppHandle, state: State<'_, AppState>) -> Result<Value, String> {
@@ -112,22 +112,6 @@ fn contains_download_scope(value: Option<&Value>) -> bool {
         .unwrap_or(false)
 }
 
-fn parse_bool_like(value: Option<&Value>) -> Option<bool> {
-    match value {
-        Some(Value::Bool(v)) => Some(*v),
-        Some(Value::Number(v)) => v.as_i64().map(|n| n != 0),
-        Some(Value::String(v)) => {
-            let normalized = v.trim().to_ascii_lowercase();
-            match normalized.as_str() {
-                "true" | "1" | "yes" | "on" => Some(true),
-                "false" | "0" | "no" | "off" | "" => Some(false),
-                _ => None,
-            }
-        }
-        _ => None,
-    }
-}
-
 #[tauri::command]
 pub fn prepare_preference_patch(params: Value) -> Result<Value, String> {
     let mut map = match params {
@@ -135,10 +119,12 @@ pub fn prepare_preference_patch(params: Value) -> Result<Value, String> {
         _ => Map::new(),
     };
 
-    if matches!(parse_bool_like(map.get("keep-seeding")), Some(false)) {
-        map.entry("seed-time".to_string()).or_insert(Value::from(0));
-        map.entry("seed-ratio".to_string())
-            .or_insert(Value::from(0));
+    if matches!(
+        parse_keep_seeding_option(map.get("keep-seeding")),
+        Some(false)
+    ) {
+        map.insert("seed-time".to_string(), Value::from(0));
+        map.insert("seed-ratio".to_string(), Value::from(0));
     }
 
     let Some(proxy) = map.get("proxy").and_then(|value| value.as_object()) else {

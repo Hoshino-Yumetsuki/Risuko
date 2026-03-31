@@ -407,22 +407,30 @@ export const useTaskStore = defineStore('task', {
         status: task.status,
       }))
       try {
-        const moved = Number(
-          await api.syncSelectedTaskOrder({
-            direction,
-            selectedTasks: selectedTaskPayload,
-          }),
-        )
+        const result: any = await api.syncSelectedTaskOrder({
+          direction,
+          selectedTasks: selectedTaskPayload,
+        })
+        const movedValue = Number(result?.moved)
+        const moved = Number.isFinite(movedValue) ? movedValue : 0
+        const partialError = !!result?.partialError
 
-        if (moved > 0 || selectedTaskPayload.some((task) => task.status === TASK_STATUS.ACTIVE)) {
+        await this.fetchList()
+        this.saveSession()
+
+        if (partialError) {
+          const err: any = new Error('priority-sync-failed')
+          err.reconciled = true
+          throw err
+        }
+
+        return moved
+      } catch (err: any) {
+        if (!err?.reconciled) {
           await this.fetchList()
           this.saveSession()
         }
 
-        return moved
-      } catch (err) {
-        await this.fetchList()
-        this.saveSession()
         throw err
       }
     },

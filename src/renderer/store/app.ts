@@ -177,7 +177,10 @@ export const useAppStore = defineStore('app', {
 
         try {
           const nativeProgress = Number(await api.calculateActiveTaskProgress({ tasks }))
-          progress = Number.isFinite(nativeProgress) ? nativeProgress : calcRendererProgress(tasks)
+          const normalizedNativeProgress = nativeProgress === 2 ? -1 : nativeProgress
+          progress = Number.isFinite(normalizedNativeProgress)
+            ? normalizedNativeProgress
+            : calcRendererProgress(tasks)
         } catch (nativeErr) {
           logger.warn(
             '[Motrix] calculateActiveTaskProgress failed, fallback to renderer:',
@@ -186,7 +189,7 @@ export const useAppStore = defineStore('app', {
           progress = calcRendererProgress(tasks)
         }
 
-        this.progress = progress
+        this.progress = progress === 2 ? -1 : progress
       } catch (err) {
         logger.warn('[Motrix] fetchProgress failed:', err.message)
       }

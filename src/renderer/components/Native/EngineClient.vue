@@ -363,9 +363,7 @@ export default {
         this.syncLowSpeedRecoveringMapWithState()
 
         const recoverGids = Array.isArray(result?.recoverGids) ? result.recoverGids : []
-        for (const gid of recoverGids) {
-          this.recoverLowSpeedTask(`${gid || ''}`)
-        }
+        await Promise.allSettled(recoverGids.map((gid) => this.recoverLowSpeedTask(`${gid || ''}`)))
       } catch (err) {
         logger.warn('[Motrix] evaluateLowSpeedTasks failed:', err?.message || err)
       }

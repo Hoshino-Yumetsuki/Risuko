@@ -908,7 +908,7 @@ fn extract_btih_token(input: &str) -> Option<String> {
     }
 }
 
-fn percent_decode_lossy(input: &str) -> String {
+pub(crate) fn percent_decode_lossy(input: &str) -> String {
     let bytes = input.as_bytes();
     let mut decoded = Vec::with_capacity(bytes.len());
     let mut i = 0usize;
@@ -1043,7 +1043,6 @@ fn trash_generated_torrent_sidecars_in_dir(dir: &Path, normalized_info_hash: Opt
     };
 
     let mut deleted = 0u32;
-    let mut fallback_candidates: Vec<PathBuf> = Vec::new();
 
     for entry in entries {
         let Ok(entry) = entry else {
@@ -1077,16 +1076,6 @@ fn trash_generated_torrent_sidecars_in_dir(dir: &Path, normalized_info_hash: Opt
             if delete_file_best_effort(&path) {
                 deleted += 1;
             }
-        } else {
-            fallback_candidates.push(path);
-        }
-    }
-
-    // Keep old behavior: when there is exactly one generated sidecar candidate,
-    // remove it even if task hash is missing/mismatched.
-    if deleted == 0 && fallback_candidates.len() == 1 {
-        if delete_file_best_effort(&fallback_candidates[0]) {
-            deleted = 1;
         }
     }
 
@@ -1170,6 +1159,7 @@ pub fn cleanup_generated_torrent_sidecars_for_task(task: Value) -> Result<u32, S
     }
 
     let normalized_info_hash = resolve_task_info_hash(&task);
+    let mut total_deleted = 0u32;
 
     for delay_ms in RETRY_DELAYS_MS {
         if delay_ms > 0 {
@@ -1190,10 +1180,8 @@ pub fn cleanup_generated_torrent_sidecars_for_task(task: Value) -> Result<u32, S
                 trash_generated_torrent_sidecars_in_dir(&path, normalized_info_hash.as_deref());
         }
 
-        if deleted > 0 {
-            return Ok(deleted);
-        }
+        total_deleted = total_deleted.saturating_add(deleted);
     }
 
-    Ok(0)
+    Ok(total_deleted)
 }

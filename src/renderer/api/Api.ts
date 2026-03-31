@@ -297,7 +297,7 @@ export default class Api {
 
   syncSelectedTaskOrder(params: any = {}) {
     const { direction = 'up', selectedTasks = [] } = params
-    return invoke<number>('sync_selected_task_order', {
+    return invoke<{ moved: number; partialError: boolean }>('sync_selected_task_order', {
       direction,
       selectedTasks,
     })

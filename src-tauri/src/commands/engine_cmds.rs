@@ -50,6 +50,13 @@ pub struct SelectedTaskOrderInput {
     pub status: String,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncOrderResult {
+    pub moved: u32,
+    pub partial_error: bool,
+}
+
 fn encode_base64(input: &[u8]) -> String {
     const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut output = String::with_capacity(input.len().div_ceil(3) * 4);
@@ -275,14 +282,16 @@ fn infer_out_from_uri(uri: &str) -> String {
     let without_hash = raw.split('#').next().unwrap_or(raw);
     let without_query = without_hash.split('?').next().unwrap_or(without_hash);
     let candidate = without_query.rsplit('/').next().unwrap_or("").trim();
-    if candidate.is_empty() || !candidate.contains('.') {
+    let decoded_candidate = crate::commands::file_cmds::percent_decode_lossy(candidate);
+    let decoded_candidate = decoded_candidate.trim();
+    if decoded_candidate.is_empty() || !decoded_candidate.contains('.') {
         return String::new();
     }
-    if candidate.starts_with('.') || candidate.ends_with('.') {
+    if decoded_candidate.starts_with('.') || decoded_candidate.ends_with('.') {
         return String::new();
     }
 
-    candidate.to_string()
+    decoded_candidate.to_string()
 }
 
 fn ensure_temp_download_suffix(value: &str) -> String {
@@ -791,7 +800,7 @@ pub async fn sync_selected_task_order(
     state: tauri::State<'_, crate::state::AppState>,
     direction: String,
     selected_tasks: Vec<SelectedTaskOrderInput>,
-) -> Result<u32, String> {
+) -> Result<SyncOrderResult, String> {
     let normalized_direction = direction.trim().to_ascii_lowercase();
     if normalized_direction != "up" && normalized_direction != "down" {
         return Err("Invalid direction".to_string());
@@ -813,7 +822,10 @@ pub async fn sync_selected_task_order(
     }
 
     if selected_gids.is_empty() {
-        return Ok(0);
+        return Ok(SyncOrderResult {
+            moved: 0,
+            partial_error: false,
+        });
     }
 
     let selected_gid_set: HashSet<String> = selected_gids.iter().cloned().collect();
@@ -871,9 +883,10 @@ pub async fn sync_selected_task_order(
             break;
         }
 
+        let queue_set: HashSet<&str> = queue.iter().map(|gid| gid.as_str()).collect();
         let active_missing_count = selected_active_gids
             .iter()
-            .filter(|gid| !queue.contains(gid))
+            .filter(|gid| !queue_set.contains(gid.as_str()))
             .count();
         if active_missing_count == 0 {
             break;
@@ -1003,9 +1016,8 @@ pub async fn sync_selected_task_order(
         }
     }
 
-    if sync_error {
-        return Err("priority-sync-failed".to_string());
-    }
-
-    Ok(moved)
+    Ok(SyncOrderResult {
+        moved,
+        partial_error: sync_error,
+    })
 }

@@ -90,7 +90,10 @@ impl ConfigManager {
     }
 
     fn migrate_legacy_keep_seeding_defaults(&mut self) -> bool {
-        let keep_seeding = parse_bool_like(self.user_config.get("keep-seeding"), false);
+        let Some(keep_seeding) = parse_keep_seeding_option(self.user_config.get("keep-seeding"))
+        else {
+            return false;
+        };
         if keep_seeding {
             return false;
         }
@@ -147,19 +150,19 @@ fn load_or_default(path: &Path, defaults: Map<String, Value>) -> Map<String, Val
     defaults
 }
 
-fn parse_bool_like(value: Option<&Value>, fallback: bool) -> bool {
+pub(crate) fn parse_keep_seeding_option(value: Option<&Value>) -> Option<bool> {
     match value {
-        Some(Value::Bool(v)) => *v,
-        Some(Value::Number(v)) => v.as_i64().map(|n| n != 0).unwrap_or(fallback),
+        Some(Value::Bool(v)) => Some(*v),
+        Some(Value::Number(v)) => v.as_i64().map(|n| n != 0),
         Some(Value::String(v)) => {
             let normalized = v.trim().to_ascii_lowercase();
             match normalized.as_str() {
-                "true" | "1" | "yes" | "on" => true,
-                "false" | "0" | "no" | "off" | "" => false,
-                _ => fallback,
+                "true" | "1" | "yes" | "on" => Some(true),
+                "false" | "0" | "no" | "off" | "" => Some(false),
+                _ => None,
             }
         }
-        _ => fallback,
+        _ => None,
     }
 }
 
