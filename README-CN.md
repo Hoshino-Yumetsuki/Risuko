@@ -186,7 +186,17 @@ pnpm run build
 
 ## ☑️ TODO
 
-开发计划请移步 [Trello](https://trello.com/b/qNUzA0bv/motrix) 查看
+请看Issue的roadmap
+
+
+## 性能
+
+Next版本内存用量大概大概是原版的一半，同时降低了了瞬发CPU占用
+| Orignal | Next |
+| ------- | ---- |
+| ![orignal_mem](./static/readme/original.png) | ![next_mem](./static/readme/next.png) |
+
+使用 ![psrecord](https://github.com/astrofrog/psrecord) 生成
 
 ## 🤝 参与共建 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg?style=flat)](http://makeapullrequest.com)
 

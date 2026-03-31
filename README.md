@@ -168,11 +168,20 @@ pnpm run build
 
 ## ☑️ TODO
 
-Development Roadmap see: [Trello](https://trello.com/b/qNUzA0bv/motrix)
+See pinned issues for roadmap
 
 ## 🤝 Contribute [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg?style=flat)](http://makeapullrequest.com)
 
 If you are interested in participating in joint development, PR and Forks are welcome!
+
+## Performance
+
+The Next version use half the memory comparing to original, also significantly less CPU usage bursts:
+| Orignal | Next |
+| ------- | ---- |
+| ![orignal_mem](./static/readme/original.png) | ![next_mem](./static/readme/next.png) |
+
+This is generated with ![psrecord](https://github.com/astrofrog/psrecord)
 
 ## 🌍 Internationalization
 
