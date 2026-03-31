@@ -20,11 +20,19 @@ impl ConfigManager {
             load_or_default(&config_dir.join("system.json"), defaults::system_defaults());
         let user_config = load_or_default(&config_dir.join("user.json"), defaults::user_defaults());
 
-        Ok(Self {
+        let mut manager = Self {
             system_config,
             user_config,
             config_dir,
-        })
+        };
+
+        if manager.migrate_legacy_keep_seeding_defaults() {
+            manager
+                .save_system()
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+        }
+
+        Ok(manager)
     }
 
     pub fn get_system_config(&self) -> &Map<String, Value> {
@@ -78,6 +86,27 @@ impl ConfigManager {
         Ok(())
     }
 
+    fn migrate_legacy_keep_seeding_defaults(&mut self) -> bool {
+        let keep_seeding = parse_bool_like(self.user_config.get("keep-seeding"), false);
+        if keep_seeding {
+            return false;
+        }
+
+        let seed_ratio = parse_f64_like(self.system_config.get("seed-ratio"));
+        let seed_time = parse_f64_like(self.system_config.get("seed-time"));
+
+        let is_legacy_seed_ratio = matches!(seed_ratio, Some(value) if (value - 2.0).abs() < 1e-6);
+        let is_legacy_seed_time = matches!(seed_time, Some(value) if (value - 2880.0).abs() < 1e-6);
+
+        if !is_legacy_seed_ratio || !is_legacy_seed_time {
+            return false;
+        }
+
+        self.system_config.insert("seed-ratio".into(), json!(0));
+        self.system_config.insert("seed-time".into(), json!(0));
+        true
+    }
+
     fn save_system(&self) -> Result<(), String> {
         let path = self.config_dir.join("system.json");
         let data = serde_json::to_string_pretty(&self.system_config).map_err(|e| e.to_string())?;
@@ -113,4 +142,28 @@ fn load_or_default(path: &Path, defaults: Map<String, Value>) -> Map<String, Val
         }
     }
     defaults
+}
+
+fn parse_bool_like(value: Option<&Value>, fallback: bool) -> bool {
+    match value {
+        Some(Value::Bool(v)) => *v,
+        Some(Value::Number(v)) => v.as_i64().map(|n| n != 0).unwrap_or(fallback),
+        Some(Value::String(v)) => {
+            let normalized = v.trim().to_ascii_lowercase();
+            match normalized.as_str() {
+                "true" | "1" | "yes" | "on" => true,
+                "false" | "0" | "no" | "off" | "" => false,
+                _ => fallback,
+            }
+        }
+        _ => fallback,
+    }
+}
+
+fn parse_f64_like(value: Option<&Value>) -> Option<f64> {
+    match value {
+        Some(Value::Number(v)) => v.as_f64(),
+        Some(Value::String(v)) => v.trim().parse::<f64>().ok(),
+        _ => None,
+    }
 }

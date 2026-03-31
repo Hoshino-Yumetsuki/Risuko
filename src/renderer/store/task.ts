@@ -400,142 +400,22 @@ export const useTaskStore = defineStore('task', {
       })
     },
     async syncSelectedTaskOrder(direction: 'up' | 'down', selectedGids: string[]) {
-      const { ACTIVE } = TASK_STATUS
       const selectedGidSet = new Set(selectedGids)
       const selectedTasks = this.taskList.filter((task) => selectedGidSet.has(task.gid))
-      const selectedActiveTasks = selectedTasks.filter((task) => task.status === ACTIVE)
-      const activeSelectedGidSet = new Set(selectedActiveTasks.map((task) => task.gid))
-      let syncError: any = null
+      const selectedTaskPayload = selectedTasks.map((task) => ({
+        gid: task.gid,
+        status: task.status,
+      }))
+      const moved = Number(
+        await api.syncSelectedTaskOrder({
+          direction,
+          selectedTasks: selectedTaskPayload,
+        }),
+      )
 
-      if (selectedActiveTasks.length > 0) {
-        const pauseResult = await Promise.allSettled(
-          selectedActiveTasks.map((task) => {
-            return api.forcePauseTask({ gid: task.gid })
-          }),
-        )
-        if (pauseResult.some((item) => item.status === 'rejected')) {
-          syncError = syncError || new Error('priority-sync-force-pause-failed')
-        }
-      }
-
-      let waitingList: any[] = []
-      const maxAttempts = selectedActiveTasks.length > 0 ? 8 : 1
-      for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-        waitingList = await api
-          .fetchWaitingTaskList({
-            offset: 0,
-            num: 10000,
-            keys: ['gid'],
-          })
-          .catch((err) => {
-            logger.warn('[Motrix] moveSelectedTasks fetchWaitingTaskList failed:', err.message)
-            syncError = syncError || err || new Error('priority-sync-fetch-waiting-failed')
-            return []
-          })
-
-        if (selectedActiveTasks.length === 0) {
-          break
-        }
-
-        const queue = waitingList.map((task) => task.gid)
-        const activeMissingCount = selectedActiveTasks.filter(
-          (task) => !queue.includes(task.gid),
-        ).length
-        if (activeMissingCount === 0) {
-          break
-        }
-        await new Promise((resolve) => setTimeout(resolve, 120))
-      }
-
-      const queue = waitingList.map((task) => task.gid)
-      const selectedQueue = queue.filter((gid) => selectedGidSet.has(gid))
-      const shouldResumeActiveTasks = selectedActiveTasks.length > 0
-
-      let moved = 0
-
-      if (selectedQueue.length === 0 && selectedActiveTasks.length > 0 && direction === 'up') {
-        for (const task of selectedActiveTasks) {
-          try {
-            await api.changePosition({
-              gid: task.gid,
-              pos: 0,
-              how: 'POS_SET',
-            })
-            moved += 1
-          } catch (err) {
-            logger.warn('[Motrix] moveSelectedTasks active fallback failed:', err.message)
-            syncError = syncError || err || new Error('priority-sync-active-fallback-failed')
-          }
-        }
-      }
-      if (selectedQueue.length === 0 && selectedActiveTasks.length > 0 && direction === 'down') {
-        const targetPos = Math.max(queue.length - 1, 0)
-        for (const task of selectedActiveTasks) {
-          try {
-            await api.changePosition({
-              gid: task.gid,
-              pos: targetPos,
-              how: 'POS_SET',
-            })
-            moved += 1
-          } catch (err) {
-            logger.warn('[Motrix] moveSelectedTasks active demote fallback failed:', err.message)
-            syncError = syncError || err || new Error('priority-sync-active-demote-failed')
-          }
-        }
-      }
-
-      const walkList = direction === 'up' ? [...selectedQueue] : [...selectedQueue].reverse()
-
-      for (const gid of walkList) {
-        const currentIndex = queue.indexOf(gid)
-        if (currentIndex < 0) {
-          continue
-        }
-
-        let targetIndex = currentIndex
-        if (direction === 'up') {
-          targetIndex = activeSelectedGidSet.has(gid) ? 0 : Math.max(currentIndex - 1, 0)
-        } else {
-          targetIndex = Math.min(currentIndex + 1, queue.length - 1)
-        }
-        if (targetIndex === currentIndex) {
-          continue
-        }
-
-        try {
-          await api.changePosition({
-            gid,
-            pos: targetIndex,
-            how: 'POS_SET',
-          })
-          const [currentGid] = queue.splice(currentIndex, 1)
-          queue.splice(targetIndex, 0, currentGid)
-          moved += 1
-        } catch (err) {
-          logger.warn('[Motrix] moveSelectedTasks changePosition failed:', err.message)
-          syncError = syncError || err || new Error('priority-sync-change-position-failed')
-        }
-      }
-
-      if (selectedActiveTasks.length > 0 && shouldResumeActiveTasks) {
-        const resumeResult = await Promise.allSettled(
-          selectedActiveTasks.map((task) => {
-            return api.resumeTask({ gid: task.gid })
-          }),
-        )
-        if (resumeResult.some((item) => item.status === 'rejected')) {
-          syncError = syncError || new Error('priority-sync-resume-failed')
-        }
-      }
-
-      if (moved > 0 || selectedActiveTasks.length > 0) {
+      if (moved > 0 || selectedTaskPayload.some((task) => task.status === TASK_STATUS.ACTIVE)) {
         await this.fetchList()
         this.saveSession()
-      }
-
-      if (syncError) {
-        throw syncError
       }
 
       return moved

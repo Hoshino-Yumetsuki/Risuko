@@ -12,7 +12,6 @@ import { usePreferenceStore } from '@/store/preference'
 import api from '@/api'
 import { finalizeCompletedDownloadPath, showItemInFolder } from '@/utils/native'
 import { checkTaskIsBT, getTaskName, parseBooleanConfig } from '@shared/utils'
-import { TASK_STATUS } from '@shared/constants'
 
 const RETRY_STRATEGY_STATIC = 'static'
 const RETRY_STRATEGY_EXPONENTIAL = 'exponential'
@@ -211,14 +210,6 @@ export default {
       }
       return result
     },
-    computeAutoRetryDelayMs(nextAttempt: number) {
-      const baseDelayMs = this.autoRetryIntervalSeconds * 1000
-      const computedDelayMs =
-        this.autoRetryStrategy === RETRY_STRATEGY_EXPONENTIAL
-          ? baseDelayMs * 2 ** (nextAttempt - 1)
-          : baseDelayMs
-      return Math.min(Math.max(computedDelayMs, 1000), AUTO_RETRY_MAX_DELAY_MS)
-    },
     async scheduleAutoRetry(gid: string) {
       const taskGid = `${gid || ''}`.trim()
       if (!this.autoRetryEnabled || !taskGid) {
@@ -228,15 +219,6 @@ export default {
       this.clearAutoRetryTimer(taskGid)
       const ticket = (this.autoRetryPlanTicketMap[taskGid] || 0) + 1
       this.autoRetryPlanTicketMap[taskGid] = ticket
-
-      const planFallback = () => {
-        const nextAttempt = (this.autoRetryAttemptMap[taskGid] || 0) + 1
-        this.autoRetryAttemptMap[taskGid] = nextAttempt
-        return {
-          nextAttempt,
-          delayMs: this.computeAutoRetryDelayMs(nextAttempt),
-        }
-      }
 
       let nextAttempt = 1
       let delayMs = 1000
@@ -256,28 +238,32 @@ export default {
 
         const plannedAttemptMap = this.normalizeAutoRetryAttemptMap(result?.attemptMap)
         const plannedAttempt = Number(result?.nextAttempt)
-        if (plannedAttemptMap[taskGid] && Number.isFinite(plannedAttempt) && plannedAttempt > 0) {
-          this.autoRetryAttemptMap = plannedAttemptMap
-          nextAttempt = Math.floor(plannedAttempt)
-          const plannedDelay = Number(result?.delayMs)
-          delayMs =
-            Number.isFinite(plannedDelay) && plannedDelay > 0
-              ? Math.min(Math.max(Math.floor(plannedDelay), 1000), AUTO_RETRY_MAX_DELAY_MS)
-              : this.computeAutoRetryDelayMs(nextAttempt)
-        } else {
-          const fallbackPlan = planFallback()
-          nextAttempt = fallbackPlan.nextAttempt
-          delayMs = fallbackPlan.delayMs
+        const plannedDelay = Number(result?.delayMs)
+        if (
+          !plannedAttemptMap[taskGid] ||
+          !Number.isFinite(plannedAttempt) ||
+          plannedAttempt <= 0 ||
+          !Number.isFinite(plannedDelay) ||
+          plannedDelay <= 0
+        ) {
+          if (this.autoRetryPlanTicketMap[taskGid] === ticket) {
+            delete this.autoRetryPlanTicketMap[taskGid]
+          }
+          logger.warn('[Motrix] planAutoRetry produced invalid plan, skip scheduling', result)
+          return
         }
+
+        this.autoRetryAttemptMap = plannedAttemptMap
+        nextAttempt = Math.floor(plannedAttempt)
+        delayMs = Math.min(Math.max(Math.floor(plannedDelay), 1000), AUTO_RETRY_MAX_DELAY_MS)
       } catch (err) {
         if (this.autoRetryPlanTicketMap[taskGid] !== ticket) {
           return
         }
 
-        logger.warn('[Motrix] planAutoRetry failed, fallback to renderer:', err?.message || err)
-        const fallbackPlan = planFallback()
-        nextAttempt = fallbackPlan.nextAttempt
-        delayMs = fallbackPlan.delayMs
+        delete this.autoRetryPlanTicketMap[taskGid]
+        logger.warn('[Motrix] planAutoRetry failed:', err?.message || err)
+        return
       }
 
       if (!this.autoRetryEnabled || this.autoRetryPlanTicketMap[taskGid] !== ticket) {
@@ -305,11 +291,6 @@ export default {
             }
           })
       }, delayMs)
-    },
-    resetLowSpeedStateForGid(gid: string) {
-      delete this.lowSpeedStrikeMap[gid]
-      delete this.lowSpeedRecoverAtMap[gid]
-      delete this.lowSpeedRecoveringMap[gid]
     },
     syncLowSpeedRecoveringMapWithState() {
       const stateGids = new Set([
@@ -340,53 +321,6 @@ export default {
         this.lowSpeedRecoveringMap[gid] = false
       }
     },
-    handleLowSpeedTasksFallback(tasks: any[] = []) {
-      if (!this.autoDetectLowSpeedTasks) {
-        return
-      }
-
-      const now = Date.now()
-      const activeGids = new Set<string>()
-
-      for (const task of tasks) {
-        const gid = `${task?.gid || ''}`
-        if (!gid || task?.status !== TASK_STATUS.ACTIVE) {
-          continue
-        }
-
-        activeGids.add(gid)
-
-        const speed = normalizePositiveNumber(task?.downloadSpeed, 0, 0)
-        if (speed >= this.lowSpeedThresholdBytes) {
-          this.resetLowSpeedStateForGid(gid)
-          continue
-        }
-
-        const strike = (this.lowSpeedStrikeMap[gid] || 0) + 1
-        this.lowSpeedStrikeMap[gid] = strike
-
-        if (strike < LOW_SPEED_STRIKE_THRESHOLD) {
-          continue
-        }
-        if ((this.lowSpeedRecoverAtMap[gid] || 0) > now) {
-          continue
-        }
-
-        this.lowSpeedStrikeMap[gid] = 0
-        this.lowSpeedRecoverAtMap[gid] = now + LOW_SPEED_RECOVERY_COOLDOWN_MS
-        this.recoverLowSpeedTask(gid)
-      }
-
-      const knownGids = new Set([
-        ...Object.keys(this.lowSpeedStrikeMap),
-        ...Object.keys(this.lowSpeedRecoverAtMap),
-      ])
-      for (const gid of knownGids) {
-        if (!activeGids.has(gid)) {
-          this.resetLowSpeedStateForGid(gid)
-        }
-      }
-    },
     async handleLowSpeedTasks(tasks: any[] = []) {
       if (!this.autoDetectLowSpeedTasks) {
         return
@@ -395,9 +329,10 @@ export default {
       try {
         const result: any = await api.evaluateLowSpeedTasks({
           tasks: tasks.map((task) => {
+            const isSeedingTask = task?.seeder === 'true' || task?.seeder === true
             return {
               gid: `${task?.gid || ''}`,
-              status: `${task?.status || ''}`,
+              status: isSeedingTask ? 'seeding' : `${task?.status || ''}`,
               downloadSpeed: task?.downloadSpeed,
             }
           }),
@@ -421,11 +356,7 @@ export default {
           this.recoverLowSpeedTask(`${gid || ''}`)
         }
       } catch (err) {
-        logger.warn(
-          '[Motrix] evaluateLowSpeedTasks failed, fallback to renderer:',
-          err?.message || err,
-        )
-        this.handleLowSpeedTasksFallback(tasks)
+        logger.warn('[Motrix] evaluateLowSpeedTasks failed:', err?.message || err)
       }
     },
     getTraySpeedLabelPayload() {
@@ -693,7 +624,7 @@ export default {
           jobs.push(
             api
               .fetchActiveTaskList({
-                keys: ['gid', 'status', 'downloadSpeed'],
+                keys: ['gid', 'status', 'downloadSpeed', 'seeder'],
               })
               .then((tasks) => {
                 activeTasksForLowSpeedCheck = Array.isArray(tasks) ? tasks : []

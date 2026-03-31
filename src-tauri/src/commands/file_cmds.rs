@@ -1,7 +1,10 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use serde::Serialize;
+use serde_json::Value;
 use sha1::{Digest, Sha1};
 use sha2::Sha256;
 use tauri::AppHandle;
@@ -785,9 +788,72 @@ pub fn resolve_torrent_path(
 }
 
 fn normalize_info_hash(raw: &str) -> String {
-    let value = raw.trim().to_ascii_lowercase();
-    let stripped = value.strip_prefix("urn:btih:").unwrap_or(&value);
-    stripped.chars().filter(|c| c.is_ascii_hexdigit()).collect()
+    fn decode_base32_btih_to_hex(input: &str) -> Option<String> {
+        let normalized = input.trim().to_ascii_uppercase();
+        if normalized.len() != 32 {
+            return None;
+        }
+
+        let mut acc: u64 = 0;
+        let mut bits: u8 = 0;
+        let mut bytes: Vec<u8> = Vec::with_capacity(20);
+
+        for ch in normalized.chars() {
+            let value: u8 = match ch {
+                'A'..='Z' => (ch as u8) - b'A',
+                '2'..='7' => 26 + (ch as u8 - b'2'),
+                _ => return None,
+            };
+
+            acc = (acc << 5) | value as u64;
+            bits += 5;
+            while bits >= 8 {
+                let shift = bits - 8;
+                let byte = ((acc >> shift) & 0xFF) as u8;
+                bytes.push(byte);
+                bits -= 8;
+                if bits > 0 {
+                    acc &= (1u64 << bits) - 1;
+                } else {
+                    acc = 0;
+                }
+            }
+        }
+
+        if bytes.len() != 20 {
+            return None;
+        }
+
+        let mut hex = String::with_capacity(bytes.len() * 2);
+        for byte in &bytes {
+            let _ = write!(&mut hex, "{:02x}", byte);
+        }
+
+        Some(hex)
+    }
+
+    let value = raw.trim();
+    let stripped = value
+        .strip_prefix("urn:btih:")
+        .or_else(|| value.strip_prefix("URN:BTIH:"))
+        .unwrap_or(value)
+        .trim();
+
+    let normalized_hex = stripped.to_ascii_lowercase();
+    if (normalized_hex.len() == 40 || normalized_hex.len() == 64)
+        && normalized_hex.chars().all(|c| c.is_ascii_hexdigit())
+    {
+        return normalized_hex;
+    }
+
+    if let Some(decoded) = decode_base32_btih_to_hex(stripped) {
+        return decoded;
+    }
+
+    normalized_hex
+        .chars()
+        .filter(|c| c.is_ascii_hexdigit())
+        .collect()
 }
 
 fn generated_torrent_hex_stem(file_name: &str) -> Option<String> {
@@ -797,6 +863,7 @@ fn generated_torrent_hex_stem(file_name: &str) -> Option<String> {
     }
 
     let stem = lower.strip_suffix(".torrent")?;
+    let stem = stem.strip_prefix("[metadata]").unwrap_or(stem);
     let is_hex = stem.chars().all(|c| c.is_ascii_hexdigit());
     if !is_hex {
         return None;
@@ -806,6 +873,219 @@ fn generated_torrent_hex_stem(file_name: &str) -> Option<String> {
     }
 
     Some(stem.to_string())
+}
+
+fn bytes_to_lower_hex(bytes: &[u8]) -> String {
+    let mut encoded = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        let _ = write!(&mut encoded, "{:02x}", byte);
+    }
+    encoded
+}
+
+fn delete_file_best_effort(path: &Path) -> bool {
+    trash::delete(path).is_ok() || std::fs::remove_file(path).is_ok()
+}
+
+fn extract_btih_token(input: &str) -> Option<String> {
+    let lower = input.to_ascii_lowercase();
+    let marker = "urn:btih:";
+    let start = lower.find(marker)? + marker.len();
+    let tail = &input[start..];
+    let token: String = tail
+        .chars()
+        .take_while(|ch| ch.is_ascii_alphanumeric())
+        .collect();
+    if token.is_empty() {
+        None
+    } else {
+        Some(token)
+    }
+}
+
+fn percent_decode_lossy(input: &str) -> String {
+    let bytes = input.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut i = 0usize;
+
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            let h1 = bytes[i + 1] as char;
+            let h2 = bytes[i + 2] as char;
+            if let Some(byte) = h1
+                .to_digit(16)
+                .zip(h2.to_digit(16))
+                .map(|(a, b)| ((a << 4) | b) as u8)
+            {
+                decoded.push(byte);
+                i += 3;
+                continue;
+            }
+        }
+
+        decoded.push(bytes[i]);
+        i += 1;
+    }
+
+    String::from_utf8_lossy(&decoded).to_string()
+}
+
+fn valid_normalized_info_hash(raw: &str) -> Option<String> {
+    let normalized = normalize_info_hash(raw);
+    if normalized.len() == 40 || normalized.len() == 64 {
+        Some(normalized)
+    } else {
+        None
+    }
+}
+
+fn resolve_task_info_hash(task: &Value) -> Option<String> {
+    if let Some(value) = task.get("infoHash").and_then(Value::as_str) {
+        if let Some(normalized) = valid_normalized_info_hash(value) {
+            return Some(normalized);
+        }
+    }
+
+    if let Some(value) = task
+        .get("bittorrent")
+        .and_then(Value::as_object)
+        .and_then(|bt| bt.get("infoHash"))
+        .and_then(Value::as_str)
+    {
+        if let Some(normalized) = valid_normalized_info_hash(value) {
+            return Some(normalized);
+        }
+    }
+
+    let Some(files) = task.get("files").and_then(Value::as_array) else {
+        return None;
+    };
+
+    for file in files {
+        let Some(uris) = file.get("uris").and_then(Value::as_array) else {
+            continue;
+        };
+
+        for uri in uris {
+            let Some(raw_uri) = uri.get("uri").and_then(Value::as_str) else {
+                continue;
+            };
+            let raw_uri = raw_uri.trim();
+            if raw_uri.is_empty() {
+                continue;
+            }
+
+            let token = extract_btih_token(raw_uri)
+                .or_else(|| extract_btih_token(&percent_decode_lossy(raw_uri)));
+            if let Some(token) = token {
+                if let Some(normalized) = valid_normalized_info_hash(&token) {
+                    return Some(normalized);
+                }
+            }
+        }
+    }
+
+    None
+}
+
+fn push_candidate_dir(
+    dirs: &mut Vec<String>,
+    seen: &mut BTreeSet<String>,
+    candidate: Option<&str>,
+) {
+    let candidate = candidate.unwrap_or("").trim();
+    if candidate.is_empty() {
+        return;
+    }
+
+    if seen.insert(candidate.to_string()) {
+        dirs.push(candidate.to_string());
+    }
+}
+
+fn resolve_task_candidate_dirs(task: &Value) -> Vec<String> {
+    let mut dirs = Vec::new();
+    let mut seen = BTreeSet::new();
+
+    push_candidate_dir(
+        &mut dirs,
+        &mut seen,
+        task.get("dir").and_then(Value::as_str),
+    );
+
+    if let Some(files) = task.get("files").and_then(Value::as_array) {
+        for file in files {
+            let Some(path) = file.get("path").and_then(Value::as_str) else {
+                continue;
+            };
+            let path = path.trim();
+            if path.is_empty() {
+                continue;
+            }
+
+            let parent = Path::new(path).parent().and_then(|value| value.to_str());
+            push_candidate_dir(&mut dirs, &mut seen, parent);
+        }
+    }
+
+    dirs
+}
+
+fn trash_generated_torrent_sidecars_in_dir(dir: &Path, normalized_info_hash: Option<&str>) -> u32 {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(_) => return 0,
+    };
+
+    let mut deleted = 0u32;
+    let mut fallback_candidates: Vec<PathBuf> = Vec::new();
+
+    for entry in entries {
+        let Ok(entry) = entry else {
+            continue;
+        };
+
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+
+        let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        // Only clean up generated sidecars (hex-stem torrents) to avoid removing
+        // user-provided source torrent files with descriptive names.
+        let Some(stem) = generated_torrent_hex_stem(file_name) else {
+            continue;
+        };
+
+        let matched = normalized_info_hash
+            .map(|hash| {
+                let matched_by_name = stem == hash;
+                let matched_by_content =
+                    !matched_by_name && matches_generated_torrent_sidecar_by_content(&path, hash);
+                matched_by_name || matched_by_content
+            })
+            .unwrap_or(false);
+
+        if matched {
+            if delete_file_best_effort(&path) {
+                deleted += 1;
+            }
+        } else {
+            fallback_candidates.push(path);
+        }
+    }
+
+    // Keep old behavior: when there is exactly one generated sidecar candidate,
+    // remove it even if task hash is missing/mismatched.
+    if deleted == 0 && fallback_candidates.len() == 1 {
+        if delete_file_best_effort(&fallback_candidates[0]) {
+            deleted = 1;
+        }
+    }
+
+    deleted
 }
 
 fn extract_info_dict_slice(input: &[u8]) -> Result<&[u8], String> {
@@ -843,11 +1123,11 @@ fn matches_generated_torrent_sidecar_by_content(path: &Path, normalized_info_has
     match normalized_info_hash.len() {
         40 => {
             let digest = Sha1::digest(info_slice);
-            format!("{:x}", digest) == normalized_info_hash
+            bytes_to_lower_hex(digest.as_ref()) == normalized_info_hash
         }
         64 => {
             let digest = Sha256::digest(info_slice);
-            format!("{:x}", digest) == normalized_info_hash
+            bytes_to_lower_hex(digest.as_ref()) == normalized_info_hash
         }
         _ => false,
     }
@@ -859,49 +1139,56 @@ pub fn trash_generated_torrent_sidecars(
     dir: String,
     info_hash: String,
 ) -> Result<u32, String> {
-    let normalized = normalize_info_hash(&info_hash);
-    if normalized.len() != 40 && normalized.len() != 64 {
+    let Some(normalized) = valid_normalized_info_hash(&info_hash) else {
         return Ok(0);
-    }
+    };
+
     let dir = PathBuf::from(dir);
     let dir = canonicalize_path(&dir).map_err(|_| "Path does not exist".to_string())?;
     if !dir.is_dir() {
         return Err("Path is not a directory".to_string());
     }
 
-    let mut deleted = 0u32;
-    let entries = std::fs::read_dir(&dir).map_err(|e| e.to_string())?;
-    for entry in entries {
-        let Ok(entry) = entry else {
-            continue;
-        };
-        let path = entry.path();
-        if !path.is_file() {
-            continue;
+    Ok(trash_generated_torrent_sidecars_in_dir(
+        &dir,
+        Some(&normalized),
+    ))
+}
+
+#[tauri::command]
+pub fn cleanup_generated_torrent_sidecars_for_task(task: Value) -> Result<u32, String> {
+    const RETRY_DELAYS_MS: [u64; 3] = [0, 250, 500];
+
+    let dirs = resolve_task_candidate_dirs(&task);
+    if dirs.is_empty() {
+        return Ok(0);
+    }
+
+    let normalized_info_hash = resolve_task_info_hash(&task);
+
+    for delay_ms in RETRY_DELAYS_MS {
+        if delay_ms > 0 {
+            std::thread::sleep(Duration::from_millis(delay_ms));
         }
 
-        let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
-            continue;
-        };
-        // Only clean up generated sidecars (hex-stem torrents) to avoid removing
-        // user-provided source torrent files with descriptive names.
-        let Some(stem) = generated_torrent_hex_stem(file_name) else {
-            continue;
-        };
+        let mut deleted = 0u32;
+        for dir in &dirs {
+            let path = PathBuf::from(dir);
+            let Ok(path) = canonicalize_path(&path) else {
+                continue;
+            };
+            if !path.is_dir() {
+                continue;
+            }
 
-        let matched_by_name = stem == normalized;
-        let matched_by_content = !matched_by_name
-            && stem.len() != normalized.len()
-            && matches_generated_torrent_sidecar_by_content(&path, &normalized);
-        if !matched_by_name && !matched_by_content {
-            continue;
+            deleted +=
+                trash_generated_torrent_sidecars_in_dir(&path, normalized_info_hash.as_deref());
         }
 
-        let deleted_ok = trash::delete(&path).is_ok() || std::fs::remove_file(&path).is_ok();
-        if deleted_ok {
-            deleted += 1;
+        if deleted > 0 {
+            return Ok(deleted);
         }
     }
 
-    Ok(deleted)
+    Ok(0)
 }

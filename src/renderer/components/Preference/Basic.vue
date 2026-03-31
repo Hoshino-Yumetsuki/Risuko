@@ -151,7 +151,7 @@
                 placeholder=""
                 v-model="form.dir"
                 :readonly="isMas"
-                class="flex-1 shadow-none rounded-none"
+                class="flex-1 shadow-none rounded-none border-none"
               />
               <span class="mo-input-append" v-if="isRenderer">
                 <mo-select-directory @selected="handleNativeDirectorySelected" />
@@ -279,7 +279,7 @@
                 <ui-checkbox :model-value="!!form.keepSeeding" @change="onKeepSeedingToggle" />
               </div>
             </div>
-            <div v-if="!form.keepSeeding" class="settings-select-group">
+            <div v-if="form.keepSeeding" class="settings-select-group">
               <div class="settings-select-item">
                 <label class="settings-select-item-label">{{ $t('preferences.seed-ratio') }}</label>
                 <NumberInput v-model="form.seedRatio" :min="0" :max="100" :step="0.1" />
@@ -318,18 +318,7 @@
                 <label class="settings-select-item-label">{{
                   $t('preferences.max-connection-per-server')
                 }}</label>
-                <NumberInput v-model="form.maxConnectionPerServer" :min="1" :max="16" />
-              </div>
-            </div>
-            <div class="settings-row">
-              <div class="settings-row-content">
-                <span class="settings-row-title">{{ $t('preferences.continue') }}</span>
-              </div>
-              <div class="settings-row-action">
-                <ui-checkbox
-                  :model-value="!!form.continue"
-                  @change="(val) => setBasicBoolean('continue', val)"
-                />
+                <NumberInput v-model="form.maxConnectionPerServer" :min="1" :max="128" />
               </div>
             </div>
             <div class="settings-row">

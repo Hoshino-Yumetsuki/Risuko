@@ -77,7 +77,7 @@
           </div>
           <div class="atd-field atd-field--narrow">
             <label class="atd-field-label">{{ $t('task.task-split') }}</label>
-            <NumberInput v-model="form.split" :min="1" :max="16" />
+            <NumberInput v-model="form.split" :min="1" />
           </div>
           <div class="atd-field atd-field--full">
             <label class="atd-field-label">{{ $t('task.task-dir') }}</label>
@@ -89,7 +89,7 @@
                 placeholder=""
                 v-model="form.dir"
                 :readonly="isMas"
-                class="flex-1 shadow-none rounded-none"
+                class="flex-1 shadow-none rounded-none border-none"
               />
               <span class="mo-input-append" v-if="isRenderer">
                 <mo-select-directory @selected="handleNativeDirectorySelected" />

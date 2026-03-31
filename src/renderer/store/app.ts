@@ -9,38 +9,6 @@ const PER_INTERVAL = 80
 const MIN_INTERVAL = 800
 const MAX_INTERVAL = 6000
 
-const normalizeNonNegativeNumber = (value: any): number => {
-  const parsed = Number(value)
-  if (!Number.isFinite(parsed) || parsed <= 0) {
-    return 0
-  }
-  return parsed
-}
-
-const calcRendererProgress = (tasks: any[] = []) => {
-  if (tasks.length === 0) {
-    return -1
-  }
-
-  let total = 0
-  let completed = 0
-  for (const task of tasks) {
-    const totalLength = normalizeNonNegativeNumber(task?.totalLength)
-    if (totalLength === 0) {
-      continue
-    }
-
-    total += totalLength
-    completed += normalizeNonNegativeNumber(task?.completedLength)
-  }
-
-  if (total === 0) {
-    return 2
-  }
-
-  return completed / total
-}
-
 export const useAppStore = defineStore('app', {
   state: () => ({
     systemTheme: getSystemTheme(),
@@ -175,16 +143,8 @@ export const useAppStore = defineStore('app', {
           return
         }
 
-        try {
-          const nativeProgress = Number(await api.calculateActiveTaskProgress({ tasks }))
-          progress = Number.isFinite(nativeProgress) ? nativeProgress : calcRendererProgress(tasks)
-        } catch (nativeErr) {
-          logger.warn(
-            '[Motrix] calculateActiveTaskProgress failed, fallback to renderer:',
-            nativeErr?.message || nativeErr,
-          )
-          progress = calcRendererProgress(tasks)
-        }
+        const nativeProgress = Number(await api.calculateActiveTaskProgress({ tasks }))
+        progress = Number.isFinite(nativeProgress) ? nativeProgress : -1
 
         this.progress = progress
       } catch (err) {

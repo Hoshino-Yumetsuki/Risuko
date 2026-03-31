@@ -151,11 +151,17 @@ export default {
     async deleteTaskFiles(task) {
       try {
         let targetTask = task
-        if (!targetTask?.infoHash && targetTask?.gid) {
+        if (targetTask?.gid) {
           try {
-            const fullTask = await api.fetchTaskItem({ gid: targetTask.gid })
+            const fullTask = await api.fetchTaskItem({
+              gid: targetTask.gid,
+              keys: ['gid', 'status', 'dir', 'files', 'bittorrent', 'infoHash'],
+            })
             if (fullTask) {
-              targetTask = fullTask
+              targetTask = {
+                ...targetTask,
+                ...fullTask,
+              }
             }
           } catch (err) {
             logger.warn('[Motrix] fetch full task before delete files failed:', err)

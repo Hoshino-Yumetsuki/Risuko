@@ -10,7 +10,7 @@ export default class LocaleManager {
     i18next.init({
       fallbackLng: 'en-US',
       resources: options.resources || {},
-      initImmediate: false,
+      initAsync: false,
     })
   }
 
