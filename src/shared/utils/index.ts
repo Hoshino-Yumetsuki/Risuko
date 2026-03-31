@@ -7,7 +7,6 @@ import {
   isEmpty,
   isFunction,
   isPlainObject,
-  kebabCase,
   omitBy,
   parseInt,
   pick,
@@ -368,12 +367,20 @@ const changeKeysCase = (obj, caseConverter) => {
   return result
 }
 
+const toKebabCasePreserveNumbers = (key = '') => {
+  return `${key}`
+    .replace(/([A-Z])([A-Z][a-z])/g, '$1-$2')
+    .replace(/([a-z0-9])([A-Z])/g, '$1-$2')
+    .replace(/[_\s]+/g, '-')
+    .toLowerCase()
+}
+
 export const changeKeysToCamelCase = (obj = {}) => {
   return changeKeysCase(obj, camelCase)
 }
 
 export const changeKeysToKebabCase = (obj = {}) => {
-  return changeKeysCase(obj, kebabCase)
+  return changeKeysCase(obj, toKebabCasePreserveNumbers)
 }
 
 export const separateConfig = (options) => {
@@ -554,7 +561,7 @@ export const formatOptionsForEngine = (options: any = {}) => {
   const result: Record<string, any> = {}
 
   Object.keys(options).forEach((key) => {
-    const kebabCaseKey = kebabCase(key)
+    const kebabCaseKey = toKebabCasePreserveNumbers(key)
     if (Array.isArray(options[key])) {
       result[kebabCaseKey] = options[key].join('\n')
     } else {

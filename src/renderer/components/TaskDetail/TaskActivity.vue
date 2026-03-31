@@ -153,8 +153,8 @@ import { TASK_STATUS } from '@shared/constants'
 import TaskGraphic from '@/components/TaskGraphic/Index.vue'
 import TaskProgress from '@/components/Task/TaskProgress.vue'
 
-const DEFAULT_SPLIT_SEGMENTS = 16
-const MAX_SPLIT_SEGMENTS = 16
+const DEFAULT_SPLIT_SEGMENTS = 32
+const MAX_SPLIT_SEGMENTS = 128
 const SPEED_HISTORY_LIMIT = 60
 const SPEED_VERTICAL_GRID_COUNT = 6
 

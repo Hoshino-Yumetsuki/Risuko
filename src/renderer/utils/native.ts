@@ -29,6 +29,8 @@ export const showItemInFolder = async (
   const fallback = `${fallbackPath || ''}`.trim()
   if (!revealPath && !fallback) return
 
+  logger.info(`[Motrix] showItemInFolder: path="${revealPath}", fallback="${fallback}"`)
+
   try {
     await invoke('reveal_in_folder', { path: revealPath || fallback })
   } catch (err) {
@@ -96,20 +98,23 @@ export const getTaskRevealPath = (task: any): string => {
   }
 
   if (isMagnetTask(task)) {
-    return `${task?.dir || ''}`.trim()
+    const result = `${task?.dir || ''}`.trim()
+    logger.info(`[Motrix] getTaskRevealPath (magnet): "${result}"`)
+    return result
   }
 
   const files = Array.isArray(task?.files) ? task.files : []
   const candidate = `${files.find((file: any) => `${file?.path || ''}`.trim())?.path || ''}`.trim()
   if (!candidate) {
-    return getTaskFullPath(task)
+    const fallback = getTaskFullPath(task)
+    logger.info(`[Motrix] getTaskRevealPath (no file.path, using getTaskFullPath): "${fallback}"`)
+    return fallback
   }
 
-  if (task?.status === TASK_STATUS.COMPLETE) {
-    return stripTempDownloadSuffix(candidate)
-  }
-
-  return candidate
+  const result =
+    task?.status === TASK_STATUS.COMPLETE ? stripTempDownloadSuffix(candidate) : candidate
+  logger.info(`[Motrix] getTaskRevealPath (from file.path): "${result}"`)
+  return result
 }
 
 export const finalizeCompletedDownloadPath = async (task: any): Promise<string> => {
@@ -147,8 +152,6 @@ export const finalizeCompletedDownloadPath = async (task: any): Promise<string> 
 
 export const moveTaskFilesToTrash = async (task: any): Promise<boolean> => {
   const { dir, status } = task
-  const normalizedDir = `${dir || ''}`.trim()
-  const normalizedInfoHash = `${task?.infoHash || task?.bittorrent?.infoHash || ''}`.trim()
   const filesToCleanup = new Set<string>()
   const addCleanupPath = (candidate = '') => {
     const value = `${candidate || ''}`.trim()
@@ -187,32 +190,21 @@ export const moveTaskFilesToTrash = async (task: any): Promise<boolean> => {
     }
   }
 
-  const sidecarDir = (() => {
-    if (normalizedDir) {
-      return normalizedDir
-    }
-    const fullPath = getTaskFullPath(task)
-    const normalizedPath = `${fullPath || ''}`.trim()
-    if (!normalizedPath) {
-      return ''
-    }
-    const segments = normalizedPath.split(/[/\\]/)
-    segments.pop()
-    return segments.join('/')
-  })()
-
-  if (sidecarDir && normalizedInfoHash) {
-    try {
-      await invoke('trash_generated_torrent_sidecars', {
-        dir: sidecarDir,
-        infoHash: normalizedInfoHash,
-      })
-    } catch (err) {
-      logger.warn(`[Motrix] cleanup generated torrent sidecars failed: ${err}`)
-    }
-  }
+  await cleanupGeneratedTorrentSidecars(task)
 
   return true
+}
+
+export const cleanupGeneratedTorrentSidecars = async (task: any): Promise<number> => {
+  try {
+    const result = await invoke<number>('cleanup_generated_torrent_sidecars_for_task', {
+      task,
+    })
+    return Number.isFinite(result) ? Number(result) : 0
+  } catch (err) {
+    logger.warn(`[Motrix] cleanup generated torrent sidecars failed: ${err}`)
+    return 0
+  }
 }
 
 export const getSystemTheme = (): string => {

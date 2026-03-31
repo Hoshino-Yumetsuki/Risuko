@@ -4,16 +4,16 @@
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead class="w-[42px]">
+            <TableHead class="w-10.5">
               <Checkbox :model-value="allSelected" @update:model-value="toggleAll" />
             </TableHead>
-            <TableHead class="min-w-[200px]">{{ $t('task.file-name') }}</TableHead>
-            <TableHead class="w-[80px]">{{ $t('task.file-extension') }}</TableHead>
-            <TableHead v-if="mode === 'DETAIL'" class="w-[50px] text-right">%</TableHead>
-            <TableHead v-if="mode === 'DETAIL'" class="w-[85px] text-right">{{
+            <TableHead class="min-w-50">{{ $t('task.file-name') }}</TableHead>
+            <TableHead class="w-20">{{ $t('task.file-extension') }}</TableHead>
+            <TableHead v-if="mode === 'DETAIL'" class="w-12.5 text-right">%</TableHead>
+            <TableHead v-if="mode === 'DETAIL'" class="w-21.25 text-right">{{
               $t('task.file-completed-size')
             }}</TableHead>
-            <TableHead class="w-[85px] text-right">{{ $t('task.file-size') }}</TableHead>
+            <TableHead class="w-21.25 text-right">{{ $t('task.file-size') }}</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -29,7 +29,7 @@
                 @update:model-value="(val) => toggleRow(row, val)"
               />
             </TableCell>
-            <TableCell class="truncate max-w-[200px]" :title="row.path || row.name">
+            <TableCell class="truncate max-w-50" :title="row.path || row.name">
               {{ row.name }}
             </TableCell>
             <TableCell>{{ formatExtension(row.extension) }}</TableCell>

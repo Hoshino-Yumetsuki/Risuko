@@ -9,6 +9,38 @@ const PER_INTERVAL = 80
 const MIN_INTERVAL = 800
 const MAX_INTERVAL = 6000
 
+const normalizeNonNegativeNumber = (value: any): number => {
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return 0
+  }
+  return parsed
+}
+
+const calcRendererProgress = (tasks: any[] = []) => {
+  if (tasks.length === 0) {
+    return -1
+  }
+
+  let total = 0
+  let completed = 0
+  for (const task of tasks) {
+    const totalLength = normalizeNonNegativeNumber(task?.totalLength)
+    if (totalLength === 0) {
+      continue
+    }
+
+    total += totalLength
+    completed += normalizeNonNegativeNumber(task?.completedLength)
+  }
+
+  if (total === 0) {
+    return 2
+  }
+
+  return completed / total
+}
+
 export const useAppStore = defineStore('app', {
   state: () => ({
     systemTheme: getSystemTheme(),
@@ -132,24 +164,32 @@ export const useAppStore = defineStore('app', {
     },
     async fetchProgress() {
       try {
-        const data = await api.fetchActiveTaskList()
+        const data = await api.fetchActiveTaskList({
+          keys: ['totalLength', 'completedLength'],
+        })
+        const tasks = Array.isArray(data) ? data : []
         let progress = -1
-        if (data.length !== 0) {
-          data.forEach((task) => {
-            task.totalLength = Number(task.totalLength)
-            task.completedLength = Number(task.completedLength)
-          })
-          const realTotal = data.reduce((total, task) => total + task.totalLength, 0)
-          if (realTotal === 0) {
-            progress = 2
-          } else {
-            const tasks = data.filter((task) => task.totalLength !== 0)
-            const completed = tasks.reduce((total, task) => total + task.completedLength, 0)
-            const total = tasks.reduce((total, task) => total + task.totalLength, 0)
-            progress = completed / total
-          }
+
+        if (tasks.length === 0) {
+          this.progress = -1
+          return
         }
-        this.progress = progress
+
+        try {
+          const nativeProgress = Number(await api.calculateActiveTaskProgress({ tasks }))
+          const normalizedNativeProgress = nativeProgress === 2 ? -1 : nativeProgress
+          progress = Number.isFinite(normalizedNativeProgress)
+            ? normalizedNativeProgress
+            : calcRendererProgress(tasks)
+        } catch (nativeErr) {
+          logger.warn(
+            '[Motrix] calculateActiveTaskProgress failed, fallback to renderer:',
+            nativeErr?.message || nativeErr,
+          )
+          progress = calcRendererProgress(tasks)
+        }
+
+        this.progress = progress === 2 ? -1 : progress
       } catch (err) {
         logger.warn('[Motrix] fetchProgress failed:', err.message)
       }

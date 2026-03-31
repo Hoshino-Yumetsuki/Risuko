@@ -11,13 +11,7 @@ import {
   changeKeysToKebabCase,
 } from '@shared/utils'
 import { startupOnlyKeys } from '@shared/configKeys'
-import {
-  ENGINE_RPC_HOST,
-  ENGINE_RPC_PORT,
-  EMPTY_STRING,
-  PROXY_SCOPES,
-  TEMP_DOWNLOAD_SUFFIX,
-} from '@shared/constants'
+import { ENGINE_RPC_HOST, ENGINE_RPC_PORT, EMPTY_STRING } from '@shared/constants'
 
 const RPC_CONFIG_KEYS = ['rpc-host', 'rpc-listen-port', 'rpc-secret']
 const ENGINE_RESTART_USER_KEYS = ['idle-bt-network-guard', 'rpc-host', 'aria2-extra-args']
@@ -49,72 +43,6 @@ const clampTaskListFetchSize = (value: unknown) => {
     return MAX_TASK_LIST_FETCH_SIZE
   }
   return normalized
-}
-
-const normalizeProxyBypass = (value: any) => {
-  if (typeof value !== 'string') {
-    return ''
-  }
-
-  return value
-    .split(/[\r\n,]+/)
-    .map((item) => item.trim())
-    .filter(Boolean)
-    .join(',')
-}
-
-const hasTempDownloadSuffix = (value = '') => {
-  return value.toLowerCase().endsWith(TEMP_DOWNLOAD_SUFFIX)
-}
-
-const ensureTempDownloadSuffix = (value = '') => {
-  const normalized = `${value || ''}`.trim()
-  if (!normalized) {
-    return ''
-  }
-  if (hasTempDownloadSuffix(normalized)) {
-    return normalized
-  }
-  return `${normalized}${TEMP_DOWNLOAD_SUFFIX}`
-}
-
-const decodeUriPathSegment = (value = '') => {
-  try {
-    return decodeURIComponent(value)
-  } catch {
-    return value
-  }
-}
-
-const inferOutFromUri = (uri = '') => {
-  const raw = `${uri || ''}`.trim()
-  if (!raw) {
-    return ''
-  }
-
-  const pickName = (path = '') => {
-    const segments = `${path || ''}`.split('/').filter(Boolean)
-    if (segments.length === 0) {
-      return ''
-    }
-    const candidate = decodeUriPathSegment(segments[segments.length - 1]).trim()
-    if (!candidate || !candidate.includes('.')) {
-      return ''
-    }
-    if (candidate.startsWith('.') || candidate.endsWith('.')) {
-      return ''
-    }
-    return candidate
-  }
-
-  try {
-    const parsed = new URL(raw)
-    return pickName(parsed.pathname)
-  } catch {
-    const withoutHash = raw.split('#')[0]
-    const withoutQuery = withoutHash.split('?')[0]
-    return pickName(withoutQuery)
-  }
 }
 
 export default class Api {
@@ -224,7 +152,9 @@ export default class Api {
 
   async savePreference(params: any = {}) {
     let kebabParams = changeKeysToKebabCase(params)
-    kebabParams = this.patchProxySystemConfig(kebabParams)
+    kebabParams = await invoke('prepare_preference_patch', {
+      params: kebabParams,
+    })
 
     const { user, system } = separateConfig(kebabParams)
     const hasStartupOnlySystemChanges = Object.keys(system).some((key) =>
@@ -244,28 +174,6 @@ export default class Api {
     if (shouldReconnect || hasStartupOnlySystemChanges || hasEngineRestartUserChanges) {
       this.config = await this.loadConfig()
       await this.reconnectClient(this.config)
-    }
-  }
-
-  patchProxySystemConfig(params: Record<string, any>) {
-    if (!Object.prototype.hasOwnProperty.call(params, 'proxy')) {
-      return params
-    }
-
-    const proxy = params.proxy || {}
-    const proxyServer = `${proxy.server || ''}`.trim()
-    const proxyScope = Array.isArray(proxy.scope) ? proxy.scope : []
-    const useDownloadProxy =
-      !!proxy.enable && !!proxyServer && proxyScope.includes(PROXY_SCOPES.DOWNLOAD)
-
-    const systemProxyConfig = {
-      'all-proxy': useDownloadProxy ? proxyServer : '',
-      'no-proxy': useDownloadProxy ? normalizeProxyBypass(proxy.bypass) : '',
-    }
-
-    return {
-      ...params,
-      ...systemProxyConfig,
     }
   }
 
@@ -344,47 +252,65 @@ export default class Api {
     return this.ensureReady().then((client) => client.call('getGlobalStat'))
   }
 
+  calculateActiveTaskProgress(params: any = {}) {
+    const { tasks = [] } = params
+    return invoke('calculate_active_task_progress', { tasks })
+  }
+
+  evaluateLowSpeedTasks(params: any = {}) {
+    const {
+      tasks = [],
+      thresholdBytes = 0,
+      strikeThreshold = 3,
+      cooldownMs = 30000,
+      nowMs = Date.now(),
+      strikeMap = {},
+      recoverAtMap = {},
+    } = params
+    return invoke('evaluate_low_speed_tasks', {
+      tasks,
+      thresholdBytes,
+      strikeThreshold,
+      cooldownMs,
+      nowMs,
+      strikeMap,
+      recoverAtMap,
+    })
+  }
+
+  planAutoRetry(params: any = {}) {
+    const {
+      gid = '',
+      strategy = 'static',
+      intervalSeconds = 5,
+      maxDelayMs = 15 * 60 * 1000,
+      attemptMap = {},
+    } = params
+    return invoke('plan_auto_retry', {
+      gid,
+      strategy,
+      intervalSeconds,
+      maxDelayMs,
+      attemptMap,
+    })
+  }
+
+  syncSelectedTaskOrder(params: any = {}) {
+    const { direction = 'up', selectedTasks = [] } = params
+    return invoke<{ moved: number; partialError: boolean }>('sync_selected_task_order', {
+      direction,
+      selectedTasks,
+    })
+  }
+
   addUri(params: any) {
     const { uris, outs, options } = params
-    const tasks = uris.map((uri, index) => {
-      const engineOptions: any = formatOptionsForEngine(options)
-      const preferredOut = (outs && outs[index]) || engineOptions.out || inferOutFromUri(uri)
-      const tempOut = ensureTempDownloadSuffix(preferredOut)
-      if (tempOut) {
-        engineOptions.out = tempOut
-      }
-      const args = compactUndefined([[uri], engineOptions])
-      return ['aria2.addUri', ...args]
+    const engineOptions = formatOptionsForEngine(options)
+    return invoke('add_uri', {
+      uris,
+      outs,
+      options: engineOptions,
     })
-    return this.ensureReady()
-      .then((client) => client.multicall(tasks))
-      .then((result: any[] = []) => {
-        const isErrorObject = (value: any) =>
-          value && typeof value === 'object' && ('code' in value || 'message' in value)
-
-        const hasItemError = (item: any) => {
-          if (isErrorObject(item)) {
-            return item
-          }
-          if (Array.isArray(item)) {
-            return item.find((entry) => isErrorObject(entry))
-          }
-          return null
-        }
-
-        const failedItem = result.find((item) => !!hasItemError(item))
-        if (failedItem) {
-          const err = hasItemError(failedItem) || {}
-          const error: any = new Error(err.message || 'task.new-task-fail')
-          if (err.code !== undefined) {
-            error.code = err.code
-          }
-          error.data = err
-          throw error
-        }
-
-        return result
-      })
   }
 
   addTorrent(params: any) {

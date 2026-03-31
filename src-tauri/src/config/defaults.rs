@@ -37,8 +37,8 @@ pub fn system_defaults() -> Map<String, Value> {
     m.insert("pause".into(), json!(true));
     m.insert("rpc-listen-port".into(), json!(16800));
     m.insert("rpc-secret".into(), json!(""));
-    m.insert("seed-ratio".into(), json!(2));
-    m.insert("seed-time".into(), json!(2880));
+    m.insert("seed-ratio".into(), json!(0));
+    m.insert("seed-time".into(), json!(0));
     m.insert("split".into(), json!(16));
     m.insert(
         "user-agent".into(),

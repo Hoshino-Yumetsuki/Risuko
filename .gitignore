@@ -8,6 +8,7 @@
 node_modules/
 thumbs.db
 .omc
+.venv
 
 # npm package
 .npmrc

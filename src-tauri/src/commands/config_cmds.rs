@@ -1,8 +1,8 @@
-use serde_json::Value;
+use serde_json::{Map, Value};
 use tauri::{AppHandle, State};
 use tauri_plugin_autostart::ManagerExt;
 
-use crate::state::AppState;
+use crate::{config::parse_keep_seeding_option, state::AppState};
 
 #[tauri::command]
 pub fn get_app_config(handle: AppHandle, state: State<'_, AppState>) -> Result<Value, String> {
@@ -88,6 +88,82 @@ pub fn save_preference(
     }
 
     Ok(())
+}
+
+fn normalize_proxy_bypass(value: &str) -> String {
+    value
+        .split(|c| c == ',' || c == '\r' || c == '\n')
+        .map(|item| item.trim())
+        .filter(|item| !item.is_empty())
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn contains_download_scope(value: Option<&Value>) -> bool {
+    value
+        .and_then(|scope| scope.as_array())
+        .map(|scope| {
+            scope.iter().any(|item| {
+                item.as_str()
+                    .map(|text| text.trim() == "download")
+                    .unwrap_or(false)
+            })
+        })
+        .unwrap_or(false)
+}
+
+#[tauri::command]
+pub fn prepare_preference_patch(params: Value) -> Result<Value, String> {
+    let mut map = match params {
+        Value::Object(map) => map,
+        _ => Map::new(),
+    };
+
+    if matches!(
+        parse_keep_seeding_option(map.get("keep-seeding")),
+        Some(false)
+    ) {
+        map.insert("seed-time".to_string(), Value::from(0));
+        map.insert("seed-ratio".to_string(), Value::from(0));
+    }
+
+    let Some(proxy) = map.get("proxy").and_then(|value| value.as_object()) else {
+        return Ok(Value::Object(map));
+    };
+
+    let proxy_enabled = proxy
+        .get("enable")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
+    let proxy_server = proxy
+        .get("server")
+        .and_then(|value| value.as_str())
+        .map(|value| value.trim().to_string())
+        .unwrap_or_default();
+    let use_download_proxy =
+        proxy_enabled && !proxy_server.is_empty() && contains_download_scope(proxy.get("scope"));
+
+    let no_proxy = if use_download_proxy {
+        proxy
+            .get("bypass")
+            .and_then(|value| value.as_str())
+            .map(normalize_proxy_bypass)
+            .unwrap_or_default()
+    } else {
+        String::new()
+    };
+
+    map.insert(
+        "all-proxy".to_string(),
+        Value::String(if use_download_proxy {
+            proxy_server
+        } else {
+            String::new()
+        }),
+    );
+    map.insert("no-proxy".to_string(), Value::String(no_proxy));
+
+    Ok(Value::Object(map))
 }
 
 fn apply_open_at_login(handle: &AppHandle, enabled: bool) -> Result<(), String> {

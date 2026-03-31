@@ -521,7 +521,6 @@ fn build_engine_args(
     if let Some(extra_args) = user.get("aria2-extra-args").and_then(|v| v.as_str()) {
         merge_custom_args(&mut args, extra_args);
     }
-    clamp_max_connection_per_server(&mut args);
 
     Ok(args)
 }
@@ -584,28 +583,6 @@ fn parse_long_option_key(token: &str) -> Option<&str> {
 
 fn arg_matches_option_key(arg: &str, key: &str) -> bool {
     arg == format!("--{}", key) || arg.starts_with(&format!("--{}=", key))
-}
-
-fn clamp_max_connection_per_server(args: &mut [String]) {
-    let mut i = 0usize;
-    while i < args.len() {
-        if let Some(raw) = args[i].strip_prefix("--max-connection-per-server=") {
-            let val = raw.parse::<u32>().unwrap_or(16);
-            if val > 16 {
-                args[i] = "--max-connection-per-server=16".to_string();
-                log::warn!("Clamped max-connection-per-server from {} to 16", val);
-            }
-        } else if args[i] == "--max-connection-per-server" && i + 1 < args.len() {
-            let val = args[i + 1].parse::<u32>().unwrap_or(16);
-            if val > 16 {
-                args[i + 1] = "16".to_string();
-                log::warn!("Clamped max-connection-per-server from {} to 16", val);
-            }
-            i += 1;
-        }
-
-        i += 1;
-    }
 }
 
 fn split_command_line_args(input: &str) -> Vec<String> {
@@ -721,7 +698,7 @@ fn configure_engine_spawn(_command: &mut Command) {}
 
 #[cfg(test)]
 mod tests {
-    use super::{clamp_max_connection_per_server, merge_custom_args, split_command_line_args};
+    use super::{merge_custom_args, split_command_line_args};
 
     #[test]
     fn split_command_line_args_splits_flags() {
@@ -806,24 +783,6 @@ mod tests {
                 "--rpc-listen-all=true".to_string(),
                 "--rpc-allow-origin-all=true".to_string(),
                 "--dir=/tmp".to_string(),
-            ]
-        );
-    }
-
-    #[test]
-    fn clamp_max_connection_per_server_handles_custom_override() {
-        let mut args = vec![
-            "--max-connection-per-server=20".to_string(),
-            "--max-connection-per-server".to_string(),
-            "99".to_string(),
-        ];
-        clamp_max_connection_per_server(&mut args);
-        assert_eq!(
-            args,
-            vec![
-                "--max-connection-per-server=16".to_string(),
-                "--max-connection-per-server".to_string(),
-                "16".to_string(),
             ]
         );
     }

@@ -198,7 +198,7 @@
     margin-right: 4px;
     padding: 0 8px;
     height: 24px;
-    border-radius: calc(var(--radius) - 2px);
+    border-radius: calc(var(--radius) - 2px) !important;
     background: rgba(0, 0, 0, 0.03);
     color: var(--muted-foreground);
     font-variant-numeric: tabular-nums;
@@ -207,16 +207,29 @@
     display: inline-flex;
     align-items: center;
     margin-right: 4px;
+    height: 24px;
+    border-radius: calc(var(--radius) - 2px);
   }
   .task-page-size .task-page-size-trigger {
     min-width: 126px;
-    height: 24px;
+    height: 24px !important;
+    min-height: 24px !important;
     padding: 0 8px;
-    border-radius: calc(var(--radius) - 2px);
-    border-style: none !important;
-    background: transparent;
-    font-size: 12px;
+    border-radius: calc(var(--radius) - 2px) !important;
+    border: 1px solid transparent !important;
+    box-shadow: none !important;
+    background: rgba(0, 0, 0, 0.03);
+    color: var(--muted-foreground) !important;
+    font-size: 0.6875rem;
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
     line-height: 1;
+  }
+  .task-page-size .task-page-size-trigger [data-slot='select-value'] {
+    color: inherit;
+    font-size: inherit;
+    font-weight: inherit;
+    font-variant-numeric: inherit;
   }
   .task-page-size .task-page-size-trigger:hover {
     border-color: color-mix(in srgb, var(--primary) 30%, var(--mo-task-item-border-color));
@@ -230,6 +243,9 @@
     font-weight: 700;
   }
   .dark .task-total-progress {
+    background: rgba(255, 255, 255, 0.06);
+  }
+  .dark .task-page-size .task-page-size-trigger {
     background: rgba(255, 255, 255, 0.06);
   }
   .task-actions .task-action {
