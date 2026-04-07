@@ -26,26 +26,26 @@
 </template>
 
 <script lang="ts">
-import { bitfieldToPercent, bytesToSize, peerIdParser } from '@shared/utils'
+import { bitfieldToPercent, bytesToSize, peerIdParser } from "@shared/utils";
 
 export default {
-  name: 'mo-task-peers',
-  props: {
-    peers: {
-      type: Array,
-      default: () => [],
-    },
-  },
-  methods: {
-    formatBitfieldPercent(bitfield: string) {
-      return bitfieldToPercent(bitfield)
-    },
-    formatBytes(value: any) {
-      return bytesToSize(value)
-    },
-    formatPeerId(peerId: string) {
-      return peerIdParser(peerId)
-    },
-  },
-}
+	name: "mo-task-peers",
+	props: {
+		peers: {
+			type: Array,
+			default: () => [],
+		},
+	},
+	methods: {
+		formatBitfieldPercent(bitfield: string) {
+			return bitfieldToPercent(bitfield);
+		},
+		formatBytes(value: string | number) {
+			return bytesToSize(value);
+		},
+		formatPeerId(peerId: string) {
+			return peerIdParser(peerId);
+		},
+	},
+};
 </script>

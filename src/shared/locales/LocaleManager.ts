@@ -1,48 +1,61 @@
-import i18next from 'i18next'
-import { getLanguage } from '@shared/locales'
+import { getLanguage } from "@shared/locales";
+import i18next from "i18next";
+
+interface LocaleManagerOptions {
+	resources?: Record<string, Record<string, unknown>>;
+	loadResource?: (
+		lng: string,
+	) => Promise<{ translation?: Record<string, unknown> } | undefined>;
+}
 
 export default class LocaleManager {
-  private options: any
+	private options: LocaleManagerOptions;
 
-  constructor(options: any = {}) {
-    this.options = options
+	constructor(options: LocaleManagerOptions = {}) {
+		this.options = options;
 
-    i18next.init({
-      fallbackLng: 'en-US',
-      resources: options.resources || {},
-      initAsync: false,
-    })
-  }
+		i18next.init({
+			fallbackLng: "en-US",
+			resources: options.resources || {},
+			initAsync: false,
+		});
+	}
 
-  async ensureLanguageResource(lng: string) {
-    if (i18next.hasResourceBundle(lng, 'translation')) {
-      return
-    }
+	async ensureLanguageResource(lng: string) {
+		if (i18next.hasResourceBundle(lng, "translation")) {
+			return;
+		}
 
-    const loadResource = this.options.loadResource
-    if (typeof loadResource !== 'function') {
-      return
-    }
+		const loadResource = this.options.loadResource;
+		if (typeof loadResource !== "function") {
+			return;
+		}
 
-    const resource = await loadResource(lng)
-    if (!resource || !resource.translation) {
-      return
-    }
+		const resource = await loadResource(lng);
+		if (!resource?.translation) {
+			return;
+		}
 
-    i18next.addResourceBundle(lng, 'translation', resource.translation, true, true)
-  }
+		i18next.addResourceBundle(
+			lng,
+			"translation",
+			resource.translation,
+			true,
+			true,
+		);
+	}
 
-  async changeLanguage(lng: string) {
-    await this.ensureLanguageResource(lng)
-    return i18next.changeLanguage(lng)
-  }
+	async changeLanguage(lng: string) {
+		await this.ensureLanguageResource(lng);
+		return i18next.changeLanguage(lng);
+	}
 
-  async changeLanguageByLocale(locale: string) {
-    const lng = getLanguage(locale)
-    return this.changeLanguage(lng)
-  }
+	async changeLanguageByLocale(locale: string) {
+		const lng = getLanguage(locale);
+		return this.changeLanguage(lng);
+	}
 
-  getI18n() {
-    return i18next
-  }
+	getI18n() {
+		return i18next;
+	}
 }

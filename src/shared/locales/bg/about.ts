@@ -1,7 +1,7 @@
 export default {
-  'engine-version': 'Версия',
-  license: 'Лиценз',
-  about: 'Информация',
-  release: 'Съобщение',
-  support: 'Подкрепа',
-}
+	"engine-version": "Версия",
+	license: "Лиценз",
+	about: "Информация",
+	release: "Съобщение",
+	support: "Подкрепа",
+};

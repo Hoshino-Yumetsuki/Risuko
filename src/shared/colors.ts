@@ -1,3 +1,3 @@
-import colors from './colors.json'
+import colors from "./colors.json";
 
-export default colors
+export default colors;

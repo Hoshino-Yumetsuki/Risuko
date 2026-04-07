@@ -5,28 +5,28 @@
 </template>
 
 <script lang="ts">
-import { open } from '@tauri-apps/plugin-dialog'
-import { Folder } from 'lucide-vue-next'
-import UiButton from '@/components/ui/compat/UiButton.vue'
+import { open } from "@tauri-apps/plugin-dialog";
+import { Folder } from "lucide-vue-next";
+import UiButton from "@/components/ui/compat/UiButton.vue";
 
 export default {
-  name: 'mo-select-directory',
-  components: {
-    UiButton,
-    Folder,
-  },
-  props: {},
-  methods: {
-    async onFolderClick() {
-      const selected = await open({
-        directory: true,
-        multiple: false,
-      })
+	name: "mo-select-directory",
+	components: {
+		UiButton,
+		Folder,
+	},
+	props: {},
+	methods: {
+		async onFolderClick() {
+			const selected = await open({
+				directory: true,
+				multiple: false,
+			});
 
-      if (selected) {
-        this.$emit('selected', selected)
-      }
-    },
-  },
-}
+			if (selected) {
+				this.$emit("selected", selected);
+			}
+		},
+	},
+};
 </script>

@@ -164,8 +164,14 @@ pub fn open_path(path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn trash_item(path: String) -> Result<(), String> {
-    trash::delete(&path).map_err(|e| e.to_string())
+pub fn trash_item(path: String) -> Result<bool, String> {
+    let p = std::path::Path::new(&path);
+    if !p.exists() {
+        log::info!("trash_item: path does not exist, skipped: {}", path);
+        return Ok(false);
+    }
+    trash::delete(&path).map_err(|e| e.to_string())?;
+    Ok(true)
 }
 
 #[tauri::command]
@@ -192,7 +198,7 @@ pub fn rename_path(from_path: String, to_path: String) -> Result<(), String> {
         return Err("Source path does not exist".to_string());
     }
 
-    // Limit rename_path to in-place temporary suffix finalization to avoid arbitrary moves.
+    // Limit rename_path to in-place temporary suffix finalization to avoid arbitrary moves
     let from_parent = canonicalize_parent_path(&from)?;
     let to_parent = canonicalize_parent_path(&to)?;
     if from_parent != to_parent {
@@ -1058,7 +1064,7 @@ fn trash_generated_torrent_sidecars_in_dir(dir: &Path, normalized_info_hash: Opt
             continue;
         };
         // Only clean up generated sidecars (hex-stem torrents) to avoid removing
-        // user-provided source torrent files with descriptive names.
+        // user-provided source torrent files with descriptive names
         let Some(stem) = generated_torrent_hex_stem(file_name) else {
             continue;
         };
@@ -1184,4 +1190,137 @@ pub fn cleanup_generated_torrent_sidecars_for_task(task: Value) -> Result<u32, S
     }
 
     Ok(total_deleted)
+}
+
+// prevent deletion of active download files
+//
+// macOS:         ACL deny-delete via chmod (flock is advisory-only on macOS,
+//                Finder ignores it)
+// Windows/Linux: fs2 exclusive lock. On Windows LockFileEx + open handle
+//                blocks deletion. On Linux flock(2) is advisory but many
+//                file managers respect it
+
+use std::collections::HashMap;
+use std::sync::Mutex;
+
+static PROTECTED_FILES: std::sync::OnceLock<Mutex<HashMap<String, ProtectedFile>>> =
+    std::sync::OnceLock::new();
+
+fn protected_files() -> &'static Mutex<HashMap<String, ProtectedFile>> {
+    PROTECTED_FILES.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Holds state needed to release a file lock
+enum ProtectedFile {
+    /// macOS - no handle needed, just remember the path for ACL cleanup
+    #[cfg(target_os = "macos")]
+    Acl,
+    /// Windows / Linux - hold open File handle with fs2 exclusive lock
+    #[cfg(not(target_os = "macos"))]
+    Locked(std::fs::File),
+}
+
+#[tauri::command]
+pub fn protect_download_file(path: String) -> Result<(), String> {
+    let path = path.trim().to_string();
+    if path.is_empty() {
+        return Ok(());
+    }
+    if !Path::new(&path).exists() {
+        return Ok(());
+    }
+    lock_file(&path)
+}
+
+#[tauri::command]
+pub fn unprotect_download_file(path: String) -> Result<(), String> {
+    let path = path.trim().to_string();
+    if path.is_empty() {
+        return Ok(());
+    }
+    unlock_file(&path)
+}
+
+/// Called on app exit to release all held file locks / ACLs
+pub fn cleanup_protected_files() {
+    let Ok(mut map) = protected_files().lock() else {
+        return;
+    };
+    for (path, entry) in map.drain() {
+        let _ = platform_unlock(&path, entry);
+    }
+}
+
+pub(crate) fn lock_file(path: &str) -> Result<(), String> {
+    let mut map = protected_files().lock().map_err(|e| e.to_string())?;
+    if map.contains_key(path) {
+        return Ok(());
+    }
+    let entry = platform_lock(path)?;
+    log::info!("Protected download file: {}", path);
+    map.insert(path.to_string(), entry);
+    Ok(())
+}
+
+pub(crate) fn unlock_file(path: &str) -> Result<(), String> {
+    let mut map = protected_files().lock().map_err(|e| e.to_string())?;
+    if let Some(entry) = map.remove(path) {
+        platform_unlock(path, entry)?;
+        log::info!("Unprotected download file: {}", path);
+    }
+    Ok(())
+}
+
+// macOS
+
+#[cfg(target_os = "macos")]
+fn platform_lock(path: &str) -> Result<ProtectedFile, String> {
+    let output = std::process::Command::new("/bin/chmod")
+        .args(["+a", "everyone deny delete", path])
+        .output()
+        .map_err(|e| format!("chmod failed: {e}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        log::warn!("protect chmod failed: {stderr}");
+    }
+    Ok(ProtectedFile::Acl)
+}
+
+#[cfg(target_os = "macos")]
+fn platform_unlock(path: &str, _entry: ProtectedFile) -> Result<(), String> {
+    if !Path::new(path).exists() {
+        return Ok(());
+    }
+    let output = std::process::Command::new("/bin/chmod")
+        .args(["-a", "everyone deny delete", path])
+        .output()
+        .map_err(|e| format!("chmod failed: {e}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        log::warn!("unprotect chmod failed: {stderr}");
+    }
+    Ok(())
+}
+
+// Win / Linux
+
+#[cfg(not(target_os = "macos"))]
+fn platform_lock(path: &str) -> Result<ProtectedFile, String> {
+    use fs2::FileExt;
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(path)
+        .map_err(|e| format!("Failed to open for locking: {e}"))?;
+    file.lock_exclusive()
+        .map_err(|e| format!("Failed to acquire lock: {e}"))?;
+    Ok(ProtectedFile::Locked(file))
+}
+
+#[cfg(not(target_os = "macos"))]
+fn platform_unlock(path: &str, entry: ProtectedFile) -> Result<(), String> {
+    use fs2::FileExt;
+    let _ = path;
+    let ProtectedFile::Locked(file) = entry;
+    file.unlock().map_err(|e| format!("Failed to unlock: {e}"))
 }

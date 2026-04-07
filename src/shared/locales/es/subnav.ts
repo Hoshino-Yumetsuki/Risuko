@@ -1,4 +1,4 @@
 export default {
-  'task-list': 'Tareas',
-  preferences: 'Preferencias',
-}
+	"task-list": "Tareas",
+	preferences: "Preferencias",
+};

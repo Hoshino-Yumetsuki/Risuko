@@ -21,22 +21,20 @@ pub fn system_defaults() -> Map<String, Value> {
     m.insert("continue".into(), json!(true));
     m.insert("dht-listen-port".into(), json!(26701));
     m.insert("dir".into(), json!(downloads_dir));
+    m.insert("ed2k-server".into(), json!("176.123.5.89:4725,45.82.80.155:5687,85.239.33.123:4232,91.208.162.87:4232,145.239.2.134:4661"));
     m.insert("enable-dht".into(), json!(true));
     m.insert("enable-dht6".into(), json!(true));
     m.insert("enable-peer-exchange".into(), json!(true));
-    m.insert("follow-metalink".into(), json!(true));
     m.insert("follow-torrent".into(), json!(true));
     m.insert("listen-port".into(), json!(21301));
     m.insert("max-concurrent-downloads".into(), json!(5));
-    m.insert("max-connection-per-server".into(), json!(16));
     m.insert("max-download-limit".into(), json!(0));
     m.insert("max-overall-download-limit".into(), json!(0));
     m.insert("max-overall-upload-limit".into(), json!(0));
     m.insert("no-proxy".into(), json!(""));
-    m.insert("pause-metadata".into(), json!(false));
-    m.insert("pause".into(), json!(true));
     m.insert("rpc-listen-port".into(), json!(16800));
     m.insert("rpc-secret".into(), json!(""));
+    m.insert("remote-time".into(), json!(false));
     m.insert("seed-ratio".into(), json!(0));
     m.insert("seed-time".into(), json!(0));
     m.insert("split".into(), json!(16));
@@ -59,9 +57,6 @@ pub fn user_defaults() -> Map<String, Value> {
     m.insert("auto-retry-interval".into(), json!(5));
     m.insert("auto-retry-strategy".into(), json!("static"));
     m.insert("auto-sync-tracker".into(), json!(true));
-    m.insert("aria2-extra-args".into(), json!(""));
-    m.insert("idle-bt-network-guard".into(), json!(true));
-    m.insert("engine-max-connection-per-server".into(), json!(16));
     m.insert("favorite-directories".into(), json!([]));
     m.insert("hide-app-menu".into(), json!(is_not_macos));
     m.insert("history-directories".into(), json!([]));
@@ -103,6 +98,7 @@ pub fn user_defaults() -> Map<String, Value> {
     );
     m.insert("tray-theme".into(), json!("auto"));
     m.insert("tray-speedometer".into(), json!(is_macos));
+    m.insert("m3u8-output-format".into(), json!("ts"));
     m.insert("update-channel".into(), json!("latest"));
     m.insert("window-state".into(), json!({}));
     m

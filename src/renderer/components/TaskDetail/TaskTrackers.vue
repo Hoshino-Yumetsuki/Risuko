@@ -7,39 +7,39 @@
 </template>
 
 <script lang="ts">
-import is from '@/shims/platform'
-import { Textarea } from '@/components/ui/textarea'
-import { checkTaskIsBT, checkTaskIsSeeder } from '@shared/utils'
-import { convertTrackerDataToLine } from '@shared/utils/tracker'
-import { EMPTY_STRING } from '@shared/constants'
+import { EMPTY_STRING } from "@shared/constants";
+import { checkTaskIsBT, checkTaskIsSeeder } from "@shared/utils";
+import { convertTrackerDataToLine } from "@shared/utils/tracker";
+import { Textarea } from "@/components/ui/textarea";
+import is from "@/shims/platform";
 
 export default {
-  name: 'mo-task-trackers',
-  components: {
-    Textarea,
-  },
-  props: {
-    task: {
-      type: Object,
-    },
-  },
-  computed: {
-    isRenderer: () => is.renderer(),
-    isBT() {
-      return checkTaskIsBT(this.task)
-    },
-    isSeeder() {
-      return checkTaskIsSeeder(this.task)
-    },
-    announceList() {
-      if (!this.isBT) {
-        return EMPTY_STRING
-      }
+	name: "mo-task-trackers",
+	components: {
+		Textarea,
+	},
+	props: {
+		task: {
+			type: Object,
+		},
+	},
+	computed: {
+		isRenderer: () => is.renderer(),
+		isBT() {
+			return checkTaskIsBT(this.task);
+		},
+		isSeeder() {
+			return checkTaskIsSeeder(this.task);
+		},
+		announceList() {
+			if (!this.isBT) {
+				return EMPTY_STRING;
+			}
 
-      const { bittorrent } = this.task
-      const data = bittorrent.announceList.map((i: any) => i[0])
-      return convertTrackerDataToLine(data)
-    },
-  },
-}
+			const { bittorrent } = this.task;
+			const data = bittorrent.announceList.map((i: string[]) => i[0]);
+			return convertTrackerDataToLine(data);
+		},
+	},
+};
 </script>

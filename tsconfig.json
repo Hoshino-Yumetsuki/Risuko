@@ -1,36 +1,36 @@
 {
-  "compilerOptions": {
-    "target": "ES2021",
-    "module": "ESNext",
-    "moduleResolution": "Bundler",
-    "lib": ["ES2021", "DOM", "DOM.Iterable"],
-    "allowJs": false,
-    "strict": false,
-    "noImplicitAny": false,
-    "skipLibCheck": true,
-    "isolatedModules": true,
-    "allowSyntheticDefaultImports": true,
-    "esModuleInterop": true,
-    "resolveJsonModule": true,
-    "useDefineForClassFields": true,
-    "types": ["node"],
-    "paths": {
-      "@/*": ["./src/renderer/*"],
-      "@shared/*": ["./src/shared/*"],
-      "@static/*": ["./static/*"]
-    }
-  },
-  "vueCompilerOptions": {
-    "strictTemplates": false,
-    "skipTemplateCodegen": true
-  },
-  "include": [
-    "src/renderer/**/*.ts",
-    "src/renderer/**/*.d.ts",
-    "src/renderer/**/*.tsx",
-    "src/renderer/**/*.vue",
-    "src/shared/**/*.ts",
-    "vite.renderer.config.ts"
-  ],
-  "exclude": ["node_modules", "dist", "release", "src-tauri"]
+	"compilerOptions": {
+		"target": "ES2022",
+		"module": "ESNext",
+		"moduleResolution": "Bundler",
+		"lib": ["ES2022", "DOM", "DOM.Iterable"],
+		"allowJs": false,
+		"strict": false,
+		"noImplicitAny": false,
+		"skipLibCheck": true,
+		"isolatedModules": true,
+		"allowSyntheticDefaultImports": true,
+		"esModuleInterop": true,
+		"resolveJsonModule": true,
+		"useDefineForClassFields": true,
+		"types": ["node"],
+		"paths": {
+			"@/*": ["./src/renderer/*"],
+			"@shared/*": ["./src/shared/*"],
+			"@static/*": ["./static/*"]
+		}
+	},
+	"vueCompilerOptions": {
+		"strictTemplates": false,
+		"skipTemplateCodegen": true
+	},
+	"include": [
+		"src/renderer/**/*.ts",
+		"src/renderer/**/*.d.ts",
+		"src/renderer/**/*.tsx",
+		"src/renderer/**/*.vue",
+		"src/shared/**/*.ts",
+		"vite.renderer.config.ts"
+	],
+	"exclude": ["node_modules", "dist", "release", "src-tauri"]
 }

@@ -1,4 +1,4 @@
 export default {
-  'task-list': 'وظایف',
-  preferences: 'ترجیحات',
-}
+	"task-list": "وظایف",
+	preferences: "ترجیحات",
+};

@@ -151,7 +151,7 @@
                 placeholder=""
                 v-model="form.dir"
                 :readonly="isMas"
-                class="flex-1 shadow-none rounded-none border-none"
+                class="flex-1 shadow-none rounded-none border-none noinput"
               />
               <span class="mo-input-append" v-if="isRenderer">
                 <mo-select-directory @selected="handleNativeDirectorySelected" />
@@ -159,6 +159,43 @@
             </div>
             <div class="form-info" v-if="isMas">
               {{ $t('preferences.mas-default-dir-tips') }}
+            </div>
+          </div>
+        </div>
+
+        <!-- File Category Paths Section -->
+        <div class="settings-section">
+          <div class="settings-section-header">
+            <div class="section-icon"><FolderDown :size="16" /></div>
+            <div class="section-title">
+              <h3>{{ $t('preferences.file-category-dirs') }}</h3>
+            </div>
+          </div>
+          <div class="settings-section-content">
+            <div class="form-info" style="margin-bottom: 8px">
+              {{ $t('preferences.file-category-dirs-tips') }}
+            </div>
+            <div
+              v-for="cat in fileCategories"
+              :key="cat.key"
+              class="settings-row"
+              style="margin-bottom: 6px"
+            >
+              <span class="settings-row-title" style="flex: 0 0 80px; min-width: 80px">{{
+                cat.label
+              }}</span>
+              <div class="mo-input-group mo-input-group--bordered" style="flex: 1; min-width: 0">
+                <Input
+                  :placeholder="form.dir"
+                  v-model="form.fileCategoryDirs[cat.key]"
+                  class="flex-1 shadow-none rounded-none border-none noinput"
+                />
+                <span class="mo-input-append" v-if="isRenderer">
+                  <mo-select-directory
+                    @selected="(dir) => handleCategoryDirectorySelected(cat.key, dir)"
+                  />
+                </span>
+              </div>
             </div>
           </div>
         </div>
@@ -249,19 +286,6 @@
             </div>
             <div class="settings-row">
               <div class="settings-row-content">
-                <span class="settings-row-title">{{
-                  $t('preferences.bt-auto-download-content')
-                }}</span>
-              </div>
-              <div class="settings-row-action">
-                <ui-checkbox
-                  :model-value="!!form.btAutoDownloadContent"
-                  @change="(val) => setBasicBoolean('btAutoDownloadContent', val)"
-                />
-              </div>
-            </div>
-            <div class="settings-row">
-              <div class="settings-row-content">
                 <span class="settings-row-title">{{ $t('preferences.bt-force-encryption') }}</span>
               </div>
               <div class="settings-row-action">
@@ -313,12 +337,6 @@
                   :min="1"
                   :max="maxConcurrentDownloads"
                 />
-              </div>
-              <div class="settings-select-item">
-                <label class="settings-select-item-label">{{
-                  $t('preferences.max-connection-per-server')
-                }}</label>
-                <NumberInput v-model="form.maxConnectionPerServer" :min="1" :max="128" />
               </div>
             </div>
             <div class="settings-row">
@@ -426,6 +444,22 @@
                 />
               </div>
             </div>
+            <div class="settings-row">
+              <div class="settings-row-content">
+                <div class="settings-row-title">
+                  {{ $t('preferences.use-remote-file-time') }}
+                </div>
+                <div class="settings-row-description">
+                  {{ $t('preferences.use-remote-file-time-tips') }}
+                </div>
+              </div>
+              <div class="settings-row-action">
+                <ui-checkbox
+                  :model-value="!!form.useRemoteFileTime"
+                  @change="(val) => setBasicBoolean('useRemoteFileTime', val)"
+                />
+              </div>
+            </div>
           </div>
         </div>
 
@@ -439,8 +473,8 @@
                 <span class="version-value">{{ appVersion || '--' }}</span>
               </div>
               <div class="version-item">
-                <span class="version-name">aria2c</span>
-                <span class="version-value">{{ aria2Version }}</span>
+                <span class="version-name">Engine</span>
+                <span class="version-value">{{ engineVersion }}</span>
               </div>
             </div>
           </div>
@@ -457,461 +491,488 @@
 </template>
 
 <script lang="ts">
-import logger from '@shared/utils/logger'
-import { invoke } from '@tauri-apps/api/core'
-import is from '@/shims/platform'
-import { confirm } from '@/components/ui/confirm-dialog'
-import { cloneDeep, extend, isEmpty } from 'lodash'
-import { useAppStore } from '@/store/app'
-import { usePreferenceStore } from '@/store/preference'
-import SubnavSwitcher from '@/components/Subnav/SubnavSwitcher.vue'
-import HistoryDirectory from '@/components/Preference/HistoryDirectory.vue'
-import SelectDirectory from '@/components/Native/SelectDirectory.vue'
-import ThemeSwitcher from '@/components/Preference/ThemeSwitcher.vue'
-import UiButton from '@/components/ui/compat/UiButton.vue'
-import { Input } from '@/components/ui/input'
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
-import NumberInput from '@/components/ui/NumberInput.vue'
+	APP_RUN_MODE,
+	EMPTY_STRING,
+	ENGINE_MAX_CONCURRENT_DOWNLOADS,
+	ENGINE_RPC_PORT,
+	FILE_CATEGORIES,
+} from "@shared/constants";
+import { availableLanguages } from "@shared/locales";
 import {
-  Palette,
-  Globe,
-  FolderDown,
-  Gauge,
-  Share2,
-  ListTodo,
-  ArrowUp,
-  ArrowDown,
-} from 'lucide-vue-next'
-import { availableLanguages } from '@shared/locales'
+	changedConfig,
+	convertLineToComma,
+	diffConfig,
+	extractSpeedUnit,
+	parseBooleanConfig,
+} from "@shared/utils";
+import logger from "@shared/utils/logger";
+import { reduceTrackerString } from "@shared/utils/tracker";
+import { invoke } from "@tauri-apps/api/core";
+import { cloneDeep, extend, isEmpty } from "lodash";
 import {
-  changedConfig,
-  convertLineToComma,
-  diffConfig,
-  extractSpeedUnit,
-  parseBooleanConfig,
-} from '@shared/utils'
+	ArrowDown,
+	ArrowUp,
+	FolderDown,
+	Gauge,
+	Globe,
+	ListTodo,
+	Palette,
+	Share2,
+} from "lucide-vue-next";
+import SelectDirectory from "@/components/Native/SelectDirectory.vue";
+import HistoryDirectory from "@/components/Preference/HistoryDirectory.vue";
+import ThemeSwitcher from "@/components/Preference/ThemeSwitcher.vue";
+import SubnavSwitcher from "@/components/Subnav/SubnavSwitcher.vue";
+import UiButton from "@/components/ui/compat/UiButton.vue";
+import { confirm } from "@/components/ui/confirm-dialog";
+import { Input } from "@/components/ui/input";
+import NumberInput from "@/components/ui/NumberInput.vue";
 import {
-  APP_RUN_MODE,
-  EMPTY_STRING,
-  ENGINE_MAX_CONCURRENT_DOWNLOADS,
-  ENGINE_RPC_PORT,
-} from '@shared/constants'
-import { reduceTrackerString } from '@shared/utils/tracker'
-import { getMotrixVersion } from '@/utils/version'
+	Select,
+	SelectContent,
+	SelectItem,
+	SelectTrigger,
+	SelectValue,
+} from "@/components/ui/select";
+import is from "@/shims/platform";
+import { useAppStore } from "@/store/app";
+import { usePreferenceStore } from "@/store/preference";
+import { getMotrixVersion } from "@/utils/version";
 
-const RETRY_STRATEGY_STATIC = 'static'
-const RETRY_STRATEGY_EXPONENTIAL = 'exponential'
+const RETRY_STRATEGY_STATIC = "static";
+const RETRY_STRATEGY_EXPONENTIAL = "exponential";
 
-const normalizePositiveInt = (value, fallback, min = 1, max = Number.MAX_SAFE_INTEGER) => {
-  const parsed = Number(value)
-  if (!Number.isFinite(parsed)) {
-    return fallback
-  }
-  return Math.min(Math.max(Math.floor(parsed), min), max)
-}
+const normalizePositiveInt = (
+	value,
+	fallback,
+	min = 1,
+	max = Number.MAX_SAFE_INTEGER,
+) => {
+	const parsed = Number(value);
+	if (!Number.isFinite(parsed)) {
+		return fallback;
+	}
+	return Math.min(Math.max(Math.floor(parsed), min), max);
+};
 
 const initForm = (config) => {
-  const {
-    autoDetectLowSpeedTasks,
-    autoRetry,
-    autoRetryInterval,
-    autoRetryStrategy,
-    autoHideWindow,
-    btForceEncryption,
-    btSaveMetadata,
-    dir,
-    engineMaxConnectionPerServer,
-    followMetalink,
-    followTorrent,
-    hideAppMenu,
-    keepSeeding,
-    keepWindowState,
-    locale,
-    maxConcurrentDownloads,
-    maxConnectionPerServer,
-    maxOverallDownloadLimit,
-    maxOverallUploadLimit,
-    newTaskShowDownloading,
-    noConfirmBeforeDeleteTask,
-    openAtLogin,
-    pauseMetadata,
-    resumeAllWhenAppLaunched,
-    runMode,
-    seedRatio,
-    seedTime,
-    showProgressBar,
-    taskNotification,
-    theme,
-    traySpeedometer,
-    lowSpeedThreshold,
-  } = config
+	const {
+		autoDetectLowSpeedTasks,
+		autoRetry,
+		autoRetryInterval,
+		autoRetryStrategy,
+		autoHideWindow,
+		btForceEncryption,
+		btSaveMetadata,
+		dir,
+		fileCategoryDirs,
+		followTorrent,
+		hideAppMenu,
+		keepSeeding,
+		keepWindowState,
+		locale,
+		maxConcurrentDownloads,
+		maxOverallDownloadLimit,
+		maxOverallUploadLimit,
+		newTaskShowDownloading,
+		noConfirmBeforeDeleteTask,
+		openAtLogin,
+		resumeAllWhenAppLaunched,
+		runMode,
+		seedRatio,
+		seedTime,
+		showProgressBar,
+		taskNotification,
+		theme,
+		traySpeedometer,
+		lowSpeedThreshold,
+	} = config;
 
-  const btAutoDownloadContent = followTorrent && followMetalink && !pauseMetadata
-
-  const result = {
-    autoDetectLowSpeedTasks: parseBooleanConfig(autoDetectLowSpeedTasks),
-    autoRetry: parseBooleanConfig(autoRetry),
-    autoRetryInterval: normalizePositiveInt(autoRetryInterval, 5, 1, 300),
-    autoRetryStrategy:
-      autoRetryStrategy === RETRY_STRATEGY_EXPONENTIAL
-        ? RETRY_STRATEGY_EXPONENTIAL
-        : RETRY_STRATEGY_STATIC,
-    autoHideWindow: parseBooleanConfig(autoHideWindow),
-    btAutoDownloadContent,
-    btForceEncryption: parseBooleanConfig(btForceEncryption),
-    btSaveMetadata: parseBooleanConfig(btSaveMetadata),
-    continue: parseBooleanConfig(config.continue),
-    dir,
-    engineMaxConnectionPerServer,
-    followMetalink,
-    followTorrent,
-    hideAppMenu: parseBooleanConfig(hideAppMenu),
-    keepSeeding: parseBooleanConfig(keepSeeding),
-    keepWindowState: parseBooleanConfig(keepWindowState),
-    locale,
-    lowSpeedThreshold: normalizePositiveInt(lowSpeedThreshold, 20, 1, 10240),
-    maxConcurrentDownloads,
-    maxConnectionPerServer,
-    maxOverallDownloadLimit,
-    maxOverallUploadLimit,
-    newTaskShowDownloading: parseBooleanConfig(newTaskShowDownloading),
-    noConfirmBeforeDeleteTask: parseBooleanConfig(noConfirmBeforeDeleteTask),
-    openAtLogin: parseBooleanConfig(openAtLogin),
-    pauseMetadata,
-    resumeAllWhenAppLaunched: parseBooleanConfig(resumeAllWhenAppLaunched),
-    runMode,
-    seedRatio,
-    seedTime,
-    showProgressBar: parseBooleanConfig(showProgressBar),
-    taskNotification: parseBooleanConfig(taskNotification),
-    theme,
-    traySpeedometer: parseBooleanConfig(traySpeedometer),
-  }
-  return result
-}
+	const result = {
+		autoDetectLowSpeedTasks: parseBooleanConfig(autoDetectLowSpeedTasks),
+		autoRetry: parseBooleanConfig(autoRetry),
+		autoRetryInterval: normalizePositiveInt(autoRetryInterval, 5, 1, 300),
+		autoRetryStrategy:
+			autoRetryStrategy === RETRY_STRATEGY_EXPONENTIAL
+				? RETRY_STRATEGY_EXPONENTIAL
+				: RETRY_STRATEGY_STATIC,
+		autoHideWindow: parseBooleanConfig(autoHideWindow),
+		btForceEncryption: parseBooleanConfig(btForceEncryption),
+		btSaveMetadata: parseBooleanConfig(btSaveMetadata),
+		continue: parseBooleanConfig(config.continue),
+		dir,
+		fileCategoryDirs: {
+			music: "",
+			video: "",
+			image: "",
+			document: "",
+			compressed: "",
+			program: "",
+			rss: "",
+			...(fileCategoryDirs || {}),
+		},
+		followTorrent,
+		hideAppMenu: parseBooleanConfig(hideAppMenu),
+		keepSeeding: parseBooleanConfig(keepSeeding),
+		keepWindowState: parseBooleanConfig(keepWindowState),
+		locale,
+		lowSpeedThreshold: normalizePositiveInt(lowSpeedThreshold, 20, 1, 10240),
+		maxConcurrentDownloads,
+		maxOverallDownloadLimit,
+		maxOverallUploadLimit,
+		newTaskShowDownloading: parseBooleanConfig(newTaskShowDownloading),
+		noConfirmBeforeDeleteTask: parseBooleanConfig(noConfirmBeforeDeleteTask),
+		openAtLogin: parseBooleanConfig(openAtLogin),
+		resumeAllWhenAppLaunched: parseBooleanConfig(resumeAllWhenAppLaunched),
+		runMode,
+		seedRatio,
+		seedTime,
+		showProgressBar: parseBooleanConfig(showProgressBar),
+		taskNotification: parseBooleanConfig(taskNotification),
+		theme,
+		traySpeedometer: parseBooleanConfig(traySpeedometer),
+	};
+	return result;
+};
 
 export default {
-  name: 'mo-preference-basic',
-  components: {
-    [SubnavSwitcher.name]: SubnavSwitcher,
-    [HistoryDirectory.name]: HistoryDirectory,
-    [SelectDirectory.name]: SelectDirectory,
-    [ThemeSwitcher.name]: ThemeSwitcher,
-    [UiButton.name]: UiButton,
-    NumberInput,
-    Input,
-    Select,
-    SelectContent,
-    SelectItem,
-    SelectTrigger,
-    SelectValue,
-    Palette,
-    Globe,
-    FolderDown,
-    Gauge,
-    Share2,
-    ListTodo,
-    ArrowUp,
-    ArrowDown,
-  },
-  data() {
-    const preferenceStore = usePreferenceStore()
-    const formOriginal = initForm(preferenceStore.config)
-    let form = {}
-    form = initForm(extend(form, formOriginal, changedConfig.basic))
+	name: "mo-preference-basic",
+	components: {
+		[SubnavSwitcher.name]: SubnavSwitcher,
+		[HistoryDirectory.name]: HistoryDirectory,
+		[SelectDirectory.name]: SelectDirectory,
+		[ThemeSwitcher.name]: ThemeSwitcher,
+		[UiButton.name]: UiButton,
+		NumberInput,
+		Input,
+		Select,
+		SelectContent,
+		SelectItem,
+		SelectTrigger,
+		SelectValue,
+		Palette,
+		Globe,
+		FolderDown,
+		Gauge,
+		Share2,
+		ListTodo,
+		ArrowUp,
+		ArrowDown,
+	},
+	data() {
+		const preferenceStore = usePreferenceStore();
+		const formOriginal = initForm(preferenceStore.config);
+		let form = {};
+		form = initForm(extend(form, formOriginal, changedConfig.basic));
 
-    return {
-      appVersion: '',
-      form,
-      formOriginal,
-      locales: availableLanguages,
-    }
-  },
-  created() {
-    getMotrixVersion().then((v) => {
-      this.appVersion = v
-    })
+		return {
+			appVersion: "",
+			form,
+			formOriginal,
+			locales: availableLanguages,
+		};
+	},
+	created() {
+		getMotrixVersion().then((v) => {
+			this.appVersion = v;
+		});
 
-    const currentEngineVersion = this.engineInfo && this.engineInfo.version
-    if (!currentEngineVersion) {
-      useAppStore().fetchEngineInfo()
-    }
-  },
-  computed: {
-    isRenderer: () => is.renderer(),
-    isMac: () => is.macOS(),
-    isMas: () => is.mas(),
-    title() {
-      return this.$t('preferences.basic')
-    },
-    maxConcurrentDownloads() {
-      return ENGINE_MAX_CONCURRENT_DOWNLOADS
-    },
-    maxOverallDownloadLimitParsed: {
-      get() {
-        return parseInt(this.form.maxOverallDownloadLimit)
-      },
-      set(value) {
-        const limit = value > 0 ? `${value}${this.downloadUnit}` : 0
-        this.form.maxOverallDownloadLimit = limit
-      },
-    },
-    maxOverallUploadLimitParsed: {
-      get() {
-        return parseInt(this.form.maxOverallUploadLimit)
-      },
-      set(value) {
-        const limit = value > 0 ? `${value}${this.uploadUnit}` : 0
-        this.form.maxOverallUploadLimit = limit
-      },
-    },
-    downloadUnit: {
-      get() {
-        const { maxOverallDownloadLimit } = this.form
-        return extractSpeedUnit(maxOverallDownloadLimit)
-      },
-      set(value) {
-        return value
-      },
-    },
-    uploadUnit: {
-      get() {
-        const { maxOverallUploadLimit } = this.form
-        return extractSpeedUnit(maxOverallUploadLimit)
-      },
-      set(value) {
-        return value
-      },
-    },
-    runModes() {
-      const result = [
-        {
-          label: this.$t('preferences.run-mode-standard'),
-          value: APP_RUN_MODE.STANDARD,
-        },
-        {
-          label: this.$t('preferences.run-mode-tray'),
-          value: APP_RUN_MODE.TRAY,
-        },
-      ]
-      return result
-    },
-    speedUnits() {
-      return [
-        {
-          label: 'KB/s',
-          value: 'K',
-        },
-        {
-          label: 'MB/s',
-          value: 'M',
-        },
-      ]
-    },
-    retryStrategies() {
-      return [
-        {
-          label: this.$t('preferences.auto-retry-strategy-static'),
-          value: RETRY_STRATEGY_STATIC,
-        },
-        {
-          label: this.$t('preferences.auto-retry-strategy-exponential'),
-          value: RETRY_STRATEGY_EXPONENTIAL,
-        },
-      ]
-    },
-    subnavs() {
-      return [
-        {
-          key: 'basic',
-          title: this.$t('preferences.basic'),
-          route: '/preference/basic',
-        },
-        {
-          key: 'advanced',
-          title: this.$t('preferences.advanced'),
-          route: '/preference/advanced',
-        },
-        {
-          key: 'lab',
-          title: this.$t('preferences.lab'),
-          route: '/preference/lab',
-        },
-      ]
-    },
-    showHideAppMenuOption() {
-      return is.windows() || is.linux()
-    },
-    rpcDefaultPort() {
-      return ENGINE_RPC_PORT
-    },
-    aria2Version() {
-      const engineVersion = this.engineInfo && this.engineInfo.version
-      return engineVersion ? `v${engineVersion}` : '--'
-    },
-    engineInfo() {
-      return useAppStore().engineInfo
-    },
-  },
-  methods: {
-    setBasicBoolean(key, enable) {
-      this.form[key] = !!enable
-    },
-    handleThemeChange(theme) {
-      this.form.theme = theme
-    },
-    handleDownloadChange(value) {
-      const speedLimit = parseInt(this.form.maxOverallDownloadLimit, 10)
-      this.downloadUnit = value
-      const limit = speedLimit > 0 ? `${speedLimit}${value}` : 0
-      this.form.maxOverallDownloadLimit = limit
-    },
-    handleUploadChange(value) {
-      const speedLimit = parseInt(this.form.maxOverallUploadLimit, 10)
-      this.uploadUnit = value
-      const limit = speedLimit > 0 ? `${speedLimit}${value}` : 0
-      this.form.maxOverallUploadLimit = limit
-    },
-    onKeepSeedingChange(enable) {
-      if (!enable) {
-        this.form.seedRatio = 0
-      }
-      this.form.seedTime = enable ? 525600 : 0
-    },
-    onKeepSeedingToggle(enable) {
-      this.form.keepSeeding = !!enable
-      this.onKeepSeedingChange(this.form.keepSeeding)
-    },
-    handleHistoryDirectorySelected(dir) {
-      this.form.dir = dir
-    },
-    handleNativeDirectorySelected(dir) {
-      this.form.dir = dir
-      usePreferenceStore().recordHistoryDirectory(dir)
-    },
-    syncFormConfig() {
-      usePreferenceStore()
-        .fetchPreference()
-        .then((config) => {
-          this.form = initForm(config)
-          this.formOriginal = cloneDeep(this.form)
-        })
-    },
-    submitForm(_formName) {
-      const data = {
-        ...diffConfig(this.formOriginal, this.form),
-        ...changedConfig.advanced,
-      }
-      const booleanKeys = [
-        'hideAppMenu',
-        'autoHideWindow',
-        'traySpeedometer',
-        'showProgressBar',
-        'openAtLogin',
-        'keepWindowState',
-        'resumeAllWhenAppLaunched',
-        'btSaveMetadata',
-        'btAutoDownloadContent',
-        'btForceEncryption',
-        'keepSeeding',
-        'continue',
-        'autoRetry',
-        'autoDetectLowSpeedTasks',
-        'newTaskShowDownloading',
-        'taskNotification',
-        'noConfirmBeforeDeleteTask',
-      ]
-      for (const key of booleanKeys) {
-        if (key in data) {
-          data[key] = !!this.form[key]
-        }
-      }
+		const currentEngineVersion = this.engineInfo?.version;
+		if (!currentEngineVersion) {
+			useAppStore().fetchEngineInfo();
+		}
+	},
+	computed: {
+		isRenderer: () => is.renderer(),
+		isMac: () => is.macOS(),
+		isMas: () => is.mas(),
+		title() {
+			return this.$t("preferences.basic");
+		},
+		maxConcurrentDownloads() {
+			return ENGINE_MAX_CONCURRENT_DOWNLOADS;
+		},
+		fileCategories() {
+			return Object.values(FILE_CATEGORIES).map((key) => ({
+				key,
+				label: this.$t(`preferences.file-category-${key}`),
+			}));
+		},
+		maxOverallDownloadLimitParsed: {
+			get() {
+				return parseInt(this.form.maxOverallDownloadLimit, 10);
+			},
+			set(value) {
+				const limit = value > 0 ? `${value}${this.downloadUnit}` : 0;
+				this.form.maxOverallDownloadLimit = limit;
+			},
+		},
+		maxOverallUploadLimitParsed: {
+			get() {
+				return parseInt(this.form.maxOverallUploadLimit, 10);
+			},
+			set(value) {
+				const limit = value > 0 ? `${value}${this.uploadUnit}` : 0;
+				this.form.maxOverallUploadLimit = limit;
+			},
+		},
+		downloadUnit: {
+			get() {
+				const { maxOverallDownloadLimit } = this.form;
+				return extractSpeedUnit(maxOverallDownloadLimit);
+			},
+			set(value) {
+				return value;
+			},
+		},
+		uploadUnit: {
+			get() {
+				const { maxOverallUploadLimit } = this.form;
+				return extractSpeedUnit(maxOverallUploadLimit);
+			},
+			set(value) {
+				return value;
+			},
+		},
+		runModes() {
+			const result = [
+				{
+					label: this.$t("preferences.run-mode-standard"),
+					value: APP_RUN_MODE.STANDARD,
+				},
+				{
+					label: this.$t("preferences.run-mode-tray"),
+					value: APP_RUN_MODE.TRAY,
+				},
+			];
+			return result;
+		},
+		speedUnits() {
+			return [
+				{
+					label: "KB/s",
+					value: "K",
+				},
+				{
+					label: "MB/s",
+					value: "M",
+				},
+			];
+		},
+		retryStrategies() {
+			return [
+				{
+					label: this.$t("preferences.auto-retry-strategy-static"),
+					value: RETRY_STRATEGY_STATIC,
+				},
+				{
+					label: this.$t("preferences.auto-retry-strategy-exponential"),
+					value: RETRY_STRATEGY_EXPONENTIAL,
+				},
+			];
+		},
+		subnavs() {
+			return [
+				{
+					key: "basic",
+					title: this.$t("preferences.basic"),
+					route: "/preference/basic",
+				},
+				{
+					key: "advanced",
+					title: this.$t("preferences.advanced"),
+					route: "/preference/advanced",
+				},
+				{
+					key: "lab",
+					title: this.$t("preferences.lab"),
+					route: "/preference/lab",
+				},
+			];
+		},
+		showHideAppMenuOption() {
+			return is.windows() || is.linux();
+		},
+		rpcDefaultPort() {
+			return ENGINE_RPC_PORT;
+		},
+		engineVersion() {
+			const engineVersion = this.engineInfo?.version;
+			return engineVersion ? `${engineVersion}` : "--";
+		},
+		engineInfo() {
+			return useAppStore().engineInfo;
+		},
+	},
+	methods: {
+		setBasicBoolean(key, enable) {
+			this.form[key] = !!enable;
+		},
+		handleCategoryDirectorySelected(category, dir) {
+			this.form.fileCategoryDirs = {
+				...this.form.fileCategoryDirs,
+				[category]: dir,
+			};
+		},
+		handleThemeChange(theme) {
+			this.form.theme = theme;
+		},
+		handleDownloadChange(value) {
+			const speedLimit = parseInt(this.form.maxOverallDownloadLimit, 10);
+			this.downloadUnit = value;
+			const limit = speedLimit > 0 ? `${speedLimit}${value}` : 0;
+			this.form.maxOverallDownloadLimit = limit;
+		},
+		handleUploadChange(value) {
+			const speedLimit = parseInt(this.form.maxOverallUploadLimit, 10);
+			this.uploadUnit = value;
+			const limit = speedLimit > 0 ? `${speedLimit}${value}` : 0;
+			this.form.maxOverallUploadLimit = limit;
+		},
+		onKeepSeedingChange(enable) {
+			if (!enable) {
+				this.form.seedRatio = 0;
+			}
+			this.form.seedTime = enable ? 525600 : 0;
+		},
+		onKeepSeedingToggle(enable) {
+			this.form.keepSeeding = !!enable;
+			this.onKeepSeedingChange(this.form.keepSeeding);
+		},
+		handleHistoryDirectorySelected(dir) {
+			this.form.dir = dir;
+		},
+		handleNativeDirectorySelected(dir) {
+			this.form.dir = dir;
+			usePreferenceStore().recordHistoryDirectory(dir);
+		},
+		syncFormConfig() {
+			usePreferenceStore()
+				.fetchPreference()
+				.then((config) => {
+					this.form = initForm(config);
+					this.formOriginal = cloneDeep(this.form);
+				});
+		},
+		submitForm(_formName) {
+			const data = {
+				...diffConfig(this.formOriginal, this.form),
+				...changedConfig.advanced,
+			};
+			const booleanKeys = [
+				"hideAppMenu",
+				"autoHideWindow",
+				"traySpeedometer",
+				"showProgressBar",
+				"openAtLogin",
+				"keepWindowState",
+				"resumeAllWhenAppLaunched",
+				"btSaveMetadata",
+				"btForceEncryption",
+				"keepSeeding",
+				"continue",
+				"autoRetry",
+				"autoDetectLowSpeedTasks",
+				"newTaskShowDownloading",
+				"taskNotification",
+				"noConfirmBeforeDeleteTask",
+			];
+			for (const key of booleanKeys) {
+				if (key in data) {
+					data[key] = !!this.form[key];
+				}
+			}
 
-      const { autoHideWindow, btAutoDownloadContent, btTracker, rpcListenPort } = data
+			const { autoHideWindow, btTracker, rpcListenPort } = data;
 
-      if ('btAutoDownloadContent' in data) {
-        data.followTorrent = btAutoDownloadContent
-        data.followMetalink = btAutoDownloadContent
-        data.pauseMetadata = !btAutoDownloadContent
-      }
+			if (btTracker) {
+				data.btTracker = reduceTrackerString(convertLineToComma(btTracker));
+			}
 
-      if (btTracker) {
-        data.btTracker = reduceTrackerString(convertLineToComma(btTracker))
-      }
+			if (rpcListenPort === EMPTY_STRING) {
+				data.rpcListenPort = this.rpcDefaultPort;
+			}
 
-      if (rpcListenPort === EMPTY_STRING) {
-        data.rpcListenPort = this.rpcDefaultPort
-      }
+			if ("autoRetryInterval" in data) {
+				data.autoRetryInterval = normalizePositiveInt(
+					this.form.autoRetryInterval,
+					5,
+					1,
+					300,
+				);
+			}
 
-      if ('autoRetryInterval' in data) {
-        data.autoRetryInterval = normalizePositiveInt(this.form.autoRetryInterval, 5, 1, 300)
-      }
+			if ("lowSpeedThreshold" in data) {
+				data.lowSpeedThreshold = normalizePositiveInt(
+					this.form.lowSpeedThreshold,
+					20,
+					1,
+					10240,
+				);
+			}
 
-      if ('lowSpeedThreshold' in data) {
-        data.lowSpeedThreshold = normalizePositiveInt(this.form.lowSpeedThreshold, 20, 1, 10240)
-      }
+			if ("autoRetryStrategy" in data) {
+				data.autoRetryStrategy =
+					this.form.autoRetryStrategy === RETRY_STRATEGY_EXPONENTIAL
+						? RETRY_STRATEGY_EXPONENTIAL
+						: RETRY_STRATEGY_STATIC;
+			}
 
-      if ('autoRetryStrategy' in data) {
-        data.autoRetryStrategy =
-          this.form.autoRetryStrategy === RETRY_STRATEGY_EXPONENTIAL
-            ? RETRY_STRATEGY_EXPONENTIAL
-            : RETRY_STRATEGY_STATIC
-      }
+			logger.log("[Motrix] preference changed data:", data);
 
-      logger.log('[Motrix] preference changed data:', data)
+			usePreferenceStore()
+				.save(data)
+				.then(() => {
+					this.syncFormConfig();
+					this.$msg.success(this.$t("preferences.save-success-message"));
+					if (this.isRenderer) {
+						if ("autoHideWindow" in data) {
+							invoke("auto_hide_window", { enabled: autoHideWindow }).catch(
+								() => {
+									/* noop */
+								},
+							);
+						}
+						if ("hideAppMenu" in data) {
+							invoke("relaunch_app").catch(() => {
+								/* noop */
+							});
+						}
+					}
+				})
+				.catch(() => {
+					this.$msg.error(this.$t("preferences.save-fail-message"));
+				});
 
-      usePreferenceStore()
-        .save(data)
-        .then(() => {
-          this.syncFormConfig()
-          this.$msg.success(this.$t('preferences.save-success-message'))
-          if (this.isRenderer) {
-            if ('autoHideWindow' in data) {
-              invoke('auto_hide_window', { enabled: autoHideWindow }).catch(() => {})
-            }
-            if ('hideAppMenu' in data) {
-              invoke('relaunch_app').catch(() => {})
-            }
-          }
-        })
-        .catch(() => {
-          this.$msg.error(this.$t('preferences.save-fail-message'))
-        })
-
-      changedConfig.basic = {}
-      changedConfig.advanced = {}
-    },
-    resetForm(_formName) {
-      this.syncFormConfig()
-    },
-  },
-  async beforeRouteLeave(to, from) {
-    changedConfig.basic = diffConfig(this.formOriginal, this.form)
-    if (to.path === '/preference/advanced') {
-      return true
-    }
-    if (isEmpty(changedConfig.basic) && isEmpty(changedConfig.advanced)) {
-      return true
-    }
-    const { confirmed } = await confirm({
-      message: this.$t('preferences.not-saved-confirm'),
-      title: this.$t('preferences.not-saved'),
-      kind: 'warning',
-      confirmText: this.$t('app.yes'),
-      cancelText: this.$t('app.no'),
-    })
-    if (confirmed) {
-      changedConfig.basic = {}
-      changedConfig.advanced = {}
-      return true
-    }
-    return false
-  },
-}
+			changedConfig.basic = {};
+			changedConfig.advanced = {};
+		},
+		resetForm(_formName) {
+			this.syncFormConfig();
+		},
+	},
+	async beforeRouteLeave(to, _from) {
+		changedConfig.basic = diffConfig(this.formOriginal, this.form);
+		if (to.path === "/preference/advanced") {
+			return true;
+		}
+		if (isEmpty(changedConfig.basic) && isEmpty(changedConfig.advanced)) {
+			return true;
+		}
+		const { confirmed } = await confirm({
+			message: this.$t("preferences.not-saved-confirm"),
+			title: this.$t("preferences.not-saved"),
+			kind: "warning",
+			confirmText: this.$t("app.yes"),
+			cancelText: this.$t("app.no"),
+		});
+		if (confirmed) {
+			changedConfig.basic = {};
+			changedConfig.advanced = {};
+			return true;
+		}
+		return false;
+	},
+};
 </script>

@@ -1,6 +1,6 @@
 <template>
   <Transition name="speedometer-panel">
-    <div v-if="isTaskPage" class="mo-speedometer" :class="{ stopped: isStopped }">
+    <div v-if="isVisible" class="mo-speedometer">
       <div class="mode" @click="toggleEngineMode">
         <i>
           <Gauge :size="24" />
@@ -8,7 +8,7 @@
         <em>{{ engineMode }}</em>
       </div>
       <Transition name="speedometer-value" mode="out-in">
-        <div class="value" v-if="!isStopped" key="active">
+        <div class="value" key="active">
           <em>
             <CloudUpload :size="14" />
             {{ formatBytes(stat.uploadSpeed) }}/s
@@ -24,40 +24,43 @@
 </template>
 
 <script lang="ts">
-import { useAppStore } from '@/store/app'
-import { usePreferenceStore } from '@/store/preference'
-import { bytesToSize } from '@shared/utils'
-import { CloudUpload, CloudDownload, Gauge } from 'lucide-vue-next'
+import { bytesToSize } from "@shared/utils";
+import { CloudDownload, CloudUpload, Gauge } from "lucide-vue-next";
+import { useAppStore } from "@/store/app";
+import { usePreferenceStore } from "@/store/preference";
 
 export default {
-  name: 'mo-speedometer',
-  components: {
-    Gauge,
-    CloudUpload,
-    CloudDownload,
-  },
-  computed: {
-    stat() {
-      return useAppStore().stat
-    },
-    engineMode() {
-      return usePreferenceStore().engineMode
-    },
-    isStopped() {
-      return this.stat.numActive === 0
-    },
-    isTaskPage() {
-      const path = this.$router.currentRoute.value?.path
-      return !path?.startsWith('/preference')
-    },
-  },
-  methods: {
-    toggleEngineMode() {
-      usePreferenceStore().toggleEngineMode()
-    },
-    formatBytes(value) {
-      return bytesToSize(value)
-    },
-  },
-}
+	name: "mo-speedometer",
+	components: {
+		Gauge,
+		CloudUpload,
+		CloudDownload,
+	},
+	computed: {
+		stat() {
+			return useAppStore().stat;
+		},
+		engineMode() {
+			return usePreferenceStore().engineMode;
+		},
+		isStopped() {
+			return this.stat.numActive === 0;
+		},
+		isTaskPage() {
+			const path = this.$router.currentRoute.value?.path;
+			return !path?.startsWith("/preference");
+		},
+		isVisible() {
+			return this.isTaskPage && !this.isStopped;
+		},
+	},
+	methods: {
+		toggleEngineMode() {
+			usePreferenceStore().toggleEngineMode();
+		},
+		formatBytes(value) {
+			return bytesToSize(value);
+		},
+	},
+};
 </script>

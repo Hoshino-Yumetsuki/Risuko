@@ -3,27 +3,27 @@ import { computed } from "vue";
 import { Checkbox } from "../checkbox";
 
 const props = withDefaults(
-  defineProps<{
-    modelValue?: boolean;
-    disabled?: boolean;
-  }>(),
-  {
-    modelValue: false,
-    disabled: false,
-  },
+	defineProps<{
+		modelValue?: boolean;
+		disabled?: boolean;
+	}>(),
+	{
+		modelValue: false,
+		disabled: false,
+	},
 );
 
 const emit = defineEmits<{
-  "update:modelValue": [value: boolean];
-  change: [value: boolean];
+	"update:modelValue": [value: boolean];
+	change: [value: boolean];
 }>();
 
 const checked = computed({
-  get: () => props.modelValue,
-  set: (val: boolean) => {
-    emit("update:modelValue", val);
-    emit("change", val);
-  },
+	get: () => props.modelValue,
+	set: (val: boolean) => {
+		emit("update:modelValue", val);
+		emit("change", val);
+	},
 });
 </script>
 

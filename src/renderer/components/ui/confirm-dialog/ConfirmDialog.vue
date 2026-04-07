@@ -1,79 +1,83 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
-import { TriangleAlert } from 'lucide-vue-next'
+import { TriangleAlert } from "lucide-vue-next";
+import { ref, watch } from "vue";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogFooter,
-} from '@/components/ui/dialog'
-import { Checkbox } from '@/components/ui/checkbox'
-import { Label } from '@/components/ui/label'
-import { Button } from '@/components/ui/button'
+	Dialog,
+	DialogContent,
+	DialogFooter,
+	DialogHeader,
+	DialogTitle,
+} from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
 
 const props = withDefaults(
-  defineProps<{
-    open: boolean
-    title?: string
-    message?: string
-    kind?: 'info' | 'warning'
-    confirmText?: string
-    cancelText?: string
-    checkboxLabel?: string
-    checkboxChecked?: boolean
-  }>(),
-  {
-    title: '',
-    message: '',
-    kind: 'info',
-    confirmText: 'OK',
-    cancelText: 'Cancel',
-    checkboxLabel: '',
-    checkboxChecked: false,
-  },
-)
+	defineProps<{
+		open: boolean;
+		title?: string;
+		message?: string;
+		kind?: "info" | "warning";
+		confirmText?: string;
+		cancelText?: string;
+		checkboxLabel?: string;
+		checkboxChecked?: boolean;
+	}>(),
+	{
+		title: "",
+		message: "",
+		kind: "info",
+		confirmText: "OK",
+		cancelText: "Cancel",
+		checkboxLabel: "",
+		checkboxChecked: false,
+	},
+);
 
 const emit = defineEmits<{
-  confirm: [checkboxChecked: boolean]
-  cancel: []
-  'update:open': [value: boolean]
-}>()
+	confirm: [checkboxChecked: boolean];
+	cancel: [];
+	"update:open": [value: boolean];
+}>();
 
-const checked = ref(props.checkboxChecked)
-
-watch(
-  () => props.checkboxChecked,
-  (val) => {
-    checked.value = val
-  },
-)
+const checked = ref(props.checkboxChecked);
 
 watch(
-  () => props.open,
-  (val) => {
-    if (val) checked.value = props.checkboxChecked
-  },
-)
+	() => props.checkboxChecked,
+	(val) => {
+		checked.value = val;
+	},
+);
+
+watch(
+	() => props.open,
+	(val) => {
+		if (val) {
+			checked.value = props.checkboxChecked;
+		}
+	},
+);
 
 function onConfirm() {
-  emit('confirm', checked.value)
-  emit('update:open', false)
+	emit("confirm", checked.value);
+	emit("update:open", false);
 }
 
 function onCancel() {
-  emit('cancel')
-  emit('update:open', false)
+	emit("cancel");
+	emit("update:open", false);
 }
 
 function onOpenChange(val: boolean) {
-  if (!val) onCancel()
+	if (!val) {
+		onCancel();
+	}
 }
 </script>
 
 <template>
   <Dialog :open="open" @update:open="onOpenChange">
-    <DialogContent :show-close-button="false" class="sm:max-w-[400px] gap-0 p-0">
+    <DialogContent :show-close-button="false" class="sm:max-w-100 gap-0 p-0">
       <div class="flex flex-col gap-3 p-5 pb-4">
         <DialogHeader class="gap-3">
           <div

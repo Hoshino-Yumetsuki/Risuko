@@ -1,10 +1,10 @@
 {
-  "bundle": {
-    "targets": ["nsis"],
-    "windows": {
-      "nsis": {
-        "installMode": "currentUser"
-      }
-    }
-  }
+	"bundle": {
+		"targets": ["nsis"],
+		"windows": {
+			"nsis": {
+				"installMode": "currentUser"
+			}
+		}
+	}
 }

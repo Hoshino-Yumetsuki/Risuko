@@ -1,22 +1,16 @@
 <script setup lang="ts">
 import type { HTMLAttributes } from "vue";
-import { useVModel } from "@vueuse/core";
 import { cn } from "@/lib/utils";
 
 const props = defineProps<{
-  class?: HTMLAttributes["class"];
-  defaultValue?: string | number;
-  modelValue?: string | number;
+	class?: HTMLAttributes["class"];
+	defaultValue?: string | number;
 }>();
 
-const emits = defineEmits<{
-  (e: "update:modelValue", payload: string | number): void;
-}>();
-
-const modelValue = useVModel(props, "modelValue", emits, {
-  passive: true,
-  defaultValue: props.defaultValue,
-});
+const modelValue = defineModel<string | number>({ default: undefined });
+if (modelValue.value === undefined && props.defaultValue !== undefined) {
+	modelValue.value = props.defaultValue;
+}
 </script>
 
 <template>

@@ -1,4 +1,4 @@
 export default {
-  'task-list': 'Oppgaver',
-  preferences: 'Innstillinger',
-}
+	"task-list": "Oppgaver",
+	preferences: "Innstillinger",
+};

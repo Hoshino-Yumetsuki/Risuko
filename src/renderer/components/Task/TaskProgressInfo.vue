@@ -36,76 +36,84 @@
 </template>
 
 <script lang="ts">
+import { TASK_STATUS } from "@shared/constants";
 import {
-  bytesToSize,
-  calcProgress,
-  checkTaskIsBT,
-  checkTaskIsSeeder,
-  timeFormat,
-  timeRemaining,
-} from '@shared/utils'
-import { TASK_STATUS } from '@shared/constants'
-import { ArrowUp, ArrowDown, Magnet, Network } from 'lucide-vue-next'
+	bytesToSize,
+	calcProgress,
+	checkTaskIsBT,
+	checkTaskIsSeeder,
+	timeFormat,
+	timeRemaining,
+} from "@shared/utils";
+import { ArrowDown, ArrowUp, Magnet, Network } from "lucide-vue-next";
 
 export default {
-  name: 'mo-task-progress-info',
-  components: {
-    ArrowUp,
-    ArrowDown,
-    Magnet,
-    Network,
-  },
-  props: {
-    task: {
-      type: Object,
-    },
-  },
-  computed: {
-    isActive() {
-      return this.task.status === TASK_STATUS.ACTIVE
-    },
-    isBT() {
-      return checkTaskIsBT(this.task)
-    },
-    isSeeder() {
-      return checkTaskIsSeeder(this.task)
-    },
-    displayUploadSpeed() {
-      return Number(this.task?.uploadSpeed || 0)
-    },
-    displayDownloadSpeed() {
-      if (this.isSeeder) {
-        return 0
-      }
-      return Number(this.task?.downloadSpeed || 0)
-    },
-    showDownloadSpeed() {
-      return !this.isSeeder
-    },
-    remaining() {
-      const { totalLength, completedLength } = this.task
-      return timeRemaining(totalLength, completedLength, this.displayDownloadSpeed)
-    },
-    remainingText() {
-      return timeFormat(this.remaining, {
-        prefix: this.$t('task.remaining-prefix'),
-        i18n: {
-          gt1d: this.$t('app.gt1d'),
-          hour: this.$t('app.hour'),
-          minute: this.$t('app.minute'),
-          second: this.$t('app.second'),
-        },
-      })
-    },
-    progressPercent() {
-      const result = calcProgress(this.task.totalLength, this.task.completedLength, 1)
-      return `${result}`.replace(/\.0$/, '')
-    },
-  },
-  methods: {
-    formatBytes(value, precision) {
-      return bytesToSize(value, precision)
-    },
-  },
-}
+	name: "mo-task-progress-info",
+	components: {
+		ArrowUp,
+		ArrowDown,
+		Magnet,
+		Network,
+	},
+	props: {
+		task: {
+			type: Object,
+		},
+	},
+	computed: {
+		isActive() {
+			return this.task.status === TASK_STATUS.ACTIVE;
+		},
+		isBT() {
+			return checkTaskIsBT(this.task);
+		},
+		isSeeder() {
+			return checkTaskIsSeeder(this.task);
+		},
+		displayUploadSpeed() {
+			return Number(this.task?.uploadSpeed || 0);
+		},
+		displayDownloadSpeed() {
+			if (this.isSeeder) {
+				return 0;
+			}
+			return Number(this.task?.downloadSpeed || 0);
+		},
+		showDownloadSpeed() {
+			return !this.isSeeder;
+		},
+		remaining() {
+			const { totalLength, completedLength } = this.task;
+			return timeRemaining(
+				totalLength,
+				completedLength,
+				this.displayDownloadSpeed,
+			);
+		},
+		remainingText() {
+			return timeFormat(this.remaining, {
+				prefix: this.$t("task.remaining-prefix"),
+				i18n: {
+					gt1d: this.$t("app.gt1d"),
+					hour: this.$t("app.hour"),
+					minute: this.$t("app.minute"),
+					second: this.$t("app.second"),
+				},
+			});
+		},
+		progressPercent() {
+			const result = calcProgress(
+				this.task.totalLength,
+				this.task.completedLength,
+				1,
+			);
+			return `${result}`.replace(/\.0$/, "");
+		},
+	},
+	methods: {
+		formatBytes(value, precision) {
+			return bytesToSize(value, precision);
+		},
+	},
+};
 </script>

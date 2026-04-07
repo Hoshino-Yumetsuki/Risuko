@@ -37,37 +37,37 @@
 </template>
 
 <script lang="ts">
-import logger from '@shared/utils/logger'
-import { FlaskConical, SlidersHorizontal, Wrench } from 'lucide-vue-next'
+import logger from "@shared/utils/logger";
+import { FlaskConical, SlidersHorizontal, Wrench } from "lucide-vue-next";
 
 export default {
-  name: 'mo-preference-subnav',
-  components: {
-    FlaskConical,
-    SlidersHorizontal,
-    Wrench,
-  },
-  props: {
-    current: {
-      type: String,
-      default: 'basic',
-    },
-  },
-  computed: {
-    title() {
-      return this.$t('subnav.preferences')
-    },
-  },
-  methods: {
-    nav(category = 'basic') {
-      this.$router
-        .push({
-          path: `/preference/${category}`,
-        })
-        .catch((err) => {
-          logger.log(err)
-        })
-    },
-  },
-}
+	name: "mo-preference-subnav",
+	components: {
+		FlaskConical,
+		SlidersHorizontal,
+		Wrench,
+	},
+	props: {
+		current: {
+			type: String,
+			default: "basic",
+		},
+	},
+	computed: {
+		title() {
+			return this.$t("subnav.preferences");
+		},
+	},
+	methods: {
+		nav(category = "basic") {
+			this.$router
+				.push({
+					path: `/preference/${category}`,
+				})
+				.catch((err) => {
+					logger.log(err);
+				});
+		},
+	},
+};
 </script>

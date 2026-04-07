@@ -1,5 +1,3 @@
-use std::io::{Read, Write};
-use std::net::TcpStream;
 use std::path::Path;
 use std::time::Duration;
 use std::{collections::HashMap, collections::HashSet};
@@ -7,8 +5,10 @@ use std::{collections::HashMap, collections::HashSet};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use tauri::AppHandle;
-use tokio::task::spawn_blocking;
 use tokio::time::sleep;
+
+use crate::engine;
+use crate::engine::torrent;
 
 const TEMP_DOWNLOAD_SUFFIX: &str = ".part";
 
@@ -55,292 +55,6 @@ pub struct SelectedTaskOrderInput {
 pub struct SyncOrderResult {
     pub moved: u32,
     pub partial_error: bool,
-}
-
-fn encode_base64(input: &[u8]) -> String {
-    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut output = String::with_capacity(input.len().div_ceil(3) * 4);
-    let mut index = 0usize;
-
-    while index < input.len() {
-        let b0 = input[index];
-        let b1 = if index + 1 < input.len() {
-            input[index + 1]
-        } else {
-            0
-        };
-        let b2 = if index + 2 < input.len() {
-            input[index + 2]
-        } else {
-            0
-        };
-
-        output.push(TABLE[(b0 >> 2) as usize] as char);
-        output.push(TABLE[(((b0 & 0b0000_0011) << 4) | (b1 >> 4)) as usize] as char);
-
-        if index + 1 < input.len() {
-            output.push(TABLE[(((b1 & 0b0000_1111) << 2) | (b2 >> 6)) as usize] as char);
-        } else {
-            output.push('=');
-        }
-
-        if index + 2 < input.len() {
-            output.push(TABLE[(b2 & 0b0011_1111) as usize] as char);
-        } else {
-            output.push('=');
-        }
-
-        index += 3;
-    }
-
-    output
-}
-
-fn resolve_rpc_endpoint(
-    state: &tauri::State<'_, crate::state::AppState>,
-) -> Result<(String, u16, String), String> {
-    let config = state.config.lock().map_err(|e| e.to_string())?;
-    let user = config.get_user_config();
-    let system = config.get_system_config();
-
-    let host = user
-        .get("rpc-host")
-        .and_then(|value| value.as_str())
-        .unwrap_or("127.0.0.1")
-        .trim()
-        .trim_start_matches("http://")
-        .trim_start_matches("https://")
-        .trim_end_matches('/')
-        .to_string();
-
-    let port = system
-        .get("rpc-listen-port")
-        .and_then(|value| value.as_u64())
-        .and_then(|value| u16::try_from(value).ok())
-        .unwrap_or(16800);
-
-    let secret = system
-        .get("rpc-secret")
-        .and_then(|value| value.as_str())
-        .unwrap_or("")
-        .to_string();
-
-    Ok((host, port, secret))
-}
-
-fn split_http_response(raw: &[u8]) -> Result<&[u8], String> {
-    let marker = b"\r\n\r\n";
-    let Some(pos) = raw
-        .windows(marker.len())
-        .position(|window| window == marker)
-    else {
-        return Err("Invalid aria2 RPC response".to_string());
-    };
-    let header_end = pos + marker.len();
-    let headers = &raw[..header_end];
-    let status_ok = headers.starts_with(b"HTTP/1.1 200") || headers.starts_with(b"HTTP/1.0 200");
-    if !status_ok {
-        return Err("aria2 RPC returned non-200 status".to_string());
-    }
-    Ok(&raw[header_end..])
-}
-
-fn call_aria2_rpc(host: &str, port: u16, body: &Value) -> Result<Value, String> {
-    let normalized_host = host.trim().trim_start_matches('[').trim_end_matches(']');
-    if normalized_host.is_empty() {
-        return Err("Invalid RPC host".to_string());
-    }
-
-    let mut stream = TcpStream::connect((normalized_host, port))
-        .map_err(|e| format!("RPC connect failed: {e}"))?;
-    stream
-        .set_read_timeout(Some(Duration::from_secs(60)))
-        .map_err(|e| e.to_string())?;
-    stream
-        .set_write_timeout(Some(Duration::from_secs(60)))
-        .map_err(|e| e.to_string())?;
-
-    let payload = serde_json::to_vec(body).map_err(|e| e.to_string())?;
-    let request = format!(
-        "POST /jsonrpc HTTP/1.1\r\nHost: {host}:{port}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-        payload.len()
-    );
-
-    stream
-        .write_all(request.as_bytes())
-        .map_err(|e| format!("RPC write failed: {e}"))?;
-    stream
-        .write_all(&payload)
-        .map_err(|e| format!("RPC write failed: {e}"))?;
-    stream
-        .flush()
-        .map_err(|e| format!("RPC flush failed: {e}"))?;
-
-    let mut response = Vec::new();
-    stream
-        .read_to_end(&mut response)
-        .map_err(|e| format!("RPC read failed: {e}"))?;
-
-    let body_bytes = split_http_response(&response)?;
-    serde_json::from_slice::<Value>(body_bytes).map_err(|e| format!("Invalid RPC JSON: {e}"))
-}
-
-fn should_retry_add_torrent_rpc(error: &str) -> bool {
-    let normalized = error.to_ascii_lowercase();
-    normalized.contains("connection reset by peer")
-        || normalized.contains("broken pipe")
-        || normalized.contains("connection aborted")
-}
-
-fn build_rpc_call_payload(method: &str, params: Vec<Value>) -> Value {
-    json!({
-        "jsonrpc": "2.0",
-        "id": "motrix-tauri",
-        "method": method,
-        "params": params,
-    })
-}
-
-fn prepend_rpc_secret(secret: &str, mut params: Vec<Value>) -> Vec<Value> {
-    if !secret.trim().is_empty() {
-        params.insert(0, Value::String(format!("token:{secret}")));
-    }
-    params
-}
-
-fn parse_rpc_result(response: Value) -> Result<Value, String> {
-    if let Some(error) = response.get("error") {
-        let message = error
-            .get("message")
-            .and_then(|value| value.as_str())
-            .unwrap_or("aria2 RPC call failed");
-        return Err(message.to_string());
-    }
-
-    Ok(response.get("result").cloned().unwrap_or(Value::Null))
-}
-
-async fn call_aria2_method(
-    host: String,
-    port: u16,
-    secret: String,
-    method: &'static str,
-    params: Vec<Value>,
-) -> Result<Value, String> {
-    let payload = build_rpc_call_payload(method, prepend_rpc_secret(&secret, params));
-    let response = spawn_blocking(move || call_aria2_rpc(&host, port, &payload))
-        .await
-        .map_err(|e| format!("RPC task failed: {e}"))?
-        .map_err(|e| format!("RPC call {method} failed: {e}"))?;
-
-    parse_rpc_result(response)
-}
-
-fn parse_waiting_queue_gids(value: Value) -> Vec<String> {
-    let mut queue = Vec::new();
-    let Value::Array(items) = value else {
-        return queue;
-    };
-
-    for item in items {
-        let gid = item
-            .get("gid")
-            .and_then(|value| value.as_str())
-            .map(|value| value.trim().to_string())
-            .unwrap_or_default();
-        if gid.is_empty() {
-            continue;
-        }
-        queue.push(gid);
-    }
-
-    queue
-}
-
-fn parse_add_torrent_response(response: Value) -> Result<String, String> {
-    if let Some(error) = response.get("error") {
-        let message = error
-            .get("message")
-            .and_then(|value| value.as_str())
-            .unwrap_or("task.new-task-fail");
-        return Err(message.to_string());
-    }
-
-    response
-        .get("result")
-        .and_then(|value| value.as_str())
-        .map(|value| value.to_string())
-        .ok_or_else(|| "task.new-task-fail".to_string())
-}
-
-fn infer_out_from_uri(uri: &str) -> String {
-    let raw = uri.trim();
-    if raw.is_empty() {
-        return String::new();
-    }
-
-    let without_hash = raw.split('#').next().unwrap_or(raw);
-    let without_query = without_hash.split('?').next().unwrap_or(without_hash);
-    let candidate = without_query.rsplit('/').next().unwrap_or("").trim();
-    let decoded_candidate = crate::commands::file_cmds::percent_decode_lossy(candidate);
-    let decoded_candidate = decoded_candidate.trim();
-    if decoded_candidate.is_empty() || !decoded_candidate.contains('.') {
-        return String::new();
-    }
-    if decoded_candidate.contains('/') || decoded_candidate.contains('\\') {
-        return String::new();
-    }
-    if decoded_candidate.starts_with('.') || decoded_candidate.ends_with('.') {
-        return String::new();
-    }
-
-    decoded_candidate.to_string()
-}
-
-fn ensure_temp_download_suffix(value: &str) -> String {
-    let normalized = value.trim();
-    if normalized.is_empty() {
-        return String::new();
-    }
-
-    if normalized
-        .to_ascii_lowercase()
-        .ends_with(TEMP_DOWNLOAD_SUFFIX)
-    {
-        return normalized.to_string();
-    }
-
-    format!("{}{}", normalized, TEMP_DOWNLOAD_SUFFIX)
-}
-
-fn find_multicall_item_error(value: &Value) -> Option<&Value> {
-    let is_error_object = |target: &Value| {
-        target.is_object() && (target.get("code").is_some() || target.get("message").is_some())
-    };
-
-    if is_error_object(value) {
-        return Some(value);
-    }
-
-    let Value::Array(items) = value else {
-        return None;
-    };
-
-    for item in items {
-        if is_error_object(item) {
-            return Some(item);
-        }
-
-        if let Value::Array(entries) = item {
-            for entry in entries {
-                if is_error_object(entry) {
-                    return Some(entry);
-                }
-            }
-        }
-    }
-
-    None
 }
 
 fn normalize_non_negative(value: f64) -> u64 {
@@ -432,6 +146,177 @@ fn compute_auto_retry_delay_ms(
     };
 
     computed.min(max_delay_ms as u128).max(min_delay_ms as u128) as u64
+}
+
+fn infer_out_from_uri_inner(uri: &str) -> String {
+    let raw = uri.trim();
+    if raw.is_empty() {
+        return String::new();
+    }
+
+    // M3U8 links: extract stem and use .ts extension
+    let lower = raw.to_ascii_lowercase();
+    let path_part = lower.split('?').next().unwrap_or(&lower);
+    let path_part = path_part.split('#').next().unwrap_or(path_part);
+    if path_part.ends_with(".m3u8") || path_part.ends_with(".m3u") {
+        let without_query = raw.split('?').next().unwrap_or(raw);
+        let without_hash = without_query.split('#').next().unwrap_or(without_query);
+        let name = without_hash.rsplit('/').next().unwrap_or("");
+        if name.is_empty() {
+            return "download.ts".to_string();
+        }
+        let stem = name
+            .strip_suffix(".m3u8")
+            .or_else(|| name.strip_suffix(".M3U8"))
+            .or_else(|| name.strip_suffix(".m3u"))
+            .or_else(|| name.strip_suffix(".M3U"))
+            .unwrap_or(name);
+        if stem.is_empty() {
+            return "download.ts".to_string();
+        }
+        return format!("{}.ts", stem);
+    }
+
+    // ED2K links: parse filename from ed2k://|file|<name>|<size>|<hash>|/
+    if lower.starts_with("ed2k://") {
+        let body = raw
+            .trim_start_matches("ed2k://|file|")
+            .trim_start_matches("ed2k://|FILE|")
+            .trim_end_matches("|/");
+        let parts: Vec<&str> = body.split('|').collect();
+        if !parts.is_empty() {
+            let decoded = urlencoding::decode(parts[0]).unwrap_or_default();
+            let name = decoded.replace('_', " ");
+            if !name.is_empty() {
+                return name;
+            }
+        }
+        return String::new();
+    }
+
+    let without_hash = raw.split('#').next().unwrap_or(raw);
+    let without_query = without_hash.split('?').next().unwrap_or(without_hash);
+    let candidate = without_query.rsplit('/').next().unwrap_or("").trim();
+    let decoded_candidate = crate::commands::file_cmds::percent_decode_lossy(candidate);
+    let decoded_candidate = decoded_candidate.trim();
+    if decoded_candidate.is_empty() || !decoded_candidate.contains('.') {
+        return String::new();
+    }
+    if decoded_candidate.contains('/') || decoded_candidate.contains('\\') {
+        return String::new();
+    }
+    if decoded_candidate.starts_with('.') || decoded_candidate.ends_with('.') {
+        return String::new();
+    }
+
+    decoded_candidate.to_string()
+}
+
+#[tauri::command]
+pub fn infer_out_from_uri(uri: String) -> String {
+    infer_out_from_uri_inner(&uri)
+}
+
+#[tauri::command]
+pub fn resolve_file_category(filename: String) -> String {
+    resolve_file_category_inner(&filename)
+}
+
+fn resolve_file_category_inner(filename: &str) -> String {
+    if filename.is_empty() {
+        return String::new();
+    }
+
+    let ext = match filename.rfind('.') {
+        Some(idx) if idx > 0 && idx < filename.len() - 1 => {
+            filename[idx..].to_ascii_lowercase()
+        }
+        _ => return String::new(),
+    };
+
+    static MUSIC: &[&str] = &[
+        ".aac", ".ape", ".flac", ".flav", ".m4a", ".mp3", ".ogg", ".wav", ".wma",
+    ];
+    static VIDEO: &[&str] = &[
+        ".avi", ".m3u8", ".m4v", ".mkv", ".mov", ".mp4", ".mpg", ".rmvb", ".ts", ".vob", ".wmv",
+    ];
+    static IMAGE: &[&str] = &[
+        ".ai", ".bmp", ".eps", ".fig", ".gif", ".heic", ".icn", ".ico", ".jpeg", ".jpg", ".png",
+        ".psd", ".raw", ".sketch", ".svg", ".tif", ".webp", ".xd",
+    ];
+    static DOCUMENT: &[&str] = &[
+        ".azw3", ".csv", ".doc", ".docx", ".epub", ".key", ".mobi", ".numbers", ".pages", ".pdf",
+        ".ppt", ".pptx", ".txt", ".xsl", ".xslx",
+    ];
+    static COMPRESSED: &[&str] = &[
+        ".zip", ".rar", ".7z", ".tar", ".gz", ".bz2", ".xz", ".zst", ".iso",
+    ];
+    static PROGRAM: &[&str] = &[
+        ".exe", ".msi", ".dmg", ".pkg", ".deb", ".rpm", ".appimage", ".apk",
+    ];
+
+    let categories: &[(&str, &[&str])] = &[
+        ("music", MUSIC),
+        ("video", VIDEO),
+        ("image", IMAGE),
+        ("document", DOCUMENT),
+        ("compressed", COMPRESSED),
+        ("program", PROGRAM),
+    ];
+
+    for &(category, suffixes) in categories {
+        if suffixes.contains(&ext.as_str()) {
+            return category.to_string();
+        }
+    }
+
+    String::new()
+}
+
+fn ensure_temp_download_suffix(value: &str) -> String {
+    let normalized = value.trim();
+    if normalized.is_empty() {
+        return String::new();
+    }
+
+    if normalized
+        .to_ascii_lowercase()
+        .ends_with(TEMP_DOWNLOAD_SUFFIX)
+    {
+        return normalized.to_string();
+    }
+
+    format!("{}{}", normalized, TEMP_DOWNLOAD_SUFFIX)
+}
+
+fn find_multicall_item_error(value: &Value) -> Option<&Value> {
+    let is_error_object = |target: &Value| {
+        target.is_object() && (target.get("code").is_some() || target.get("message").is_some())
+    };
+
+    if is_error_object(value) {
+        return Some(value);
+    }
+
+    let Value::Array(items) = value else {
+        return None;
+    };
+
+    for item in items {
+        if is_error_object(item) {
+            return Some(item);
+        }
+
+        if let Value::Array(entries) = item {
+            for entry in entries {
+                if is_error_object(entry) {
+                    return Some(entry);
+                }
+            }
+        }
+    }
+
+    None
 }
 
 #[tauri::command]
@@ -580,6 +465,59 @@ pub async fn restart_engine(handle: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
+pub async fn probe_m3u8(url: String) -> Result<Value, String> {
+    use crate::engine::m3u8::parser::{fetch_and_parse_playlist, ParsedPlaylist};
+
+    let url = url.trim().to_string();
+    if url.is_empty() {
+        return Err("URL is required".to_string());
+    }
+
+    let client = reqwest::Client::builder()
+        .user_agent("Mozilla/5.0")
+        .build()
+        .map_err(|e| format!("Failed to build client: {e}"))?;
+
+    let playlist = fetch_and_parse_playlist(&url, &client).await?;
+
+    match playlist {
+        ParsedPlaylist::Master { mut variants } => {
+            variants.sort_by(|a, b| b.bandwidth.cmp(&a.bandwidth));
+            let variant_vals: Vec<Value> = variants
+                .iter()
+                .map(|v| {
+                    json!({
+                        "bandwidth": v.bandwidth,
+                        "resolution": v.resolution,
+                        "codecs": v.codecs,
+                        "url": v.url,
+                    })
+                })
+                .collect();
+            Ok(json!({
+                "type": "master",
+                "variants": variant_vals,
+            }))
+        }
+        ParsedPlaylist::Media {
+            segments,
+            end_list,
+            total_duration,
+            ..
+        } => {
+            let encrypted = segments.iter().any(|s| s.encryption.is_some());
+            Ok(json!({
+                "type": "media",
+                "segments": segments.len(),
+                "duration": total_duration,
+                "encrypted": encrypted,
+                "endList": end_list,
+            }))
+        }
+    }
+}
+
+#[tauri::command]
 pub fn get_engine_status(state: tauri::State<'_, crate::state::AppState>) -> Result<bool, String> {
     let running = state.engine_running.lock().map_err(|e| e.to_string())?;
     Ok(*running)
@@ -587,8 +525,8 @@ pub fn get_engine_status(state: tauri::State<'_, crate::state::AppState>) -> Res
 
 #[tauri::command]
 pub async fn add_torrent_by_path(
-    handle: AppHandle,
-    state: tauri::State<'_, crate::state::AppState>,
+    _handle: AppHandle,
+    _state: tauri::State<'_, crate::state::AppState>,
     path: String,
     options: Option<Value>,
 ) -> Result<String, String> {
@@ -619,15 +557,6 @@ pub async fn add_torrent_by_path(
         crate::commands::file_cmds::inspect_torrent_metadata(&bytes, fallback_name)
             .unwrap_or_else(|_| (false, fallback_name.to_string()));
 
-    let (host, port, secret) = resolve_rpc_endpoint(&state)?;
-    let mut params = Vec::new();
-    if !secret.is_empty() {
-        params.push(Value::String(format!("token:{secret}")));
-    }
-
-    params.push(Value::String(encode_base64(&bytes)));
-    params.push(Value::Array(Vec::new()));
-
     let options = options.unwrap_or(Value::Object(Map::new()));
     let mut options = match options {
         Value::Object(map) => map,
@@ -657,43 +586,17 @@ pub async fn add_torrent_by_path(
             }
         }
     }
-    let options = Value::Object(options);
-    params.push(options);
 
-    let payload = json!({
-        "jsonrpc": "2.0",
-        "id": "motrix-tauri",
-        "method": "aria2.addTorrent",
-        "params": params,
-    });
+    let manager = engine::get_manager()
+        .await
+        .ok_or("Engine not running")?;
 
-    let mut retried_after_restart = false;
-    loop {
-        let host_for_call = host.clone();
-        let payload_for_call = payload.clone();
-        let rpc_result =
-            spawn_blocking(move || call_aria2_rpc(&host_for_call, port, &payload_for_call))
-                .await
-                .map_err(|e| format!("RPC task failed: {e}"))?;
-        match rpc_result {
-            Ok(response) => return parse_add_torrent_response(response),
-            Err(err) => {
-                if retried_after_restart || !should_retry_add_torrent_rpc(&err) {
-                    return Err(err);
-                }
-                retried_after_restart = true;
-                crate::engine::restart_engine(&handle)
-                    .await
-                    .map_err(|e| e.to_string())?;
-                sleep(Duration::from_millis(500)).await;
-            }
-        }
-    }
+    manager.add_torrent_task(bytes, options).await
 }
 
 #[tauri::command]
 pub async fn add_uri(
-    state: tauri::State<'_, crate::state::AppState>,
+    _state: tauri::State<'_, crate::state::AppState>,
     uris: Vec<String>,
     outs: Option<Vec<String>>,
     options: Option<Value>,
@@ -714,8 +617,11 @@ pub async fn add_uri(
         _ => Map::new(),
     };
 
-    let (host, port, secret) = resolve_rpc_endpoint(&state)?;
-    let mut calls = Vec::with_capacity(normalized_uris.len());
+    let manager = engine::get_manager()
+        .await
+        .ok_or("Engine not running")?;
+
+    let mut results = Vec::with_capacity(normalized_uris.len());
 
     for (index, uri) in normalized_uris.iter().enumerate() {
         let mut task_options = base_options.clone();
@@ -731,76 +637,86 @@ pub async fn add_uri(
                     .map(|value| value.trim().to_string())
                     .filter(|value| !value.is_empty())
             })
-            .unwrap_or_else(|| infer_out_from_uri(uri));
+            .unwrap_or_else(|| infer_out_from_uri_inner(uri));
 
-        let temp_out = ensure_temp_download_suffix(&preferred_out);
-        if !temp_out.is_empty() {
-            task_options.insert("out".to_string(), Value::String(temp_out));
+        // M3u8 uses a temp directory for segments, not a .part file
+        let is_m3u8 = engine::m3u8::is_m3u8_uri(uri);
+        if !is_m3u8 {
+            let temp_out = ensure_temp_download_suffix(&preferred_out);
+            if !temp_out.is_empty() {
+                task_options.insert("out".to_string(), Value::String(temp_out));
+            }
+        } else if !preferred_out.is_empty() {
+            task_options.insert("out".to_string(), Value::String(preferred_out));
         }
 
-        let call_params = prepend_rpc_secret(
-            &secret,
-            vec![
-                Value::Array(vec![Value::String(uri.clone())]),
-                Value::Object(task_options),
-            ],
+        // Check if this is a magnet link
+        if torrent::is_magnet_uri(uri) {
+            match manager.add_magnet_task(uri, task_options).await {
+                Ok(gid) => results.push(Value::Array(vec![Value::String(gid)])),
+                Err(e) => results.push(json!({"code": 1, "message": e})),
+            }
+        } else if is_m3u8 {
+            match manager.add_m3u8_task(uri, task_options).await {
+                Ok(gid) => results.push(Value::Array(vec![Value::String(gid)])),
+                Err(e) => results.push(json!({"code": 1, "message": e})),
+            }
+        } else if engine::ed2k::is_ed2k_uri(uri) {
+            match manager.add_ed2k_task(uri, task_options).await {
+                Ok(gid) => results.push(Value::Array(vec![Value::String(gid)])),
+                Err(e) => results.push(json!({"code": 1, "message": e})),
+            }
+        } else if engine::ftp::is_ftp_uri(uri) {
+            match manager.add_ftp_task(uri, task_options).await {
+                Ok(gid) => results.push(Value::Array(vec![Value::String(gid)])),
+                Err(e) => results.push(json!({"code": 1, "message": e})),
+            }
+        } else {
+            match manager
+                .add_http_task(vec![uri.clone()], task_options)
+                .await
+            {
+                Ok(gid) => results.push(Value::Array(vec![Value::String(gid)])),
+                Err(e) => results.push(json!({"code": 1, "message": e})),
+            }
+        }
+    }
+
+    // Check for errors
+    let mut failed_count = 0usize;
+    let mut first_error_message: Option<String> = None;
+
+    for item in &results {
+        if let Some(error_item) = find_multicall_item_error(item) {
+            failed_count += 1;
+            if first_error_message.is_none() {
+                first_error_message = error_item
+                    .get("message")
+                    .and_then(|value| value.as_str())
+                    .map(|value| value.to_string());
+            }
+        }
+    }
+
+    if failed_count > 0 {
+        let success_count = results.len().saturating_sub(failed_count);
+        if success_count == 0 {
+            return Err(first_error_message.unwrap_or_else(|| "task.new-task-fail".to_string()));
+        }
+
+        log::warn!(
+            "[Motrix] add_uri partially failed: {} succeeded, {} failed",
+            success_count,
+            failed_count
         );
-        calls.push(json!({
-            "methodName": "aria2.addUri",
-            "params": call_params,
-        }));
     }
 
-    let payload = build_rpc_call_payload("system.multicall", vec![Value::Array(calls)]);
-    let response = spawn_blocking(move || call_aria2_rpc(&host, port, &payload))
-        .await
-        .map_err(|e| format!("RPC task failed: {e}"))?
-        .map_err(|e| format!("add_uri RPC failed: {e}"))?;
-
-    let result = parse_rpc_result(response)?;
-
-    if let Value::Array(items) = &result {
-        let mut failed_count = 0usize;
-        let mut first_error_message: Option<String> = None;
-
-        for item in items {
-            if let Some(error_item) = find_multicall_item_error(item) {
-                failed_count = failed_count.saturating_add(1);
-                if first_error_message.is_none() {
-                    first_error_message = error_item
-                        .get("message")
-                        .and_then(|value| value.as_str())
-                        .map(|value| value.to_string());
-                }
-            }
-        }
-
-        if failed_count > 0 {
-            let success_count = items.len().saturating_sub(failed_count);
-            if success_count == 0 {
-                return Err(first_error_message.unwrap_or_else(|| "task.new-task-fail".to_string()));
-            }
-
-            log::warn!(
-                "[Motrix] add_uri multicall partially failed: {} succeeded, {} failed",
-                success_count,
-                failed_count
-            );
-        }
-    } else if let Some(error_item) = find_multicall_item_error(&result) {
-        let message = error_item
-            .get("message")
-            .and_then(|value| value.as_str())
-            .unwrap_or("task.new-task-fail");
-        return Err(message.to_string());
-    }
-
-    Ok(result)
+    Ok(Value::Array(results))
 }
 
 #[tauri::command]
 pub async fn sync_selected_task_order(
-    state: tauri::State<'_, crate::state::AppState>,
+    _state: tauri::State<'_, crate::state::AppState>,
     direction: String,
     selected_tasks: Vec<SelectedTaskOrderInput>,
 ) -> Result<SyncOrderResult, String> {
@@ -831,189 +747,55 @@ pub async fn sync_selected_task_order(
         });
     }
 
+    let manager = engine::get_manager()
+        .await
+        .ok_or("Engine not running")?;
+
     let selected_gid_set: HashSet<String> = selected_gids.iter().cloned().collect();
-    let active_selected_gid_set: HashSet<String> = selected_active_gids.iter().cloned().collect();
-    let (host, port, secret) = resolve_rpc_endpoint(&state)?;
     let mut sync_error = false;
-
-    if !selected_active_gids.is_empty() {
-        for gid in &selected_active_gids {
-            let result = call_aria2_method(
-                host.clone(),
-                port,
-                secret.clone(),
-                "aria2.forcePause",
-                vec![Value::String(gid.clone())],
-            )
-            .await;
-            if result.is_err() {
-                sync_error = true;
-            }
-        }
-    }
-
-    let mut queue = Vec::new();
-    let max_attempts = if selected_active_gids.is_empty() {
-        1
-    } else {
-        8
-    };
-    for _ in 0..max_attempts {
-        let waiting_result = call_aria2_method(
-            host.clone(),
-            port,
-            secret.clone(),
-            "aria2.tellWaiting",
-            vec![
-                Value::Number(serde_json::Number::from(0u64)),
-                Value::Number(serde_json::Number::from(10000u64)),
-                Value::Array(vec![Value::String("gid".to_string())]),
-            ],
-        )
-        .await;
-
-        match waiting_result {
-            Ok(value) => {
-                queue = parse_waiting_queue_gids(value);
-            }
-            Err(_) => {
-                sync_error = true;
-                queue.clear();
-            }
-        }
-
-        if selected_active_gids.is_empty() {
-            break;
-        }
-
-        let queue_set: HashSet<&str> = queue.iter().map(|gid| gid.as_str()).collect();
-        let active_missing_count = selected_active_gids
-            .iter()
-            .filter(|gid| !queue_set.contains(gid.as_str()))
-            .count();
-        if active_missing_count == 0 {
-            break;
-        }
-        sleep(Duration::from_millis(120)).await;
-    }
-
-    let selected_queue: Vec<String> = queue
-        .iter()
-        .filter(|gid| selected_gid_set.contains(gid.as_str()))
-        .cloned()
-        .collect();
-
     let mut moved: u32 = 0;
 
-    if selected_queue.is_empty()
-        && !selected_active_gids.is_empty()
-        && normalized_direction.as_str() == "up"
-    {
-        for gid in &selected_active_gids {
-            let result = call_aria2_method(
-                host.clone(),
-                port,
-                secret.clone(),
-                "aria2.changePosition",
-                vec![
-                    Value::String(gid.clone()),
-                    Value::Number(serde_json::Number::from(0u64)),
-                    Value::String("POS_SET".to_string()),
-                ],
-            )
-            .await;
-            if result.is_ok() {
-                moved += 1;
-            } else {
-                sync_error = true;
-            }
-        }
-    }
-
-    if selected_queue.is_empty()
-        && !selected_active_gids.is_empty()
-        && normalized_direction.as_str() == "down"
-    {
-        let target_pos = queue.len().saturating_sub(1);
-        for gid in &selected_active_gids {
-            let result = call_aria2_method(
-                host.clone(),
-                port,
-                secret.clone(),
-                "aria2.changePosition",
-                vec![
-                    Value::String(gid.clone()),
-                    Value::Number(serde_json::Number::from(target_pos as u64)),
-                    Value::String("POS_SET".to_string()),
-                ],
-            )
-            .await;
-            if result.is_ok() {
-                moved += 1;
-            } else {
-                sync_error = true;
-            }
-        }
-    }
-
-    let walk_list: Vec<String> = if normalized_direction.as_str() == "up" {
-        selected_queue.clone()
-    } else {
-        selected_queue.iter().rev().cloned().collect()
-    };
-
-    for gid in walk_list {
-        let Some(current_index) = queue.iter().position(|item| item == &gid) else {
-            continue;
-        };
-
-        let target_index = if normalized_direction.as_str() == "up" {
-            if active_selected_gid_set.contains(&gid) {
-                0
-            } else {
-                current_index.saturating_sub(1)
-            }
-        } else {
-            (current_index + 1).min(queue.len().saturating_sub(1))
-        };
-
-        if target_index == current_index {
-            continue;
-        }
-
-        let result = call_aria2_method(
-            host.clone(),
-            port,
-            secret.clone(),
-            "aria2.changePosition",
-            vec![
-                Value::String(gid.clone()),
-                Value::Number(serde_json::Number::from(target_index as u64)),
-                Value::String("POS_SET".to_string()),
-            ],
-        )
-        .await;
-
-        if result.is_ok() {
-            let current_gid = queue.remove(current_index);
-            queue.insert(target_index, current_gid);
-            moved += 1;
-        } else {
-            sync_error = true;
-        }
-    }
-
+    // Pause active tasks first
     if !selected_active_gids.is_empty() {
         for gid in &selected_active_gids {
-            let result = call_aria2_method(
-                host.clone(),
-                port,
-                secret.clone(),
-                "aria2.unpause",
-                vec![Value::String(gid.clone())],
-            )
+            if manager.pause(gid).await.is_err() {
+                sync_error = true;
+            }
+        }
+        // little delay for status transition
+        sleep(Duration::from_millis(100)).await;
+    }
+
+    // Move tasks one position at a time, matching frontend behavior
+    
+    // For "up": iterate in forward order so earlier items move first
+    //   preserving relative order among selected tasks
+    // For "down": iterate in reverse order so later items move first
+    let ordered_gids: Vec<String> = if normalized_direction == "up" {
+        // Get current waiting queue order, filter to selected
+        manager
+            .get_waiting_gids_in_order(&selected_gid_set)
+            .await
+    } else {
+        let mut v = manager
+            .get_waiting_gids_in_order(&selected_gid_set)
             .await;
-            if result.is_err() {
+        v.reverse();
+        v
+    };
+
+    for gid in &ordered_gids {
+        let pos = if normalized_direction == "up" { -1i64 } else { 1i64 };
+        match manager.change_position(gid, pos, "POS_CUR").await {
+            Ok(_) => moved += 1,
+            Err(_) => sync_error = true,
+        }
+    }
+
+    // Unpause previously active tasks
+    if !selected_active_gids.is_empty() {
+        for gid in &selected_active_gids {
+            if manager.unpause(gid).await.is_err() {
                 sync_error = true;
             }
         }
@@ -1023,4 +805,217 @@ pub async fn sync_selected_task_order(
         moved,
         partial_error: sync_error,
     })
+}
+
+// Tauri commands wrapping TaskManager for direct invoke() calls
+
+const ENGINE_VERSION: &str = "motrix-engine/0.1";
+
+#[tauri::command]
+pub async fn tell_status(gid: String, keys: Option<Vec<String>>) -> Result<Value, String> {
+    let manager = engine::get_manager().await.ok_or("Engine not running")?;
+    manager.tell_status(&gid, &keys.unwrap_or_default()).await
+}
+
+#[tauri::command]
+pub async fn tell_active(keys: Option<Vec<String>>) -> Result<Value, String> {
+    let manager = engine::get_manager().await.ok_or("Engine not running")?;
+    Ok(manager.tell_active(&keys.unwrap_or_default()).await)
+}
+
+#[tauri::command]
+pub async fn tell_waiting(
+    offset: Option<i64>,
+    num: Option<usize>,
+    keys: Option<Vec<String>>,
+) -> Result<Value, String> {
+    let manager = engine::get_manager().await.ok_or("Engine not running")?;
+    Ok(manager
+        .tell_waiting(
+            offset.unwrap_or(0),
+            num.unwrap_or(1000),
+            &keys.unwrap_or_default(),
+        )
+        .await)
+}
+
+#[tauri::command]
+pub async fn tell_stopped(
+    offset: Option<i64>,
+    num: Option<usize>,
+    keys: Option<Vec<String>>,
+) -> Result<Value, String> {
+    let manager = engine::get_manager().await.ok_or("Engine not running")?;
+    Ok(manager
+        .tell_stopped(
+            offset.unwrap_or(0),
+            num.unwrap_or(1000),
+            &keys.unwrap_or_default(),
+        )
+        .await)
+}
+
+#[tauri::command]
+pub async fn pause_task(gid: String) -> Result<String, String> {
+    let manager = engine::get_manager().await.ok_or("Engine not running")?;
+    manager.pause(&gid).await?;
+    Ok(gid)
+}
+
+#[tauri::command]
+pub async fn unpause_task(gid: String) -> Result<String, String> {
+    let manager = engine::get_manager().await.ok_or("Engine not running")?;
+    manager.unpause(&gid).await?;
+    Ok(gid)
+}
+
+#[tauri::command]
+pub async fn remove_task(gid: String) -> Result<String, String> {
+    let manager = engine::get_manager().await.ok_or("Engine not running")?;
+    manager.remove(&gid).await?;
+    Ok(gid)
+}
+
+#[tauri::command]
+pub async fn change_option(gid: String, options: Value) -> Result<(), String> {
+    let manager = engine::get_manager().await.ok_or("Engine not running")?;
+    let opts = match options {
+        Value::Object(map) => map,
+        _ => Map::new(),
+    };
+    manager.change_option(&gid, opts).await
+}
+
+#[tauri::command]
+pub async fn change_global_option_engine(options: Value) -> Result<(), String> {
+    let manager = engine::get_manager().await.ok_or("Engine not running")?;
+    let opts = match options {
+        Value::Object(map) => map,
+        _ => Map::new(),
+    };
+    manager.change_global_option(opts).await;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn get_option_engine(gid: String) -> Result<Value, String> {
+    let manager = engine::get_manager().await.ok_or("Engine not running")?;
+    manager.get_option(&gid).await
+}
+
+#[tauri::command]
+pub async fn get_global_option_engine() -> Result<Value, String> {
+    let manager = engine::get_manager().await.ok_or("Engine not running")?;
+    Ok(manager.get_global_option().await)
+}
+
+#[tauri::command]
+pub async fn get_global_stat() -> Result<Value, String> {
+    let manager = engine::get_manager().await.ok_or("Engine not running")?;
+    Ok(manager.get_global_stat().await)
+}
+
+#[tauri::command]
+pub async fn change_position(gid: String, pos: i64, how: String) -> Result<Value, String> {
+    let manager = engine::get_manager().await.ok_or("Engine not running")?;
+    manager.change_position(&gid, pos, &how).await
+}
+
+#[tauri::command]
+pub async fn save_session() -> Result<(), String> {
+    let manager = engine::get_manager().await.ok_or("Engine not running")?;
+    manager.save_session().await
+}
+
+#[tauri::command]
+pub async fn get_version() -> Result<Value, String> {
+    Ok(json!({
+        "version": ENGINE_VERSION,
+        "enabledFeatures": [
+            "HTTP",
+            "HTTPS",
+            "FTP",
+            "FTPS",
+            "SFTP",
+            "BitTorrent",
+            "JSON-RPC",
+        ]
+    }))
+}
+
+#[tauri::command]
+pub async fn pause_all_tasks() -> Result<(), String> {
+    let manager = engine::get_manager().await.ok_or("Engine not running")?;
+    manager.pause_all().await;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn unpause_all_tasks() -> Result<(), String> {
+    let manager = engine::get_manager().await.ok_or("Engine not running")?;
+    manager.unpause_all().await;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn purge_download_result() -> Result<(), String> {
+    let manager = engine::get_manager().await.ok_or("Engine not running")?;
+    manager.purge_download_result().await;
+    let _ = manager.save_session().await;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn remove_download_result(gid: String) -> Result<(), String> {
+    let manager = engine::get_manager().await.ok_or("Engine not running")?;
+    manager.remove_download_result(&gid).await?;
+    let _ = manager.save_session().await;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn get_peers(gid: String) -> Result<Value, String> {
+    let manager = engine::get_manager().await.ok_or("Engine not running")?;
+    Ok(manager.get_peers(&gid).await)
+}
+
+#[tauri::command]
+pub async fn multicall_engine(
+    method: String,
+    gids: Vec<String>,
+    options: Option<Value>,
+) -> Result<Value, String> {
+    let manager = engine::get_manager().await.ok_or("Engine not running")?;
+    let opts = match options {
+        Some(Value::Object(map)) => map,
+        _ => Map::new(),
+    };
+
+    let mut results: Vec<Value> = Vec::with_capacity(gids.len());
+    for gid in &gids {
+        let result = match method.as_str() {
+            "motrix.changeOption" => {
+                manager
+                    .change_option(gid, opts.clone())
+                    .await
+                    .map(|_| Value::String("OK".into()))
+            }
+            "motrix.remove" => manager.remove(gid).await.map(|_| Value::String(gid.clone())),
+            "motrix.pause" | "motrix.forcePause" => {
+                manager.pause(gid).await.map(|_| Value::String(gid.clone()))
+            }
+            "motrix.unpause" => {
+                manager
+                    .unpause(gid)
+                    .await
+                    .map(|_| Value::String(gid.clone()))
+            }
+            _ => Err(format!("Unsupported multicall method: {}", method)),
+        };
+        match result {
+            Ok(v) => results.push(Value::Array(vec![v])),
+            Err(e) => results.push(json!({ "code": 1, "message": e })),
+        }
+    }
+    Ok(Value::Array(results))
 }

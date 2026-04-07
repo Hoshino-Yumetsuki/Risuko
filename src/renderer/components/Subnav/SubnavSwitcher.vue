@@ -17,39 +17,41 @@
 </template>
 
 <script lang="ts">
-import { ChevronDown } from 'lucide-vue-next'
+import { ChevronDown } from "lucide-vue-next";
 
 export default {
-  name: 'mo-subnav-switcher',
-  components: {
-    ChevronDown,
-  },
-  props: {
-    title: {
-      type: String,
-    },
-    subnavs: {
-      type: Array,
-    },
-  },
-  computed: {
-    currentRoute() {
-      const route = this.$route?.path
-      const exists = this.subnavs.find((item) => item.route === route)
-      return exists ? route : this.subnavs[0]?.route || '/'
-    },
-  },
-  methods: {
-    handleRoute(route) {
-      if (!route) {
-        return
-      }
-      this.$router
-        .push({
-          path: route,
-        })
-        .catch(() => {})
-    },
-  },
-}
+	name: "mo-subnav-switcher",
+	components: {
+		ChevronDown,
+	},
+	props: {
+		title: {
+			type: String,
+		},
+		subnavs: {
+			type: Array,
+		},
+	},
+	computed: {
+		currentRoute() {
+			const route = this.$route?.path;
+			const exists = this.subnavs.find((item) => item.route === route);
+			return exists ? route : this.subnavs[0]?.route || "/";
+		},
+	},
+	methods: {
+		handleRoute(route) {
+			if (!route) {
+				return;
+			}
+			this.$router
+				.push({
+					path: route,
+				})
+				.catch(() => {
+					/* noop */
+				});
+		},
+	},
+};
 </script>

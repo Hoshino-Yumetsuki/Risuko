@@ -1,3 +1,3 @@
-import CommandManager from '.'
+import CommandManager from ".";
 
-export const commands = new CommandManager()
+export const commands = new CommandManager();

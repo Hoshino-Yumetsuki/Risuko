@@ -51,74 +51,76 @@
 
 <script setup lang="ts">
 const props = withDefaults(
-  defineProps<{
-    modelValue?: number;
-    min?: number;
-    max?: number;
-    step?: number;
-  }>(),
-  {
-    modelValue: 0,
-    min: 0,
-    max: Infinity,
-    step: 1,
-  },
+	defineProps<{
+		modelValue?: number;
+		min?: number;
+		max?: number;
+		step?: number;
+	}>(),
+	{
+		modelValue: 0,
+		min: 0,
+		max: Infinity,
+		step: 1,
+	},
 );
 
-const emit = defineEmits<{
-  (e: "update:modelValue", value: number): void;
-}>();
+const emit = defineEmits<(e: "update:modelValue", value: number) => void>();
 
 const clickResetTimers = new WeakMap<HTMLElement, number>();
 
 function clamp(val: number): number {
-  return Math.min(props.max, Math.max(props.min, val));
+	return Math.min(props.max, Math.max(props.min, val));
 }
 
-function onInput(e: Event) {
-  const raw = (e.target as HTMLInputElement).value;
-  if (raw === "") return;
-  const num = parseFloat(raw);
-  if (!isNaN(num)) {
-    emit("update:modelValue", num);
-  }
+function _onInput(e: Event) {
+	const raw = (e.target as HTMLInputElement).value;
+	if (raw === "") {
+		return;
+	}
+	const num = parseFloat(raw);
+	if (!Number.isNaN(num)) {
+		emit("update:modelValue", num);
+	}
 }
 
-function onBlur(e: Event) {
-  const raw = (e.target as HTMLInputElement).value;
-  const num = parseFloat(raw);
-  if (isNaN(num)) {
-    emit("update:modelValue", props.min);
-  } else {
-    emit("update:modelValue", clamp(num));
-  }
+function _onBlur(e: Event) {
+	const raw = (e.target as HTMLInputElement).value;
+	const num = parseFloat(raw);
+	if (Number.isNaN(num)) {
+		emit("update:modelValue", props.min);
+	} else {
+		emit("update:modelValue", clamp(num));
+	}
 }
 
 function animateBtn(target: EventTarget | null) {
-  const el = target as HTMLElement | null;
-  if (!el) return;
-  const previousTimer = clickResetTimers.get(el);
-  if (previousTimer !== undefined) {
-    window.clearTimeout(previousTimer);
-  }
-  el.classList.remove("is-clicked");
-  // Force reflow so repeated fast clicks can replay the animation.
-  el.getBoundingClientRect();
-  el.classList.add("is-clicked");
-  const timer = window.setTimeout(() => {
-    clickResetTimers.delete(el);
-    el.classList.remove("is-clicked");
-  }, 180);
-  clickResetTimers.set(el, timer);
+	const el = target as HTMLElement | null;
+	if (!el) {
+		return;
+	}
+	const previousTimer = clickResetTimers.get(el);
+	if (previousTimer !== undefined) {
+		window.clearTimeout(previousTimer);
+	}
+	el.classList.remove("is-clicked");
+	// Force reflow so repeated fast clicks can replay the animation.
+	el.getBoundingClientRect();
+	el.classList.add("is-clicked");
+	const timer = window.setTimeout(() => {
+		clickResetTimers.delete(el);
+		el.classList.remove("is-clicked");
+	}, 180);
+	clickResetTimers.set(el, timer);
 }
 
-function increment(event?: MouseEvent) {
-  animateBtn(event?.currentTarget ?? null);
-  emit("update:modelValue", clamp((props.modelValue ?? 0) + props.step));
+function _increment(event?: MouseEvent) {
+	animateBtn(event?.currentTarget ?? null);
+	emit("update:modelValue", clamp((props.modelValue ?? 0) + props.step));
 }
 
-function decrement(event?: MouseEvent) {
-  animateBtn(event?.currentTarget ?? null);
-  emit("update:modelValue", clamp((props.modelValue ?? 0) - props.step));
+function _decrement(event?: MouseEvent) {
+	animateBtn(event?.currentTarget ?? null);
+	emit("update:modelValue", clamp((props.modelValue ?? 0) - props.step));
 }
 </script>
