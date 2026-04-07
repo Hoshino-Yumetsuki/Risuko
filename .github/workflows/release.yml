@@ -98,7 +98,6 @@ jobs:
           prerelease: ${{ contains(github.ref_name, '-') }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          CARGO_BUILD_RUSTFLAGS: ${{ matrix.target == 'aarch64-apple-darwin' && '' || '-Ctarget-cpu=native' }}
           CARGO_TARGET_ARMV7_UNKNOWN_LINUX_GNUEABIHF_LINKER: ${{ matrix.linker }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
@@ -110,7 +109,6 @@ jobs:
         if: ${{ !startsWith(github.ref, 'refs/tags/') }}
         run: pnpm tauri build --target ${{ matrix.target }} ${{ matrix.tauri_args }}
         env:
-          CARGO_BUILD_RUSTFLAGS: ${{ matrix.target == 'aarch64-apple-darwin' && '' || '-Ctarget-cpu=native' }}
           CARGO_TARGET_ARMV7_UNKNOWN_LINUX_GNUEABIHF_LINKER: ${{ matrix.linker }}
 
       - name: Verify local bundle output exists
