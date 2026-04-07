@@ -98,7 +98,7 @@ All captured while idle, with command `psrecord <PID> --plot memory.png --includ
 App info provided by Finder  
 v0.1.0 has a singnificantly less CPU and memory usage, and smaller bundle size comparing to v0.4.0-alpha
 Comparing to original, v0.1.0 has:
-  - ~90% less bundle size (219.3 MB -> 21.1 MB)
+  - ~92% less bundle size (219.3 MB -> 17.3 MB)
   - ~70% less memory usage (taking nearest tenth, ~400MB -> ~120MB)
   - ~70% less peak CPU usage (~140% -> ~40%)
 
