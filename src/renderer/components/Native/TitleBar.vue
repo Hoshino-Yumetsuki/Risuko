@@ -20,41 +20,43 @@
 </template>
 
 <script lang="ts">
-import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
-import { Minus, Maximize2, X } from 'lucide-vue-next'
+import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { Maximize2, Minus, X } from "lucide-vue-next";
 
-const appWindow = getCurrentWebviewWindow()
+const appWindow = getCurrentWebviewWindow();
 
 export default {
-  name: 'mo-title-bar',
-  components: {
-    Minus,
-    Maximize2,
-    X,
-  },
-  props: {
-    showActions: {
-      type: Boolean,
-    },
-  },
-  methods: {
-    handleStartDragging() {
-      appWindow.startDragging().catch(() => {})
-    },
-    handleMinimize() {
-      appWindow.minimize()
-    },
-    async handleMaximize() {
-      const maximized = await appWindow.isMaximized()
-      if (maximized) {
-        appWindow.unmaximize()
-      } else {
-        appWindow.maximize()
-      }
-    },
-    handleClose() {
-      appWindow.hide()
-    },
-  },
-}
+	name: "mo-title-bar",
+	components: {
+		Minus,
+		Maximize2,
+		X,
+	},
+	props: {
+		showActions: {
+			type: Boolean,
+		},
+	},
+	methods: {
+		handleStartDragging() {
+			appWindow.startDragging().catch(() => {
+				/* noop */
+			});
+		},
+		handleMinimize() {
+			appWindow.minimize();
+		},
+		async handleMaximize() {
+			const maximized = await appWindow.isMaximized();
+			if (maximized) {
+				appWindow.unmaximize();
+			} else {
+				appWindow.maximize();
+			}
+		},
+		handleClose() {
+			appWindow.hide();
+		},
+	},
+};
 </script>

@@ -1,13 +1,13 @@
 <script setup lang="ts">
 import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
+	Tooltip,
+	TooltipContent,
+	TooltipProvider,
+	TooltipTrigger,
 } from "../tooltip";
 
 defineProps<{
-  content?: string;
+	content?: string;
 }>();
 </script>
 

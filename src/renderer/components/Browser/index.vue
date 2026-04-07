@@ -9,27 +9,27 @@
 
 <script lang="ts">
 export default {
-  name: 'mo-browser',
-  props: {
-    src: {
-      type: String,
-      default: '',
-    },
-  },
-  data() {
-    return {
-      isLoading: true,
-    }
-  },
-  watch: {
-    src() {
-      this.isLoading = true
-    },
-  },
-  methods: {
-    onLoad() {
-      this.isLoading = false
-    },
-  },
-}
+	name: "mo-browser",
+	props: {
+		src: {
+			type: String,
+			default: "",
+		},
+	},
+	data() {
+		return {
+			isLoading: true,
+		};
+	},
+	watch: {
+		src() {
+			this.isLoading = true;
+		},
+	},
+	methods: {
+		onLoad() {
+			this.isLoading = false;
+		},
+	},
+};
 </script>

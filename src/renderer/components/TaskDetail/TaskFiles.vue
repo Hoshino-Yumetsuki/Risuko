@@ -71,141 +71,177 @@
   </div>
 </template>
 <script lang="ts">
-import { isEmpty } from 'lodash'
-import UiButton from '@/components/ui/compat/UiButton.vue'
-import { Checkbox } from '@/components/ui/checkbox'
+import { NONE_SELECTED_FILES, SELECTED_ALL_FILES } from "@shared/constants";
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table'
-import { Video, Headphones, Image, FileText } from 'lucide-vue-next'
-import { NONE_SELECTED_FILES, SELECTED_ALL_FILES } from '@shared/constants'
+	bytesToSize,
+	calcProgress,
+	filterAudioFiles,
+	filterDocumentFiles,
+	filterImageFiles,
+	filterVideoFiles,
+	removeExtensionDot,
+} from "@shared/utils";
+import { isEmpty } from "lodash";
+import { FileText, Headphones, Image, Video } from "lucide-vue-next";
+import { Checkbox } from "@/components/ui/checkbox";
+import UiButton from "@/components/ui/compat/UiButton.vue";
 import {
-  bytesToSize,
-  calcProgress,
-  filterAudioFiles,
-  filterDocumentFiles,
-  filterImageFiles,
-  filterVideoFiles,
-  removeExtensionDot,
-} from '@shared/utils'
+	Table,
+	TableBody,
+	TableCell,
+	TableHead,
+	TableHeader,
+	TableRow,
+} from "@/components/ui/table";
+
+interface TaskFileRow {
+	idx: number;
+	path: string;
+	name: string;
+	extension: string;
+	length: number;
+	completedLength: string;
+	selected: boolean;
+}
 
 export default {
-  name: 'mo-task-files',
-  components: {
-    [UiButton.name]: UiButton,
-    Checkbox,
-    Table,
-    TableBody,
-    TableCell,
-    TableHead,
-    TableHeader,
-    TableRow,
-    Video,
-    Headphones,
-    Image,
-    FileText,
-  },
-  props: {
-    mode: {
-      type: String,
-      default: 'ADD',
-      validator: (value: string) => ['ADD', 'DETAIL'].includes(value),
-    },
-    height: { type: [Number, String] },
-    files: { type: Array, default: () => [] },
-  },
-  data() {
-    return { selectedIndices: new Set<number>() }
-  },
-  computed: {
-    allSelected() {
-      return this.files?.length > 0 && this.selectedIndices.size === this.files.length
-    },
-    selectedFiles() {
-      return (this.files as any[]).filter((f) => this.selectedIndices.has(f.idx))
-    },
-    selectedFilesCount() {
-      return this.selectedIndices.size
-    },
-    selectedFilesTotalSize() {
-      const total = this.selectedFiles.reduce(
-        (acc: number, cur: any) => acc + parseInt(cur.length, 10),
-        0,
-      )
-      return bytesToSize(total)
-    },
-    selectedFileIndex() {
-      const { files, selectedIndices } = this
-      if ((files as any[]).length === 0 || selectedIndices.size === 0) return NONE_SELECTED_FILES
-      if ((files as any[]).length === selectedIndices.size) return SELECTED_ALL_FILES
-      const arr = Array.from(selectedIndices) as number[]
-      arr.sort((a, b) => a - b)
-      return arr.join(',')
-    },
-  },
-  watch: {
-    selectedFileIndex() {
-      this.$emit('selection-change', this.selectedFileIndex)
-    },
-  },
-  methods: {
-    calcProgress,
-    formatBytes(value: any) {
-      return bytesToSize(value)
-    },
-    formatExtension(value: any) {
-      return removeExtensionDot(value)
-    },
-    isSelected(row: any) {
-      return this.selectedIndices.has(row.idx)
-    },
-    toggleAll(checked: boolean | 'indeterminate') {
-      this.selectedIndices =
-        checked === true ? new Set((this.files as any[]).map((f) => f.idx)) : new Set()
-    },
-    toggleRow(row: any, selected: boolean | 'indeterminate') {
-      const next = new Set(this.selectedIndices)
-      selected === true ? next.add(row.idx) : next.delete(row.idx)
-      this.selectedIndices = next
-    },
-    toggleAllSelection() {
-      this.selectedIndices = new Set((this.files as any[]).map((f) => f.idx))
-    },
-    clearSelection() {
-      this.selectedIndices = new Set()
-    },
-    toggleRowSelection(row: any, selected?: boolean) {
-      const next = new Set(this.selectedIndices)
-      if (selected === undefined) {
-        next.has(row.idx) ? next.delete(row.idx) : next.add(row.idx)
-      } else {
-        selected ? next.add(row.idx) : next.delete(row.idx)
-      }
-      this.selectedIndices = next
-    },
-    toggleSelection(rows: any[]) {
-      this.selectedIndices = isEmpty(rows) ? new Set() : new Set(rows.map((r) => r.idx))
-    },
-    toggleVideoSelection() {
-      this.toggleSelection(filterVideoFiles(this.files))
-    },
-    toggleAudioSelection() {
-      this.toggleSelection(filterAudioFiles(this.files))
-    },
-    toggleImageSelection() {
-      this.toggleSelection(filterImageFiles(this.files))
-    },
-    toggleDocumentSelection() {
-      this.toggleSelection(filterDocumentFiles(this.files))
-    },
-    handleRowDbClick(row: any) {
-      this.toggleRowSelection(row)
-    },
-  },
-}
+	name: "mo-task-files",
+	components: {
+		[UiButton.name]: UiButton,
+		Checkbox,
+		Table,
+		TableBody,
+		TableCell,
+		TableHead,
+		TableHeader,
+		TableRow,
+		Video,
+		Headphones,
+		Image,
+		FileText,
+	},
+	props: {
+		mode: {
+			type: String,
+			default: "ADD",
+			validator: (value: string) => ["ADD", "DETAIL"].includes(value),
+		},
+		height: { type: [Number, String] },
+		files: { type: Array, default: () => [] },
+	},
+	data() {
+		return { selectedIndices: new Set<number>() };
+	},
+	computed: {
+		allSelected() {
+			return (
+				this.files?.length > 0 &&
+				this.selectedIndices.size === this.files.length
+			);
+		},
+		selectedFiles() {
+			return (this.files as TaskFileRow[]).filter((f) =>
+				this.selectedIndices.has(f.idx),
+			);
+		},
+		selectedFilesCount() {
+			return this.selectedIndices.size;
+		},
+		selectedFilesTotalSize() {
+			const total = this.selectedFiles.reduce(
+				(acc: number, cur: TaskFileRow) =>
+					acc + parseInt(String(cur.length), 10),
+				0,
+			);
+			return bytesToSize(total);
+		},
+		selectedFileIndex() {
+			const { files, selectedIndices } = this;
+			if ((files as TaskFileRow[]).length === 0 || selectedIndices.size === 0) {
+				return NONE_SELECTED_FILES;
+			}
+			if ((files as TaskFileRow[]).length === selectedIndices.size) {
+				return SELECTED_ALL_FILES;
+			}
+			const arr = Array.from(selectedIndices) as number[];
+			arr.sort((a, b) => a - b);
+			return arr.join(",");
+		},
+	},
+	watch: {
+		selectedFileIndex() {
+			this.$emit("selection-change", this.selectedFileIndex);
+		},
+	},
+	methods: {
+		calcProgress,
+		formatBytes(value: string | number) {
+			return bytesToSize(value);
+		},
+		formatExtension(value: string) {
+			return removeExtensionDot(value);
+		},
+		isSelected(row: TaskFileRow) {
+			return this.selectedIndices.has(row.idx);
+		},
+		toggleAll(checked: boolean | "indeterminate") {
+			this.selectedIndices =
+				checked === true
+					? new Set((this.files as TaskFileRow[]).map((f) => f.idx))
+					: new Set();
+		},
+		toggleRow(row: TaskFileRow, selected: boolean | "indeterminate") {
+			const next = new Set(this.selectedIndices);
+			if (selected === true) {
+				next.add(row.idx);
+			} else {
+				next.delete(row.idx);
+			}
+			this.selectedIndices = next;
+		},
+		toggleAllSelection() {
+			this.selectedIndices = new Set(
+				(this.files as TaskFileRow[]).map((f) => f.idx),
+			);
+		},
+		clearSelection() {
+			this.selectedIndices = new Set();
+		},
+		toggleRowSelection(row: TaskFileRow, selected?: boolean) {
+			const next = new Set(this.selectedIndices);
+			if (selected === undefined) {
+				if (next.has(row.idx)) {
+					next.delete(row.idx);
+				} else {
+					next.add(row.idx);
+				}
+			} else if (selected) {
+				next.add(row.idx);
+			} else {
+				next.delete(row.idx);
+			}
+			this.selectedIndices = next;
+		},
+		toggleSelection(rows: TaskFileRow[]) {
+			this.selectedIndices = isEmpty(rows)
+				? new Set()
+				: new Set(rows.map((r) => r.idx));
+		},
+		toggleVideoSelection() {
+			this.toggleSelection(filterVideoFiles(this.files));
+		},
+		toggleAudioSelection() {
+			this.toggleSelection(filterAudioFiles(this.files));
+		},
+		toggleImageSelection() {
+			this.toggleSelection(filterImageFiles(this.files));
+		},
+		toggleDocumentSelection() {
+			this.toggleSelection(filterDocumentFiles(this.files));
+		},
+		handleRowDbClick(row: TaskFileRow) {
+			this.toggleRowSelection(row);
+		},
+	},
+};
 </script>

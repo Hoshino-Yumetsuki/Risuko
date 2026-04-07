@@ -127,6 +127,14 @@ pub fn prepare_preference_patch(params: Value) -> Result<Value, String> {
         map.insert("seed-ratio".to_string(), Value::from(0));
     }
 
+    // Sync use-remote-file-time user pref → remote-time system option
+    if let Some(val) = map.get("use-remote-file-time").cloned() {
+        let enabled = val.as_bool().unwrap_or_else(|| {
+            val.as_str().map(|s| s == "true").unwrap_or(false)
+        });
+        map.insert("remote-time".to_string(), Value::from(enabled));
+    }
+
     let Some(proxy) = map.get("proxy").and_then(|value| value.as_object()) else {
         return Ok(Value::Object(map));
     };

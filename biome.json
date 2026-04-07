@@ -1,0 +1,84 @@
+{
+	"$schema": "https://biomejs.dev/schemas/2.4.10/schema.json",
+	"vcs": { "enabled": true, "clientKind": "git", "useIgnoreFile": true },
+	"files": { "includes": ["**", "!!**/dist"] },
+	"formatter": { "enabled": true, "indentStyle": "tab" },
+	"linter": {
+		"enabled": true,
+		"rules": {
+			"recommended": true,
+			"suspicious": {},
+			"style": {
+				"noNonNullAssertion": "off",
+				"useBlockStatements": "error",
+				"useThrowOnlyError": "error"
+			}
+		},
+		"includes": [
+			"**",
+			"!**/*.d.ts",
+			"!src/shared/locales/*",
+			"!node_modules/",
+			"!dist",
+			"!src-tauri/",
+			"src/shared/locales/all.ts",
+			"src/shared/locales/app.ts",
+			"src/shared/locales/index.ts",
+			"src/shared/locales/LocaleManager.ts"
+		]
+	},
+	"css": {
+		"parser": { "cssModules": false, "tailwindDirectives": true },
+		"formatter": { "enabled": true }
+	},
+	"javascript": {
+		"formatter": { "quoteStyle": "double" },
+		"globals": ["exports", "navigator", "window", "document"]
+	},
+	"overrides": [
+		{
+			"includes": ["*.vue", "**/*.vue"],
+			"linter": {
+				"rules": {
+					"correctness": { "noUnusedVariables": "off" }
+				}
+			}
+		},
+		{
+			"includes": ["src/**/*.{js,mjs,cjs,ts,mts,cts,vue}"],
+			"javascript": {
+				"globals": ["__static", "appId"]
+			},
+			"linter": {
+				"rules": {
+					"suspicious": { "noConsole": "warn" }
+				}
+			}
+		},
+		{
+			"includes": [
+				"src/renderer/components/ui/**/*.vue",
+				"src/renderer/components/ui/**/*.ts"
+			],
+			"linter": {
+				"rules": {
+					"correctness": { "noUnusedImports": "off" },
+					"style": { "useSymbolDescription": "off" }
+				}
+			}
+		},
+		{
+			"includes": ["**/*.css"],
+			"linter": {
+				"rules": {
+					"complexity": { "noImportantStyles": "off" },
+					"style": { "noDescendingSpecificity": "off" }
+				}
+			}
+		}
+	],
+	"assist": {
+		"enabled": true,
+		"actions": { "source": { "organizeImports": "on" } }
+	}
+}

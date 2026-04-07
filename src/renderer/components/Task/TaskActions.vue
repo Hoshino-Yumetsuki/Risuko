@@ -103,202 +103,225 @@
 </template>
 
 <script lang="ts">
-import { toast } from 'vue-sonner'
-import { useAppStore } from '@/store/app'
-import { useTaskStore } from '@/store/task'
-
-import { commands } from '@/components/CommandManager/instance'
-import { ADD_TASK_TYPE } from '@shared/constants'
-import { bytesToSize, calcProgress } from '@shared/utils'
+import { ADD_TASK_TYPE } from "@shared/constants";
+import { bytesToSize, calcProgress } from "@shared/utils";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
-import { Trash2, RefreshCw, Play, Pause, Eraser, ArrowUp, ArrowDown } from 'lucide-vue-next'
+	ArrowDown,
+	ArrowUp,
+	Eraser,
+	Pause,
+	Play,
+	RefreshCw,
+	Trash2,
+} from "lucide-vue-next";
+import { toast } from "vue-sonner";
+import { commands } from "@/components/CommandManager/instance";
+import {
+	Select,
+	SelectContent,
+	SelectItem,
+	SelectTrigger,
+	SelectValue,
+} from "@/components/ui/select";
+import { useAppStore } from "@/store/app";
+import { useTaskStore } from "@/store/task";
 
 export default {
-  name: 'mo-task-actions',
-  components: {
-    Select,
-    SelectContent,
-    SelectItem,
-    SelectTrigger,
-    SelectValue,
-    Trash2,
-    RefreshCw,
-    Play,
-    Pause,
-    Eraser,
-    ArrowUp,
-    ArrowDown,
-  },
-  props: ['task'],
-  data() {
-    return {
-      refreshing: false,
-      t: null as any,
-    }
-  },
-  computed: {
-    tasksPerPage() {
-      return useTaskStore().tasksPerPage
-    },
-    tasksPerPageOptions() {
-      return [10, 20, 30, 40, 50]
-    },
-    currentList() {
-      return useTaskStore().currentList
-    },
-    taskList() {
-      return useTaskStore().taskList
-    },
-    selectedGidListCount() {
-      return useTaskStore().selectedGidList.length
-    },
-    hasSelection() {
-      return this.selectedGidListCount > 0
-    },
-    showTotalProgress() {
-      return this.currentList !== 'stopped' && this.totalLength > 0
-    },
-    totalLength() {
-      return this.taskList.reduce((sum, task) => sum + Number(task.totalLength || 0), 0)
-    },
-    totalCompletedLength() {
-      return this.taskList.reduce((sum, task) => sum + Number(task.completedLength || 0), 0)
-    },
-    totalProgressPercent() {
-      const result = calcProgress(this.totalLength, this.totalCompletedLength, 1)
-      return `${result}`.replace(/\.0$/, '')
-    },
-  },
-  methods: {
-    onTasksPerPageChange(value) {
-      useTaskStore().setTasksPerPage(value)
-    },
-    refreshSpin() {
-      this.t && clearTimeout(this.t)
+	name: "mo-task-actions",
+	components: {
+		Select,
+		SelectContent,
+		SelectItem,
+		SelectTrigger,
+		SelectValue,
+		Trash2,
+		RefreshCw,
+		Play,
+		Pause,
+		Eraser,
+		ArrowUp,
+		ArrowDown,
+	},
+	props: ["task"],
+	data() {
+		return {
+			refreshing: false,
+			t: null as ReturnType<typeof setTimeout> | null,
+		};
+	},
+	computed: {
+		tasksPerPage() {
+			return useTaskStore().tasksPerPage;
+		},
+		tasksPerPageOptions() {
+			return [10, 20, 30, 40, 50];
+		},
+		currentList() {
+			return useTaskStore().currentList;
+		},
+		taskList() {
+			return useTaskStore().taskList;
+		},
+		selectedGidListCount() {
+			return useTaskStore().selectedGidList.length;
+		},
+		hasSelection() {
+			return this.selectedGidListCount > 0;
+		},
+		showTotalProgress() {
+			return (
+				this.currentList !== "stopped" &&
+				this.currentList !== "completed" &&
+				this.totalLength > 0
+			);
+		},
+		totalLength() {
+			return this.taskList.reduce(
+				(sum, task) => sum + Number(task.totalLength || 0),
+				0,
+			);
+		},
+		totalCompletedLength() {
+			return this.taskList.reduce(
+				(sum, task) => sum + Number(task.completedLength || 0),
+				0,
+			);
+		},
+		totalProgressPercent() {
+			const result = calcProgress(
+				this.totalLength,
+				this.totalCompletedLength,
+				1,
+			);
+			return `${result}`.replace(/\.0$/, "");
+		},
+	},
+	methods: {
+		onTasksPerPageChange(value) {
+			useTaskStore().setTasksPerPage(value);
+		},
+		refreshSpin() {
+			if (this.t) {
+				clearTimeout(this.t);
+			}
 
-      this.refreshing = true
-      this.t = setTimeout(() => {
-        this.refreshing = false
-      }, 500)
-    },
-    onBatchDeleteClick(event) {
-      const deleteWithFiles = !!event.shiftKey
-      commands.emit('batch-delete-task', { deleteWithFiles })
-    },
-    onRefreshClick() {
-      this.refreshSpin()
-      useTaskStore().fetchList()
-    },
-    onResumeClick() {
-      if (this.hasSelection) {
-        useTaskStore()
-          .batchResumeSelectedTasks()
-          ?.then(() => {
-            this.$msg.success(this.$t('task.resume-selected-tasks-success'))
-          })
-          .catch(({ code }) => {
-            if (code === 1) {
-              this.$msg.error(this.$t('task.resume-selected-tasks-fail'))
-            }
-          })
-      } else {
-        useTaskStore()
-          .resumeAllTask()
-          .then(() => {
-            this.$msg.success(this.$t('task.resume-all-task-success'))
-          })
-          .catch(({ code }) => {
-            if (code === 1) {
-              this.$msg.error(this.$t('task.resume-all-task-fail'))
-            }
-          })
-      }
-    },
-    onPauseClick() {
-      if (this.hasSelection) {
-        useTaskStore()
-          .batchPauseSelectedTasks()
-          ?.then(() => {
-            this.$msg.success(this.$t('task.pause-selected-tasks-success'))
-          })
-          .catch(({ code }) => {
-            if (code === 1) {
-              this.$msg.error(this.$t('task.pause-selected-tasks-fail'))
-            }
-          })
-      } else {
-        useTaskStore()
-          .pauseAllTask()
-          .then(() => {
-            this.$msg.success(this.$t('task.pause-all-task-success'))
-          })
-          .catch(({ code }) => {
-            if (code === 1) {
-              this.$msg.error(this.$t('task.pause-all-task-fail'))
-            }
-          })
-      }
-    },
-    onMoveUpClick() {
-      useTaskStore()
-        .moveSelectedTasks('up', {
-          onSyncError: () => {
-            toast.error('Syncing priority failed', {
-              duration: 1800,
-            })
-          },
-        })
-        .then((movedCount) => {
-          if (movedCount > 0) {
-            this.$msg.success(this.$t('task.move-task-up'))
-          }
-        })
-        .catch(() => {
-          this.$msg.error(this.$t('task.move-task-up'))
-        })
-    },
-    onMoveDownClick() {
-      useTaskStore()
-        .moveSelectedTasks('down', {
-          onSyncError: () => {
-            toast.error('Syncing priority failed', {
-              duration: 1800,
-            })
-          },
-        })
-        .then((movedCount) => {
-          if (movedCount > 0) {
-            this.$msg.success(this.$t('task.move-task-down'))
-          }
-        })
-        .catch(() => {
-          this.$msg.error(this.$t('task.move-task-down'))
-        })
-    },
-    onPurgeRecordClick() {
-      useTaskStore()
-        .purgeTaskRecord()
-        .then(() => {
-          this.$msg.success(this.$t('task.purge-record-success'))
-        })
-        .catch(({ code }) => {
-          if (code === 1) {
-            this.$msg.error(this.$t('task.purge-record-fail'))
-          }
-        })
-    },
-    onAddClick() {
-      useAppStore().showAddTaskDialog(ADD_TASK_TYPE.URI)
-    },
-    formatBytes(value, precision = 1) {
-      return bytesToSize(value, precision)
-    },
-  },
-}
+			this.refreshing = true;
+			this.t = setTimeout(() => {
+				this.refreshing = false;
+			}, 500);
+		},
+		onBatchDeleteClick(event) {
+			const deleteWithFiles = !!event.shiftKey;
+			commands.emit("batch-delete-task", { deleteWithFiles });
+		},
+		onRefreshClick() {
+			this.refreshSpin();
+			useTaskStore().fetchList();
+		},
+		onResumeClick() {
+			if (this.hasSelection) {
+				useTaskStore()
+					.batchResumeSelectedTasks()
+					?.then(() => {
+						this.$msg.success(this.$t("task.resume-selected-tasks-success"));
+					})
+					.catch(({ code }) => {
+						if (code === 1) {
+							this.$msg.error(this.$t("task.resume-selected-tasks-fail"));
+						}
+					});
+			} else {
+				useTaskStore()
+					.resumeAllTask()
+					.then(() => {
+						this.$msg.success(this.$t("task.resume-all-task-success"));
+					})
+					.catch(({ code }) => {
+						if (code === 1) {
+							this.$msg.error(this.$t("task.resume-all-task-fail"));
+						}
+					});
+			}
+		},
+		onPauseClick() {
+			if (this.hasSelection) {
+				useTaskStore()
+					.batchPauseSelectedTasks()
+					?.then(() => {
+						this.$msg.success(this.$t("task.pause-selected-tasks-success"));
+					})
+					.catch(({ code }) => {
+						if (code === 1) {
+							this.$msg.error(this.$t("task.pause-selected-tasks-fail"));
+						}
+					});
+			} else {
+				useTaskStore()
+					.pauseAllTask()
+					.then(() => {
+						this.$msg.success(this.$t("task.pause-all-task-success"));
+					})
+					.catch(({ code }) => {
+						if (code === 1) {
+							this.$msg.error(this.$t("task.pause-all-task-fail"));
+						}
+					});
+			}
+		},
+		onMoveUpClick() {
+			useTaskStore()
+				.moveSelectedTasks("up", {
+					onSyncError: () => {
+						toast.error("Syncing priority failed", {
+							duration: 1800,
+						});
+					},
+				})
+				.then((movedCount) => {
+					if (movedCount > 0) {
+						this.$msg.success(this.$t("task.move-task-up"));
+					}
+				})
+				.catch(() => {
+					this.$msg.error(this.$t("task.move-task-up"));
+				});
+		},
+		onMoveDownClick() {
+			useTaskStore()
+				.moveSelectedTasks("down", {
+					onSyncError: () => {
+						toast.error("Syncing priority failed", {
+							duration: 1800,
+						});
+					},
+				})
+				.then((movedCount) => {
+					if (movedCount > 0) {
+						this.$msg.success(this.$t("task.move-task-down"));
+					}
+				})
+				.catch(() => {
+					this.$msg.error(this.$t("task.move-task-down"));
+				});
+		},
+		onPurgeRecordClick() {
+			useTaskStore()
+				.purgeTaskRecord()
+				.then(() => {
+					this.$msg.success(this.$t("task.purge-record-success"));
+				})
+				.catch(({ code }) => {
+					if (code === 1) {
+						this.$msg.error(this.$t("task.purge-record-fail"));
+					}
+				});
+		},
+		onAddClick() {
+			useAppStore().showAddTaskDialog(ADD_TASK_TYPE.URI);
+		},
+		formatBytes(value, precision = 1) {
+			return bytesToSize(value, precision);
+		},
+	},
+};
 </script>

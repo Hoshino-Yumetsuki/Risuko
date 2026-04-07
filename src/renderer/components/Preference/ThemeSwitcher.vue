@@ -49,68 +49,68 @@
 </template>
 
 <script lang="ts">
-import { APP_THEME } from '@shared/constants'
+import { APP_THEME } from "@shared/constants";
 
 export default {
-  name: 'mo-theme-switcher',
-  props: {
-    modelValue: {
-      type: String,
-      default: null,
-    },
-    // legacy v-model support
-    value: {
-      type: String,
-      default: null,
-    },
-  },
-  emits: ['update:modelValue', 'change'],
-  data() {
-    return {
-      currentValue: this.modelValue ?? this.value ?? APP_THEME.AUTO,
-    }
-  },
-  computed: {
-    themeOptions() {
-      return [
-        {
-          className: 'preview-auto',
-          value: APP_THEME.AUTO,
-          text: this.$t('preferences.theme-auto'),
-        },
-        {
-          className: 'preview-light',
-          value: APP_THEME.LIGHT,
-          text: this.$t('preferences.theme-light'),
-        },
-        {
-          className: 'preview-dark',
-          value: APP_THEME.DARK,
-          text: this.$t('preferences.theme-dark'),
-        },
-      ]
-    },
-  },
-  watch: {
-    modelValue(val) {
-      if (val !== null && val !== this.currentValue) {
-        this.currentValue = val
-      }
-    },
-    value(val) {
-      if (val !== null && val !== this.currentValue) {
-        this.currentValue = val
-      }
-    },
-    currentValue(val) {
-      this.$emit('update:modelValue', val)
-      this.$emit('change', val)
-    },
-  },
-  methods: {
-    handleChange(theme) {
-      this.currentValue = theme
-    },
-  },
-}
+	name: "mo-theme-switcher",
+	props: {
+		modelValue: {
+			type: String,
+			default: null,
+		},
+		// legacy v-model support
+		value: {
+			type: String,
+			default: null,
+		},
+	},
+	emits: ["update:modelValue", "change"],
+	data() {
+		return {
+			currentValue: this.modelValue ?? this.value ?? APP_THEME.AUTO,
+		};
+	},
+	computed: {
+		themeOptions() {
+			return [
+				{
+					className: "preview-auto",
+					value: APP_THEME.AUTO,
+					text: this.$t("preferences.theme-auto"),
+				},
+				{
+					className: "preview-light",
+					value: APP_THEME.LIGHT,
+					text: this.$t("preferences.theme-light"),
+				},
+				{
+					className: "preview-dark",
+					value: APP_THEME.DARK,
+					text: this.$t("preferences.theme-dark"),
+				},
+			];
+		},
+	},
+	watch: {
+		modelValue(val) {
+			if (val !== null && val !== this.currentValue) {
+				this.currentValue = val;
+			}
+		},
+		value(val) {
+			if (val !== null && val !== this.currentValue) {
+				this.currentValue = val;
+			}
+		},
+		currentValue(val) {
+			this.$emit("update:modelValue", val);
+			this.$emit("change", val);
+		},
+	},
+	methods: {
+		handleChange(theme) {
+			this.currentValue = theme;
+		},
+	},
+};
 </script>

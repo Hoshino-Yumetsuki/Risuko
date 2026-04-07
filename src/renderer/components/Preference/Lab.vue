@@ -9,71 +9,70 @@
 </template>
 
 <script lang="ts">
-import is from '@/shims/platform'
-import { useAppStore } from '@/store/app'
-import { usePreferenceStore } from '@/store/preference'
-
-import { APP_THEME } from '@shared/constants'
-import SubnavSwitcher from '@/components/Subnav/SubnavSwitcher.vue'
-import Browser from '@/components/Browser/index.vue'
+import { APP_THEME } from "@shared/constants";
+import Browser from "@/components/Browser/index.vue";
+import SubnavSwitcher from "@/components/Subnav/SubnavSwitcher.vue";
+import is from "@/shims/platform";
+import { useAppStore } from "@/store/app";
+import { usePreferenceStore } from "@/store/preference";
 
 export default {
-  name: 'mo-preference-lab',
-  components: {
-    [SubnavSwitcher.name]: SubnavSwitcher,
-    [Browser.name]: Browser,
-  },
-  data() {
-    const locale = ((usePreferenceStore().config as any) || {}).locale || 'en-US'
-    return {
-      locale,
-    }
-  },
-  computed: {
-    isRenderer: () => is.renderer(),
-    systemTheme() {
-      return useAppStore().systemTheme
-    },
-    config() {
-      return usePreferenceStore().config
-    },
-    theme() {
-      return (usePreferenceStore().config as any).theme
-    },
-    currentTheme() {
-      if (this.theme === APP_THEME.AUTO) {
-        return this.systemTheme
-      } else {
-        return this.theme
-      }
-    },
-    url() {
-      const { currentTheme, locale } = this
-      const result = `https://motrix.app/lab?lite=true&theme=${currentTheme}&lang=${locale}`
-      return result
-    },
-    title() {
-      return this.$t('preferences.lab')
-    },
-    subnavs() {
-      return [
-        {
-          key: 'basic',
-          title: this.$t('preferences.basic'),
-          route: '/preference/basic',
-        },
-        {
-          key: 'advanced',
-          title: this.$t('preferences.advanced'),
-          route: '/preference/advanced',
-        },
-        {
-          key: 'lab',
-          title: this.$t('preferences.lab'),
-          route: '/preference/lab',
-        },
-      ]
-    },
-  },
-}
+	name: "mo-preference-lab",
+	components: {
+		[SubnavSwitcher.name]: SubnavSwitcher,
+		[Browser.name]: Browser,
+	},
+	data() {
+		const locale = usePreferenceStore().config?.locale || "en-US";
+		return {
+			locale,
+		};
+	},
+	computed: {
+		isRenderer: () => is.renderer(),
+		systemTheme() {
+			return useAppStore().systemTheme;
+		},
+		config() {
+			return usePreferenceStore().config;
+		},
+		theme() {
+			return usePreferenceStore().config.theme;
+		},
+		currentTheme() {
+			if (this.theme === APP_THEME.AUTO) {
+				return this.systemTheme;
+			} else {
+				return this.theme;
+			}
+		},
+		url() {
+			const { currentTheme, locale } = this;
+			const result = `https://motrix.app/lab?lite=true&theme=${currentTheme}&lang=${locale}`;
+			return result;
+		},
+		title() {
+			return this.$t("preferences.lab");
+		},
+		subnavs() {
+			return [
+				{
+					key: "basic",
+					title: this.$t("preferences.basic"),
+					route: "/preference/basic",
+				},
+				{
+					key: "advanced",
+					title: this.$t("preferences.advanced"),
+					route: "/preference/advanced",
+				},
+				{
+					key: "lab",
+					title: this.$t("preferences.lab"),
+					route: "/preference/lab",
+				},
+			];
+		},
+	},
+};
 </script>

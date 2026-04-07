@@ -1,20 +1,20 @@
 <script setup lang="ts">
-import type { PopoverContentEmits, PopoverContentProps } from "reka-ui";
-import type { HTMLAttributes } from "vue";
 import { reactiveOmit } from "@vueuse/core";
+import type { PopoverContentEmits, PopoverContentProps } from "reka-ui";
 import { PopoverContent, PopoverPortal, useForwardPropsEmits } from "reka-ui";
+import type { HTMLAttributes } from "vue";
 import { cn } from "@/lib/utils";
 
 defineOptions({
-  inheritAttrs: false,
+	inheritAttrs: false,
 });
 
 const props = withDefaults(
-  defineProps<PopoverContentProps & { class?: HTMLAttributes["class"] }>(),
-  {
-    align: "center",
-    sideOffset: 4,
-  },
+	defineProps<PopoverContentProps & { class?: HTMLAttributes["class"] }>(),
+	{
+		align: "center",
+		sideOffset: 4,
+	},
 );
 const emits = defineEmits<PopoverContentEmits>();
 

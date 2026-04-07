@@ -1,74 +1,83 @@
-/* eslint no-unused-vars: 'off' */
-import { TRAY_CANVAS_CONFIG } from '@shared/constants'
-import { draw } from '@shared/utils/tray'
+import { TRAY_CANVAS_CONFIG } from "@shared/constants";
+import { draw } from "@shared/utils/tray";
 
-let idx = 0
-let canvas: OffscreenCanvas | undefined
+let idx = 0;
+let canvas: OffscreenCanvas | undefined;
 
 const initCanvas = () => {
-  if (canvas) {
-    return canvas
-  }
+	if (canvas) {
+		return canvas;
+	}
 
-  const { WIDTH, HEIGHT } = TRAY_CANVAS_CONFIG
-  return new OffscreenCanvas(WIDTH, HEIGHT)
+	const { WIDTH, HEIGHT } = TRAY_CANVAS_CONFIG;
+	return new OffscreenCanvas(WIDTH, HEIGHT);
+};
+
+interface TrayDrawPayload {
+	theme: string;
+	icon: ImageBitmap;
+	uploadSpeed: string;
+	downloadSpeed: string;
+	showSpeed?: boolean;
+	scale: number;
+	resultType: string;
 }
 
-const drawTray = async (payload: any) => {
-  self.postMessage({
-    type: 'log',
-    payload,
-  })
+const drawTray = async (payload: TrayDrawPayload) => {
+	self.postMessage({
+		type: "log",
+		payload,
+	});
 
-  if (!canvas) {
-    canvas = initCanvas()
-  }
+	if (!canvas) {
+		canvas = initCanvas();
+	}
 
-  try {
-    await draw({
-      canvas,
-      ...payload,
-    })
+	try {
+		await draw({
+			canvas,
+			...payload,
+		});
 
-    // Read raw RGBA pixels for Tauri `Image::new_owned`.
-    const ctx = canvas.getContext('2d')!
-    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height)
+		// Read raw RGBA pixels for Tauri `Image::new_owned`.
+		const ctx = canvas.getContext("2d")!;
+		const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
 
-    self.postMessage({
-      type: 'tray:drawed',
-      payload: {
-        idx,
-        rgba: Array.from(imageData.data),
-        width: canvas.width,
-        height: canvas.height,
-      },
-    })
+		self.postMessage({
+			type: "tray:drawed",
+			payload: {
+				idx,
+				rgba: Array.from(imageData.data),
+				width: canvas.width,
+				height: canvas.height,
+			},
+		});
 
-    idx += 1
-  } catch (error: any) {
-    logger(error.message)
-  }
-}
+		idx += 1;
+	} catch (error: unknown) {
+		logger(error instanceof Error ? error.message : String(error));
+	}
+};
 
 const logger = (text: string) => {
-  self.postMessage({
-    type: 'log',
-    payload: text,
-  })
-}
+	self.postMessage({
+		type: "log",
+		payload: text,
+	});
+};
 
 self.postMessage({
-  type: 'initialized',
-  payload: Date.now(),
-})
+	type: "initialized",
+	payload: Date.now(),
+});
 
-self.addEventListener('message', (event) => {
-  const { type, payload } = event.data
-  switch (type) {
-    case 'tray:draw':
-      drawTray(payload)
-      break
-    default:
-      logger(JSON.stringify(event.data))
-  }
-})
+self.addEventListener("message", (event) => {
+	const { type, payload } = event.data;
+	switch (type) {
+		case "tray:draw":
+			drawTray(payload);
+			break;
+		default:
+			logger(JSON.stringify(event.data));
+	}
+});

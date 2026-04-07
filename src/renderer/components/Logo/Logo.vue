@@ -18,16 +18,16 @@
 
 <script lang="ts">
 export default {
-  name: 'mo-logo',
-  props: {
-    width: {
-      type: Number,
-      default: 62,
-    },
-    height: {
-      type: Number,
-      default: 14,
-    },
-  },
-}
+	name: "mo-logo",
+	props: {
+		width: {
+			type: Number,
+			default: 62,
+		},
+		height: {
+			type: Number,
+			default: 14,
+		},
+	},
+};
 </script>

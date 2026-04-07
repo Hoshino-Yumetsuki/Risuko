@@ -17,31 +17,31 @@
 </template>
 
 <script lang="ts">
-import is from '@/shims/platform'
-import Logo from '@/components/Logo/Logo.vue'
+import Logo from "@/components/Logo/Logo.vue";
+import is from "@/shims/platform";
 
 export default {
-  name: 'mo-app-info',
-  components: {
-    [Logo.name]: Logo,
-  },
-  props: {
-    version: {
-      type: String,
-      default: '',
-    },
-    engine: {
-      type: Object,
-      default() {
-        return {
-          version: '',
-          enabledFeatures: [],
-        }
-      },
-    },
-  },
-  methods: {
-    isMas: is.mas,
-  },
-}
+	name: "mo-app-info",
+	components: {
+		[Logo.name]: Logo,
+	},
+	props: {
+		version: {
+			type: String,
+			default: "",
+		},
+		engine: {
+			type: Object,
+			default() {
+				return {
+					version: "",
+					enabledFeatures: [],
+				};
+			},
+		},
+	},
+	methods: {
+		isMas: is.mas,
+	},
+};
 </script>

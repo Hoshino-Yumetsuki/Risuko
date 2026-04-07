@@ -1,5 +1,3 @@
 {
-  "bundle": {
-    "resources": ["../extra/linux/arm64/engine/**/*"]
-  }
+	"bundle": {}
 }

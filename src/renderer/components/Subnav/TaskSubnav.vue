@@ -23,9 +23,19 @@
         <span>{{ $t('task.waiting') }}</span>
       </li>
       <li
+        @click="() => nav('completed')"
+        :class="[current === 'completed' ? 'active' : '']"
+        style="--stagger-index: 2"
+      >
+        <i class="subnav-icon">
+          <CircleCheck :size="20" />
+        </i>
+        <span>{{ $t('task.completed') }}</span>
+      </li>
+      <li
         @click="() => nav('stopped')"
         :class="[current === 'stopped' ? 'active' : '']"
-        style="--stagger-index: 2"
+        style="--stagger-index: 3"
       >
         <i class="subnav-icon">
           <Square :size="20" />
@@ -37,37 +47,38 @@
 </template>
 
 <script lang="ts">
-import logger from '@shared/utils/logger'
-import { Pause, Play, Square } from 'lucide-vue-next'
+import logger from "@shared/utils/logger";
+import { CircleCheck, Pause, Play, Square } from "lucide-vue-next";
 
 export default {
-  name: 'mo-task-subnav',
-  components: {
-    Pause,
-    Play,
-    Square,
-  },
-  props: {
-    current: {
-      type: String,
-      default: 'active',
-    },
-  },
-  computed: {
-    title() {
-      return this.$t('subnav.task-list')
-    },
-  },
-  methods: {
-    nav(status = 'active') {
-      this.$router
-        .push({
-          path: `/task/${status}`,
-        })
-        .catch((err) => {
-          logger.log(err)
-        })
-    },
-  },
-}
+	name: "mo-task-subnav",
+	components: {
+		CircleCheck,
+		Pause,
+		Play,
+		Square,
+	},
+	props: {
+		current: {
+			type: String,
+			default: "active",
+		},
+	},
+	computed: {
+		title() {
+			return this.$t("subnav.task-list");
+		},
+	},
+	methods: {
+		nav(status = "active") {
+			this.$router
+				.push({
+					path: `/task/${status}`,
+				})
+				.catch((err) => {
+					logger.log(err);
+				});
+		},
+	},
+};
 </script>

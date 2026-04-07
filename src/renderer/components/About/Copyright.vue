@@ -40,12 +40,12 @@
 
 <script lang="ts">
 export default {
-  name: 'mo-copyright',
-  data() {
-    const year = new Date().getFullYear()
-    return {
-      year,
-    }
-  },
-}
+	name: "mo-copyright",
+	data() {
+		const year = new Date().getFullYear();
+		return {
+			year,
+		};
+	},
+};
 </script>

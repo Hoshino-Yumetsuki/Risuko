@@ -1,4 +1,5 @@
 export default {
-  'task-list': 'Tasks',
-  preferences: 'Preferences',
-}
+	"task-list": "Tasks",
+	preferences: "Preferences",
+	rss: "RSS",
+};

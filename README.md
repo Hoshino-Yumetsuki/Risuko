@@ -16,94 +16,11 @@ Motrix is a full-featured download manager that supports downloading HTTP, FTP, 
 
 Motrix has a clean and easy to use interface. I hope you will like it 👻.
 
-✈️ [Official Website](https://motrix.app) | 📖 [Manual](https://github.com/agalwood/Motrix/wiki)
+✈️ [Official Website](https://motrix-next.vercel.app) | 📖 [Manual](https://github.com/agalwood/Motrix/wiki)
 
 ## 💽 Installation
 
-Download from [GitHub Releases](https://github.com/agalwood/Motrix/releases) and install it.
-
-### Windows
-
-It is recommended to install Motrix using the installation package (Motrix-Setup-x.y.z.exe) to ensure a complete experience, such as associating torrent files, capturing magnet links, etc.
-
-If you use package management tools to manage applications on Windows, such as [Chocolatey](https://chocolatey.org), [scoop](https://github.com/lukesampson/scoop). You can use them to install Motrix.
-
-#### Chocolatey
-
-Thanks to [@Yato](https://github.com/iYato) for continuing to maintain the [Motrix Chocolatey](https://community.chocolatey.org/packages/motrix) package. To install motrix, run the following command from the `command line` or from `PowerShell`:
-
-```bash
-# Install
-choco install motrix
-
-# Upgrade
-choco upgrade motrix
-```
-
-#### scoop
-
-If you prefer the portable version, you can use [scoop](https://github.com/lukesampson/scoop) (need Windows 7+) to install Motrix.
-
-```bash
-scoop bucket add extras
-scoop install motrix
-```
-
-### macOS
-
-The macOS users can install Motrix using `brew`, thanks to [PR](https://github.com/Homebrew/homebrew-cask/pull/59494) of [@Mitscherlich](https://github.com/Mitscherlich).
-
-```bash
-brew update && brew install motrix
-```
-
-#### Auto Update
-
-Since Motrix v1.8.0 and later versions changed the App BundleID ( `net.agalwood.Motrix` => `app.motrix.native` ), the automatic update of Motrix v1.6.11 will fail. [Motrix Install Assistant](https://github.com/motrixapp/motrix-install-assistant) will help you install the latest Motrix application.
-
-<p>
-  <a href="https://github.com/motrixapp/motrix-install-assistant">
-    <img src="https://raw.githubusercontent.com/motrixapp/motrix-install-assistant/main/build/256x256.png" width="192" alt="Motrix Install Assistant Icon" />
-  </a>
-</p>
-
-### Linux
-
-You can download the `AppImage` (for all Linux distributions) or `snap` to install Motrix, see [GitHub/release](https://github.com/agalwood/Motrix/releases) for more Linux installation package formats.
-
-Motrix may need to run with `sudo` for the first time in Linux because there is no permission to create the download session file (`/var/cache/aria2.session`).
-
-If you want to build from source code, please read the **Build** section.
-
-#### AppImage
-
-For desktop integration with AppImage, check [AppImageLauncher](https://github.com/TheAssassin/AppImageLauncher).
-
-#### Snap
-
-Motrix is on [Snapcraft](https://snapcraft.io/motrix). Ubuntu users can install from the Snap Store.
-
-#### AUR
-
-For Arch Linux users, Motrix is available in [aur](https://aur.archlinux.org/packages/motrix/), thanks to the maintainer [@weearc](https://github.com/weearc).
-
-Run the following command to install:
-
-```bash
-yay -S motrix
-```
-
-#### Flatpak
-
-Thanks to the [PR](https://github.com/flathub/flathub/pull/2334) of [@proletarius101](https://github.com/proletarius101), Motrix has been listed [Flathub](https://flathub.org/apps/details/net.agalwood.Motrix), Linux users who like the Flatpak can try it.
-
-```bash
-# Install
-flatpak install flathub net.agalwood.Motrix
-
-# Run
-flatpak run net.agalwood.Motrix
-```
+Download from [GitHub Releases](https://github.com/YueMiyuki/Motrix/releases) and install it.
 
 ## ✨ Features
 
@@ -164,7 +81,6 @@ pnpm run build
 - [Vite](https://vite.dev/)
 - [TypeScript](https://www.typescriptlang.org/)
 - [Tailwind CSS](https://tailwindcss.com/)
-- [Aria2](https://aria2.github.io/)
 
 ## ☑️ TODO
 
@@ -174,12 +90,22 @@ See pinned issues for roadmap
 
 If you are interested in participating in joint development, PR and Forks are welcome!
 
-## Performance
+## Optimizations
 
-The Next version use half the memory comparing to original, also significantly less CPU usage bursts:
-| Orignal | Next |
-| ------- | ---- |
-| ![orignal_mem](./static/readme/original.png) | ![next_mem](./static/readme/next.png) |
+The Next version use half the memory comparing to original, also significantly less CPU usage bursts  
+In Next v0.1.0, there is performance optimization because aria2 is replaced by native Rust  
+All captured while idle, with command `psrecord <PID> --plot memory.png --include-children --duration 60`  
+App info provided by Finder  
+v0.1.0 has a singnificantly less CPU and memory usage, and smaller bundle size comparing to v0.4.0-alpha
+Comparing to original, v0.1.0 has:
+  - ~90% less bundle size (219.3 MB -> 21.1 MB)
+  - ~70% less memory usage (taking nearest tenth, ~400MB -> ~120MB)
+  - ~70% less peak CPU usage (~140% -> ~40%)
+
+| Orignal | Next | Next v0.1.0 |
+| ------- | ---- | ----------- |
+| ![orignal_mem](./static/readme/Original_Memory.png) | ![0.4.0_mem](./static/readme/v0.0.4_Memory.png) | ![0.1.0_mem](./static/readme/v0.1.0_Memory.png) |
+| ![original_appinfo](./static/readme/Original_AppInfo.png) | ![0.4.0_appinfo](./static/readme/v0.0.4_AppInfo.png) | ![0.1.0_appinfo](./static/readme/v0.1.0_AppInfo.png)
 
 This is generated with ![psrecord](https://github.com/astrofrog/psrecord)
 

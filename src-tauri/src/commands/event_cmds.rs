@@ -173,14 +173,14 @@ fn add_recent_document(path: &str) -> Result<(), String> {
 
     #[cfg(target_os = "macos")]
     {
-        // No stable Rust std API exists for app-scoped recent-docs registration on macOS.
-        // Keep this a no-op for now to avoid opening files as a side effect.
+        // No stable Rust std API exists for app-scoped recent-docs registration on macOS
+        // Keep this a no-op for now to avoid opening files as a side effect
         let _ = path;
     }
 
     #[cfg(target_os = "linux")]
     {
-        // No freedesktop-wide app-scoped recent-doc API is available through std.
+        // No API is available through std
         let _ = path;
     }
 
@@ -347,7 +347,7 @@ fn windows_inhibit_worker() -> &'static WindowsInhibitWorker {
                 };
 
                 unsafe {
-                    // SAFETY: All SetThreadExecutionState calls happen on this dedicated worker thread.
+                    // SAFETY: All SetThreadExecutionState calls happen on this dedicated worker thread
                     let _ = SetThreadExecutionState(flags);
                 }
 
@@ -397,7 +397,7 @@ fn windows_add_recent_document(path: &str) -> Result<(), String> {
         .collect();
     const SHARD_PATHW: u32 = 0x0000_0003;
     unsafe {
-        // SAFETY: SHAddToRecentDocs reads a null-terminated wide path pointer for SHARD_PATHW.
+        // SAFETY: SHAddToRecentDocs reads a null-terminated wide path pointer for SHARD_PATHW
         SHAddToRecentDocs(SHARD_PATHW, wide.as_ptr() as *const c_void);
     }
     Ok(())

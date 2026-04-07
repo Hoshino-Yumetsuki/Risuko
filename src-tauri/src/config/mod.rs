@@ -55,7 +55,7 @@ impl ConfigManager {
             merged.insert(k.clone(), v.clone());
         }
 
-        // Add runtime context.
+        // Add runtime context
         merged.insert("platform".into(), json!(std::env::consts::OS));
         merged.insert("arch".into(), json!(std::env::consts::ARCH));
 
@@ -138,7 +138,7 @@ fn get_config_dir(handle: &AppHandle) -> PathBuf {
 fn load_or_default(path: &Path, defaults: Map<String, Value>) -> Map<String, Value> {
     if let Ok(data) = fs::read_to_string(path) {
         if let Ok(Value::Object(mut map)) = serde_json::from_str(&data) {
-            // Fill in missing keys from defaults.
+            // Fill in missing keys from defaults
             for (k, v) in &defaults {
                 if !map.contains_key(k) {
                     map.insert(k.clone(), v.clone());

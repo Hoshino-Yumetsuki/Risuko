@@ -1,16 +1,16 @@
-import 'vue'
+import "vue";
 
-declare module '@vue/runtime-core' {
-  interface ComponentCustomProperties {
-    [key: string]: any
-    $store: any
-    $router: any
-    $route: any
-    $http: any
-    $msg: any
-    $native: any
-    $t: (key: string, value?: any) => any
-  }
+declare module "@vue/runtime-core" {
+	interface ComponentCustomProperties {
+		[key: string]: any;
+		$store: any;
+		$router: any;
+		$route: any;
+		$http: any;
+		$msg: any;
+		$native: any;
+		$t: (key: string, value?: any) => any;
+	}
 }
 
-export {}
+export {};

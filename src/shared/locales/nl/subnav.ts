@@ -1,4 +1,4 @@
 export default {
-  'task-list': 'Taken',
-  preferences: 'Voorkeuren',
-}
+	"task-list": "Taken",
+	preferences: "Voorkeuren",
+};
