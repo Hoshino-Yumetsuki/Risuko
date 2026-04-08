@@ -302,31 +302,3 @@ export const getSystemTheme = (): string => {
 	}
 	return APP_THEME.LIGHT;
 };
-
-export const protectDownloadFile = async (
-	task: DownloadTask,
-): Promise<void> => {
-	const path = getTaskFullPath(task, { normalizeCompletedPath: false });
-	if (!path) {
-		return;
-	}
-	try {
-		await invoke("protect_download_file", { path });
-	} catch (err) {
-		logger.warn(`[Motrix] protectDownloadFile failed: ${err}`);
-	}
-};
-
-export const unprotectDownloadFile = async (
-	task: DownloadTask,
-): Promise<void> => {
-	const path = getTaskFullPath(task, { normalizeCompletedPath: false });
-	if (!path) {
-		return;
-	}
-	try {
-		await invoke("unprotect_download_file", { path });
-	} catch (err) {
-		logger.warn(`[Motrix] unprotectDownloadFile failed: ${err}`);
-	}
-};

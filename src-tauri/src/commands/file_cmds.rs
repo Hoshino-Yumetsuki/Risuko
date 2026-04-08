@@ -1192,135 +1192,189 @@ pub fn cleanup_generated_torrent_sidecars_for_task(task: Value) -> Result<u32, S
     Ok(total_deleted)
 }
 
-// prevent deletion of active download files
-//
-// macOS:         ACL deny-delete via chmod (flock is advisory-only on macOS,
-//                Finder ignores it)
-// Windows/Linux: fs2 exclusive lock. On Windows LockFileEx + open handle
-//                blocks deletion. On Linux flock(2) is advisory but many
-//                file managers respect it
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-use std::collections::HashMap;
-use std::sync::Mutex;
+    // --- strip_temp_download_suffix ---
 
-static PROTECTED_FILES: std::sync::OnceLock<Mutex<HashMap<String, ProtectedFile>>> =
-    std::sync::OnceLock::new();
-
-fn protected_files() -> &'static Mutex<HashMap<String, ProtectedFile>> {
-    PROTECTED_FILES.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
-/// Holds state needed to release a file lock
-enum ProtectedFile {
-    /// macOS - no handle needed, just remember the path for ACL cleanup
-    #[cfg(target_os = "macos")]
-    Acl,
-    /// Windows / Linux - hold open File handle with fs2 exclusive lock
-    #[cfg(not(target_os = "macos"))]
-    Locked(std::fs::File),
-}
-
-#[tauri::command]
-pub fn protect_download_file(path: String) -> Result<(), String> {
-    let path = path.trim().to_string();
-    if path.is_empty() {
-        return Ok(());
+    #[test]
+    fn strip_suffix_removes_part() {
+        assert_eq!(
+            strip_temp_download_suffix("file.zip.part"),
+            Some("file.zip".to_string())
+        );
     }
-    if !Path::new(&path).exists() {
-        return Ok(());
+
+    #[test]
+    fn strip_suffix_case_insensitive() {
+        assert_eq!(
+            strip_temp_download_suffix("file.zip.PART"),
+            Some("file.zip".to_string())
+        );
     }
-    lock_file(&path)
-}
 
-#[tauri::command]
-pub fn unprotect_download_file(path: String) -> Result<(), String> {
-    let path = path.trim().to_string();
-    if path.is_empty() {
-        return Ok(());
+    #[test]
+    fn strip_suffix_no_match() {
+        assert_eq!(strip_temp_download_suffix("file.zip"), None);
     }
-    unlock_file(&path)
-}
 
-/// Called on app exit to release all held file locks / ACLs
-pub fn cleanup_protected_files() {
-    let Ok(mut map) = protected_files().lock() else {
-        return;
-    };
-    for (path, entry) in map.drain() {
-        let _ = platform_unlock(&path, entry);
+    #[test]
+    fn strip_suffix_too_short() {
+        assert_eq!(strip_temp_download_suffix(".part"), None);
+        assert_eq!(strip_temp_download_suffix("a.par"), None);
     }
-}
 
-pub(crate) fn lock_file(path: &str) -> Result<(), String> {
-    let mut map = protected_files().lock().map_err(|e| e.to_string())?;
-    if map.contains_key(path) {
-        return Ok(());
+    // --- push_index_to_ranges ---
+
+    #[test]
+    fn push_index_ignores_zero() {
+        let mut ranges = Vec::new();
+        push_index_to_ranges(&mut ranges, 0);
+        assert!(ranges.is_empty());
     }
-    let entry = platform_lock(path)?;
-    log::info!("Protected download file: {}", path);
-    map.insert(path.to_string(), entry);
-    Ok(())
-}
 
-pub(crate) fn unlock_file(path: &str) -> Result<(), String> {
-    let mut map = protected_files().lock().map_err(|e| e.to_string())?;
-    if let Some(entry) = map.remove(path) {
-        platform_unlock(path, entry)?;
-        log::info!("Unprotected download file: {}", path);
+    #[test]
+    fn push_index_starts_new_range() {
+        let mut ranges = Vec::new();
+        push_index_to_ranges(&mut ranges, 3);
+        assert_eq!(ranges, vec![(3, 3)]);
     }
-    Ok(())
-}
 
-// macOS
-
-#[cfg(target_os = "macos")]
-fn platform_lock(path: &str) -> Result<ProtectedFile, String> {
-    let output = std::process::Command::new("/bin/chmod")
-        .args(["+a", "everyone deny delete", path])
-        .output()
-        .map_err(|e| format!("chmod failed: {e}"))?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        log::warn!("protect chmod failed: {stderr}");
+    #[test]
+    fn push_index_extends_sequential() {
+        let mut ranges = vec![(1, 3)];
+        push_index_to_ranges(&mut ranges, 4);
+        assert_eq!(ranges, vec![(1, 4)]);
     }
-    Ok(ProtectedFile::Acl)
-}
 
-#[cfg(target_os = "macos")]
-fn platform_unlock(path: &str, _entry: ProtectedFile) -> Result<(), String> {
-    if !Path::new(path).exists() {
-        return Ok(());
+    #[test]
+    fn push_index_gap_creates_new() {
+        let mut ranges = vec![(1, 3)];
+        push_index_to_ranges(&mut ranges, 5);
+        assert_eq!(ranges, vec![(1, 3), (5, 5)]);
     }
-    let output = std::process::Command::new("/bin/chmod")
-        .args(["-a", "everyone deny delete", path])
-        .output()
-        .map_err(|e| format!("chmod failed: {e}"))?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        log::warn!("unprotect chmod failed: {stderr}");
+
+    // --- encode_index_ranges ---
+
+    #[test]
+    fn encode_ranges_empty() {
+        assert_eq!(encode_index_ranges(&[]), None);
     }
-    Ok(())
-}
 
-// Win / Linux
+    #[test]
+    fn encode_ranges_single_value() {
+        assert_eq!(encode_index_ranges(&[(5, 5)]), Some("5".to_string()));
+    }
 
-#[cfg(not(target_os = "macos"))]
-fn platform_lock(path: &str) -> Result<ProtectedFile, String> {
-    use fs2::FileExt;
-    let file = std::fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open(path)
-        .map_err(|e| format!("Failed to open for locking: {e}"))?;
-    file.lock_exclusive()
-        .map_err(|e| format!("Failed to acquire lock: {e}"))?;
-    Ok(ProtectedFile::Locked(file))
-}
+    #[test]
+    fn encode_ranges_single_range() {
+        assert_eq!(encode_index_ranges(&[(1, 5)]), Some("1-5".to_string()));
+    }
 
-#[cfg(not(target_os = "macos"))]
-fn platform_unlock(path: &str, entry: ProtectedFile) -> Result<(), String> {
-    use fs2::FileExt;
-    let _ = path;
-    let ProtectedFile::Locked(file) = entry;
-    file.unlock().map_err(|e| format!("Failed to unlock: {e}"))
+    #[test]
+    fn encode_ranges_mixed() {
+        let ranges = [(1, 3), (5, 5), (7, 9)];
+        assert_eq!(encode_index_ranges(&ranges), Some("1-3,5,7-9".to_string()));
+    }
+
+    // --- normalize_torrent_path ---
+
+    #[test]
+    fn normalize_path_backslashes() {
+        assert_eq!(normalize_torrent_path("folder\\file.txt"), "folder/file.txt");
+    }
+
+    #[test]
+    fn normalize_path_leading_slash() {
+        assert_eq!(normalize_torrent_path("/folder/file.txt"), "folder/file.txt");
+    }
+
+    #[test]
+    fn normalize_path_already_clean() {
+        assert_eq!(normalize_torrent_path("folder/file.txt"), "folder/file.txt");
+    }
+
+    // --- normalize_info_hash ---
+
+    #[test]
+    fn info_hash_sha1_hex() {
+        let hex = "aabbccddee11223344556677889900aabbccddee";
+        assert_eq!(normalize_info_hash(hex), hex);
+    }
+
+    #[test]
+    fn info_hash_sha1_uppercase() {
+        let hex = "AABBCCDDEE11223344556677889900AABBCCDDEE";
+        assert_eq!(normalize_info_hash(hex), hex.to_ascii_lowercase());
+    }
+
+    #[test]
+    fn info_hash_urn_btih_prefix() {
+        let hash = "aabbccddee11223344556677889900aabbccddee";
+        let input = format!("urn:btih:{}", hash);
+        assert_eq!(normalize_info_hash(&input), hash);
+    }
+
+    #[test]
+    fn info_hash_base32_decode() {
+        // 20 bytes of 0x61 ("aaaa...") = base32 "MFQWCYLBMFQWCYLBMFQWCYLBMFQWCYLB"
+        let base32 = "MFQWCYLBMFQWCYLBMFQWCYLBMFQWCYLB";
+        let expected = "6161616161616161616161616161616161616161";
+        assert_eq!(normalize_info_hash(base32), expected);
+    }
+
+    // --- percent_decode_lossy ---
+
+    #[test]
+    fn decode_space() {
+        assert_eq!(percent_decode_lossy("%20"), " ");
+    }
+
+    #[test]
+    fn decode_utf8_multibyte() {
+        // "中" is U+4E2D, UTF-8: E4 B8 AD
+        assert_eq!(percent_decode_lossy("%E4%B8%AD"), "中");
+    }
+
+    #[test]
+    fn decode_invalid_sequence() {
+        assert_eq!(percent_decode_lossy("%ZZ"), "%ZZ");
+    }
+
+    #[test]
+    fn decode_passthrough() {
+        assert_eq!(percent_decode_lossy("hello"), "hello");
+    }
+
+    // --- inspect_torrent_metadata ---
+
+    #[test]
+    fn inspect_empty_bytes() {
+        assert!(inspect_torrent_metadata(b"", "fallback").is_err());
+    }
+
+    #[test]
+    fn inspect_single_file_torrent() {
+        let bytes = b"d4:infod6:lengthi1024e4:name8:test.binee";
+        let (is_multi, name) = inspect_torrent_metadata(bytes, "fallback").unwrap();
+        assert!(!is_multi);
+        assert_eq!(name, "test.bin");
+    }
+
+    #[test]
+    fn inspect_multi_file_torrent() {
+        let bytes = b"d4:infod5:filesld6:lengthi512e4:pathl5:a.bineee4:name4:testee";
+        let (is_multi, name) = inspect_torrent_metadata(bytes, "fallback").unwrap();
+        assert!(is_multi);
+        assert_eq!(name, "test");
+    }
+
+    #[test]
+    fn inspect_fallback_name() {
+        // Torrent with info dict but no name key
+        let bytes = b"d4:infod6:lengthi100eee";
+        let (_, name) = inspect_torrent_metadata(bytes, "my_fallback").unwrap();
+        assert_eq!(name, "my_fallback");
+    }
 }

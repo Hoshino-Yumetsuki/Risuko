@@ -118,7 +118,9 @@ pub async fn start_engine(handle: &AppHandle) -> Result<(), Box<dyn std::error::
             .map_err(|e| format!("Failed to create task manager: {}", e))?,
     );
 
-    let mut rpc_server = RpcServer::new(rpc_host, rpc_port, rpc_secret, manager.clone(), events.clone());
+    let (rpc_shutdown_tx, mut rpc_shutdown_rx) = tokio::sync::mpsc::channel::<()>(1);
+
+    let mut rpc_server = RpcServer::new(rpc_host, rpc_port, rpc_secret, manager.clone(), events.clone(), rpc_shutdown_tx);
     rpc_server
         .start()
         .await
@@ -190,6 +192,17 @@ pub async fn start_engine(handle: &AppHandle) -> Result<(), Box<dyn std::error::
 
     *ENGINE_INSTANCE.lock().await = Some(instance);
     *state.engine_running.lock().unwrap() = true;
+
+    // Monitor for RPC-initiated shutdown requests (spawned after instance is stored)
+    let shutdown_handle = handle.clone();
+    tokio::spawn(async move {
+        if rpc_shutdown_rx.recv().await.is_some() {
+            log::info!("Shutdown requested via RPC");
+            if let Err(e) = stop_engine(&shutdown_handle).await {
+                log::error!("Failed to stop engine via RPC shutdown: {}", e);
+            }
+        }
+    });
 
     log::info!("Motrix engine started on port {}", rpc_port);
     Ok(())

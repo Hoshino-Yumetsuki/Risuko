@@ -100,3 +100,110 @@ impl SessionManager {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::Map;
+    use tempfile::TempDir;
+
+    fn make_http_task(gid: &str, status: TaskStatus) -> DownloadTask {
+        let mut task = DownloadTask::new_http(
+            gid.into(),
+            vec!["http://example.com/file.zip".into()],
+            "/dl".into(),
+            Map::new(),
+        );
+        task.status = status;
+        task
+    }
+
+    #[test]
+    fn save_and_load_round_trip() {
+        let dir = TempDir::new().unwrap();
+        let mgr = SessionManager::new(dir.path());
+
+        let tasks = vec![
+            make_http_task("gid1", TaskStatus::Paused),
+            make_http_task("gid2", TaskStatus::Complete),
+        ];
+
+        mgr.save(&tasks).unwrap();
+        let loaded = mgr.load();
+
+        assert_eq!(loaded.len(), 2);
+        assert_eq!(loaded[0].gid, "gid1");
+        assert_eq!(loaded[0].status, TaskStatus::Paused);
+        assert_eq!(loaded[1].gid, "gid2");
+        assert_eq!(loaded[1].status, TaskStatus::Complete);
+    }
+
+    #[test]
+    fn load_missing_file_returns_empty() {
+        let dir = TempDir::new().unwrap();
+        let mgr = SessionManager::new(dir.path());
+        assert!(mgr.load().is_empty());
+    }
+
+    #[test]
+    fn load_corrupt_json_returns_empty() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join(SESSION_FILENAME);
+        fs::write(&path, "not valid json {{{").unwrap();
+
+        let mgr = SessionManager::new(dir.path());
+        assert!(mgr.load().is_empty());
+    }
+
+    #[test]
+    fn active_tasks_become_paused_on_load() {
+        let dir = TempDir::new().unwrap();
+        let mgr = SessionManager::new(dir.path());
+
+        let mut task = make_http_task("gid1", TaskStatus::Active);
+        task.download_speed = 1000;
+        task.connections = 5;
+
+        mgr.save(&[task]).unwrap();
+        let loaded = mgr.load();
+
+        assert_eq!(loaded[0].status, TaskStatus::Paused);
+        assert_eq!(loaded[0].download_speed, 0);
+        assert_eq!(loaded[0].connections, 0);
+    }
+
+    #[test]
+    fn removed_tasks_filtered_on_save_and_load() {
+        let dir = TempDir::new().unwrap();
+        let mgr = SessionManager::new(dir.path());
+
+        let tasks = vec![
+            make_http_task("kept", TaskStatus::Paused),
+            make_http_task("gone", TaskStatus::Removed),
+        ];
+
+        mgr.save(&tasks).unwrap();
+        let loaded = mgr.load();
+
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].gid, "kept");
+    }
+
+    #[test]
+    fn cleanup_legacy_removes_old_session() {
+        let dir = TempDir::new().unwrap();
+        let legacy = dir.path().join("download.session");
+        fs::write(&legacy, "old data").unwrap();
+        assert!(legacy.exists());
+
+        SessionManager::cleanup_legacy(dir.path());
+        assert!(!legacy.exists());
+    }
+
+    #[test]
+    fn cleanup_legacy_no_op_when_missing() {
+        let dir = TempDir::new().unwrap();
+        // Should not panic
+        SessionManager::cleanup_legacy(dir.path());
+    }
+}

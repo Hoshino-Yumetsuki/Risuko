@@ -1,10 +1,12 @@
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::extract::State;
-use axum::response::IntoResponse;
+use axum::extract::{FromRequest, State};
+use axum::http::{header, StatusCode};
+use axum::response::{IntoResponse, Response};
 use axum::routing::post;
-use axum::Json;
 use axum::Router;
+use base64::Engine as _;
 use serde_json::{json, Value};
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tower_http::cors::{Any, CorsLayer};
@@ -14,13 +16,21 @@ use super::manager::TaskManager;
 
 const ENGINE_VERSION: &str = "motrix-engine/0.1";
 
+// JSON-RPC 2.0 error codes
+const PARSE_ERROR: i64 = -32700;
+const INVALID_REQUEST: i64 = -32600;
+const METHOD_NOT_FOUND: i64 = -32601;
+const INVALID_PARAMS: i64 = -32602;
+
 pub struct RpcServer {
     host: String,
     port: u16,
     secret: String,
+    session_id: String,
     manager: Arc<TaskManager>,
     events: EventBroadcaster,
     shutdown_tx: Option<tokio::sync::oneshot::Sender<()>>,
+    rpc_shutdown_tx: tokio::sync::mpsc::Sender<()>,
 }
 
 #[derive(Clone)]
@@ -28,6 +38,8 @@ struct RpcState {
     manager: Arc<TaskManager>,
     events: EventBroadcaster,
     secret: String,
+    session_id: String,
+    rpc_shutdown_tx: tokio::sync::mpsc::Sender<()>,
 }
 
 impl RpcServer {
@@ -37,14 +49,23 @@ impl RpcServer {
         secret: String,
         manager: Arc<TaskManager>,
         events: EventBroadcaster,
+        rpc_shutdown_tx: tokio::sync::mpsc::Sender<()>,
     ) -> Self {
+        let session_id = uuid::Uuid::new_v4()
+            .as_bytes()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<String>();
+
         Self {
             host,
             port,
             secret,
+            session_id,
             manager,
             events,
             shutdown_tx: None,
+            rpc_shutdown_tx,
         }
     }
 
@@ -53,16 +74,18 @@ impl RpcServer {
             manager: self.manager.clone(),
             events: self.events.clone(),
             secret: self.secret.clone(),
+            session_id: self.session_id.clone(),
+            rpc_shutdown_tx: self.rpc_shutdown_tx.clone(),
         };
 
         let cors = CorsLayer::new()
             .allow_origin(Any)
             .allow_methods(Any)
-            .allow_headers(Any);
+            .allow_headers(Any)
+            .max_age(std::time::Duration::from_secs(1728000));
 
         let app = Router::new()
-            .route("/jsonrpc", post(handle_http_rpc))
-            .route("/jsonrpc", axum::routing::get(handle_ws_upgrade))
+            .route("/jsonrpc", post(handle_http_post).get(handle_http_get_or_ws))
             .layer(cors)
             .with_state(state);
 
@@ -97,35 +120,224 @@ impl RpcServer {
     }
 }
 
-async fn handle_http_rpc(
+// HTTP POST handler
+
+async fn handle_http_post(
     State(state): State<RpcState>,
-    Json(body): Json<Value>,
-) -> impl IntoResponse {
-    let response = process_rpc_request(&state, body).await;
-    Json(response)
+    body: String,
+) -> Response {
+    let parsed = match serde_json::from_str::<Value>(&body) {
+        Ok(v) => v,
+        Err(_) => {
+            let err = rpc_error(Value::Null, PARSE_ERROR, "Parse error");
+            return json_rpc_response(err);
+        }
+    };
+
+    match parsed {
+        Value::Array(batch) => {
+            if batch.is_empty() {
+                return json_rpc_response(rpc_error(Value::Null, INVALID_REQUEST, "Invalid Request"));
+            }
+            let mut results = Vec::with_capacity(batch.len());
+            for item in batch {
+                let resp = process_single_request(&state, item).await;
+                if let Some(r) = resp {
+                    results.push(r);
+                }
+            }
+            if results.is_empty() {
+                // All were notifications, no response per spec
+                (StatusCode::NO_CONTENT, "").into_response()
+            } else {
+                json_rpc_response(Value::Array(results))
+            }
+        }
+        Value::Object(_) => {
+            match process_single_request(&state, parsed).await {
+                Some(resp) => json_rpc_response(resp),
+                None => (StatusCode::NO_CONTENT, "").into_response(),
+            }
+        }
+        _ => json_rpc_response(rpc_error(Value::Null, INVALID_REQUEST, "Invalid Request")),
+    }
 }
 
-async fn handle_ws_upgrade(
+// HTTP GET handler — WebSocket upgrade or query-param RPC
+
+async fn handle_http_get_or_ws(
     State(state): State<RpcState>,
-    ws: WebSocketUpgrade,
-) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| handle_ws_connection(state, socket))
+    req: axum::extract::Request,
+) -> Response {
+    // Check if this is a WebSocket upgrade
+    let is_upgrade = req
+        .headers()
+        .get(header::UPGRADE)
+        .and_then(|v| v.to_str().ok())
+        .map(|v| v.eq_ignore_ascii_case("websocket"))
+        .unwrap_or(false);
+
+    if is_upgrade {
+        // Extract WebSocket upgrade from the request
+        let ws = match WebSocketUpgrade::from_request(req, &state).await {
+            Ok(ws) => ws,
+            Err(e) => return e.into_response(),
+        };
+        return ws
+            .on_upgrade(move |socket| handle_ws_connection(state, socket))
+            .into_response();
+    }
+
+    // Parse query params from URI
+    let query_str = req.uri().query().unwrap_or("");
+    let params: HashMap<String, String> =
+        url::form_urlencoded::parse(query_str.as_bytes())
+            .map(|(k, v)| (k.into_owned(), v.into_owned()))
+            .collect();
+
+    handle_get_query(state, params).await
 }
+
+async fn handle_get_query(state: RpcState, params: HashMap<String, String>) -> Response {
+    let method = params.get("method").map(|s| s.as_str()).unwrap_or("");
+    let id = params
+        .get("id")
+        .map(|s| Value::String(s.clone()))
+        .unwrap_or(Value::Null);
+    let callback = params.get("jsoncallback").cloned();
+
+    let rpc_params = if let Some(encoded) = params.get("params") {
+        match base64::engine::general_purpose::STANDARD.decode(encoded) {
+            Ok(bytes) => match String::from_utf8(bytes) {
+                Ok(s) => serde_json::from_str::<Value>(&s).unwrap_or(Value::Array(Vec::new())),
+                Err(_) => Value::Array(Vec::new()),
+            },
+            Err(_) => Value::Array(Vec::new()),
+        }
+    } else {
+        Value::Array(Vec::new())
+    };
+
+    // If no method specified, treat params as batch of requests
+    if method.is_empty() && id == Value::Null {
+        if let Value::Array(batch) = rpc_params {
+            if batch.is_empty() {
+                return json_rpc_response(rpc_error(Value::Null, INVALID_REQUEST, "Invalid Request"));
+            }
+            let mut results = Vec::with_capacity(batch.len());
+            for item in batch {
+                if let Some(r) = process_single_request(&state, item).await {
+                    results.push(r);
+                }
+            }
+            return maybe_jsonp(Value::Array(results), callback);
+        }
+    }
+
+    // Build a JSON-RPC request from query params
+    let request = json!({
+        "jsonrpc": "2.0",
+        "method": method,
+        "params": rpc_params,
+        "id": id,
+    });
+
+    let response = match process_single_request(&state, request).await {
+        Some(r) => r,
+        None => Value::Null,
+    };
+
+    maybe_jsonp(response, callback)
+}
+
+fn json_rpc_response(body: Value) -> Response {
+    let json_str = serde_json::to_string(&body).unwrap_or_default();
+    (
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, "application/json-rpc")],
+        json_str,
+    )
+        .into_response()
+}
+
+fn maybe_jsonp(body: Value, callback: Option<String>) -> Response {
+    let json_str = serde_json::to_string(&body).unwrap_or_default();
+    match callback {
+        Some(cb) if !cb.is_empty() => {
+            // Sanitize callback name: allow only alphanumerics, underscore, dot
+            let safe_cb: String = cb
+                .chars()
+                .filter(|c| c.is_alphanumeric() || *c == '_' || *c == '.')
+                .collect();
+            if safe_cb.is_empty() {
+                return (
+                    StatusCode::OK,
+                    [(header::CONTENT_TYPE, "application/json-rpc")],
+                    json_str,
+                )
+                    .into_response();
+            }
+            let jsonp = format!("{safe_cb}({json_str});");
+            (
+                StatusCode::OK,
+                [(header::CONTENT_TYPE, "text/javascript")],
+                jsonp,
+            )
+                .into_response()
+        }
+        _ => (
+            StatusCode::OK,
+            [(header::CONTENT_TYPE, "application/json-rpc")],
+            json_str,
+        )
+            .into_response(),
+    }
+}
+
+// WebSocket handler for batch/single/notification push
 
 async fn handle_ws_connection(state: RpcState, mut socket: WebSocket) {
     let mut event_rx = state.events.subscribe();
 
     loop {
         tokio::select! {
-            // Handle incoming messages from client
             msg = socket.recv() => {
                 match msg {
                     Some(Ok(Message::Text(text))) => {
-                        if let Ok(request) = serde_json::from_str::<Value>(&text) {
-                            let response = process_rpc_request(&state, request).await;
-                            let response_text = serde_json::to_string(&response).unwrap_or_default();
-                            if socket.send(Message::Text(response_text.into())).await.is_err() {
-                                break;
+                        let parsed = match serde_json::from_str::<Value>(&text) {
+                            Ok(v) => v,
+                            Err(_) => {
+                                let err = rpc_error(Value::Null, PARSE_ERROR, "Parse error");
+                                let text = serde_json::to_string(&err).unwrap_or_default();
+                                if socket.send(Message::Text(text.into())).await.is_err() {
+                                    break;
+                                }
+                                continue;
+                            }
+                        };
+
+                        match parsed {
+                            Value::Array(batch) => {
+                                let mut results = Vec::with_capacity(batch.len());
+                                for item in batch {
+                                    if let Some(r) = process_single_request(&state, item).await {
+                                        results.push(r);
+                                    }
+                                }
+                                if !results.is_empty() {
+                                    let text = serde_json::to_string(&Value::Array(results)).unwrap_or_default();
+                                    if socket.send(Message::Text(text.into())).await.is_err() {
+                                        break;
+                                    }
+                                }
+                            }
+                            _ => {
+                                if let Some(resp) = process_single_request(&state, parsed).await {
+                                    let text = serde_json::to_string(&resp).unwrap_or_default();
+                                    if socket.send(Message::Text(text.into())).await.is_err() {
+                                        break;
+                                    }
+                                }
                             }
                         }
                     }
@@ -133,7 +345,6 @@ async fn handle_ws_connection(state: RpcState, mut socket: WebSocket) {
                     _ => {}
                 }
             }
-            // Push event notifications
             event = event_rx.recv() => {
                 match event {
                     Ok(event) => {
@@ -151,12 +362,22 @@ async fn handle_ws_connection(state: RpcState, mut socket: WebSocket) {
     }
 }
 
-async fn process_rpc_request(state: &RpcState, request: Value) -> Value {
-    let id = request.get("id").cloned().unwrap_or(Value::Null);
-    let method = request
-        .get("method")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
+/// Process a single JSON-RPC request object
+/// Returns `None` for notifications (requests without `id`)
+async fn process_single_request(state: &RpcState, request: Value) -> Option<Value> {
+    let id = request.get("id").cloned();
+
+    let method = match request.get("method").and_then(|v| v.as_str()) {
+        Some(m) if !m.is_empty() => m,
+        _ => {
+            return Some(rpc_error(
+                id.unwrap_or(Value::Null),
+                INVALID_REQUEST,
+                "Invalid Request",
+            ));
+        }
+    };
+
     let params = request
         .get("params")
         .cloned()
@@ -164,29 +385,57 @@ async fn process_rpc_request(state: &RpcState, request: Value) -> Value {
 
     let params_vec = match params {
         Value::Array(v) => v,
+        Value::Object(_) => {
+            return Some(rpc_error(
+                id.unwrap_or(Value::Null),
+                INVALID_PARAMS,
+                "Named params not supported",
+            ));
+        }
         _ => vec![params],
     };
 
-    // Check auth
+    // Auth check
     let (authed_params, auth_ok) = check_auth(&state.secret, params_vec);
     if !auth_ok {
-        return rpc_error(id, 1, "Unauthorized");
+        return Some(rpc_error(
+            id.unwrap_or(Value::Null),
+            1,
+            "Unauthorized",
+        ));
     }
 
-    let result = dispatch_method(state, method, authed_params).await;
+    // Normalize method prefix: aria2.X → motrix.X
+    let normalized = normalize_method(method);
 
-    match result {
+    let result = dispatch_method(state, &normalized, authed_params).await;
+
+    // If no id, this is a notification — don't send response
+    let id = match id {
+        Some(v) => v,
+        None => return None,
+    };
+
+    Some(match result {
         Ok(value) => json!({
             "jsonrpc": "2.0",
             "id": id,
             "result": value,
         }),
-        Err(msg) => rpc_error(id, 1, &msg),
-    }
+        Err(RpcError { code, message }) => rpc_error(id, code, &message),
+    })
 }
 
 fn check_auth(secret: &str, mut params: Vec<Value>) -> (Vec<Value>, bool) {
     if secret.is_empty() {
+        // Still strip token param if provided, for compatibility
+        if let Some(first) = params.first() {
+            if let Some(s) = first.as_str() {
+                if s.starts_with("token:") {
+                    params.remove(0);
+                }
+            }
+        }
         return (params, true);
     }
 
@@ -203,6 +452,32 @@ fn check_auth(secret: &str, mut params: Vec<Value>) -> (Vec<Value>, bool) {
     (params, false)
 }
 
+/// Normalize `aria2.X` → `motrix.X`, pass `system.X` and `motrix.X` through
+fn normalize_method(method: &str) -> String {
+    if let Some(suffix) = method.strip_prefix("aria2.") {
+        format!("motrix.{suffix}")
+    } else {
+        method.to_string()
+    }
+}
+
+struct RpcError {
+    code: i64,
+    message: String,
+}
+
+impl std::fmt::Debug for RpcError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "RpcError({}: {})", self.code, self.message)
+    }
+}
+
+impl From<String> for RpcError {
+    fn from(message: String) -> Self {
+        Self { code: 1, message }
+    }
+}
+
 fn rpc_error(id: Value, code: i64, message: &str) -> Value {
     json!({
         "jsonrpc": "2.0",
@@ -214,11 +489,12 @@ fn rpc_error(id: Value, code: i64, message: &str) -> Value {
     })
 }
 
+// Dispatches a normalized method name to the corresponding manager function
 fn dispatch_method<'a>(
     state: &'a RpcState,
     method: &'a str,
     params: Vec<Value>,
-) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value, String>> + Send + 'a>> {
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value, RpcError>> + Send + 'a>> {
     Box::pin(async move {
     match method {
         "motrix.addUri" => {
@@ -233,7 +509,7 @@ fn dispatch_method<'a>(
                 .unwrap_or_default();
 
             if uris.is_empty() {
-                return Err("URI required".to_string());
+                return Err("URI required".to_string().into());
             }
 
             let options = params
@@ -242,7 +518,7 @@ fn dispatch_method<'a>(
                 .cloned()
                 .unwrap_or_default();
 
-            let gid = state.manager.add_http_task(uris, options).await?;
+            let gid = state.manager.add_http_task(uris, options).await.map_err(RpcError::from)?;
             Ok(Value::String(gid))
         }
 
@@ -250,17 +526,20 @@ fn dispatch_method<'a>(
             let torrent_b64 = params
                 .first()
                 .and_then(|v| v.as_str())
-                .ok_or("Torrent data required")?;
+                .ok_or_else(|| RpcError::from("Torrent data required".to_string()))?;
 
-            let torrent_data = base64_decode(torrent_b64)?;
+            let torrent_data = base64::engine::general_purpose::STANDARD
+                .decode(torrent_b64)
+                .map_err(|e| RpcError::from(format!("Invalid base64: {e}")))?;
 
+            // aria2 convention: params[1] = uris (unused by us), params[2] = options
             let options = params
                 .get(2)
                 .and_then(|v| v.as_object())
                 .cloned()
                 .unwrap_or_default();
 
-            let gid = state.manager.add_torrent_task(torrent_data, options).await?;
+            let gid = state.manager.add_torrent_task(torrent_data, options).await.map_err(RpcError::from)?;
             Ok(Value::String(gid))
         }
 
@@ -268,7 +547,7 @@ fn dispatch_method<'a>(
             let uri = params
                 .first()
                 .and_then(|v| v.as_str())
-                .ok_or("ed2k URI required")?;
+                .ok_or_else(|| RpcError::from("ed2k URI required".to_string()))?;
 
             let options = params
                 .get(1)
@@ -276,19 +555,19 @@ fn dispatch_method<'a>(
                 .cloned()
                 .unwrap_or_default();
 
-            let gid = state.manager.add_ed2k_task(uri, options).await?;
+            let gid = state.manager.add_ed2k_task(uri, options).await.map_err(RpcError::from)?;
             Ok(Value::String(gid))
         }
 
         "motrix.remove" | "motrix.forceRemove" => {
             let gid = get_gid(&params)?;
-            state.manager.remove(&gid).await?;
+            state.manager.remove(&gid).await.map_err(RpcError::from)?;
             Ok(Value::String(gid))
         }
 
         "motrix.pause" | "motrix.forcePause" => {
             let gid = get_gid(&params)?;
-            state.manager.pause(&gid).await?;
+            state.manager.pause(&gid).await.map_err(RpcError::from)?;
             Ok(Value::String(gid))
         }
 
@@ -299,7 +578,7 @@ fn dispatch_method<'a>(
 
         "motrix.unpause" => {
             let gid = get_gid(&params)?;
-            state.manager.unpause(&gid).await?;
+            state.manager.unpause(&gid).await.map_err(RpcError::from)?;
             Ok(Value::String(gid))
         }
 
@@ -311,7 +590,7 @@ fn dispatch_method<'a>(
         "motrix.tellStatus" => {
             let gid = get_gid(&params)?;
             let keys = get_keys(&params, 1);
-            state.manager.tell_status(&gid, &keys).await
+            state.manager.tell_status(&gid, &keys).await.map_err(RpcError::from)
         }
 
         "motrix.tellActive" => {
@@ -354,7 +633,7 @@ fn dispatch_method<'a>(
                 .and_then(|v| v.as_object())
                 .cloned()
                 .unwrap_or_default();
-            state.manager.change_option(&gid, opts).await?;
+            state.manager.change_option(&gid, opts).await.map_err(RpcError::from)?;
             Ok(Value::String("OK".into()))
         }
 
@@ -370,7 +649,7 @@ fn dispatch_method<'a>(
 
         "motrix.getOption" => {
             let gid = get_gid(&params)?;
-            state.manager.get_option(&gid).await
+            state.manager.get_option(&gid).await.map_err(RpcError::from)
         }
 
         "motrix.getGlobalOption" => Ok(state.manager.get_global_option().await),
@@ -385,7 +664,7 @@ fn dispatch_method<'a>(
                 .get(2)
                 .and_then(|v| v.as_str())
                 .unwrap_or("POS_SET");
-            state.manager.change_position(&gid, pos, how).await
+            state.manager.change_position(&gid, pos, how).await.map_err(RpcError::from)
         }
 
         "motrix.getPeers" => {
@@ -393,8 +672,38 @@ fn dispatch_method<'a>(
             Ok(state.manager.get_peers(&gid).await)
         }
 
+        "motrix.getUris" => {
+            let gid = get_gid(&params)?;
+            state.manager.get_uris(&gid).await.map_err(RpcError::from)
+        }
+
+        "motrix.getFiles" => {
+            let gid = get_gid(&params)?;
+            state.manager.get_files(&gid).await.map_err(RpcError::from)
+        }
+
+        "motrix.getServers" => {
+            let gid = get_gid(&params)?;
+            state.manager.get_servers(&gid).await.map_err(RpcError::from)
+        }
+
+        "motrix.getSessionInfo" => {
+            Ok(json!({ "sessionId": state.session_id }))
+        }
+
+        "motrix.shutdown" => {
+            state.manager.save_session().await.ok();
+            let _ = state.rpc_shutdown_tx.send(()).await;
+            Ok(Value::String("OK".into()))
+        }
+
+        "motrix.forceShutdown" => {
+            let _ = state.rpc_shutdown_tx.send(()).await;
+            Ok(Value::String("OK".into()))
+        }
+
         "motrix.saveSession" => {
-            state.manager.save_session().await?;
+            state.manager.save_session().await.map_err(RpcError::from)?;
             Ok(Value::String("OK".into()))
         }
 
@@ -405,7 +714,7 @@ fn dispatch_method<'a>(
 
         "motrix.removeDownloadResult" => {
             let gid = get_gid(&params)?;
-            state.manager.remove_download_result(&gid).await?;
+            state.manager.remove_download_result(&gid).await.map_err(RpcError::from)?;
             Ok(Value::String("OK".into()))
         }
 
@@ -441,72 +750,106 @@ fn dispatch_method<'a>(
                     .cloned()
                     .unwrap_or_default();
 
-                // Strip auth token from sub-call params (already authenticated)
                 let (clean_params, _) = check_auth(&state.secret, call_params);
+                let normalized = normalize_method(method_name);
 
-                match dispatch_method(state, method_name, clean_params).await {
+                match dispatch_method(state, &normalized, clean_params).await {
                     Ok(value) => results.push(Value::Array(vec![value])),
-                    Err(msg) => results.push(json!({
-                        "code": 1,
-                        "message": msg,
+                    Err(e) => results.push(json!({
+                        "code": e.code,
+                        "message": e.message,
                     })),
                 }
             }
             Ok(Value::Array(results))
         }
 
-        "system.listMethods" => Ok(json!([
-            "motrix.addUri",
-            "motrix.addTorrent",
-            "motrix.addEd2k",
-            "motrix.remove",
-            "motrix.forceRemove",
-            "motrix.pause",
-            "motrix.forcePause",
-            "motrix.pauseAll",
-            "motrix.forcePauseAll",
-            "motrix.unpause",
-            "motrix.unpauseAll",
-            "motrix.tellStatus",
-            "motrix.tellActive",
-            "motrix.tellWaiting",
-            "motrix.tellStopped",
-            "motrix.getGlobalStat",
-            "motrix.changeOption",
-            "motrix.changeGlobalOption",
-            "motrix.getOption",
-            "motrix.getGlobalOption",
-            "motrix.changePosition",
-            "motrix.getPeers",
-            "motrix.saveSession",
-            "motrix.purgeDownloadResult",
-            "motrix.removeDownloadResult",
-            "motrix.getVersion",
-            "system.multicall",
-            "system.listMethods",
-            "system.listNotifications",
-        ])),
+        "system.listMethods" => Ok(list_methods()),
 
-        "system.listNotifications" => Ok(json!([
-            "motrix.onDownloadStart",
-            "motrix.onDownloadPause",
-            "motrix.onDownloadStop",
-            "motrix.onDownloadComplete",
-            "motrix.onDownloadError",
-            "motrix.onBtDownloadComplete",
-        ])),
+        "system.listNotifications" => Ok(list_notifications()),
 
-        _ => Err(format!("Method not found: {}", method)),
+        _ => Err(RpcError {
+            code: METHOD_NOT_FOUND,
+            message: format!("Method not found: {method}"),
+        }),
     }
     })
 }
 
-fn get_gid(params: &[Value]) -> Result<String, String> {
+// Method & notification listings
+fn list_methods() -> Value {
+    let motrix_methods = [
+        "addUri",
+        "addTorrent",
+        "addEd2k",
+        "remove",
+        "forceRemove",
+        "pause",
+        "forcePause",
+        "pauseAll",
+        "forcePauseAll",
+        "unpause",
+        "unpauseAll",
+        "tellStatus",
+        "tellActive",
+        "tellWaiting",
+        "tellStopped",
+        "getGlobalStat",
+        "changeOption",
+        "changeGlobalOption",
+        "getOption",
+        "getGlobalOption",
+        "changePosition",
+        "getPeers",
+        "getUris",
+        "getFiles",
+        "getServers",
+        "getSessionInfo",
+        "shutdown",
+        "forceShutdown",
+        "saveSession",
+        "purgeDownloadResult",
+        "removeDownloadResult",
+        "getVersion",
+    ];
+
+    let mut all: Vec<Value> = Vec::new();
+    for m in &motrix_methods {
+        all.push(Value::String(format!("aria2.{m}")));
+        all.push(Value::String(format!("motrix.{m}")));
+    }
+    all.push(Value::String("system.multicall".into()));
+    all.push(Value::String("system.listMethods".into()));
+    all.push(Value::String("system.listNotifications".into()));
+    Value::Array(all)
+}
+
+fn list_notifications() -> Value {
+    let names = [
+        "onDownloadStart",
+        "onDownloadPause",
+        "onDownloadStop",
+        "onDownloadComplete",
+        "onDownloadError",
+        "onBtDownloadComplete",
+    ];
+
+    let mut all: Vec<Value> = Vec::new();
+    for n in &names {
+        all.push(Value::String(format!("aria2.{n}")));
+        all.push(Value::String(format!("motrix.{n}")));
+    }
+    Value::Array(all)
+}
+
+// Helpers
+
+fn get_gid(params: &[Value]) -> Result<String, RpcError> {
     params
         .first()
         .and_then(|v| v.as_str())
         .map(|s| s.to_string())
-        .ok_or_else(|| "GID required".to_string())
+        .ok_or_else(|| RpcError::from("GID required".to_string()))
 }
 
 fn get_keys(params: &[Value], index: usize) -> Vec<String> {
@@ -521,47 +864,122 @@ fn get_keys(params: &[Value], index: usize) -> Vec<String> {
         .unwrap_or_default()
 }
 
-fn base64_decode(input: &str) -> Result<Vec<u8>, String> {
-    const TABLE: [u8; 128] = {
-        let mut t = [255u8; 128];
-        let chars = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-        let mut i = 0;
-        while i < 64 {
-            t[chars[i] as usize] = i as u8;
-            i += 1;
-        }
-        t
-    };
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
 
-    let input = input.trim();
-    if input.is_empty() {
-        return Ok(Vec::new());
+    // --- check_auth ---
+
+    #[test]
+    fn auth_empty_secret_always_ok() {
+        let params = vec![json!("hello")];
+        let (out, ok) = check_auth("", params);
+        assert!(ok);
+        assert_eq!(out, vec![json!("hello")]);
     }
 
-    let bytes: Vec<u8> = input.bytes().filter(|&b| b != b'\n' && b != b'\r' && b != b' ').collect();
-    let mut output = Vec::with_capacity(bytes.len() * 3 / 4);
-    let mut i = 0;
-
-    while i + 3 < bytes.len() {
-        let b0 = TABLE.get(bytes[i] as usize).copied().unwrap_or(255);
-        let b1 = TABLE.get(bytes[i + 1] as usize).copied().unwrap_or(255);
-        let b2 = if bytes[i + 2] == b'=' { 0 } else { TABLE.get(bytes[i + 2] as usize).copied().unwrap_or(255) };
-        let b3 = if bytes[i + 3] == b'=' { 0 } else { TABLE.get(bytes[i + 3] as usize).copied().unwrap_or(255) };
-
-        if b0 == 255 || b1 == 255 || (bytes[i + 2] != b'=' && b2 == 255) || (bytes[i + 3] != b'=' && b3 == 255) {
-            return Err("Invalid base64".to_string());
-        }
-
-        output.push((b0 << 2) | (b1 >> 4));
-        if bytes[i + 2] != b'=' {
-            output.push(((b1 & 0x0f) << 4) | (b2 >> 2));
-        }
-        if bytes[i + 3] != b'=' {
-            output.push(((b2 & 0x03) << 6) | b3);
-        }
-
-        i += 4;
+    #[test]
+    fn auth_empty_secret_strips_token() {
+        let params = vec![json!("token:abc"), json!("arg1")];
+        let (out, ok) = check_auth("", params);
+        assert!(ok);
+        assert_eq!(out, vec![json!("arg1")]);
     }
 
-    Ok(output)
+    #[test]
+    fn auth_valid_token() {
+        let params = vec![json!("token:mysecret"), json!("gid1")];
+        let (out, ok) = check_auth("mysecret", params);
+        assert!(ok);
+        assert_eq!(out, vec![json!("gid1")]);
+    }
+
+    #[test]
+    fn auth_wrong_token() {
+        let params = vec![json!("token:wrong"), json!("gid1")];
+        let (out, ok) = check_auth("mysecret", params);
+        assert!(!ok);
+        assert_eq!(out.len(), 2); // params untouched
+    }
+
+    #[test]
+    fn auth_missing_token_param() {
+        let params = vec![json!("gid1")];
+        let (out, ok) = check_auth("mysecret", params);
+        assert!(!ok);
+        assert_eq!(out, vec![json!("gid1")]);
+    }
+
+    #[test]
+    fn auth_non_string_first_param() {
+        let params = vec![json!(42), json!("gid1")];
+        let (_, ok) = check_auth("mysecret", params);
+        assert!(!ok);
+    }
+
+    #[test]
+    fn auth_empty_params_with_secret() {
+        let params = vec![];
+        let (out, ok) = check_auth("mysecret", params);
+        assert!(!ok);
+        assert!(out.is_empty());
+    }
+
+    // --- normalize_method ---
+
+    #[test]
+    fn normalize_aria2_to_motrix() {
+        assert_eq!(normalize_method("aria2.addUri"), "motrix.addUri");
+        assert_eq!(normalize_method("aria2.tellStatus"), "motrix.tellStatus");
+    }
+
+    #[test]
+    fn normalize_passthrough() {
+        assert_eq!(normalize_method("motrix.addUri"), "motrix.addUri");
+        assert_eq!(normalize_method("system.listMethods"), "system.listMethods");
+    }
+
+    // --- get_gid ---
+
+    #[test]
+    fn get_gid_ok() {
+        let params = vec![json!("abc123")];
+        assert_eq!(get_gid(&params).unwrap(), "abc123");
+    }
+
+    #[test]
+    fn get_gid_empty_params() {
+        let params: Vec<Value> = vec![];
+        assert!(get_gid(&params).is_err());
+    }
+
+    #[test]
+    fn get_gid_non_string() {
+        let params = vec![json!(42)];
+        assert!(get_gid(&params).is_err());
+    }
+
+    // --- get_keys ---
+
+    #[test]
+    fn get_keys_extracts_strings() {
+        let params = vec![json!("gid"), json!(["status", "totalLength"])];
+        let keys = get_keys(&params, 1);
+        assert_eq!(keys, vec!["status", "totalLength"]);
+    }
+
+    #[test]
+    fn get_keys_missing_index_returns_empty() {
+        let params = vec![json!("gid")];
+        let keys = get_keys(&params, 1);
+        assert!(keys.is_empty());
+    }
+
+    #[test]
+    fn get_keys_non_array_returns_empty() {
+        let params = vec![json!("gid"), json!("not_array")];
+        let keys = get_keys(&params, 1);
+        assert!(keys.is_empty());
+    }
 }

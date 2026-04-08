@@ -20,7 +20,7 @@ interface TaskFormState {
 	preference: { config: AppConfig };
 }
 
-export interface TaskForm {
+interface TaskForm {
 	allProxy: string;
 	cookie: string;
 	dir: string;

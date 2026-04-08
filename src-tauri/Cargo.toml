@@ -1,6 +1,6 @@
 [package]
 name = "motrix"
-version = "0.1.0"
+version = "0.1.1"
 description = "A full-featured download manager"
 authors = ["YueMiyuki"]
 edition = "2021"
@@ -46,6 +46,7 @@ tauri-plugin-single-instance = "2"
 librqbit = "8"
 axum = { version = "0.8", features = ["ws"] }
 uuid = { version = "1", features = ["v4"] }
+base64 = "0.22"
 futures-util = "0.3"
 rand = "0.9"
 tower-http = { version = "0.6", features = ["cors"] }
@@ -56,7 +57,6 @@ tokio-util = { version = "0.7", features = ["io"] }
 bytes = "1"
 url = "2"
 filetime = "0.2"
-fs2 = "0.4"
 m3u8-rs = "6.0.0"
 aes = "0.8"
 cbc = "0.1"
@@ -70,3 +70,6 @@ suppaftp = { version = "6", features = ["async-rustls", "deprecated"] }
 russh = "0.46"
 russh-sftp = "2"
 russh-keys = "0.46"
+
+[dev-dependencies]
+tempfile = "3"
