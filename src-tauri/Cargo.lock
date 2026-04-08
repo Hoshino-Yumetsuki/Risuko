@@ -3765,6 +3765,7 @@ dependencies = [
  "tauri-plugin-shell",
  "tauri-plugin-single-instance",
  "tauri-plugin-store",
+ "tempfile",
  "tokio",
  "tokio-util",
  "tower-http",

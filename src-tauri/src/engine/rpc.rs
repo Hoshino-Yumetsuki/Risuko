@@ -453,6 +453,12 @@ struct RpcError {
     message: String,
 }
 
+impl std::fmt::Debug for RpcError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "RpcError({}: {})", self.code, self.message)
+    }
+}
+
 impl From<String> for RpcError {
     fn from(message: String) -> Self {
         Self { code: 1, message }
@@ -843,4 +849,124 @@ fn get_keys(params: &[Value], index: usize) -> Vec<String> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    // --- check_auth ---
+
+    #[test]
+    fn auth_empty_secret_always_ok() {
+        let params = vec![json!("hello")];
+        let (out, ok) = check_auth("", params);
+        assert!(ok);
+        assert_eq!(out, vec![json!("hello")]);
+    }
+
+    #[test]
+    fn auth_empty_secret_strips_token() {
+        let params = vec![json!("token:abc"), json!("arg1")];
+        let (out, ok) = check_auth("", params);
+        assert!(ok);
+        assert_eq!(out, vec![json!("arg1")]);
+    }
+
+    #[test]
+    fn auth_valid_token() {
+        let params = vec![json!("token:mysecret"), json!("gid1")];
+        let (out, ok) = check_auth("mysecret", params);
+        assert!(ok);
+        assert_eq!(out, vec![json!("gid1")]);
+    }
+
+    #[test]
+    fn auth_wrong_token() {
+        let params = vec![json!("token:wrong"), json!("gid1")];
+        let (out, ok) = check_auth("mysecret", params);
+        assert!(!ok);
+        assert_eq!(out.len(), 2); // params untouched
+    }
+
+    #[test]
+    fn auth_missing_token_param() {
+        let params = vec![json!("gid1")];
+        let (out, ok) = check_auth("mysecret", params);
+        assert!(!ok);
+        assert_eq!(out, vec![json!("gid1")]);
+    }
+
+    #[test]
+    fn auth_non_string_first_param() {
+        let params = vec![json!(42), json!("gid1")];
+        let (_, ok) = check_auth("mysecret", params);
+        assert!(!ok);
+    }
+
+    #[test]
+    fn auth_empty_params_with_secret() {
+        let params = vec![];
+        let (out, ok) = check_auth("mysecret", params);
+        assert!(!ok);
+        assert!(out.is_empty());
+    }
+
+    // --- normalize_method ---
+
+    #[test]
+    fn normalize_aria2_to_motrix() {
+        assert_eq!(normalize_method("aria2.addUri"), "motrix.addUri");
+        assert_eq!(normalize_method("aria2.tellStatus"), "motrix.tellStatus");
+    }
+
+    #[test]
+    fn normalize_passthrough() {
+        assert_eq!(normalize_method("motrix.addUri"), "motrix.addUri");
+        assert_eq!(normalize_method("system.listMethods"), "system.listMethods");
+    }
+
+    // --- get_gid ---
+
+    #[test]
+    fn get_gid_ok() {
+        let params = vec![json!("abc123")];
+        assert_eq!(get_gid(&params).unwrap(), "abc123");
+    }
+
+    #[test]
+    fn get_gid_empty_params() {
+        let params: Vec<Value> = vec![];
+        assert!(get_gid(&params).is_err());
+    }
+
+    #[test]
+    fn get_gid_non_string() {
+        let params = vec![json!(42)];
+        assert!(get_gid(&params).is_err());
+    }
+
+    // --- get_keys ---
+
+    #[test]
+    fn get_keys_extracts_strings() {
+        let params = vec![json!("gid"), json!(["status", "totalLength"])];
+        let keys = get_keys(&params, 1);
+        assert_eq!(keys, vec!["status", "totalLength"]);
+    }
+
+    #[test]
+    fn get_keys_missing_index_returns_empty() {
+        let params = vec![json!("gid")];
+        let keys = get_keys(&params, 1);
+        assert!(keys.is_empty());
+    }
+
+    #[test]
+    fn get_keys_non_array_returns_empty() {
+        let params = vec![json!("gid"), json!("not_array")];
+        let keys = get_keys(&params, 1);
+        assert!(keys.is_empty());
+    }
 }

@@ -103,3 +103,97 @@ pub fn user_defaults() -> Map<String, Value> {
     m.insert("window-state".into(), json!({}));
     m
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // --- system_defaults ---
+
+    #[test]
+    fn system_defaults_required_keys() {
+        let sys = system_defaults();
+        let required = [
+            "dir",
+            "max-concurrent-downloads",
+            "rpc-listen-port",
+            "rpc-secret",
+            "seed-ratio",
+            "seed-time",
+            "split",
+            "user-agent",
+            "enable-dht",
+            "listen-port",
+        ];
+        for key in required {
+            assert!(sys.contains_key(key), "missing system key: {key}");
+        }
+    }
+
+    #[test]
+    fn system_defaults_sensible_values() {
+        let sys = system_defaults();
+        assert_eq!(sys.get("max-concurrent-downloads").unwrap(), 5);
+        assert_eq!(sys.get("rpc-listen-port").unwrap(), 16800);
+        assert_eq!(sys.get("split").unwrap(), 16);
+        assert_eq!(sys.get("rpc-secret").unwrap(), "");
+    }
+
+    #[test]
+    fn system_defaults_dir_is_downloads() {
+        let sys = system_defaults();
+        let dir = sys.get("dir").unwrap().as_str().unwrap();
+        assert!(
+            dir.contains("Downloads") || dir.contains("downloads"),
+            "dir should contain 'Downloads', got: {dir}"
+        );
+    }
+
+    // --- user_defaults ---
+
+    #[test]
+    fn user_defaults_required_keys() {
+        let user = user_defaults();
+        let required = [
+            "theme",
+            "locale",
+            "keep-seeding",
+            "auto-check-update",
+            "rpc-host",
+            "m3u8-output-format",
+            "tray-theme",
+            "log-level",
+        ];
+        for key in required {
+            assert!(user.contains_key(key), "missing user key: {key}");
+        }
+    }
+
+    #[test]
+    fn user_defaults_sensible_values() {
+        let user = user_defaults();
+        assert_eq!(user.get("theme").unwrap(), "auto");
+        assert_eq!(user.get("locale").unwrap(), "en-US");
+        assert_eq!(user.get("keep-seeding").unwrap(), false);
+        assert_eq!(user.get("rpc-host").unwrap(), "127.0.0.1");
+        assert_eq!(user.get("m3u8-output-format").unwrap(), "ts");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn user_defaults_macos_specific() {
+        let user = user_defaults();
+        assert_eq!(user.get("auto-check-update").unwrap(), true);
+        assert_eq!(user.get("hide-app-menu").unwrap(), false);
+        assert_eq!(user.get("tray-speedometer").unwrap(), true);
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn user_defaults_non_macos_specific() {
+        let user = user_defaults();
+        assert_eq!(user.get("auto-check-update").unwrap(), false);
+        assert_eq!(user.get("hide-app-menu").unwrap(), true);
+        assert_eq!(user.get("tray-speedometer").unwrap(), false);
+    }
+}

@@ -490,3 +490,211 @@ fn now_ms() -> u64 {
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::{json, Map};
+
+    // --- generate_gid ---
+
+    #[test]
+    fn gid_is_16_hex_chars() {
+        let gid = generate_gid();
+        assert_eq!(gid.len(), 16);
+        assert!(gid.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn gid_is_unique() {
+        let a = generate_gid();
+        let b = generate_gid();
+        assert_ne!(a, b);
+    }
+
+    // --- TaskStatus ---
+
+    #[test]
+    fn status_as_str() {
+        assert_eq!(TaskStatus::Active.as_str(), "active");
+        assert_eq!(TaskStatus::Waiting.as_str(), "waiting");
+        assert_eq!(TaskStatus::Paused.as_str(), "paused");
+        assert_eq!(TaskStatus::Complete.as_str(), "complete");
+        assert_eq!(TaskStatus::Error.as_str(), "error");
+        assert_eq!(TaskStatus::Removed.as_str(), "removed");
+    }
+
+    #[test]
+    fn status_is_stopped() {
+        assert!(TaskStatus::Complete.is_stopped());
+        assert!(TaskStatus::Error.is_stopped());
+        assert!(TaskStatus::Removed.is_stopped());
+        assert!(!TaskStatus::Active.is_stopped());
+        assert!(!TaskStatus::Waiting.is_stopped());
+        assert!(!TaskStatus::Paused.is_stopped());
+    }
+
+    #[test]
+    fn status_display() {
+        assert_eq!(format!("{}", TaskStatus::Active), "active");
+        assert_eq!(format!("{}", TaskStatus::Complete), "complete");
+    }
+
+    // --- DownloadTask constructors ---
+
+    #[test]
+    fn new_http_basic() {
+        let opts = Map::new();
+        let uris = vec!["http://example.com/file.zip".to_string()];
+        let task = DownloadTask::new_http("gid1".into(), uris.clone(), "/tmp".into(), opts);
+
+        assert_eq!(task.gid, "gid1");
+        assert_eq!(task.status, TaskStatus::Waiting);
+        assert_eq!(task.kind, TaskKind::Http);
+        assert_eq!(task.uris, uris);
+        assert_eq!(task.dir, "/tmp");
+        assert_eq!(task.total_length, 0);
+        assert_eq!(task.files.len(), 1);
+        assert_eq!(task.files[0].uris.len(), 1);
+    }
+
+    #[test]
+    fn new_http_strips_part_from_display_path() {
+        let mut opts = Map::new();
+        opts.insert("out".into(), json!("file.zip.part"));
+        let uris = vec!["http://example.com/file.zip".to_string()];
+        let task = DownloadTask::new_http("gid1".into(), uris, "/dl".into(), opts);
+
+        assert_eq!(task.out, "file.zip.part");
+        // Display path should have .part stripped
+        assert_eq!(task.files[0].path, "/dl/file.zip");
+    }
+
+    #[test]
+    fn new_torrent_basic() {
+        let opts = Map::new();
+        let task = DownloadTask::new_torrent("gid2".into(), "/dl".into(), opts);
+
+        assert_eq!(task.kind, TaskKind::Torrent);
+        assert_eq!(task.status, TaskStatus::Waiting);
+        assert!(task.files.is_empty());
+        assert!(task.info_hash.is_none());
+    }
+
+    #[test]
+    fn new_ed2k_sets_file_size() {
+        let opts = Map::new();
+        let task = DownloadTask::new_ed2k(
+            "gid3".into(),
+            "ed2k://|file|test.bin|1024|hash|/".into(),
+            "test.bin".into(),
+            1024,
+            "/dl".into(),
+            opts,
+        );
+
+        assert_eq!(task.kind, TaskKind::Ed2k);
+        assert_eq!(task.total_length, 1024);
+        assert_eq!(task.out, "test.bin");
+        assert_eq!(task.files[0].length, "1024");
+        assert_eq!(task.files[0].path, "/dl/test.bin");
+    }
+
+    #[test]
+    fn new_m3u8_basic() {
+        let opts = Map::new();
+        let task = DownloadTask::new_m3u8(
+            "gid4".into(),
+            "http://example.com/stream.m3u8".into(),
+            "stream.ts".into(),
+            "/dl".into(),
+            opts,
+        );
+
+        assert_eq!(task.kind, TaskKind::M3u8);
+        assert_eq!(task.out, "stream.ts");
+        assert_eq!(task.files[0].path, "/dl/stream.ts");
+    }
+
+    #[test]
+    fn new_ftp_basic() {
+        let opts = Map::new();
+        let task = DownloadTask::new_ftp(
+            "gid5".into(),
+            "ftp://files.example.com/data.csv".into(),
+            "/dl".into(),
+            opts,
+        );
+
+        assert_eq!(task.kind, TaskKind::Ftp);
+        assert_eq!(task.status, TaskStatus::Waiting);
+        assert_eq!(task.uris[0], "ftp://files.example.com/data.csv");
+    }
+
+    // --- to_rpc_status ---
+
+    #[test]
+    fn rpc_status_all_keys() {
+        let task = DownloadTask::new_http(
+            "test_gid".into(),
+            vec!["http://example.com/f.bin".into()],
+            "/tmp".into(),
+            Map::new(),
+        );
+        let status = task.to_rpc_status(&[]);
+        let obj = status.as_object().unwrap();
+
+        assert_eq!(obj.get("gid").unwrap(), "test_gid");
+        assert_eq!(obj.get("status").unwrap(), "waiting");
+        assert!(obj.contains_key("totalLength"));
+        assert!(obj.contains_key("files"));
+        assert!(obj.contains_key("dir"));
+    }
+
+    #[test]
+    fn rpc_status_filtered_keys() {
+        let task = DownloadTask::new_http(
+            "test_gid".into(),
+            vec!["http://example.com/f.bin".into()],
+            "/tmp".into(),
+            Map::new(),
+        );
+        let keys = vec!["gid".to_string(), "status".to_string()];
+        let status = task.to_rpc_status(&keys);
+        let obj = status.as_object().unwrap();
+
+        assert_eq!(obj.len(), 2);
+        assert!(obj.contains_key("gid"));
+        assert!(obj.contains_key("status"));
+    }
+
+    #[test]
+    fn rpc_status_torrent_has_bittorrent_field() {
+        let mut task = DownloadTask::new_torrent("tgid".into(), "/dl".into(), Map::new());
+        task.info_hash = Some("abc123".into());
+        task.bt_name = Some("My Torrent".into());
+
+        let status = task.to_rpc_status(&[]);
+        let obj = status.as_object().unwrap();
+
+        assert!(obj.contains_key("bittorrent"));
+        assert!(obj.contains_key("seeder"));
+        let bt = obj.get("bittorrent").unwrap().as_object().unwrap();
+        assert_eq!(bt.get("infoHash").unwrap(), "abc123");
+    }
+
+    #[test]
+    fn rpc_status_ed2k_has_ed2k_link() {
+        let task = DownloadTask::new_ed2k(
+            "egid".into(),
+            "ed2k://|file|test|100|hash|/".into(),
+            "test".into(),
+            100,
+            "/dl".into(),
+            Map::new(),
+        );
+        let status = task.to_rpc_status(&[]);
+        let obj = status.as_object().unwrap();
+        assert!(obj.contains_key("ed2kLink"));
+    }
+}

@@ -1191,3 +1191,191 @@ pub fn cleanup_generated_torrent_sidecars_for_task(task: Value) -> Result<u32, S
 
     Ok(total_deleted)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // --- strip_temp_download_suffix ---
+
+    #[test]
+    fn strip_suffix_removes_part() {
+        assert_eq!(
+            strip_temp_download_suffix("file.zip.part"),
+            Some("file.zip".to_string())
+        );
+    }
+
+    #[test]
+    fn strip_suffix_case_insensitive() {
+        assert_eq!(
+            strip_temp_download_suffix("file.zip.PART"),
+            Some("file.zip".to_string())
+        );
+    }
+
+    #[test]
+    fn strip_suffix_no_match() {
+        assert_eq!(strip_temp_download_suffix("file.zip"), None);
+    }
+
+    #[test]
+    fn strip_suffix_too_short() {
+        assert_eq!(strip_temp_download_suffix(".part"), None);
+        assert_eq!(strip_temp_download_suffix("a.par"), None);
+    }
+
+    // --- push_index_to_ranges ---
+
+    #[test]
+    fn push_index_ignores_zero() {
+        let mut ranges = Vec::new();
+        push_index_to_ranges(&mut ranges, 0);
+        assert!(ranges.is_empty());
+    }
+
+    #[test]
+    fn push_index_starts_new_range() {
+        let mut ranges = Vec::new();
+        push_index_to_ranges(&mut ranges, 3);
+        assert_eq!(ranges, vec![(3, 3)]);
+    }
+
+    #[test]
+    fn push_index_extends_sequential() {
+        let mut ranges = vec![(1, 3)];
+        push_index_to_ranges(&mut ranges, 4);
+        assert_eq!(ranges, vec![(1, 4)]);
+    }
+
+    #[test]
+    fn push_index_gap_creates_new() {
+        let mut ranges = vec![(1, 3)];
+        push_index_to_ranges(&mut ranges, 5);
+        assert_eq!(ranges, vec![(1, 3), (5, 5)]);
+    }
+
+    // --- encode_index_ranges ---
+
+    #[test]
+    fn encode_ranges_empty() {
+        assert_eq!(encode_index_ranges(&[]), None);
+    }
+
+    #[test]
+    fn encode_ranges_single_value() {
+        assert_eq!(encode_index_ranges(&[(5, 5)]), Some("5".to_string()));
+    }
+
+    #[test]
+    fn encode_ranges_single_range() {
+        assert_eq!(encode_index_ranges(&[(1, 5)]), Some("1-5".to_string()));
+    }
+
+    #[test]
+    fn encode_ranges_mixed() {
+        let ranges = [(1, 3), (5, 5), (7, 9)];
+        assert_eq!(encode_index_ranges(&ranges), Some("1-3,5,7-9".to_string()));
+    }
+
+    // --- normalize_torrent_path ---
+
+    #[test]
+    fn normalize_path_backslashes() {
+        assert_eq!(normalize_torrent_path("folder\\file.txt"), "folder/file.txt");
+    }
+
+    #[test]
+    fn normalize_path_leading_slash() {
+        assert_eq!(normalize_torrent_path("/folder/file.txt"), "folder/file.txt");
+    }
+
+    #[test]
+    fn normalize_path_already_clean() {
+        assert_eq!(normalize_torrent_path("folder/file.txt"), "folder/file.txt");
+    }
+
+    // --- normalize_info_hash ---
+
+    #[test]
+    fn info_hash_sha1_hex() {
+        let hex = "aabbccddee11223344556677889900aabbccddee";
+        assert_eq!(normalize_info_hash(hex), hex);
+    }
+
+    #[test]
+    fn info_hash_sha1_uppercase() {
+        let hex = "AABBCCDDEE11223344556677889900AABBCCDDEE";
+        assert_eq!(normalize_info_hash(hex), hex.to_ascii_lowercase());
+    }
+
+    #[test]
+    fn info_hash_urn_btih_prefix() {
+        let hash = "aabbccddee11223344556677889900aabbccddee";
+        let input = format!("urn:btih:{}", hash);
+        assert_eq!(normalize_info_hash(&input), hash);
+    }
+
+    #[test]
+    fn info_hash_base32_decode() {
+        // Base32 "MFZWIZLTOQ3GC3BPMJWGK3TEN5SGK4Y=" without padding
+        // Let's use a known conversion: 20 bytes of 0x61 ("aaaa...") = base32 "MFQWCYLBMFQWCYLBMFQWCYLBMFQWCYLB"
+        let base32 = "MFQWCYLBMFQWCYLBMFQWCYLBMFQWCYLB";
+        let expected = "6161616161616161616161616161616161616161";
+        assert_eq!(normalize_info_hash(base32), expected);
+    }
+
+    // --- percent_decode_lossy ---
+
+    #[test]
+    fn decode_space() {
+        assert_eq!(percent_decode_lossy("%20"), " ");
+    }
+
+    #[test]
+    fn decode_utf8_multibyte() {
+        // "中" is U+4E2D, UTF-8: E4 B8 AD
+        assert_eq!(percent_decode_lossy("%E4%B8%AD"), "中");
+    }
+
+    #[test]
+    fn decode_invalid_sequence() {
+        assert_eq!(percent_decode_lossy("%ZZ"), "%ZZ");
+    }
+
+    #[test]
+    fn decode_passthrough() {
+        assert_eq!(percent_decode_lossy("hello"), "hello");
+    }
+
+    // --- inspect_torrent_metadata ---
+
+    #[test]
+    fn inspect_empty_bytes() {
+        assert!(inspect_torrent_metadata(b"", "fallback").is_err());
+    }
+
+    #[test]
+    fn inspect_single_file_torrent() {
+        let bytes = b"d4:infod6:lengthi1024e4:name8:test.binee";
+        let (is_multi, name) = inspect_torrent_metadata(bytes, "fallback").unwrap();
+        assert!(!is_multi);
+        assert_eq!(name, "test.bin");
+    }
+
+    #[test]
+    fn inspect_multi_file_torrent() {
+        let bytes = b"d4:infod5:filesld6:lengthi512e4:pathl5:a.bineee4:name4:testee";
+        let (is_multi, name) = inspect_torrent_metadata(bytes, "fallback").unwrap();
+        assert!(is_multi);
+        assert_eq!(name, "test");
+    }
+
+    #[test]
+    fn inspect_fallback_name() {
+        // Torrent with info dict but no name key
+        let bytes = b"d4:infod6:lengthi100eee";
+        let (_, name) = inspect_torrent_metadata(bytes, "my_fallback").unwrap();
+        assert_eq!(name, "my_fallback");
+    }
+}

@@ -70,3 +70,6 @@ suppaftp = { version = "6", features = ["async-rustls", "deprecated"] }
 russh = "0.46"
 russh-sftp = "2"
 russh-keys = "0.46"
+
+[dev-dependencies]
+tempfile = "3"

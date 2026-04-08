@@ -105,3 +105,113 @@ impl EngineOptions {
         merged
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn make_system() -> Map<String, Value> {
+        let mut m = Map::new();
+        m.insert("dir".into(), json!("/downloads"));
+        m.insert("max-concurrent-downloads".into(), json!(3));
+        m.insert("rpc-listen-port".into(), json!(16800));
+        m.insert("rpc-secret".into(), json!("secret123"));
+        m.insert("seed-ratio".into(), json!("1.5"));
+        m.insert("ed2k-server".into(), json!("srv1,srv2"));
+        m.insert("ed2k-port".into(), json!(5662));
+        m
+    }
+
+    fn make_user() -> Map<String, Value> {
+        let mut m = Map::new();
+        m.insert("rpc-host".into(), json!("0.0.0.0"));
+        m.insert("m3u8-output-format".into(), json!("mp4"));
+        // This key should be ignored (not in the allow list)
+        m.insert("dir".into(), json!("/user-override"));
+        m
+    }
+
+    // --- from_config ---
+
+    #[test]
+    fn from_config_copies_system_keys() {
+        let opts = EngineOptions::from_config(&make_system(), &Map::new());
+        assert_eq!(opts.dir(), "/downloads");
+        assert_eq!(opts.max_concurrent_downloads(), 3);
+    }
+
+    #[test]
+    fn from_config_applies_user_overrides() {
+        let opts = EngineOptions::from_config(&make_system(), &make_user());
+        assert_eq!(opts.rpc_host(), "0.0.0.0");
+        assert_eq!(opts.get_str("m3u8-output-format"), Some("mp4"));
+        // dir should NOT be overridden from user config
+        assert_eq!(opts.dir(), "/downloads");
+    }
+
+    // --- getters with defaults ---
+
+    #[test]
+    fn getter_defaults_when_empty() {
+        let opts = EngineOptions::from_config(&Map::new(), &Map::new());
+        assert_eq!(opts.dir(), ".");
+        assert_eq!(opts.max_concurrent_downloads(), 5);
+        assert_eq!(opts.rpc_listen_port(), 16800);
+        assert_eq!(opts.rpc_host(), "127.0.0.1");
+        assert_eq!(opts.rpc_secret(), "");
+        assert_eq!(opts.seed_ratio(), 0.0);
+        assert_eq!(opts.seed_time(), 0);
+        assert!(opts.ed2k_servers().is_empty());
+        assert_eq!(opts.ed2k_port(), 4662);
+    }
+
+    #[test]
+    fn getter_values_from_config() {
+        let opts = EngineOptions::from_config(&make_system(), &Map::new());
+        assert_eq!(opts.rpc_secret(), "secret123");
+        assert_eq!(opts.seed_ratio(), 1.5);
+        assert_eq!(opts.ed2k_servers(), vec!["srv1", "srv2"]);
+        assert_eq!(opts.ed2k_port(), 5662);
+    }
+
+    #[test]
+    fn get_u64_parses_string() {
+        let mut sys = Map::new();
+        sys.insert("rpc-listen-port".into(), json!("9999"));
+        let opts = EngineOptions::from_config(&sys, &Map::new());
+        assert_eq!(opts.rpc_listen_port(), 9999);
+    }
+
+    // --- set ---
+
+    #[test]
+    fn set_overrides_value() {
+        let mut opts = EngineOptions::from_config(&make_system(), &Map::new());
+        opts.set("dir".into(), json!("/new"));
+        assert_eq!(opts.dir(), "/new");
+    }
+
+    // --- merge_task_options ---
+
+    #[test]
+    fn merge_task_options_overrides_globals() {
+        let opts = EngineOptions::from_config(&make_system(), &Map::new());
+        let mut task = Map::new();
+        task.insert("dir".into(), json!("/task-dir"));
+        task.insert("out".into(), json!("file.zip"));
+
+        let merged = opts.merge_task_options(&task);
+        assert_eq!(merged.get("dir").unwrap(), "/task-dir");
+        assert_eq!(merged.get("out").unwrap(), "file.zip");
+        // Original global key preserved
+        assert_eq!(merged.get("rpc-secret").unwrap(), "secret123");
+    }
+
+    #[test]
+    fn merge_task_options_empty_task_returns_globals() {
+        let opts = EngineOptions::from_config(&make_system(), &Map::new());
+        let merged = opts.merge_task_options(&Map::new());
+        assert_eq!(merged.get("dir").unwrap(), "/downloads");
+    }
+}

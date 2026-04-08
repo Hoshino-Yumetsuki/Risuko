@@ -173,3 +173,199 @@ fn parse_f64_like(value: Option<&Value>) -> Option<f64> {
         _ => None,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    // --- parse_keep_seeding_option ---
+
+    #[test]
+    fn keep_seeding_bool() {
+        assert_eq!(parse_keep_seeding_option(Some(&json!(true))), Some(true));
+        assert_eq!(parse_keep_seeding_option(Some(&json!(false))), Some(false));
+    }
+
+    #[test]
+    fn keep_seeding_string_truthy() {
+        for s in &["true", "1", "yes", "on"] {
+            assert_eq!(
+                parse_keep_seeding_option(Some(&json!(s))),
+                Some(true),
+                "expected true for {:?}",
+                s
+            );
+        }
+    }
+
+    #[test]
+    fn keep_seeding_string_falsy() {
+        for s in &["false", "0", "no", "off", ""] {
+            assert_eq!(
+                parse_keep_seeding_option(Some(&json!(s))),
+                Some(false),
+                "expected false for {:?}",
+                s
+            );
+        }
+    }
+
+    #[test]
+    fn keep_seeding_number() {
+        assert_eq!(parse_keep_seeding_option(Some(&json!(1))), Some(true));
+        assert_eq!(parse_keep_seeding_option(Some(&json!(0))), Some(false));
+        assert_eq!(parse_keep_seeding_option(Some(&json!(-1))), Some(true));
+    }
+
+    #[test]
+    fn keep_seeding_none_and_unknown() {
+        assert_eq!(parse_keep_seeding_option(None), None);
+        assert_eq!(parse_keep_seeding_option(Some(&json!("random"))), None);
+    }
+
+    // --- parse_f64_like ---
+
+    #[test]
+    fn f64_like_number() {
+        assert_eq!(parse_f64_like(Some(&json!(3.14))), Some(3.14));
+        assert_eq!(parse_f64_like(Some(&json!(0))), Some(0.0));
+    }
+
+    #[test]
+    fn f64_like_string() {
+        assert_eq!(parse_f64_like(Some(&json!("2.5"))), Some(2.5));
+        assert_eq!(parse_f64_like(Some(&json!(" 4.0 "))), Some(4.0));
+    }
+
+    #[test]
+    fn f64_like_invalid() {
+        assert_eq!(parse_f64_like(Some(&json!("abc"))), None);
+        assert_eq!(parse_f64_like(None), None);
+        assert_eq!(parse_f64_like(Some(&json!(null))), None);
+    }
+
+    // --- load_or_default ---
+
+    #[test]
+    fn load_or_default_missing_file_returns_defaults() {
+        let mut defaults = Map::new();
+        defaults.insert("key".into(), json!("val"));
+        let result = load_or_default(Path::new("/nonexistent/path.json"), defaults.clone());
+        assert_eq!(result, defaults);
+    }
+
+    #[test]
+    fn load_or_default_corrupt_json_returns_defaults() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("config.json");
+        fs::write(&path, "not json!!!").unwrap();
+
+        let mut defaults = Map::new();
+        defaults.insert("k".into(), json!(1));
+        let result = load_or_default(&path, defaults.clone());
+        assert_eq!(result, defaults);
+    }
+
+    #[test]
+    fn load_or_default_valid_file_fills_missing_keys() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("config.json");
+        fs::write(&path, r#"{"existing": "value"}"#).unwrap();
+
+        let mut defaults = Map::new();
+        defaults.insert("existing".into(), json!("default"));
+        defaults.insert("missing".into(), json!("filled"));
+
+        let result = load_or_default(&path, defaults);
+        assert_eq!(result.get("existing").unwrap(), "value"); // preserved from file
+        assert_eq!(result.get("missing").unwrap(), "filled"); // filled from defaults
+    }
+
+    // --- get_merged_config ---
+
+    #[test]
+    fn merged_config_combines_system_and_user() {
+        let mut sys = Map::new();
+        sys.insert("dir".into(), json!("/downloads"));
+        sys.insert("split".into(), json!(16));
+
+        let mut user = Map::new();
+        user.insert("theme".into(), json!("dark"));
+        user.insert("dir".into(), json!("/user-dir")); // user overrides system
+
+        let mgr = ConfigManager {
+            system_config: sys,
+            user_config: user,
+            config_dir: PathBuf::from("/tmp"),
+        };
+
+        let merged = mgr.get_merged_config();
+        let obj = merged.as_object().unwrap();
+
+        assert_eq!(obj.get("dir").unwrap(), "/user-dir"); // user wins
+        assert_eq!(obj.get("split").unwrap(), 16);
+        assert_eq!(obj.get("theme").unwrap(), "dark");
+        assert!(obj.contains_key("platform"));
+        assert!(obj.contains_key("arch"));
+    }
+
+    // --- migrate_legacy_keep_seeding_defaults ---
+
+    #[test]
+    fn migration_resets_legacy_seed_values() {
+        let mut sys = Map::new();
+        sys.insert("seed-ratio".into(), json!(2.0));
+        sys.insert("seed-time".into(), json!(2880.0));
+
+        let mut user = Map::new();
+        user.insert("keep-seeding".into(), json!(false));
+
+        let mut mgr = ConfigManager {
+            system_config: sys,
+            user_config: user,
+            config_dir: PathBuf::from("/tmp"),
+        };
+
+        let migrated = mgr.migrate_legacy_keep_seeding_defaults();
+        assert!(migrated);
+        assert_eq!(mgr.system_config.get("seed-ratio").unwrap(), 0);
+        assert_eq!(mgr.system_config.get("seed-time").unwrap(), 0);
+    }
+
+    #[test]
+    fn migration_skips_when_keep_seeding_true() {
+        let mut sys = Map::new();
+        sys.insert("seed-ratio".into(), json!(2.0));
+        sys.insert("seed-time".into(), json!(2880.0));
+
+        let mut user = Map::new();
+        user.insert("keep-seeding".into(), json!(true));
+
+        let mut mgr = ConfigManager {
+            system_config: sys,
+            user_config: user,
+            config_dir: PathBuf::from("/tmp"),
+        };
+
+        assert!(!mgr.migrate_legacy_keep_seeding_defaults());
+    }
+
+    #[test]
+    fn migration_skips_when_non_legacy_values() {
+        let mut sys = Map::new();
+        sys.insert("seed-ratio".into(), json!(1.0));
+        sys.insert("seed-time".into(), json!(60.0));
+
+        let mut user = Map::new();
+        user.insert("keep-seeding".into(), json!(false));
+
+        let mut mgr = ConfigManager {
+            system_config: sys,
+            user_config: user,
+            config_dir: PathBuf::from("/tmp"),
+        };
+
+        assert!(!mgr.migrate_legacy_keep_seeding_defaults());
+    }
+}

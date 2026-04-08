@@ -1670,3 +1670,250 @@ fn looks_like_url(path: &str) -> bool {
         || path.starts_with("ftp://")
         || path.starts_with("ed2k://")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // --- infer_m3u8_output_name ---
+
+    #[test]
+    fn m3u8_name_strips_extension() {
+        assert_eq!(infer_m3u8_output_name("http://example.com/video.m3u8"), "video.ts");
+    }
+
+    #[test]
+    fn m3u_name_strips_extension() {
+        assert_eq!(infer_m3u8_output_name("http://example.com/video.m3u"), "video.ts");
+    }
+
+    #[test]
+    fn m3u8_name_ignores_query_string() {
+        assert_eq!(
+            infer_m3u8_output_name("http://example.com/video.m3u8?token=abc"),
+            "video.ts"
+        );
+    }
+
+    #[test]
+    fn m3u8_name_no_extension() {
+        assert_eq!(infer_m3u8_output_name("http://example.com/video"), "video.ts");
+    }
+
+    #[test]
+    fn m3u8_name_empty_segment() {
+        assert_eq!(infer_m3u8_output_name("http://example.com/"), "download.ts");
+    }
+
+    #[test]
+    fn m3u8_name_bare_name() {
+        assert_eq!(infer_m3u8_output_name("download"), "download.ts");
+    }
+
+    // --- looks_like_url ---
+
+    #[test]
+    fn looks_like_url_protocols() {
+        assert!(looks_like_url("http://example.com"));
+        assert!(looks_like_url("https://example.com"));
+        assert!(looks_like_url("ftp://files.example.com"));
+        assert!(looks_like_url("ed2k://|file|test|100|hash|/"));
+    }
+
+    #[test]
+    fn looks_like_url_paths() {
+        assert!(!looks_like_url("/path/to/file"));
+        assert!(!looks_like_url("file.txt"));
+        assert!(!looks_like_url(""));
+    }
+
+    // --- TaskManager async query tests ---
+
+    use tokio::sync::RwLock;
+
+    /// Build a TaskManager with pre-loaded tasks, no torrent engine needed
+    fn make_test_manager(tasks: Vec<DownloadTask>) -> TaskManager {
+        let dir = tempfile::TempDir::new().unwrap();
+        let session = SessionManager::new(dir.path());
+        let options = EngineOptions::from_config(&Map::new(), &Map::new());
+        let events = EventBroadcaster::new(16);
+        let global_speed_limiter = Arc::new(SpeedLimiter::new(0));
+
+        TaskManager {
+            tasks: Arc::new(RwLock::new(tasks)),
+            active_downloads: Arc::new(RwLock::new(HashMap::new())),
+            torrent_ids: Arc::new(RwLock::new(HashMap::new())),
+            options: Arc::new(RwLock::new(options)),
+            events,
+            session,
+            torrent_engine: Arc::new(RwLock::new(None)),
+            global_speed_limiter,
+        }
+    }
+
+    fn make_task(gid: &str, status: TaskStatus) -> DownloadTask {
+        let mut task = DownloadTask::new_http(
+            gid.into(),
+            vec!["http://example.com/f.bin".into()],
+            "/dl".into(),
+            Map::new(),
+        );
+        task.status = status;
+        task
+    }
+
+    #[tokio::test]
+    async fn tell_active_returns_only_active() {
+        let mgr = make_test_manager(vec![
+            make_task("a1", TaskStatus::Active),
+            make_task("w1", TaskStatus::Waiting),
+            make_task("a2", TaskStatus::Active),
+        ]);
+
+        let result = mgr.tell_active(&[]).await;
+        let arr = result.as_array().unwrap();
+        assert_eq!(arr.len(), 2);
+        assert_eq!(arr[0].get("gid").unwrap(), "a1");
+        assert_eq!(arr[1].get("gid").unwrap(), "a2");
+    }
+
+    #[tokio::test]
+    async fn tell_waiting_pagination() {
+        let mgr = make_test_manager(vec![
+            make_task("w1", TaskStatus::Waiting),
+            make_task("w2", TaskStatus::Paused),
+            make_task("w3", TaskStatus::Waiting),
+            make_task("a1", TaskStatus::Active),
+        ]);
+
+        // offset=0, num=2 → first two waiting/paused
+        let result = mgr.tell_waiting(0, 2, &[]).await;
+        let arr = result.as_array().unwrap();
+        assert_eq!(arr.len(), 2);
+        assert_eq!(arr[0].get("gid").unwrap(), "w1");
+        assert_eq!(arr[1].get("gid").unwrap(), "w2");
+
+        // offset=1, num=10 → skip first, get rest
+        let result = mgr.tell_waiting(1, 10, &[]).await;
+        let arr = result.as_array().unwrap();
+        assert_eq!(arr.len(), 2);
+        assert_eq!(arr[0].get("gid").unwrap(), "w2");
+    }
+
+    #[tokio::test]
+    async fn tell_waiting_negative_offset() {
+        let mgr = make_test_manager(vec![
+            make_task("w1", TaskStatus::Waiting),
+            make_task("w2", TaskStatus::Waiting),
+            make_task("w3", TaskStatus::Waiting),
+        ]);
+
+        // offset=-1 → start from last item
+        let result = mgr.tell_waiting(-1, 10, &[]).await;
+        let arr = result.as_array().unwrap();
+        assert_eq!(arr.len(), 1);
+        assert_eq!(arr[0].get("gid").unwrap(), "w3");
+    }
+
+    #[tokio::test]
+    async fn tell_stopped_filters_correctly() {
+        let mgr = make_test_manager(vec![
+            make_task("c1", TaskStatus::Complete),
+            make_task("e1", TaskStatus::Error),
+            make_task("w1", TaskStatus::Waiting),
+            make_task("r1", TaskStatus::Removed),
+        ]);
+
+        let result = mgr.tell_stopped(0, 10, &[]).await;
+        let arr = result.as_array().unwrap();
+        assert_eq!(arr.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn get_global_stat_counts() {
+        let mut active = make_task("a1", TaskStatus::Active);
+        active.download_speed = 1000;
+        active.upload_speed = 200;
+
+        let mgr = make_test_manager(vec![
+            active,
+            make_task("w1", TaskStatus::Waiting),
+            make_task("w2", TaskStatus::Paused),
+            make_task("c1", TaskStatus::Complete),
+        ]);
+
+        let stat = mgr.get_global_stat().await;
+        assert_eq!(stat.get("numActive").unwrap(), "1");
+        assert_eq!(stat.get("numWaiting").unwrap(), "2");
+        assert_eq!(stat.get("numStopped").unwrap(), "1");
+        assert_eq!(stat.get("downloadSpeed").unwrap(), "1000");
+        assert_eq!(stat.get("uploadSpeed").unwrap(), "200");
+    }
+
+    #[tokio::test]
+    async fn tell_status_found_and_not_found() {
+        let mgr = make_test_manager(vec![make_task("gid1", TaskStatus::Active)]);
+
+        let result = mgr.tell_status("gid1", &[]).await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().get("gid").unwrap(), "gid1");
+
+        let result = mgr.tell_status("nonexistent", &[]).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn change_position_set() {
+        let mgr = make_test_manager(vec![
+            make_task("w1", TaskStatus::Waiting),
+            make_task("w2", TaskStatus::Waiting),
+            make_task("w3", TaskStatus::Waiting),
+        ]);
+
+        // Move w3 to position 0 (front)
+        let result = mgr.change_position("w3", 0, "POS_SET").await;
+        assert!(result.is_ok());
+
+        // Verify w3 is now first in waiting
+        let waiting = mgr.tell_waiting(0, 10, &[]).await;
+        let arr = waiting.as_array().unwrap();
+        assert_eq!(arr[0].get("gid").unwrap(), "w3");
+    }
+
+    #[tokio::test]
+    async fn change_position_cur() {
+        let mgr = make_test_manager(vec![
+            make_task("w1", TaskStatus::Waiting),
+            make_task("w2", TaskStatus::Waiting),
+            make_task("w3", TaskStatus::Waiting),
+        ]);
+
+        // Move w1 forward by 1 (relative)
+        let result = mgr.change_position("w1", 1, "POS_CUR").await;
+        assert!(result.is_ok());
+
+        let waiting = mgr.tell_waiting(0, 10, &[]).await;
+        let arr = waiting.as_array().unwrap();
+        assert_eq!(arr[0].get("gid").unwrap(), "w2");
+        assert_eq!(arr[1].get("gid").unwrap(), "w1");
+    }
+
+    #[tokio::test]
+    async fn change_position_end() {
+        let mgr = make_test_manager(vec![
+            make_task("w1", TaskStatus::Waiting),
+            make_task("w2", TaskStatus::Waiting),
+            make_task("w3", TaskStatus::Waiting),
+        ]);
+
+        // Move w1 to end
+        let result = mgr.change_position("w1", 0, "POS_END").await;
+        assert!(result.is_ok());
+
+        let waiting = mgr.tell_waiting(0, 10, &[]).await;
+        let arr = waiting.as_array().unwrap();
+        assert_eq!(arr[0].get("gid").unwrap(), "w2");
+        assert_eq!(arr[1].get("gid").unwrap(), "w3");
+        assert_eq!(arr[2].get("gid").unwrap(), "w1");
+    }
+}

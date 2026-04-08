@@ -1019,3 +1019,185 @@ pub async fn multicall_engine(
     }
     Ok(Value::Array(results))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    // --- normalize_non_negative ---
+
+    #[test]
+    fn normalize_non_negative_positive_float() {
+        assert_eq!(normalize_non_negative(3.7), 3);
+        assert_eq!(normalize_non_negative(1.0), 1);
+        assert_eq!(normalize_non_negative(0.9), 0);
+    }
+
+    #[test]
+    fn normalize_non_negative_zero_and_negative() {
+        assert_eq!(normalize_non_negative(0.0), 0);
+        assert_eq!(normalize_non_negative(-1.0), 0);
+        assert_eq!(normalize_non_negative(-0.0), 0);
+    }
+
+    #[test]
+    fn normalize_non_negative_special_floats() {
+        assert_eq!(normalize_non_negative(f64::NAN), 0);
+        assert_eq!(normalize_non_negative(f64::INFINITY), 0);
+        assert_eq!(normalize_non_negative(f64::NEG_INFINITY), 0);
+    }
+
+    #[test]
+    fn normalize_non_negative_large_value() {
+        assert_eq!(normalize_non_negative(1e20), u64::MAX);
+    }
+
+    // --- parse_length_like ---
+
+    #[test]
+    fn parse_length_like_u64_number() {
+        assert_eq!(parse_length_like(&json!(42)), 42);
+        assert_eq!(parse_length_like(&json!(0)), 0);
+    }
+
+    #[test]
+    fn parse_length_like_negative_number() {
+        assert_eq!(parse_length_like(&json!(-5)), 0);
+    }
+
+    #[test]
+    fn parse_length_like_float_number() {
+        assert_eq!(parse_length_like(&json!(3.7)), 3);
+    }
+
+    #[test]
+    fn parse_length_like_string() {
+        assert_eq!(parse_length_like(&json!("100")), 100);
+        assert_eq!(parse_length_like(&json!("3.9")), 3);
+        assert_eq!(parse_length_like(&json!("0")), 0);
+        assert_eq!(parse_length_like(&json!("")), 0);
+        assert_eq!(parse_length_like(&json!("abc")), 0);
+    }
+
+    #[test]
+    fn parse_length_like_bool() {
+        assert_eq!(parse_length_like(&json!(true)), 1);
+        assert_eq!(parse_length_like(&json!(false)), 0);
+    }
+
+    #[test]
+    fn parse_length_like_null() {
+        assert_eq!(parse_length_like(&json!(null)), 0);
+    }
+
+    // --- parse_counter_like ---
+
+    #[test]
+    fn parse_counter_like_normal() {
+        assert_eq!(parse_counter_like(&json!(10)), 10);
+    }
+
+    #[test]
+    fn parse_counter_like_overflow() {
+        assert_eq!(parse_counter_like(&json!(u64::MAX)), u32::MAX);
+        assert_eq!(parse_counter_like(&json!(u32::MAX as u64 + 1)), u32::MAX);
+    }
+
+    // --- compute_auto_retry_delay_ms ---
+
+    #[test]
+    fn retry_exponential_backoff() {
+        assert_eq!(compute_auto_retry_delay_ms("exponential", 2000, 1, 60_000), 2000);
+        assert_eq!(compute_auto_retry_delay_ms("exponential", 2000, 2, 60_000), 4000);
+        assert_eq!(compute_auto_retry_delay_ms("exponential", 2000, 3, 60_000), 8000);
+    }
+
+    #[test]
+    fn retry_exponential_capped_by_max() {
+        assert_eq!(compute_auto_retry_delay_ms("exponential", 2000, 10, 10_000), 10_000);
+    }
+
+    #[test]
+    fn retry_static_strategy() {
+        assert_eq!(compute_auto_retry_delay_ms("static", 5000, 1, 60_000), 5000);
+        assert_eq!(compute_auto_retry_delay_ms("static", 5000, 5, 60_000), 5000);
+    }
+
+    #[test]
+    fn retry_min_delay_clamp() {
+        // base_delay below 1000 is clamped to 1000
+        assert_eq!(compute_auto_retry_delay_ms("static", 100, 1, 60_000), 1000);
+    }
+
+    // --- infer_out_from_uri_inner ---
+
+    #[test]
+    fn infer_out_empty() {
+        assert_eq!(infer_out_from_uri_inner(""), "");
+        assert_eq!(infer_out_from_uri_inner("   "), "");
+    }
+
+    #[test]
+    fn infer_out_m3u8_uri() {
+        assert_eq!(infer_out_from_uri_inner("http://example.com/video.m3u8"), "video.ts");
+        assert_eq!(infer_out_from_uri_inner("http://example.com/video.m3u8?token=abc"), "video.ts");
+        assert_eq!(infer_out_from_uri_inner("http://example.com/video.m3u"), "video.ts");
+    }
+
+    #[test]
+    fn infer_out_http_filename() {
+        assert_eq!(
+            infer_out_from_uri_inner("http://example.com/path/file.zip"),
+            "file.zip"
+        );
+        assert_eq!(
+            infer_out_from_uri_inner("http://example.com/path/file.zip?v=1"),
+            "file.zip"
+        );
+    }
+
+    #[test]
+    fn infer_out_no_extension() {
+        assert_eq!(infer_out_from_uri_inner("http://example.com/path/noext"), "");
+    }
+
+    #[test]
+    fn infer_out_ed2k() {
+        let uri = "ed2k://|file|test_file.bin|1024|abc123def456abc123def456abc123de|/";
+        let result = infer_out_from_uri_inner(uri);
+        assert_eq!(result, "test file.bin");
+    }
+
+    // --- resolve_file_category_inner ---
+
+    #[test]
+    fn category_video() {
+        assert_eq!(resolve_file_category_inner("movie.mp4"), "video");
+        assert_eq!(resolve_file_category_inner("movie.MKV"), "video");
+    }
+
+    #[test]
+    fn category_music() {
+        assert_eq!(resolve_file_category_inner("song.mp3"), "music");
+        assert_eq!(resolve_file_category_inner("song.FLAC"), "music");
+    }
+
+    #[test]
+    fn category_document() {
+        assert_eq!(resolve_file_category_inner("report.pdf"), "document");
+    }
+
+    #[test]
+    fn category_compressed() {
+        assert_eq!(resolve_file_category_inner("archive.zip"), "compressed");
+        assert_eq!(resolve_file_category_inner("archive.7z"), "compressed");
+    }
+
+    #[test]
+    fn category_empty_and_no_ext() {
+        assert_eq!(resolve_file_category_inner(""), "");
+        assert_eq!(resolve_file_category_inner("noext"), "");
+        assert_eq!(resolve_file_category_inner("file.unknownext"), "");
+    }
+}
