@@ -30,6 +30,7 @@ pub struct RpcServer {
     manager: Arc<TaskManager>,
     events: EventBroadcaster,
     shutdown_tx: Option<tokio::sync::oneshot::Sender<()>>,
+    rpc_shutdown_tx: tokio::sync::mpsc::Sender<()>,
 }
 
 #[derive(Clone)]
@@ -38,6 +39,7 @@ struct RpcState {
     events: EventBroadcaster,
     secret: String,
     session_id: String,
+    rpc_shutdown_tx: tokio::sync::mpsc::Sender<()>,
 }
 
 impl RpcServer {
@@ -47,6 +49,7 @@ impl RpcServer {
         secret: String,
         manager: Arc<TaskManager>,
         events: EventBroadcaster,
+        rpc_shutdown_tx: tokio::sync::mpsc::Sender<()>,
     ) -> Self {
         let session_id = uuid::Uuid::new_v4()
             .as_bytes()
@@ -62,6 +65,7 @@ impl RpcServer {
             manager,
             events,
             shutdown_tx: None,
+            rpc_shutdown_tx,
         }
     }
 
@@ -71,6 +75,7 @@ impl RpcServer {
             events: self.events.clone(),
             secret: self.secret.clone(),
             session_id: self.session_id.clone(),
+            rpc_shutdown_tx: self.rpc_shutdown_tx.clone(),
         };
 
         let cors = CorsLayer::new()
@@ -264,6 +269,14 @@ fn maybe_jsonp(body: Value, callback: Option<String>) -> Response {
                 .chars()
                 .filter(|c| c.is_alphanumeric() || *c == '_' || *c == '.')
                 .collect();
+            if safe_cb.is_empty() {
+                return (
+                    StatusCode::OK,
+                    [(header::CONTENT_TYPE, "application/json-rpc")],
+                    json_str,
+                )
+                    .into_response();
+            }
             let jsonp = format!("{safe_cb}({json_str});");
             (
                 StatusCode::OK,
@@ -680,12 +693,12 @@ fn dispatch_method<'a>(
 
         "motrix.shutdown" => {
             state.manager.save_session().await.ok();
-            state.manager.shutdown().await;
+            let _ = state.rpc_shutdown_tx.send(()).await;
             Ok(Value::String("OK".into()))
         }
 
         "motrix.forceShutdown" => {
-            state.manager.shutdown().await;
+            let _ = state.rpc_shutdown_tx.send(()).await;
             Ok(Value::String("OK".into()))
         }
 

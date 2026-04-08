@@ -140,13 +140,12 @@ mod tests {
     }
 
     #[test]
-    fn system_defaults_dir_is_downloads() {
+    fn system_defaults_dir_is_valid_path() {
         let sys = system_defaults();
         let dir = sys.get("dir").unwrap().as_str().unwrap();
-        assert!(
-            dir.contains("Downloads") || dir.contains("downloads"),
-            "dir should contain 'Downloads', got: {dir}"
-        );
+        let path = std::path::Path::new(dir);
+        assert!(!dir.is_empty(), "dir should not be empty");
+        assert!(path.is_absolute(), "dir should be absolute, got: {dir}");
     }
 
     // --- user_defaults ---

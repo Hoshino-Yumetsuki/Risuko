@@ -1318,8 +1318,7 @@ mod tests {
 
     #[test]
     fn info_hash_base32_decode() {
-        // Base32 "MFZWIZLTOQ3GC3BPMJWGK3TEN5SGK4Y=" without padding
-        // Let's use a known conversion: 20 bytes of 0x61 ("aaaa...") = base32 "MFQWCYLBMFQWCYLBMFQWCYLBMFQWCYLB"
+        // 20 bytes of 0x61 ("aaaa...") = base32 "MFQWCYLBMFQWCYLBMFQWCYLBMFQWCYLB"
         let base32 = "MFQWCYLBMFQWCYLBMFQWCYLBMFQWCYLB";
         let expected = "6161616161616161616161616161616161616161";
         assert_eq!(normalize_info_hash(base32), expected);

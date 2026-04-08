@@ -346,31 +346,3 @@ export const FILE_CATEGORIES = {
 	PROGRAM: "program",
 	RSS: "rss",
 } as const;
-
-export const FILE_CATEGORY_SUFFIXES: Record<string, string[]> = {
-	[FILE_CATEGORIES.MUSIC]: AUDIO_SUFFIXES,
-	[FILE_CATEGORIES.VIDEO]: VIDEO_SUFFIXES,
-	[FILE_CATEGORIES.IMAGE]: IMAGE_SUFFIXES,
-	[FILE_CATEGORIES.DOCUMENT]: DOCUMENT_SUFFIXES,
-	[FILE_CATEGORIES.COMPRESSED]: [
-		".zip",
-		".rar",
-		".7z",
-		".tar",
-		".gz",
-		".bz2",
-		".xz",
-		".zst",
-		".iso",
-	],
-	[FILE_CATEGORIES.PROGRAM]: [
-		".exe",
-		".msi",
-		".dmg",
-		".pkg",
-		".deb",
-		".rpm",
-		".appimage",
-		".apk",
-	],
-};

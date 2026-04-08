@@ -249,9 +249,11 @@ mod tests {
 
     #[test]
     fn load_or_default_missing_file_returns_defaults() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("does_not_exist.json");
         let mut defaults = Map::new();
         defaults.insert("key".into(), json!("val"));
-        let result = load_or_default(Path::new("/nonexistent/path.json"), defaults.clone());
+        let result = load_or_default(&path, defaults.clone());
         assert_eq!(result, defaults);
     }
 
