@@ -113,8 +113,7 @@ pub fn run() {
             commands::file_cmds::resolve_torrent_path,
             commands::file_cmds::trash_generated_torrent_sidecars,
             commands::file_cmds::cleanup_generated_torrent_sidecars_for_task,
-            commands::file_cmds::protect_download_file,
-            commands::file_cmds::unprotect_download_file,
+
             commands::engine_cmds::restart_engine,
             commands::engine_cmds::get_engine_status,
             commands::engine_cmds::add_uri,
@@ -180,7 +179,6 @@ pub fn run() {
             tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit
         ) {
             commands::event_cmds::cleanup_download_inhibit();
-            commands::file_cmds::cleanup_protected_files();
         }
     });
 }

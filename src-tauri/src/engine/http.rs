@@ -432,11 +432,6 @@ async fn run_multi_chunk(
             .map_err(|e| format!("Failed to pre-allocate file: {e}"))?;
     }
 
-    // Lock file to prevent deletion while downloading
-    if let Some(path_str) = part_path.to_str() {
-        let _ = crate::commands::file_cmds::lock_file(path_str);
-    }
-
     tracing::info!("Multi-chunk download: {split} chunks, {content_length} bytes total");
 
     // Calculate chunk boundaries
@@ -503,10 +498,6 @@ async fn run_multi_chunk(
     speed.store(0, Ordering::Relaxed);
 
     if !errors.is_empty() {
-        // Unlock file on error/cancel so it can be deleted or retried
-        if let Some(path_str) = part_path.to_str() {
-            let _ = crate::commands::file_cmds::unlock_file(path_str);
-        }
         if errors.iter().all(|e| e.contains("cancelled")) {
             return Err("Download cancelled".to_string());
         }
@@ -789,12 +780,7 @@ async fn run_single_download(
             .map_err(|e| format!("Failed to create file: {e}"))?
     };
 
-    // Lock file to prevent deletion while downloading
-    if let Some(path_str) = part_path.to_str() {
-        let _ = crate::commands::file_cmds::lock_file(path_str);
-    }
-
-    // Speed tracking.
+    // Speed tracking
     let speed_cancel = cancel_token.clone();
     let speed_completed = completed.clone();
     let speed_val = speed.clone();
@@ -862,10 +848,6 @@ async fn run_single_download(
     speed.store(0, Ordering::Relaxed);
 
     if let Err(e) = result {
-        // Unlock file on error/cancel so it can be deleted or retried
-        if let Some(path_str) = part_path.to_str() {
-            let _ = crate::commands::file_cmds::unlock_file(path_str);
-        }
         return Err(e);
     }
     let final_path = finalize_download(part_path, filename, dir_path)?;
@@ -922,11 +904,6 @@ fn finalize_download(
     filename: &str,
     dir_path: &Path,
 ) -> Result<PathBuf, String> {
-    // Release file lock before rename
-    if let Some(path_str) = part_path.to_str() {
-        let _ = crate::commands::file_cmds::unlock_file(path_str);
-    }
-
     let final_name = if filename.ends_with(PART_SUFFIX) {
         filename[..filename.len() - PART_SUFFIX.len()].to_string()
     } else {

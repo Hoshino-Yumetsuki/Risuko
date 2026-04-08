@@ -904,6 +904,21 @@ impl TaskManager {
                     if let Some(f) = task.files.first_mut() {
                         f.length = task.total_length.to_string();
                         f.completed_length = task.completed_length.to_string();
+                        // if it's still a raw URL, resolve to disk path
+                        if looks_like_url(&f.path) {
+                            let filename = if !task.out.is_empty() {
+                                task.out.clone()
+                            } else if let Some(uri) = task.uris.first() {
+                                let name = http::infer_filename_from_uri(uri);
+                                format!("{name}.part")
+                            } else {
+                                String::new()
+                            };
+                            if !filename.is_empty() {
+                                let display = filename.strip_suffix(".part").unwrap_or(&filename);
+                                f.path = format!("{}/{}", task.dir, display);
+                            }
+                        }
                     }
                 }
             }
@@ -1430,6 +1445,96 @@ impl TaskManager {
         }
     }
 
+    pub async fn get_uris(&self, gid: &str) -> Result<Value, String> {
+        let tasks = self.tasks.read().await;
+        let task = tasks
+            .iter()
+            .find(|t| t.gid == gid)
+            .ok_or_else(|| format!("GID {} not found", gid))?;
+        // Prefer URIs from first file entry, fall back to task-level uris
+        let uris: Vec<Value> = if let Some(file) = task.files.first() {
+            if !file.uris.is_empty() {
+                file.uris
+                    .iter()
+                    .map(|u| {
+                        serde_json::json!({
+                            "uri": u.uri,
+                            "status": u.status,
+                        })
+                    })
+                    .collect()
+            } else {
+                task.uris
+                    .iter()
+                    .enumerate()
+                    .map(|(i, u)| {
+                        serde_json::json!({
+                            "uri": u,
+                            "status": if i == 0 { "used" } else { "waiting" },
+                        })
+                    })
+                    .collect()
+            }
+        } else {
+            task.uris
+                .iter()
+                .enumerate()
+                .map(|(i, u)| {
+                    serde_json::json!({
+                        "uri": u,
+                        "status": if i == 0 { "used" } else { "waiting" },
+                    })
+                })
+                .collect()
+        };
+        Ok(Value::Array(uris))
+    }
+
+    pub async fn get_files(&self, gid: &str) -> Result<Value, String> {
+        let tasks = self.tasks.read().await;
+        let task = tasks
+            .iter()
+            .find(|t| t.gid == gid)
+            .ok_or_else(|| format!("GID {} not found", gid))?;
+        let files: Vec<Value> = task
+            .files
+            .iter()
+            .map(|f| serde_json::to_value(f).unwrap_or(Value::Null))
+            .collect();
+        Ok(Value::Array(files))
+    }
+
+    pub async fn get_servers(&self, gid: &str) -> Result<Value, String> {
+        let tasks = self.tasks.read().await;
+        let task = tasks
+            .iter()
+            .find(|t| t.gid == gid)
+            .ok_or_else(|| format!("GID {} not found", gid))?;
+        // connection state like aria2, return a minimal structure.
+        let servers: Vec<Value> = task
+            .files
+            .iter()
+            .map(|f| {
+                let svrs: Vec<Value> = f
+                    .uris
+                    .iter()
+                    .map(|u| {
+                        serde_json::json!({
+                            "uri": u.uri,
+                            "currentUri": u.uri,
+                            "downloadSpeed": "0",
+                        })
+                    })
+                    .collect();
+                serde_json::json!({
+                    "index": f.index,
+                    "servers": svrs,
+                })
+            })
+            .collect();
+        Ok(Value::Array(servers))
+    }
+
     pub async fn save_session(&self) -> Result<(), String> {
         let tasks = self.tasks.read().await;
         self.session.save(&tasks)
@@ -1557,4 +1662,11 @@ fn infer_m3u8_output_name(uri: &str) -> String {
     } else {
         format!("{name}.ts")
     }
+}
+
+fn looks_like_url(path: &str) -> bool {
+    path.starts_with("http://")
+        || path.starts_with("https://")
+        || path.starts_with("ftp://")
+        || path.starts_with("ed2k://")
 }

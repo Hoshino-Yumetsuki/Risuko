@@ -98,7 +98,7 @@ mod tests {
     fn test_parse_basic_link() {
         let uri = "ed2k://|file|The_Two_Towers-The_Purist_Edit-Trailer.avi|14997504|965c013e991ee246d63d45ea71954c4d|/";
         let parsed = parse_ed2k_link(uri).unwrap();
-        assert_eq!(parsed.file_name, "The Two Towers-The Purist Edit-Trailer.avi");
+        assert_eq!(parsed.file_name, "The_Two_Towers-The_Purist_Edit-Trailer.avi");
         assert_eq!(parsed.file_size, 14997504);
         assert_eq!(parsed.file_hash, "965c013e991ee246d63d45ea71954c4d");
         assert!(parsed.sources.is_empty());

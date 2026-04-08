@@ -15,9 +15,7 @@ import { usePreferenceStore } from "@/store/preference";
 import { useTaskStore } from "@/store/task";
 import {
 	finalizeCompletedDownloadPath,
-	protectDownloadFile,
 	showItemInFolder,
-	unprotectDownloadFile,
 } from "@/utils/native";
 
 const RETRY_STRATEGY_STATIC = "static";
@@ -531,8 +529,6 @@ export default {
 				const taskName = getTaskName(task);
 				const message = this.$t("task.download-start-message", { taskName });
 				this.$msg.info(message);
-
-				protectDownloadFile(task);
 			});
 		},
 		onDownloadPause(payload: { gid: string }) {
@@ -547,7 +543,6 @@ export default {
 				if (!task) {
 					return;
 				}
-				unprotectDownloadFile(task);
 				const taskName = getTaskName(task);
 				const message = this.$t("task.download-pause-message", { taskName });
 				this.$msg.info(message);
@@ -560,7 +555,6 @@ export default {
 				if (!task) {
 					return;
 				}
-				unprotectDownloadFile(task);
 				const taskName = getTaskName(task);
 				const message = this.$t("task.download-stop-message", { taskName });
 				this.$msg.info(message);
@@ -573,7 +567,6 @@ export default {
 				if (!task) {
 					return;
 				}
-				unprotectDownloadFile(task);
 				const taskName = getTaskName(task);
 				const { errorCode, errorMessage } = task;
 				logger.error(
@@ -622,9 +615,6 @@ export default {
 		},
 		async handleDownloadComplete(task, isBT) {
 			useTaskStore().saveSession();
-
-			// Remove file protection before renaming .part → final name
-			await unprotectDownloadFile(task);
 
 			const path = await finalizeCompletedDownloadPath(task);
 			this.showTaskCompleteNotify(task, isBT, path);
