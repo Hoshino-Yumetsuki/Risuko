@@ -1,6 +1,6 @@
 [package]
 name = "motrix"
-version = "0.1.1"
+version = "0.1.2"
 description = "A full-featured download manager"
 authors = ["YueMiyuki"]
 edition = "2021"

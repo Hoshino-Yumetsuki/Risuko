@@ -64,13 +64,13 @@
       </div>
     </div>
 
-    <!-- Piece graphic (BT only) -->
-    <div class="graphic-box" ref="graphicBox" v-if="isBT">
+    <!-- Piece graphic (BT or split HTTP) -->
+    <div class="graphic-box" ref="graphicBox" v-if="isBT || hasChunkProgress">
       <mo-task-graphic
         :outerWidth="graphicWidth"
         :bitfield="task.bitfield"
-        :cellCount="graphicCellCount"
-        :cellPercents="splitProgressPercents"
+        :cellCount="displayGraphicCellCount"
+        :cellPercents="displaySplitPercents"
         v-if="graphicWidth > 0"
       />
     </div>
@@ -92,13 +92,13 @@
         :total="Number(task.totalLength)"
         :status="taskStatus"
       />
-      <div class="split-progress-list" v-if="isBT && splitProgressList.length > 0">
+      <div class="split-progress-list" v-if="displaySplitProgressList.length > 0">
         <div
           class="split-progress-item"
-          v-for="item in splitProgressList"
+          v-for="item in displaySplitProgressList"
           :key="`split-${item.index}`"
         >
-          <span class="split-progress-label">S{{ item.index + 1 }}</span>
+          <span class="split-progress-label">{{ hasChunkProgress && !isBT ? 'T' : 'S' }}{{ item.index + 1 }}</span>
           <div class="split-progress-track">
             <div class="split-progress-fill" :style="{ width: `${item.percent}%` }"></div>
           </div>
@@ -152,10 +152,15 @@ import TaskProgress from "@/components/Task/TaskProgress.vue";
 import TaskGraphic from "@/components/TaskGraphic/Index.vue";
 import is from "@/shims/platform";
 import { usePreferenceStore } from "@/store/preference";
+import {
+	deleteSpeedHistory,
+	getSpeedHistory,
+	SPEED_HISTORY_LIMIT,
+	useTaskStore,
+} from "@/store/task";
 
 const DEFAULT_SPLIT_SEGMENTS = 32;
 const MAX_SPLIT_SEGMENTS = 128;
-const SPEED_HISTORY_LIMIT = 60;
 const SPEED_VERTICAL_GRID_COUNT = 6;
 
 export default {
@@ -191,11 +196,18 @@ export default {
 	data() {
 		return {
 			graphicWidth: 0,
-			speedHistory: [],
-			speedSampler: null,
 		};
 	},
 	computed: {
+		speedHistory() {
+			// Depend on store's reactive rev counter to recompute when samples change
+			void useTaskStore().speedHistoryRev;
+			const gid = this.task?.gid;
+			if (!gid) {
+				return [];
+			}
+			return getSpeedHistory(gid);
+		},
 		isRenderer: () => is.renderer(),
 		isBT() {
 			return checkTaskIsBT(this.task);
@@ -225,15 +237,6 @@ export default {
 		},
 		isActive() {
 			return this.taskStatus === TASK_STATUS.ACTIVE;
-		},
-		shouldSampleSpeed() {
-			if (!this.task) {
-				return false;
-			}
-			return (
-				this.taskStatus === TASK_STATUS.ACTIVE ||
-				this.taskStatus === TASK_STATUS.SEEDING
-			);
 		},
 		percent() {
 			const { totalLength, completedLength } = this.task;
@@ -340,6 +343,42 @@ export default {
 		splitProgressPercents() {
 			return this.splitProgressList.map((item) => item.percent);
 		},
+		hasChunkProgress() {
+			return (
+				Array.isArray(this.task?.chunkProgress) &&
+				this.task.chunkProgress.length > 1
+			);
+		},
+		httpChunkProgressList() {
+			if (!this.hasChunkProgress) {
+				return [];
+			}
+			return this.task.chunkProgress.map((chunk, index) => {
+				const total = Number(chunk.totalLength || 0);
+				const completed = Number(chunk.completedLength || 0);
+				const percent = calcProgress(total, completed);
+				return {
+					index,
+					percent,
+					percentText: `${percent}%`,
+				};
+			});
+		},
+		displaySplitProgressList() {
+			if (this.isBT) {
+				return this.splitProgressList;
+			}
+			return this.httpChunkProgressList;
+		},
+		displaySplitPercents() {
+			return this.displaySplitProgressList.map((item) => item.percent);
+		},
+		displayGraphicCellCount() {
+			if (this.isBT) {
+				return this.graphicCellCount;
+			}
+			return this.httpChunkProgressList.length;
+		},
 		speedHistoryMax() {
 			const maxSpeed = this.speedHistory.reduce((max, sample) => {
 				const downloadSpeed = Number(sample.download || 0);
@@ -373,55 +412,14 @@ export default {
 		this.$nextTick(() => {
 			this.updateGraphicWidth();
 		});
-		this.resetSpeedHistory();
-		this.syncSpeedSampler();
-	},
-	beforeUnmount() {
-		this.stopSpeedSampler();
-	},
-	watch: {
-		"task.gid"() {
-			this.resetSpeedHistory();
-			this.syncSpeedSampler();
-		},
-		shouldSampleSpeed() {
-			this.syncSpeedSampler();
-		},
 	},
 	methods: {
-		startSpeedSampler() {
-			this.stopSpeedSampler();
-			this.speedSampler = window.setInterval(() => {
-				this.pushSpeedSample();
-			}, 1000);
-		},
-		stopSpeedSampler() {
-			if (this.speedSampler) {
-				window.clearInterval(this.speedSampler);
-				this.speedSampler = null;
-			}
-		},
 		resetSpeedHistory() {
-			this.speedHistory = [];
-			this.pushSpeedSample();
-		},
-		syncSpeedSampler() {
-			if (this.shouldSampleSpeed) {
-				this.startSpeedSampler();
-			} else {
-				this.stopSpeedSampler();
+			const gid = this.task?.gid;
+			if (gid) {
+				deleteSpeedHistory(gid);
+				useTaskStore().speedHistoryRev++;
 			}
-		},
-		pushSpeedSample() {
-			if (!this.task || !this.shouldSampleSpeed) {
-				return;
-			}
-			const sample = {
-				download: Math.max(0, this.displayDownloadSpeed),
-				upload: this.isBT ? Math.max(0, this.displayUploadSpeed) : 0,
-			};
-			const nextHistory = [...this.speedHistory, sample];
-			this.speedHistory = nextHistory.slice(-SPEED_HISTORY_LIMIT);
 		},
 		buildSpeedPath(type) {
 			if (!Array.isArray(this.speedHistory) || this.speedHistory.length < 2) {

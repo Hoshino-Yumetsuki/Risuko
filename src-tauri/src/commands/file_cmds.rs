@@ -14,6 +14,7 @@ const MAX_TORRENT_PREVIEW_BYTES: usize = 8 * 1024 * 1024;
 const DEFAULT_TORRENT_PREVIEW_PAGE_SIZE: usize = 300;
 const MAX_TORRENT_PREVIEW_PAGE_SIZE: usize = 2_000;
 const TEMP_DOWNLOAD_SUFFIX: &str = ".part";
+const CHUNK_META_SUFFIX: &str = ".chunks";
 
 #[derive(Debug)]
 enum BencodeValue {
@@ -168,9 +169,19 @@ pub fn trash_item(path: String) -> Result<bool, String> {
     let p = std::path::Path::new(&path);
     if !p.exists() {
         log::info!("trash_item: path does not exist, skipped: {}", path);
+        // Still try to clean up .chunks sidecar even if .part is gone
+        if path.ends_with(TEMP_DOWNLOAD_SUFFIX) {
+            let chunks_path = format!("{}{}", path, CHUNK_META_SUFFIX);
+            let _ = std::fs::remove_file(&chunks_path);
+        }
         return Ok(false);
     }
     trash::delete(&path).map_err(|e| e.to_string())?;
+    // Clean up multi-chunk resume sidecar alongside .part file
+    if path.ends_with(TEMP_DOWNLOAD_SUFFIX) {
+        let chunks_path = format!("{}{}", path, CHUNK_META_SUFFIX);
+        let _ = std::fs::remove_file(&chunks_path);
+    }
     Ok(true)
 }
 

@@ -27,6 +27,8 @@ const CHUNK_MAX_RETRIES: u32 = 5;
 const STALE_PART_REMOVED: &str = "stale partial file removed";
 /// Exponential moving average smoothing factor for speed reporting
 const SPEED_EMA_ALPHA: f64 = 0.3;
+/// Suffix for per-chunk resume metadata file
+const CHUNK_META_SUFFIX: &str = ".chunks";
 
 /// Inclusive byte range [start, end]
 #[derive(Debug, Clone, Copy)]
@@ -50,8 +52,92 @@ impl ChunkRange {
     }
 }
 
+/// Outcome from a single stream call: always reports bytes flushed to disk.
+struct StreamOutcome {
+    bytes_flushed: u64,
+    error: Option<String>,
+}
+
+/// Metadata for resuming multi-chunk downloads, persisted as a JSON sidecar.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct ChunkMeta {
+    content_length: u64,
+    split: usize,
+    etag: Option<String>,
+    /// Per-chunk bytes confirmed flushed to disk
+    chunk_bytes: Vec<u64>,
+}
+
+fn chunk_meta_path(part_path: &Path) -> PathBuf {
+    let mut p = part_path.as_os_str().to_owned();
+    p.push(CHUNK_META_SUFFIX);
+    PathBuf::from(p)
+}
+
+fn save_chunk_meta(
+    part_path: &Path,
+    content_length: u64,
+    split: usize,
+    etag: &Option<String>,
+    chunk_completed: &[Arc<AtomicU64>],
+) {
+    let meta = ChunkMeta {
+        content_length,
+        split,
+        etag: etag.clone(),
+        chunk_bytes: chunk_completed
+            .iter()
+            .map(|c| c.load(Ordering::Relaxed))
+            .collect(),
+    };
+    let path = chunk_meta_path(part_path);
+    if let Ok(json) = serde_json::to_string(&meta) {
+        let _ = fs::write(&path, json);
+    }
+}
+
+fn load_chunk_meta(
+    part_path: &Path,
+    content_length: u64,
+    split: usize,
+    etag: &Option<String>,
+) -> Option<ChunkMeta> {
+    let path = chunk_meta_path(part_path);
+    let data = fs::read_to_string(&path).ok()?;
+    let meta: ChunkMeta = serde_json::from_str(&data).ok()?;
+    if meta.content_length != content_length
+        || meta.split != split
+        || meta.chunk_bytes.len() != split
+    {
+        let _ = fs::remove_file(&path);
+        return None;
+    }
+    // If both have ETags, they must match (server file unchanged)
+    if let (Some(saved), Some(current)) = (&meta.etag, etag) {
+        if saved != current {
+            let _ = fs::remove_file(&path);
+            return None;
+        }
+    }
+    Some(meta)
+}
+
+fn delete_chunk_meta(part_path: &Path) {
+    let _ = fs::remove_file(chunk_meta_path(part_path));
+}
+
 /// Build a reqwest Client with common settings applied from options
 fn build_client(options: &Map<String, Value>) -> Result<Client, String> {
+    build_client_inner(options, true)
+}
+
+/// Build a client without automatic decompression — needed for range requests
+/// where we must receive raw bytes at exact file offsets.
+fn build_client_no_decompress(options: &Map<String, Value>) -> Result<Client, String> {
+    build_client_inner(options, false)
+}
+
+fn build_client_inner(options: &Map<String, Value>, decompress: bool) -> Result<Client, String> {
     let ua = options
         .get("user-agent")
         .and_then(|v| v.as_str())
@@ -61,10 +147,13 @@ fn build_client(options: &Map<String, Value>) -> Result<Client, String> {
         .user_agent(ua)
         .redirect(reqwest::redirect::Policy::limited(10))
         .connect_timeout(std::time::Duration::from_secs(30))
-        .tcp_nodelay(true)
-        .gzip(true)
-        .brotli(true)
-        .deflate(true);
+        .tcp_nodelay(true);
+
+    if decompress {
+        builder = builder.gzip(true).brotli(true).deflate(true);
+    } else {
+        builder = builder.no_gzip().no_brotli().no_deflate();
+    }
 
     if let Some(proxy_url) = options
         .get("all-proxy")
@@ -139,6 +228,7 @@ pub async fn run_http_download(
     cancel_token: CancellationToken,
     global_limiter: Arc<SpeedLimiter>,
     task_limiter: Arc<SpeedLimiter>,
+    chunk_completed: Vec<Arc<AtomicU64>>,
 ) -> Result<PathBuf, String> {
     tracing::info!("Starting download: uri={uri}, dir={dir}, out={out}");
     let dir_path = Path::new(dir);
@@ -164,6 +254,11 @@ pub async fn run_http_download(
         .max(1) as usize;
 
     let client = build_client(options)?;
+    let range_client = if split > 1 {
+        build_client_no_decompress(options)?
+    } else {
+        client.clone()
+    };
     let headers = build_headers(options);
 
     let use_remote_time = options
@@ -181,7 +276,7 @@ pub async fn run_http_download(
     let mut last_modified_header: Option<String> = None;
 
     let is_http = uri.starts_with("http://") || uri.starts_with("https://");
-    if is_http && split > 1 && existing_size == 0 {
+    if is_http && split > 1 {
         match probe_range_support(&client, uri, &headers).await {
             Ok(Some(probe)) if probe.content_length > MIN_SEGMENT_SIZE * split as u64 => {
                 if use_remote_time {
@@ -189,7 +284,7 @@ pub async fn run_http_download(
                 }
                 connections.store(split as u32, Ordering::Relaxed);
                 let result = run_multi_chunk(
-                    &client,
+                    &range_client,
                     uri,
                     &part_path,
                     probe.content_length,
@@ -204,6 +299,7 @@ pub async fn run_http_download(
                     global_limiter,
                     task_limiter,
                     probe.etag,
+                    &chunk_completed,
                 )
                 .await;
                 if let Ok(ref path) = result {
@@ -226,6 +322,14 @@ pub async fn run_http_download(
     }
 
     // Single-connection download (fallback, resume, FTP, or small files)
+    // If falling through from a failed multi-chunk probe and a pre-allocated .part exists,
+    // its size doesn't reflect actual download progress — remove it to avoid a 416.
+    if split > 1 && existing_size > 0 {
+        tracing::info!("Removing pre-allocated .part before single-connection fallback");
+        let _ = fs::remove_file(&part_path);
+        delete_chunk_meta(&part_path);
+        let _ = fs::remove_file(&part_path);
+    }
     connections.store(1, Ordering::Relaxed);
     let result = run_single_download(
         &client,
@@ -248,9 +352,13 @@ pub async fn run_http_download(
     let final_result = match result {
         Err(ref e) if e.contains(STALE_PART_REMOVED) => {
             tracing::info!("Retrying download after stale .part removal");
+            delete_chunk_meta(&part_path);
             completed.store(0, Ordering::Relaxed);
             total.store(0, Ordering::Relaxed);
             speed.store(0, Ordering::Relaxed);
+            for cc in &chunk_completed {
+                cc.store(0, Ordering::Relaxed);
+            }
 
             if is_http && split > 1 {
                 if let Ok(Some(probe)) =
@@ -262,7 +370,7 @@ pub async fn run_http_download(
                         }
                         connections.store(split as u32, Ordering::Relaxed);
                         let mc_result = run_multi_chunk(
-                            &client,
+                            &range_client,
                             uri,
                             &part_path,
                             probe.content_length,
@@ -277,6 +385,7 @@ pub async fn run_http_download(
                             global_limiter,
                             task_limiter,
                             probe.etag,
+                            &chunk_completed,
                         )
                         .await;
                         if let Ok(ref path) = mc_result {
@@ -417,10 +526,11 @@ async fn run_multi_chunk(
     global_limiter: Arc<SpeedLimiter>,
     task_limiter: Arc<SpeedLimiter>,
     expected_etag: Option<String>,
+    chunk_completed: &[Arc<AtomicU64>],
 ) -> Result<PathBuf, String> {
     total.store(content_length, Ordering::Relaxed);
 
-    // Pre-allocate the output file
+    // Pre-allocate the output file (no-op if already at correct size)
     {
         let file = fs::OpenOptions::new()
             .create(true)
@@ -447,6 +557,24 @@ async fn run_multi_chunk(
         chunks.push(ChunkRange::new(start, end));
     }
 
+    // Check for existing chunk progress from a previous paused/failed attempt
+    let initial_offsets =
+        if let Some(meta) = load_chunk_meta(part_path, content_length, split, &expected_etag) {
+            let total_resumed: u64 = meta.chunk_bytes.iter().sum();
+            completed.store(total_resumed, Ordering::Relaxed);
+            for (i, &bytes) in meta.chunk_bytes.iter().enumerate() {
+                if let Some(cc) = chunk_completed.get(i) {
+                    cc.store(bytes, Ordering::Relaxed);
+                }
+            }
+            tracing::info!(
+                "Resuming multi-chunk download: {total_resumed}/{content_length} bytes"
+            );
+            meta.chunk_bytes
+        } else {
+            vec![0u64; split]
+        };
+
     let file = tokio::fs::OpenOptions::new()
         .write(true)
         .open(part_path)
@@ -466,6 +594,12 @@ async fn run_multi_chunk(
     // Spawn all chunk downloads concurrently
     let mut futures = futures_util::stream::FuturesUnordered::new();
     for (i, chunk) in chunks.iter().enumerate() {
+        let initial = initial_offsets[i];
+        // Skip chunks already fully downloaded
+        if initial >= chunk.len() {
+            continue;
+        }
+
         let client = client.clone();
         let uri = uri.to_string();
         let headers = headers.clone();
@@ -476,9 +610,10 @@ async fn run_multi_chunk(
         let gl = global_limiter.clone();
         let tl = task_limiter.clone();
         let etag = expected_etag.clone();
+        let cc = chunk_completed.get(i).cloned();
 
         futures.push(tokio::spawn(async move {
-            download_chunk(&client, &uri, &headers, chunk, &file, &completed, cancel_token, i, &gl, &tl, etag.as_deref())
+            download_chunk(&client, &uri, &headers, chunk, &file, &completed, cancel_token, i, &gl, &tl, etag.as_deref(), cc.as_ref(), initial)
                 .await
         }));
     }
@@ -498,6 +633,9 @@ async fn run_multi_chunk(
     speed.store(0, Ordering::Relaxed);
 
     if !errors.is_empty() {
+        // Persist per-chunk progress for potential resume
+        save_chunk_meta(part_path, content_length, split, &expected_etag, chunk_completed);
+
         if errors.iter().all(|e| e.contains("cancelled")) {
             return Err("Download cancelled".to_string());
         }
@@ -512,6 +650,7 @@ async fn run_multi_chunk(
         }
     }
 
+    delete_chunk_meta(part_path);
     finalize_download(part_path, filename, dir_path)
 }
 
@@ -528,8 +667,10 @@ async fn download_chunk(
     global_limiter: &SpeedLimiter,
     task_limiter: &SpeedLimiter,
     expected_etag: Option<&str>,
+    chunk_completed: Option<&Arc<AtomicU64>>,
+    initial_bytes_written: u64,
 ) -> Result<(), String> {
-    let mut bytes_written: u64 = 0;
+    let mut bytes_written: u64 = initial_bytes_written;
     let mut retry_count: u32 = 0;
 
     loop {
@@ -543,7 +684,7 @@ async fn download_chunk(
         }
 
         let current_range = ChunkRange::new(current_start, chunk.end);
-        let result = download_chunk_stream(
+        let outcome = download_chunk_stream(
             client,
             uri,
             headers,
@@ -557,19 +698,24 @@ async fn download_chunk(
         )
         .await;
 
-        match result {
-            Ok(written) => {
-                bytes_written += written;
+        // Always account for bytes confirmed flushed to disk
+        bytes_written += outcome.bytes_flushed;
+        if let Some(cc) = chunk_completed {
+            cc.store(bytes_written, Ordering::Relaxed);
+        }
+
+        match outcome.error {
+            None => {
                 if bytes_written >= chunk.len() {
                     return Ok(());
                 }
                 // Partial success, continue to download the rest of the chunk
                 retry_count = 0;
             }
-            Err(e) if e.contains("cancelled") => {
+            Some(e) if e.contains("cancelled") => {
                 return Err(e);
             }
-            Err(e) => {
+            Some(e) => {
                 retry_count += 1;
                 if retry_count > CHUNK_MAX_RETRIES {
                     return Err(format!(
@@ -587,7 +733,8 @@ async fn download_chunk(
     }
 }
 
-/// Stream a chunk range. Returns bytes successfully written to disk
+/// Stream a chunk range. Always returns the number of bytes flushed to disk,
+/// even on error, so the caller can accurately track resume progress.
 async fn download_chunk_stream(
     client: &Client,
     uri: &str,
@@ -599,38 +746,48 @@ async fn download_chunk_stream(
     global_limiter: &SpeedLimiter,
     task_limiter: &SpeedLimiter,
     expected_etag: Option<&str>,
-) -> Result<u64, String> {
+) -> StreamOutcome {
     let mut req = client
         .get(uri)
         .headers(headers.clone())
         .header(RANGE, range.to_range_header_value());
 
-    // If we have an ETag from the probe, send If-Match to ensure the file hasn't changed
-    // If the ETag no longer matches, the server returns 412 Precondition Failed
     if let Some(etag) = expected_etag {
         if let Ok(v) = HeaderValue::from_str(etag) {
             req = req.header(IF_MATCH, v);
         }
     }
 
-    let resp = req
-        .send()
-        .await
-        .map_err(|e| format!("HTTP request failed: {e}"))?;
+    let resp = match req.send().await {
+        Ok(r) => r,
+        Err(e) => {
+            return StreamOutcome {
+                bytes_flushed: 0,
+                error: Some(format!("HTTP request failed: {e}")),
+            };
+        }
+    };
 
     let status = resp.status().as_u16();
 
-    // For range requests, validate that the ETag still matches
     if let Some(expected) = expected_etag {
         if let Some(actual) = resp.headers().get(ETAG).and_then(|v| v.to_str().ok()) {
             if actual != expected {
-                return Err("Server file changed (ETag mismatch), aborting download".to_string());
+                return StreamOutcome {
+                    bytes_flushed: 0,
+                    error: Some(
+                        "Server file changed (ETag mismatch), aborting download".to_string(),
+                    ),
+                };
             }
         }
     }
 
     if status >= 400 {
-        return Err(format!("HTTP error: {status}"));
+        return StreamOutcome {
+            bytes_flushed: 0,
+            error: Some(format!("HTTP error: {status}")),
+        };
     }
 
     let mut stream = resp.bytes_stream();
@@ -641,16 +798,22 @@ async fn download_chunk_stream(
         tokio::select! {
             _ = cancel_token.cancelled() => {
                 if !buf.is_empty() {
-                    flush_buf_at(file, range.start + total_written, &buf).await?;
+                    if let Ok(n) = flush_buf_at(file, range.start + total_written, &buf).await {
+                        total_written += n as u64;
+                    } else {
+                        // Flush failed; revert the received-bytes from `completed`
+                        completed.fetch_sub(buf.len() as u64, Ordering::Relaxed);
+                    }
                 }
-                return Err("Download cancelled".to_string());
+                return StreamOutcome {
+                    bytes_flushed: total_written,
+                    error: Some("Download cancelled".to_string()),
+                };
             }
             chunk = stream.next() => {
                 match chunk {
                     Some(Ok(bytes)) => {
                         let len = bytes.len();
-
-                        // Apply speed limits before accounting for the bytes
                         global_limiter.acquire(len).await;
                         task_limiter.acquire(len).await;
 
@@ -658,29 +821,57 @@ async fn download_chunk_stream(
                         completed.fetch_add(len as u64, Ordering::Relaxed);
 
                         if buf.len() >= CHUNK_BUF_CAPACITY {
-                            let written = flush_buf_at(
+                            match flush_buf_at(
                                 file, range.start + total_written, &buf,
-                            ).await?;
-                            total_written += written as u64;
-                            buf.clear();
+                            ).await {
+                                Ok(written) => {
+                                    total_written += written as u64;
+                                    buf.clear();
+                                }
+                                Err(e) => {
+                                    return StreamOutcome {
+                                        bytes_flushed: total_written,
+                                        error: Some(e),
+                                    };
+                                }
+                            }
                         }
                     }
                     Some(Err(e)) => {
                         if !buf.is_empty() {
-                            flush_buf_at(
+                            if let Ok(n) = flush_buf_at(
                                 file, range.start + total_written, &buf,
-                            ).await?;
+                            ).await {
+                                total_written += n as u64;
+                            } else {
+                                completed.fetch_sub(buf.len() as u64, Ordering::Relaxed);
+                            }
                         }
-                        return Err(format!("Stream error: {e}"));
+                        return StreamOutcome {
+                            bytes_flushed: total_written,
+                            error: Some(format!("Stream error: {e}")),
+                        };
                     }
                     None => {
                         if !buf.is_empty() {
-                            let written = flush_buf_at(
+                            match flush_buf_at(
                                 file, range.start + total_written, &buf,
-                            ).await?;
-                            total_written += written as u64;
+                            ).await {
+                                Ok(written) => {
+                                    total_written += written as u64;
+                                }
+                                Err(e) => {
+                                    return StreamOutcome {
+                                        bytes_flushed: total_written,
+                                        error: Some(e),
+                                    };
+                                }
+                            }
                         }
-                        return Ok(total_written);
+                        return StreamOutcome {
+                            bytes_flushed: total_written,
+                            error: None,
+                        };
                     }
                 }
             }

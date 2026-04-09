@@ -42,6 +42,7 @@ export interface DownloadTask {
 	pieceLength?: string;
 	numPieces?: string;
 	options?: Record<string, string>;
+	chunkProgress?: { completedLength: string; totalLength: string }[];
 }
 
 export interface PeerInfo {

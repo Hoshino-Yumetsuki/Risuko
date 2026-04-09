@@ -73,7 +73,7 @@ function clamp(val: number): number {
 	return Math.min(props.max, Math.max(props.min, val));
 }
 
-function _onInput(e: Event) {
+function onInput(e: Event) {
 	const raw = (e.target as HTMLInputElement).value;
 	if (raw === "") {
 		return;
@@ -84,7 +84,7 @@ function _onInput(e: Event) {
 	}
 }
 
-function _onBlur(e: Event) {
+function onBlur(e: Event) {
 	const raw = (e.target as HTMLInputElement).value;
 	const num = parseFloat(raw);
 	if (Number.isNaN(num)) {
@@ -114,12 +114,12 @@ function animateBtn(target: EventTarget | null) {
 	clickResetTimers.set(el, timer);
 }
 
-function _increment(event?: MouseEvent) {
+function increment(event?: MouseEvent) {
 	animateBtn(event?.currentTarget ?? null);
 	emit("update:modelValue", clamp((props.modelValue ?? 0) + props.step));
 }
 
-function _decrement(event?: MouseEvent) {
+function decrement(event?: MouseEvent) {
 	animateBtn(event?.currentTarget ?? null);
 	emit("update:modelValue", clamp((props.modelValue ?? 0) - props.step));
 }
