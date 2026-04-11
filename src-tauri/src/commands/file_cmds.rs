@@ -14,7 +14,7 @@ const MAX_TORRENT_PREVIEW_BYTES: usize = 8 * 1024 * 1024;
 const DEFAULT_TORRENT_PREVIEW_PAGE_SIZE: usize = 300;
 const MAX_TORRENT_PREVIEW_PAGE_SIZE: usize = 2_000;
 const TEMP_DOWNLOAD_SUFFIX: &str = ".part";
-const CHUNK_META_SUFFIX: &str = ".chunks";
+use crate::engine::CHUNK_META_SUFFIX;
 
 #[derive(Debug)]
 enum BencodeValue {

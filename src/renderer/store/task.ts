@@ -537,6 +537,7 @@ export const useTaskStore = defineStore("task", {
 			}
 
 			return api.removeTask({ gid }).finally(() => {
+				speedHistoryCache.delete(gid);
 				this.fetchList();
 				this.saveSession();
 			});
@@ -671,6 +672,9 @@ export const useTaskStore = defineStore("task", {
 		},
 		batchRemoveTask(gids: string[]) {
 			return api.batchRemoveTask({ gids }).finally(() => {
+				for (const gid of gids) {
+					speedHistoryCache.delete(gid);
+				}
 				this.fetchList();
 				this.saveSession();
 			});

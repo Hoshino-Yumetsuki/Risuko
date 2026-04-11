@@ -28,7 +28,7 @@ const STALE_PART_REMOVED: &str = "stale partial file removed";
 /// Exponential moving average smoothing factor for speed reporting
 const SPEED_EMA_ALPHA: f64 = 0.3;
 /// Suffix for per-chunk resume metadata file
-const CHUNK_META_SUFFIX: &str = ".chunks";
+use super::CHUNK_META_SUFFIX;
 
 /// Inclusive byte range [start, end]
 #[derive(Debug, Clone, Copy)]
@@ -112,6 +112,21 @@ fn load_chunk_meta(
         let _ = fs::remove_file(&path);
         return None;
     }
+
+    // Verify the .part file exists with the expected pre-allocated size
+    match fs::metadata(part_path) {
+        Ok(m) if m.len() == content_length => {}
+        _ => {
+            let _ = fs::remove_file(&path);
+            return None;
+        }
+    }
+
+    // Saved ETag without a current probe ETag means we can't verify integrity
+    if meta.etag.is_some() && etag.is_none() {
+        let _ = fs::remove_file(&path);
+        return None;
+    }
     // If both have ETags, they must match (server file unchanged)
     if let (Some(saved), Some(current)) = (&meta.etag, etag) {
         if saved != current {
@@ -119,6 +134,21 @@ fn load_chunk_meta(
             return None;
         }
     }
+
+    // Bounds-check each chunk's saved bytes against its real length
+    let chunk_size = content_length / split as u64;
+    for (i, &bytes) in meta.chunk_bytes.iter().enumerate() {
+        let chunk_len = if i == split - 1 {
+            content_length - chunk_size * (split as u64 - 1)
+        } else {
+            chunk_size
+        };
+        if bytes > chunk_len {
+            let _ = fs::remove_file(&path);
+            return None;
+        }
+    }
+
     Some(meta)
 }
 
@@ -695,6 +725,7 @@ async fn download_chunk(
             global_limiter,
             task_limiter,
             expected_etag,
+            chunk_completed,
         )
         .await;
 
@@ -746,6 +777,7 @@ async fn download_chunk_stream(
     global_limiter: &SpeedLimiter,
     task_limiter: &SpeedLimiter,
     expected_etag: Option<&str>,
+    chunk_completed: Option<&Arc<AtomicU64>>,
 ) -> StreamOutcome {
     let mut req = client
         .get(uri)
@@ -803,6 +835,9 @@ async fn download_chunk_stream(
                     } else {
                         // Flush failed; revert the received-bytes from `completed`
                         completed.fetch_sub(buf.len() as u64, Ordering::Relaxed);
+                        if let Some(cc) = chunk_completed {
+                            cc.fetch_sub(buf.len() as u64, Ordering::Relaxed);
+                        }
                     }
                 }
                 return StreamOutcome {
@@ -819,6 +854,9 @@ async fn download_chunk_stream(
 
                         buf.extend_from_slice(&bytes);
                         completed.fetch_add(len as u64, Ordering::Relaxed);
+                        if let Some(cc) = chunk_completed {
+                            cc.fetch_add(len as u64, Ordering::Relaxed);
+                        }
 
                         if buf.len() >= CHUNK_BUF_CAPACITY {
                             match flush_buf_at(
@@ -829,6 +867,10 @@ async fn download_chunk_stream(
                                     buf.clear();
                                 }
                                 Err(e) => {
+                                    completed.fetch_sub(buf.len() as u64, Ordering::Relaxed);
+                                    if let Some(cc) = chunk_completed {
+                                        cc.fetch_sub(buf.len() as u64, Ordering::Relaxed);
+                                    }
                                     return StreamOutcome {
                                         bytes_flushed: total_written,
                                         error: Some(e),
@@ -845,6 +887,9 @@ async fn download_chunk_stream(
                                 total_written += n as u64;
                             } else {
                                 completed.fetch_sub(buf.len() as u64, Ordering::Relaxed);
+                                if let Some(cc) = chunk_completed {
+                                    cc.fetch_sub(buf.len() as u64, Ordering::Relaxed);
+                                }
                             }
                         }
                         return StreamOutcome {

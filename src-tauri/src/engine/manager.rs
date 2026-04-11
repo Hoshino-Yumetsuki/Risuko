@@ -427,6 +427,7 @@ impl TaskManager {
             .map(|_| Arc::new(AtomicU64::new(0)))
             .collect();
         let chunk_completed_dl = chunk_completed.clone();
+        let chunk_completed_ref = chunk_completed.clone();
 
         let cancel_dl = cancel.clone();
         let cancel_token_dl = cancel_token.clone();
@@ -434,6 +435,7 @@ impl TaskManager {
         let completed_dl = completed.clone();
         let speed_dl = speed.clone();
         let connections_dl = connections.clone();
+        let connections_ref = connections.clone();
 
         let total_ref = total.clone();
         let completed_ref = completed.clone();
@@ -477,6 +479,30 @@ impl TaskManager {
                 task.total_length = total_ref.load(Ordering::Relaxed);
                 task.completed_length = completed_ref.load(Ordering::Relaxed);
                 task.download_speed = 0;
+
+                // Snapshot final per-chunk progress before the active download is removed
+                let conns = connections_ref.load(Ordering::Relaxed);
+                if chunk_completed_ref.len() > 1 && task.total_length > 0 && conns > 1 {
+                    let split_count = chunk_completed_ref.len() as u64;
+                    let chunk_size = task.total_length / split_count;
+                    task.chunk_progress = chunk_completed_ref
+                        .iter()
+                        .enumerate()
+                        .map(|(i, cc)| {
+                            let total = if i as u64 == split_count - 1 {
+                                task.total_length - chunk_size * (split_count - 1)
+                            } else {
+                                chunk_size
+                            };
+                            ChunkProgress {
+                                completed: cc.load(Ordering::Relaxed),
+                                total,
+                            }
+                        })
+                        .collect();
+                } else {
+                    task.chunk_progress.clear();
+                }
 
                 match download_result {
                     Ok(path) => {
@@ -916,7 +942,10 @@ impl TaskManager {
                     task.connections = ad.connections.load(Ordering::Relaxed);
 
                     // split chunk progress for multi-thread HTTP
-                    if !ad.chunk_completed.is_empty() && task.total_length > 0 {
+                    // Only populate when actually using multiple connections;
+                    // single-connection fallback leaves chunk_completed at zero.
+                    let conns = ad.connections.load(Ordering::Relaxed);
+                    if !ad.chunk_completed.is_empty() && task.total_length > 0 && conns > 1 {
                         let split = ad.chunk_completed.len() as u64;
                         let chunk_size = task.total_length / split;
                         task.chunk_progress = ad

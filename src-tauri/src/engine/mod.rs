@@ -14,6 +14,9 @@ pub mod torrent;
 
 pub use session::SESSION_FILENAME;
 
+/// Suffix for per-chunk resume metadata sidecar file
+pub const CHUNK_META_SUFFIX: &str = ".chunks";
+
 use std::path::PathBuf;
 use std::sync::Arc;
 use tauri::AppHandle;

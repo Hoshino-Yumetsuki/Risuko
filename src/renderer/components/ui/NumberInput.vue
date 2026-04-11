@@ -80,7 +80,7 @@ function onInput(e: Event) {
 	}
 	const num = parseFloat(raw);
 	if (!Number.isNaN(num)) {
-		emit("update:modelValue", num);
+		emit("update:modelValue", clamp(num));
 	}
 }
 
