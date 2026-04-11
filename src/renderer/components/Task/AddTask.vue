@@ -77,7 +77,7 @@
           </div>
           <div class="atd-field atd-field--narrow">
             <label class="atd-field-label">{{ $t('task.task-split') }}</label>
-            <NumberInput v-model="form.split" :min="1" />
+            <NumberInput v-model="form.split" :min="1" :max="128" />
           </div>
           <div class="atd-field atd-field--full">
             <label class="atd-field-label">{{ $t('task.task-dir') }}</label>

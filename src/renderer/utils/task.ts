@@ -20,7 +20,7 @@ interface TaskFormState {
 	preference: { config: AppConfig };
 }
 
-interface TaskForm {
+export interface TaskForm {
 	allProxy: string;
 	cookie: string;
 	dir: string;
@@ -59,7 +59,7 @@ export const initTaskForm = (state: TaskFormState) => {
 	const splitNumber = Number(split);
 	const normalizedSplit =
 		Number.isFinite(splitNumber) && splitNumber > 0
-			? Math.max(1, Math.min(Math.trunc(splitNumber), 16))
+			? Math.max(1, Math.min(Math.trunc(splitNumber), 128))
 			: 16;
 
 	const result = {

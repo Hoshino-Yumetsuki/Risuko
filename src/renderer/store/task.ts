@@ -17,6 +17,47 @@ const TASKS_PER_PAGE_STORAGE_KEY = "motrix.tasks-per-page";
 const SORT_BY_STORAGE_KEY = "motrix.task-sort-by";
 const SORT_ORDER_STORAGE_KEY = "motrix.task-sort-order";
 
+/** Maximum number of speed samples retained per task */
+export const SPEED_HISTORY_LIMIT = 60;
+
+export type SpeedSample = { download: number; upload: number };
+
+/** Module cache: gid -> speed samples. */
+// please work please work please work
+const speedHistoryCache = new Map<string, SpeedSample[]>();
+
+export function getSpeedHistory(gid: string): SpeedSample[] {
+	return speedHistoryCache.get(gid) || [];
+}
+
+export function deleteSpeedHistory(gid: string): void {
+	speedHistoryCache.delete(gid);
+}
+
+function sampleSpeedsFromTasks(tasks: DownloadTask[]): boolean {
+	let changed = false;
+	for (const task of tasks) {
+		const status = task.status;
+		const isActive =
+			status === TASK_STATUS.ACTIVE || status === TASK_STATUS.SEEDING;
+		if (!isActive || !task.gid) {
+			continue;
+		}
+		const isBT = checkTaskIsBT(task);
+		const isSeeder = isBT && task.seeder === "true";
+		const download = isSeeder
+			? 0
+			: Math.max(0, Number(task.downloadSpeed || 0));
+		const upload = isBT ? Math.max(0, Number(task.uploadSpeed || 0)) : 0;
+		const sample: SpeedSample = { download, upload };
+		const prev = speedHistoryCache.get(task.gid) || [];
+		const next = [...prev, sample].slice(-SPEED_HISTORY_LIMIT);
+		speedHistoryCache.set(task.gid, next);
+		changed = true;
+	}
+	return changed;
+}
+
 type TaskSortBy = "default" | "name" | "size" | "time";
 type TaskSortOrder = "asc" | "desc";
 type DisplayTask = DownloadTask & {
@@ -95,6 +136,7 @@ export const useTaskStore = defineStore("task", {
 		seedingList: [] as string[],
 		taskList: [] as DownloadTask[],
 		selectedGidList: [] as string[],
+		speedHistoryRev: 0,
 		taskOrderMap: {
 			active: [] as string[],
 			waiting: [] as string[],
@@ -340,6 +382,39 @@ export const useTaskStore = defineStore("task", {
 				return [];
 			}
 		},
+		/**
+		 * Sample speeds for all active/seeding tasks.
+		 * Called every polling tick from EngineClient.
+		 */
+		async sampleActiveSpeeds() {
+			try {
+				// If we're on the active list, taskList already has speeds
+				if (this.currentList === "active" && this.taskList.length > 0) {
+					if (sampleSpeedsFromTasks(this.taskList)) {
+						this.speedHistoryRev++;
+					}
+					return;
+				}
+
+				// Otherwise fetch for active tasks
+				const tasks = (await api.fetchTaskList({
+					type: "active",
+					keys: [
+						"gid",
+						"status",
+						"downloadSpeed",
+						"uploadSpeed",
+						"seeder",
+						"bittorrent",
+					],
+				})) as DownloadTask[];
+				if (sampleSpeedsFromTasks(tasks)) {
+					this.speedHistoryRev++;
+				}
+			} catch {
+				// Sampling is best-effort
+			}
+		},
 		selectTasks(list: string[]) {
 			this.selectedGidList = list;
 		},
@@ -462,6 +537,7 @@ export const useTaskStore = defineStore("task", {
 			}
 
 			return api.removeTask({ gid }).finally(() => {
+				speedHistoryCache.delete(gid);
 				this.fetchList();
 				this.saveSession();
 			});
@@ -596,6 +672,9 @@ export const useTaskStore = defineStore("task", {
 		},
 		batchRemoveTask(gids: string[]) {
 			return api.batchRemoveTask({ gids }).finally(() => {
+				for (const gid of gids) {
+					speedHistoryCache.delete(gid);
+				}
 				this.fetchList();
 				this.saveSession();
 			});

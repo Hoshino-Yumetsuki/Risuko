@@ -78,6 +78,12 @@ pub struct PeerInfo {
     pub seeder: String,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct ChunkProgress {
+    pub completed: u64,
+    pub total: u64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DownloadTask {
     pub gid: String,
@@ -108,6 +114,9 @@ pub struct DownloadTask {
     /// Timestamp (ms) when seeding started, 0 if not seeding
     #[serde(default)]
     pub seeding_since: u64,
+    /// split progress for multi-thread HTTP downloads (transient)
+    #[serde(skip, default)]
+    pub chunk_progress: Vec<ChunkProgress>,
 }
 
 impl DownloadTask {
@@ -171,6 +180,7 @@ impl DownloadTask {
             peers: Vec::new(),
             created_at: now_ms(),
             seeding_since: 0,
+            chunk_progress: Vec::new(),
         }
     }
 
@@ -205,6 +215,7 @@ impl DownloadTask {
             peers: Vec::new(),
             created_at: now_ms(),
             seeding_since: 0,
+            chunk_progress: Vec::new(),
         }
     }
 
@@ -268,6 +279,7 @@ impl DownloadTask {
             peers: Vec::new(),
             created_at: now_ms(),
             seeding_since: 0,
+            chunk_progress: Vec::new(),
         }
     }
 
@@ -330,6 +342,7 @@ impl DownloadTask {
             peers: Vec::new(),
             created_at: now_ms(),
             seeding_since: 0,
+            chunk_progress: Vec::new(),
         }
     }
 
@@ -383,6 +396,7 @@ impl DownloadTask {
             peers: Vec::new(),
             created_at: now_ms(),
             seeding_since: 0,
+            chunk_progress: Vec::new(),
         }
     }
 
@@ -466,6 +480,21 @@ impl DownloadTask {
             if let Some(uri) = self.uris.first() {
                 m.insert("m3u8Link".into(), Value::String(uri.clone()));
             }
+        }
+
+        // Per-chunk progress for multi-thread HTTP downloads
+        if !self.chunk_progress.is_empty() {
+            let chunks: Vec<Value> = self
+                .chunk_progress
+                .iter()
+                .map(|cp| {
+                    let mut cm = Map::new();
+                    cm.insert("completedLength".into(), Value::String(cp.completed.to_string()));
+                    cm.insert("totalLength".into(), Value::String(cp.total.to_string()));
+                    Value::Object(cm)
+                })
+                .collect();
+            m.insert("chunkProgress".into(), Value::Array(chunks));
         }
 
         Value::Object(m)

@@ -704,6 +704,7 @@ export default {
 				const jobs: Array<Promise<unknown>> = [
 					useAppStore().fetchGlobalStat(),
 					useAppStore().fetchProgress(),
+					useTaskStore().sampleActiveSpeeds(),
 				];
 				let activeTasksForLowSpeedCheck: Pick<
 					DownloadTask,
