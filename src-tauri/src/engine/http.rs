@@ -354,11 +354,11 @@ pub async fn run_http_download(
     // Single-connection download (fallback, resume, FTP, or small files)
     // If falling through from a failed multi-chunk probe and a pre-allocated .part exists,
     // its size doesn't reflect actual download progress — remove it to avoid a 416.
-    if split > 1 && existing_size > 0 {
+    // Only remove when chunk metadata confirms this is a multi-chunk artifact
+    if chunk_meta_path(&part_path).exists() && existing_size > 0 {
         tracing::info!("Removing pre-allocated .part before single-connection fallback");
         let _ = fs::remove_file(&part_path);
         delete_chunk_meta(&part_path);
-        let _ = fs::remove_file(&part_path);
     }
     connections.store(1, Ordering::Relaxed);
     let result = run_single_download(
@@ -560,18 +560,6 @@ async fn run_multi_chunk(
 ) -> Result<PathBuf, String> {
     total.store(content_length, Ordering::Relaxed);
 
-    // Pre-allocate the output file (no-op if already at correct size)
-    {
-        let file = fs::OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(false)
-            .open(part_path)
-            .map_err(|e| format!("Failed to create file: {e}"))?;
-        file.set_len(content_length)
-            .map_err(|e| format!("Failed to pre-allocate file: {e}"))?;
-    }
-
     tracing::info!("Multi-chunk download: {split} chunks, {content_length} bytes total");
 
     // Calculate chunk boundaries
@@ -587,7 +575,7 @@ async fn run_multi_chunk(
         chunks.push(ChunkRange::new(start, end));
     }
 
-    // Check for existing chunk progress from a previous paused/failed attempt
+    // Load resume sidecar BEFORE pre-allocating so the file-size check is meaningful
     let initial_offsets =
         if let Some(meta) = load_chunk_meta(part_path, content_length, split, &expected_etag) {
             let total_resumed: u64 = meta.chunk_bytes.iter().sum();
@@ -604,6 +592,18 @@ async fn run_multi_chunk(
         } else {
             vec![0u64; split]
         };
+
+    // Pre-allocate the output file AFTER sidecar validation
+    {
+        let file = fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(false)
+            .open(part_path)
+            .map_err(|e| format!("Failed to create file: {e}"))?;
+        file.set_len(content_length)
+            .map_err(|e| format!("Failed to pre-allocate file: {e}"))?;
+    }
 
     let file = tokio::fs::OpenOptions::new()
         .write(true)
@@ -822,6 +822,44 @@ async fn download_chunk_stream(
         };
     }
 
+    // enforce 206 Partial Content with matching Content-Range
+    if status != 206 {
+        return StreamOutcome {
+            bytes_flushed: 0,
+            error: Some(format!(
+                "Expected 206 Partial Content with matching Content-Range, got {status}"
+            )),
+        };
+    }
+    if let Some(cr) = resp.headers().get(CONTENT_RANGE).and_then(|v| v.to_str().ok()) {
+        // Content-Range: bytes START-END/TOTAL
+        if let Some(space) = cr.find(' ') {
+            if let Some(dash) = cr[space + 1..].find('-') {
+                if let Ok(range_start) = cr[space + 1..space + 1 + dash].parse::<u64>() {
+                    if range_start != range.start {
+                        return StreamOutcome {
+                            bytes_flushed: 0,
+                            error: Some(format!(
+                                "Expected 206 Partial Content with matching Content-Range: \
+                                 requested start {} but got {range_start}",
+                                range.start
+                            )),
+                        };
+                    }
+                }
+            }
+        }
+    } else {
+        return StreamOutcome {
+            bytes_flushed: 0,
+            error: Some(
+                "Expected 206 Partial Content with matching Content-Range, \
+                 but Content-Range header is missing"
+                    .to_string(),
+            ),
+        };
+    }
+
     let mut stream = resp.bytes_stream();
     let mut buf = Vec::with_capacity(CHUNK_BUF_CAPACITY);
     let mut total_written: u64 = 0;
@@ -906,6 +944,10 @@ async fn download_chunk_stream(
                                     total_written += written as u64;
                                 }
                                 Err(e) => {
+                                    completed.fetch_sub(buf.len() as u64, Ordering::Relaxed);
+                                    if let Some(cc) = chunk_completed {
+                                        cc.fetch_sub(buf.len() as u64, Ordering::Relaxed);
+                                    }
                                     return StreamOutcome {
                                         bytes_flushed: total_written,
                                         error: Some(e),
