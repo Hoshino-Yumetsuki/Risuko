@@ -123,7 +123,14 @@ pub async fn start_engine(handle: &AppHandle) -> Result<(), Box<dyn std::error::
 
     let (rpc_shutdown_tx, mut rpc_shutdown_rx) = tokio::sync::mpsc::channel::<()>(1);
 
-    let mut rpc_server = RpcServer::new(rpc_host, rpc_port, rpc_secret, manager.clone(), events.clone(), rpc_shutdown_tx);
+    let mut rpc_server = RpcServer::new(
+        rpc_host,
+        rpc_port,
+        rpc_secret,
+        manager.clone(),
+        events.clone(),
+        rpc_shutdown_tx,
+    );
     rpc_server
         .start()
         .await
@@ -160,12 +167,22 @@ pub async fn start_engine(handle: &AppHandle) -> Result<(), Box<dyn std::error::
             match event_rx.recv().await {
                 Ok(event) => {
                     let (name, gid) = match &event {
-                        EngineEvent::DownloadStart { gid } => ("engine:download-start", gid.as_str()),
-                        EngineEvent::DownloadPause { gid } => ("engine:download-pause", gid.as_str()),
+                        EngineEvent::DownloadStart { gid } => {
+                            ("engine:download-start", gid.as_str())
+                        }
+                        EngineEvent::DownloadPause { gid } => {
+                            ("engine:download-pause", gid.as_str())
+                        }
                         EngineEvent::DownloadStop { gid } => ("engine:download-stop", gid.as_str()),
-                        EngineEvent::DownloadComplete { gid } => ("engine:download-complete", gid.as_str()),
-                        EngineEvent::DownloadError { gid } => ("engine:download-error", gid.as_str()),
-                        EngineEvent::BtDownloadComplete { gid } => ("engine:bt-download-complete", gid.as_str()),
+                        EngineEvent::DownloadComplete { gid } => {
+                            ("engine:download-complete", gid.as_str())
+                        }
+                        EngineEvent::DownloadError { gid } => {
+                            ("engine:download-error", gid.as_str())
+                        }
+                        EngineEvent::BtDownloadComplete { gid } => {
+                            ("engine:bt-download-complete", gid.as_str())
+                        }
                     };
                     let payload = serde_json::json!({ "gid": gid });
                     if let Err(e) = event_handle.emit(name, payload) {

@@ -1101,7 +1101,9 @@ export default {
 							);
 						}
 						if ("hideAppMenu" in data) {
-							invoke("relaunch_app").catch(() => {
+							invoke("toggle_app_menu", {
+								hidden: !!this.form.hideAppMenu,
+							}).catch(() => {
 								/* noop */
 							});
 						}

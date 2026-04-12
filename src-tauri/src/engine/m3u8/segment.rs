@@ -74,11 +74,7 @@ impl KeyCache {
         }
     }
 
-    async fn get_or_fetch(
-        &mut self,
-        key_uri: &str,
-        client: &Client,
-    ) -> Result<[u8; 16], String> {
+    async fn get_or_fetch(&mut self, key_uri: &str, client: &Client) -> Result<[u8; 16], String> {
         if let Some(key) = self.entries.get(key_uri) {
             return Ok(*key);
         }
@@ -105,8 +101,7 @@ pub async fn download_segments(
     task_limiter: Arc<SpeedLimiter>,
     max_concurrent: usize,
 ) -> Result<(Vec<PathBuf>, ProgressState), String> {
-    std::fs::create_dir_all(temp_dir)
-        .map_err(|e| format!("Failed to create temp dir: {e}"))?;
+    std::fs::create_dir_all(temp_dir).map_err(|e| format!("Failed to create temp dir: {e}"))?;
 
     let mut progress = ProgressState::load(temp_dir);
     let semaphore = Arc::new(Semaphore::new(max_concurrent));
@@ -193,8 +188,7 @@ pub async fn download_segments(
 
                     // Estimate total from first completed segment
                     if !total_estimated_inner.swap(true, Ordering::Relaxed) {
-                        let estimated =
-                            bytes_written.saturating_mul(total_segments_inner);
+                        let estimated = bytes_written.saturating_mul(total_segments_inner);
                         total_inner.store(estimated, Ordering::Relaxed);
                     }
 
@@ -329,7 +323,11 @@ async fn attempt_segment_download(
     // Decrypt if needed
     let final_data = if let Some(ref enc) = segment.encryption {
         if enc.method == "AES-128" {
-            let key = key_cache.lock().await.get_or_fetch(&enc.key_uri, client).await?;
+            let key = key_cache
+                .lock()
+                .await
+                .get_or_fetch(&enc.key_uri, client)
+                .await?;
             let iv = match &enc.iv {
                 Some(iv_bytes) => {
                     let mut iv = [0u8; 16];

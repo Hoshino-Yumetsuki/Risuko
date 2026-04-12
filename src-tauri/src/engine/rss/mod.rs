@@ -48,8 +48,8 @@ impl RssManager {
             .store(RSS_STORE_KEY)
             .map_err(|e| format!("Failed to open RSS store: {e}"))?;
         if let Some(val) = store.get("data") {
-            let data: RssStore =
-                serde_json::from_value(val).map_err(|e| format!("Failed to parse RSS data: {e}"))?;
+            let data: RssStore = serde_json::from_value(val)
+                .map_err(|e| format!("Failed to parse RSS data: {e}"))?;
             let mut s = self.store.blocking_lock();
             *s = data;
         }
@@ -88,10 +88,7 @@ impl RssManager {
             .first()
             .map(|l| l.href.clone())
             .unwrap_or_default();
-        let description = parsed
-            .description
-            .map(|d| d.content)
-            .unwrap_or_default();
+        let description = parsed.description.map(|d| d.content).unwrap_or_default();
 
         let feed = RssFeed {
             id: Uuid::new_v4().to_string(),
@@ -267,7 +264,12 @@ impl RssManager {
 
     // Item operations
 
-    pub async fn mark_item_downloaded(&self, feed_id: &str, item_id: &str, download_path: Option<String>) -> Result<(), String> {
+    pub async fn mark_item_downloaded(
+        &self,
+        feed_id: &str,
+        item_id: &str,
+        download_path: Option<String>,
+    ) -> Result<(), String> {
         let mut s = self.store.lock().await;
         if let Some(items) = s.items.get_mut(feed_id) {
             if let Some(item) = items.iter_mut().find(|i| i.id == item_id) {
@@ -303,7 +305,10 @@ impl RssManager {
         self.save().await
     }
 
-    pub async fn delete_items(&self, items_by_feed: Vec<(String, Vec<String>)>) -> Result<(), String> {
+    pub async fn delete_items(
+        &self,
+        items_by_feed: Vec<(String, Vec<String>)>,
+    ) -> Result<(), String> {
         let mut s = self.store.lock().await;
         let mut paths_to_delete: Vec<String> = Vec::new();
         for (feed_id, item_ids) in &items_by_feed {
@@ -388,8 +393,7 @@ impl RssManager {
     pub async fn add_rule(&self, rule: RssRule) -> Result<RssRule, String> {
         // Validate regex if applicable
         if rule.is_regex {
-            Regex::new(&rule.pattern)
-                .map_err(|e| format!("Invalid regex pattern: {e}"))?;
+            Regex::new(&rule.pattern).map_err(|e| format!("Invalid regex pattern: {e}"))?;
         }
         let rule = RssRule {
             id: Uuid::new_v4().to_string(),
@@ -467,10 +471,7 @@ impl RssManager {
                             {
                                 let options = rule.download_dir.as_ref().map(|dir| {
                                     let mut map = serde_json::Map::new();
-                                    map.insert(
-                                        "dir".to_string(),
-                                        Value::String(dir.clone()),
-                                    );
+                                    map.insert("dir".to_string(), Value::String(dir.clone()));
                                     Value::Object(map)
                                 });
 
@@ -489,9 +490,8 @@ impl RssManager {
                                             e
                                         );
                                     } else {
-                                        let _ = rss
-                                            .mark_item_downloaded(feed_id, &item.id, None)
-                                            .await;
+                                        let _ =
+                                            rss.mark_item_downloaded(feed_id, &item.id, None).await;
                                         log::info!(
                                             "Auto-downloaded '{}' via rule '{}'",
                                             item.title,
@@ -506,8 +506,10 @@ impl RssManager {
 
                 // Notify frontend of new items
                 if !new_items_per_feed.is_empty() {
-                    let total_new: usize =
-                        new_items_per_feed.iter().map(|(_, items)| items.len()).sum();
+                    let total_new: usize = new_items_per_feed
+                        .iter()
+                        .map(|(_, items)| items.len())
+                        .sum();
                     let _ = rss.app.emit("rss-new-items", total_new);
                 }
             }

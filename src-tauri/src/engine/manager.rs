@@ -11,7 +11,9 @@ use super::http;
 use super::options::EngineOptions;
 use super::session::SessionManager;
 use super::speed_limiter::{parse_speed_limit, SpeedLimiter};
-use super::task::{generate_gid, ChunkProgress, DownloadFile, DownloadTask, FileUri, TaskKind, TaskStatus};
+use super::task::{
+    generate_gid, ChunkProgress, DownloadFile, DownloadTask, FileUri, TaskKind, TaskStatus,
+};
 use super::torrent::TorrentEngine;
 
 struct ActiveDownload {
@@ -54,9 +56,8 @@ impl TaskManager {
             })
             .ok();
 
-        let global_speed_limiter = Arc::new(SpeedLimiter::new(
-            options.max_overall_download_limit(),
-        ));
+        let global_speed_limiter =
+            Arc::new(SpeedLimiter::new(options.max_overall_download_limit()));
 
         let manager = Self {
             tasks: Arc::new(RwLock::new(saved_tasks)),
@@ -102,15 +103,20 @@ impl TaskManager {
                     }
                     log::info!(
                         "Restored torrent mapping: gid={} -> librqbit_id={} ({})",
-                        task.gid, librqbit_id, info_hash
+                        task.gid,
+                        librqbit_id,
+                        info_hash
                     );
                     break;
                 }
             }
         }
 
-        log::info!("Restored {} torrent mappings out of {} persisted torrents",
-            ids.len(), managed.len());
+        log::info!(
+            "Restored {} torrent mappings out of {} persisted torrents",
+            ids.len(),
+            managed.len()
+        );
     }
 
     pub async fn add_http_task(
@@ -167,8 +173,16 @@ impl TaskManager {
         if let Some(ref te) = *te_guard {
             match te.add_torrent_bytes(&torrent_data, &merged).await {
                 Ok(handle) => {
-                    log::info!("Torrent task {} added: id={}, info_hash={:?}", gid, handle.id, handle.info_hash);
-                    self.torrent_ids.write().await.insert(gid.clone(), handle.id);
+                    log::info!(
+                        "Torrent task {} added: id={}, info_hash={:?}",
+                        gid,
+                        handle.id,
+                        handle.info_hash
+                    );
+                    self.torrent_ids
+                        .write()
+                        .await
+                        .insert(gid.clone(), handle.id);
                     task.info_hash = handle.info_hash;
                     task.status = TaskStatus::Active;
                 }
@@ -212,7 +226,10 @@ impl TaskManager {
         if let Some(ref te) = *te_guard {
             match te.add_magnet(magnet_uri, &merged).await {
                 Ok(handle) => {
-                    self.torrent_ids.write().await.insert(gid.clone(), handle.id);
+                    self.torrent_ids
+                        .write()
+                        .await
+                        .insert(gid.clone(), handle.id);
                     task.info_hash = handle.info_hash;
                     task.status = TaskStatus::Active;
                 }
@@ -403,7 +420,10 @@ impl TaskManager {
 
         let split: u32 = merged_options
             .get("split")
-            .and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse().ok())))
+            .and_then(|v| {
+                v.as_u64()
+                    .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+            })
             .unwrap_or(1)
             .max(1) as u32;
 
@@ -423,9 +443,8 @@ impl TaskManager {
         let connections = Arc::new(AtomicU32::new(split));
 
         // split chunk progress atomics for multi-thread downloads
-        let chunk_completed: Vec<Arc<AtomicU64>> = (0..split)
-            .map(|_| Arc::new(AtomicU64::new(0)))
-            .collect();
+        let chunk_completed: Vec<Arc<AtomicU64>> =
+            (0..split).map(|_| Arc::new(AtomicU64::new(0))).collect();
         let chunk_completed_dl = chunk_completed.clone();
         let chunk_completed_ref = chunk_completed.clone();
 
@@ -1032,18 +1051,25 @@ impl TaskManager {
 
                                 // Determine which files are selected (0-based indices)
                                 let selected_indices: Option<std::collections::HashSet<usize>> =
-                                    task.options.get("select-file")
+                                    task.options
+                                        .get("select-file")
                                         .and_then(|v| v.as_str())
                                         .and_then(|raw| {
                                             let raw = raw.trim();
-                                            if raw.is_empty() { return None; }
+                                            if raw.is_empty() {
+                                                return None;
+                                            }
                                             let set: std::collections::HashSet<usize> = raw
                                                 .split(',')
                                                 .filter_map(|s| s.trim().parse::<usize>().ok())
                                                 .filter(|&i| i >= 1)
                                                 .map(|i| i - 1) // 1-based to 0-based
                                                 .collect();
-                                            if set.is_empty() { None } else { Some(set) }
+                                            if set.is_empty() {
+                                                None
+                                            } else {
+                                                Some(set)
+                                            }
                                         });
 
                                 let mut selected_total: u64 = 0;
@@ -1052,11 +1078,8 @@ impl TaskManager {
                                 task.files = file_details
                                     .iter()
                                     .map(|fd| {
-                                        let completed = stats
-                                            .file_progress
-                                            .get(fd.index)
-                                            .copied()
-                                            .unwrap_or(0);
+                                        let completed =
+                                            stats.file_progress.get(fd.index).copied().unwrap_or(0);
                                         let is_selected = selected_indices
                                             .as_ref()
                                             .map_or(true, |set| set.contains(&fd.index));
@@ -1069,7 +1092,8 @@ impl TaskManager {
                                             path: format!("{}/{}", base_dir, fd.path),
                                             length: fd.length.to_string(),
                                             completed_length: completed.to_string(),
-                                            selected: if is_selected { "true" } else { "false" }.to_string(),
+                                            selected: if is_selected { "true" } else { "false" }
+                                                .to_string(),
                                             uris: Vec::new(),
                                         }
                                     })
@@ -1108,7 +1132,8 @@ impl TaskManager {
                                     task.seeding_since = std::time::SystemTime::now()
                                         .duration_since(std::time::UNIX_EPOCH)
                                         .unwrap_or_default()
-                                        .as_millis() as u64;
+                                        .as_millis()
+                                        as u64;
                                     task.download_speed = 0;
                                     self.events.send(EngineEvent::BtDownloadComplete {
                                         gid: task.gid.clone(),
@@ -1134,7 +1159,8 @@ impl TaskManager {
                                     let now = std::time::SystemTime::now()
                                         .duration_since(std::time::UNIX_EPOCH)
                                         .unwrap_or_default()
-                                        .as_millis() as u64;
+                                        .as_millis()
+                                        as u64;
                                     if now - task.seeding_since >= seed_time_ms as u64 {
                                         should_stop = true;
                                     }
@@ -1142,7 +1168,8 @@ impl TaskManager {
 
                                 // Check seed ratio limit
                                 if !should_stop && seed_ratio > 0.0 && task.total_length > 0 {
-                                    let current_ratio = task.upload_length as f64 / task.total_length as f64;
+                                    let current_ratio =
+                                        task.upload_length as f64 / task.total_length as f64;
                                     if current_ratio >= seed_ratio {
                                         should_stop = true;
                                     }
@@ -1318,10 +1345,7 @@ impl TaskManager {
 
     pub async fn tell_stopped(&self, offset: i64, num: usize, keys: &[String]) -> Value {
         let tasks = self.tasks.read().await;
-        let stopped: Vec<&DownloadTask> = tasks
-            .iter()
-            .filter(|t| t.status.is_stopped())
-            .collect();
+        let stopped: Vec<&DownloadTask> = tasks.iter().filter(|t| t.status.is_stopped()).collect();
 
         let start = if offset >= 0 {
             offset as usize
@@ -1368,12 +1392,7 @@ impl TaskManager {
         })
     }
 
-    pub async fn change_position(
-        &self,
-        gid: &str,
-        pos: i64,
-        how: &str,
-    ) -> Result<Value, String> {
+    pub async fn change_position(&self, gid: &str, pos: i64, how: &str) -> Result<Value, String> {
         let mut tasks = self.tasks.write().await;
         let waiting: Vec<usize> = tasks
             .iter()
@@ -1410,9 +1429,7 @@ impl TaskManager {
             let waiting_after_remove: Vec<usize> = tasks
                 .iter()
                 .enumerate()
-                .filter(|(_, t)| {
-                    t.status == TaskStatus::Waiting || t.status == TaskStatus::Paused
-                })
+                .filter(|(_, t)| t.status == TaskStatus::Waiting || t.status == TaskStatus::Paused)
                 .map(|(i, _)| i)
                 .collect();
 
@@ -1425,7 +1442,9 @@ impl TaskManager {
             tasks.insert(insert_idx, task);
         }
 
-        Ok(Value::Number(serde_json::Number::from(target_waiting_pos as u64)))
+        Ok(Value::Number(serde_json::Number::from(
+            target_waiting_pos as u64,
+        )))
     }
 
     /// Return GIDs of waiting/paused tasks that are in `filter`, preserving queue order
@@ -1449,11 +1468,18 @@ impl TaskManager {
         if let Some(task) = tasks.iter_mut().find(|t| t.gid == gid) {
             // If seed-time is being set to 0, stop seeding immediately
             if let Some(v) = opts.get("seed-time") {
-                let val = v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse().ok())).unwrap_or(0);
+                let val = v
+                    .as_u64()
+                    .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+                    .unwrap_or(0);
                 if val == 0 && task.seeder {
                     // Only stop if seed-ratio is also 0 or absent
-                    let ratio_zero = opts.get("seed-ratio")
-                        .and_then(|r| r.as_f64().or_else(|| r.as_str().and_then(|s| s.parse().ok())))
+                    let ratio_zero = opts
+                        .get("seed-ratio")
+                        .and_then(|r| {
+                            r.as_f64()
+                                .or_else(|| r.as_str().and_then(|s| s.parse().ok()))
+                        })
                         .map_or(true, |r| r <= 0.0);
                     if ratio_zero {
                         task.seeder = false;
@@ -1746,12 +1772,18 @@ mod tests {
 
     #[test]
     fn m3u8_name_strips_extension() {
-        assert_eq!(infer_m3u8_output_name("http://example.com/video.m3u8"), "video.ts");
+        assert_eq!(
+            infer_m3u8_output_name("http://example.com/video.m3u8"),
+            "video.ts"
+        );
     }
 
     #[test]
     fn m3u_name_strips_extension() {
-        assert_eq!(infer_m3u8_output_name("http://example.com/video.m3u"), "video.ts");
+        assert_eq!(
+            infer_m3u8_output_name("http://example.com/video.m3u"),
+            "video.ts"
+        );
     }
 
     #[test]
@@ -1764,7 +1796,10 @@ mod tests {
 
     #[test]
     fn m3u8_name_no_extension() {
-        assert_eq!(infer_m3u8_output_name("http://example.com/video"), "video.ts");
+        assert_eq!(
+            infer_m3u8_output_name("http://example.com/video"),
+            "video.ts"
+        );
     }
 
     #[test]

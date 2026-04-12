@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddrV4;
 
@@ -84,43 +82,6 @@ impl ServerList {
 
     pub fn servers(&self) -> &[ServerEntry] {
         &self.servers
-    }
-
-    pub fn add_server(&mut self, entry: ServerEntry) {
-        // Avoid duplicates by IP:port
-        if !self.servers.iter().any(|s| s.ip == entry.ip && s.port == entry.port) {
-            self.servers.push(entry);
-        }
-    }
-
-    pub fn remove_server(&mut self, ip: &str, port: u16) {
-        self.servers.retain(|s| !(s.ip == ip && s.port == port));
-    }
-
-    /// Record a connection failure; remove server if too many failures
-    pub fn record_failure(&mut self, ip: &str, port: u16) {
-        if let Some(s) = self.servers.iter_mut().find(|s| s.ip == ip && s.port == port) {
-            s.fail_count += 1;
-            if s.fail_count > 5 {
-                self.servers.retain(|s| !(s.ip == ip && s.port == port));
-            }
-        }
-    }
-
-    /// Record a successful connection
-    pub fn record_success(&mut self, ip: &str, port: u16) {
-        if let Some(s) = self.servers.iter_mut().find(|s| s.ip == ip && s.port == port) {
-            s.fail_count = 0;
-        }
-    }
-
-    /// Add servers discovered from the network
-    pub fn add_discovered(&mut self, entries: &[(u32, u16)]) {
-        for &(ip_num, port) in entries {
-            let bytes = ip_num.to_le_bytes();
-            let ip = format!("{}.{}.{}.{}", bytes[0], bytes[1], bytes[2], bytes[3]);
-            self.add_server(ServerEntry::new(&ip, port, "Discovered"));
-        }
     }
 }
 

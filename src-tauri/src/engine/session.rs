@@ -13,16 +13,6 @@ pub struct SessionData {
     pub tasks: Vec<DownloadTask>,
 }
 
-impl SessionData {
-    #[allow(dead_code)]
-    pub fn new() -> Self {
-        Self {
-            version: 1,
-            tasks: Vec::new(),
-        }
-    }
-}
-
 pub struct SessionManager {
     path: PathBuf,
 }
@@ -86,8 +76,7 @@ impl SessionManager {
         // Atomic write: write to temp file, then rename
         let tmp = self.path.with_extension("json.tmp");
         fs::write(&tmp, &data).map_err(|e| format!("Failed to write session: {}", e))?;
-        fs::rename(&tmp, &self.path)
-            .map_err(|e| format!("Failed to finalize session: {}", e))?;
+        fs::rename(&tmp, &self.path).map_err(|e| format!("Failed to finalize session: {}", e))?;
 
         Ok(())
     }

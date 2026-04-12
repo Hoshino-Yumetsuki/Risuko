@@ -14,10 +14,7 @@ pub async fn fetch_decryption_key(
         .map_err(|e| format!("Failed to fetch decryption key: {e}"))?;
 
     if !resp.status().is_success() {
-        return Err(format!(
-            "Key fetch failed with status {}",
-            resp.status()
-        ));
+        return Err(format!("Key fetch failed with status {}", resp.status()));
     }
 
     let bytes = resp
@@ -44,11 +41,7 @@ pub fn iv_from_sequence(sequence_number: u64) -> [u8; 16] {
 }
 
 /// Decrypt a segment using AES-128-CBC with PKCS7 padding
-pub fn decrypt_segment(
-    data: &[u8],
-    key: &[u8; 16],
-    iv: &[u8; 16],
-) -> Result<Vec<u8>, String> {
+pub fn decrypt_segment(data: &[u8], key: &[u8; 16], iv: &[u8; 16]) -> Result<Vec<u8>, String> {
     if data.is_empty() {
         return Ok(Vec::new());
     }

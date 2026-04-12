@@ -1,7 +1,4 @@
-#![allow(dead_code)]
-
 use serde::{Deserialize, Serialize};
-use std::net::SocketAddrV4;
 
 /// Parsed ed2k file link
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -24,13 +21,6 @@ pub struct Ed2kSource {
     pub port: u16,
 }
 
-impl Ed2kSource {
-    pub fn to_socket_addr(&self) -> Option<SocketAddrV4> {
-        let ip = self.ip.parse().ok()?;
-        Some(SocketAddrV4::new(ip, self.port))
-    }
-}
-
 /// ed2k chunk size: 9,728,000 bytes (9500 KiB)
 pub const ED2K_CHUNK_SIZE: u64 = 9_728_000;
 
@@ -51,7 +41,6 @@ pub const OP_OFFER_FILES: u8 = 0x15;
 pub const OP_SEARCH_FILE: u8 = 0x16;
 pub const OP_DISCONNECT: u8 = 0x18;
 pub const OP_GET_SOURCES: u8 = 0x19;
-pub const OP_GET_SERVER_LIST: u8 = 0x14;
 
 /// Server -> Client opcodes
 pub const OP_ID_CHANGE: u8 = 0x40;
@@ -75,7 +64,6 @@ pub const OP_HASHSET_REQUEST: u8 = 0x51;
 pub const OP_HASHSET_ANSWER: u8 = 0x52;
 pub const OP_SLOT_REQUEST: u8 = 0x54;
 pub const OP_SLOT_GIVEN: u8 = 0x55;
-pub const OP_SLOT_RELEASE: u8 = 0x56;
 pub const OP_SLOT_TAKEN: u8 = 0x57;
 pub const OP_REQUEST_PARTS: u8 = 0x47;
 pub const OP_SENDING_PART: u8 = 0x46;
@@ -88,14 +76,6 @@ pub const OP_EMULE_DATA_COMPRESSED: u8 = 0x40;
 pub const OP_EMULE_QUEUE_RANKING: u8 = 0x60;
 pub const OP_EMULE_SOURCES_REQUEST: u8 = 0x81;
 pub const OP_EMULE_SOURCES_ANSWER: u8 = 0x82;
-
-/// UDP opcodes
-pub const OP_UDP_SERVER_STATUS_REQ: u8 = 0x96;
-pub const OP_UDP_SERVER_STATUS: u8 = 0x97;
-pub const OP_UDP_SEARCH_FILE: u8 = 0x98;
-pub const OP_UDP_SEARCH_FILE_RESULT: u8 = 0x99;
-pub const OP_UDP_GET_SOURCES: u8 = 0x9a;
-pub const OP_UDP_FOUND_SOURCES: u8 = 0x9b;
 
 /// Meta tag special IDs
 pub const TAG_NAME: u8 = 0x01;
@@ -128,34 +108,6 @@ pub fn is_high_id(client_id: u32) -> bool {
 pub fn client_id_to_ip(client_id: u32) -> std::net::Ipv4Addr {
     let bytes = client_id.to_le_bytes();
     std::net::Ipv4Addr::new(bytes[0], bytes[1], bytes[2], bytes[3])
-}
-
-/// Server information
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ServerInfo {
-    pub ip: String,
-    pub port: u16,
-    pub name: String,
-    pub description: String,
-    pub users: u32,
-    pub files: u32,
-    pub max_users: u32,
-    pub priority: ServerPriority,
-    pub ping_ms: Option<u32>,
-    pub last_seen: u64,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ServerPriority {
-    Low,
-    Normal,
-    High,
-}
-
-impl Default for ServerPriority {
-    fn default() -> Self {
-        Self::Normal
-    }
 }
 
 /// Chunk status during download

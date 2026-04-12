@@ -80,11 +80,23 @@ pub fn parse_ftp_uri(uri: &str) -> Result<FtpUri, String> {
     let (user, password) = match userinfo {
         Some(info) => match info.find(':') {
             Some(idx) => (
-                Some(urlencoding::decode(&info[..idx]).map_err(|e| e.to_string())?.into_owned()),
-                Some(urlencoding::decode(&info[idx + 1..]).map_err(|e| e.to_string())?.into_owned()),
+                Some(
+                    urlencoding::decode(&info[..idx])
+                        .map_err(|e| e.to_string())?
+                        .into_owned(),
+                ),
+                Some(
+                    urlencoding::decode(&info[idx + 1..])
+                        .map_err(|e| e.to_string())?
+                        .into_owned(),
+                ),
             ),
             None => (
-                Some(urlencoding::decode(info).map_err(|e| e.to_string())?.into_owned()),
+                Some(
+                    urlencoding::decode(info)
+                        .map_err(|e| e.to_string())?
+                        .into_owned(),
+                ),
                 None,
             ),
         },
@@ -96,13 +108,14 @@ pub fn parse_ftp_uri(uri: &str) -> Result<FtpUri, String> {
         // IPv6
         let bracket_end = hostport.find(']').ok_or("Invalid IPv6 address")?;
         let host = &hostport[1..bracket_end];
-        let port = if bracket_end + 1 < hostport.len() && hostport.as_bytes()[bracket_end + 1] == b':' {
-            hostport[bracket_end + 2..]
-                .parse::<u16>()
-                .map_err(|e| format!("Invalid port: {e}"))?
-        } else {
-            default_port
-        };
+        let port =
+            if bracket_end + 1 < hostport.len() && hostport.as_bytes()[bracket_end + 1] == b':' {
+                hostport[bracket_end + 2..]
+                    .parse::<u16>()
+                    .map_err(|e| format!("Invalid port: {e}"))?
+            } else {
+                default_port
+            };
         (host.to_string(), port)
     } else {
         match hostport.rfind(':') {
@@ -210,11 +223,23 @@ mod tests {
 
     #[test]
     fn test_detect_ftp_protocol() {
-        assert_eq!(detect_ftp_protocol("ftp://host/file"), Some(FtpProtocol::Ftp));
-        assert_eq!(detect_ftp_protocol("ftps://host/file"), Some(FtpProtocol::Ftps));
-        assert_eq!(detect_ftp_protocol("sftp://host/file"), Some(FtpProtocol::Sftp));
+        assert_eq!(
+            detect_ftp_protocol("ftp://host/file"),
+            Some(FtpProtocol::Ftp)
+        );
+        assert_eq!(
+            detect_ftp_protocol("ftps://host/file"),
+            Some(FtpProtocol::Ftps)
+        );
+        assert_eq!(
+            detect_ftp_protocol("sftp://host/file"),
+            Some(FtpProtocol::Sftp)
+        );
         assert_eq!(detect_ftp_protocol("http://host/file"), None);
-        assert_eq!(detect_ftp_protocol("FTP://HOST/file"), Some(FtpProtocol::Ftp));
+        assert_eq!(
+            detect_ftp_protocol("FTP://HOST/file"),
+            Some(FtpProtocol::Ftp)
+        );
     }
 
     #[test]
@@ -258,7 +283,10 @@ mod tests {
 
     #[test]
     fn test_infer_filename() {
-        assert_eq!(infer_filename_from_ftp_uri("ftp://host/dir/file.zip"), "file.zip");
+        assert_eq!(
+            infer_filename_from_ftp_uri("ftp://host/dir/file.zip"),
+            "file.zip"
+        );
         assert_eq!(infer_filename_from_ftp_uri("sftp://host/"), "download");
         assert_eq!(infer_filename_from_ftp_uri("ftp://host"), "download");
     }

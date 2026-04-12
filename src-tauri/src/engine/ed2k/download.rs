@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tokio::time::{Duration, interval};
+use tokio::time::{interval, Duration};
 use tokio_util::sync::CancellationToken;
 
 use super::chunks::ChunkManager;
@@ -354,7 +354,12 @@ async fn run_peer_download(
     cancel_token: &CancellationToken,
 ) -> Result<(), String> {
     let mut peer = PeerConnection::new(
-        addr, client_hash, client_id, client_port, server_ip, server_port,
+        addr,
+        client_hash,
+        client_id,
+        client_port,
+        server_ip,
+        server_port,
     );
     let (mut event_rx, _packet_tx) = peer.connect().await?;
 
@@ -373,7 +378,10 @@ async fn run_peer_download(
                 peer.request_file_status(file_hash).await?;
                 peer.request_hashset(file_hash).await?;
             }
-            Some(PeerEvent::FileStatus { file_hash: fh, parts }) => {
+            Some(PeerEvent::FileStatus {
+                file_hash: fh,
+                parts,
+            }) => {
                 if fh == *file_hash {
                     let needs = {
                         let cm = chunks.lock().await;
@@ -386,7 +394,10 @@ async fn run_peer_download(
                     }
                 }
             }
-            Some(PeerEvent::HashsetAnswer { file_hash: fh, hashes }) => {
+            Some(PeerEvent::HashsetAnswer {
+                file_hash: fh,
+                hashes,
+            }) => {
                 if fh == *file_hash {
                     chunks.lock().await.set_chunk_hashes(hashes);
                 }

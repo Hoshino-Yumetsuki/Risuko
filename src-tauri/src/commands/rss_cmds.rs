@@ -117,7 +117,11 @@ pub async fn download_rss_item(
             d.to_string()
         } else {
             let global = manager.get_global_option().await;
-            global.get("dir").and_then(|v| v.as_str()).unwrap_or(".").to_string()
+            global
+                .get("dir")
+                .and_then(|v| v.as_str())
+                .unwrap_or(".")
+                .to_string()
         };
         let p = std::path::Path::new(&dir).join(out);
         Some(p.to_string_lossy().to_string())
@@ -150,7 +154,8 @@ pub async fn mark_rss_downloaded(
     download_path: Option<String>,
 ) -> Result<(), String> {
     let mgr = get_rss(&state)?;
-    mgr.mark_item_downloaded(&feed_id, &item_id, download_path).await
+    mgr.mark_item_downloaded(&feed_id, &item_id, download_path)
+        .await
 }
 
 #[tauri::command]
@@ -259,10 +264,7 @@ pub async fn download_rss_item_tracked(
                 .await;
 
             let status = match &status_result {
-                Ok(val) => val
-                    .get("status")
-                    .and_then(|s| s.as_str())
-                    .unwrap_or(""),
+                Ok(val) => val.get("status").and_then(|s| s.as_str()).unwrap_or(""),
                 Err(_) => break,
             };
 

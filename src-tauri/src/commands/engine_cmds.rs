@@ -228,9 +228,7 @@ fn resolve_file_category_inner(filename: &str) -> String {
     }
 
     let ext = match filename.rfind('.') {
-        Some(idx) if idx > 0 && idx < filename.len() - 1 => {
-            filename[idx..].to_ascii_lowercase()
-        }
+        Some(idx) if idx > 0 && idx < filename.len() - 1 => filename[idx..].to_ascii_lowercase(),
         _ => return String::new(),
     };
 
@@ -252,7 +250,14 @@ fn resolve_file_category_inner(filename: &str) -> String {
         ".zip", ".rar", ".7z", ".tar", ".gz", ".bz2", ".xz", ".zst", ".iso",
     ];
     static PROGRAM: &[&str] = &[
-        ".exe", ".msi", ".dmg", ".pkg", ".deb", ".rpm", ".appimage", ".apk",
+        ".exe",
+        ".msi",
+        ".dmg",
+        ".pkg",
+        ".deb",
+        ".rpm",
+        ".appimage",
+        ".apk",
     ];
 
     let categories: &[(&str, &[&str])] = &[
@@ -587,9 +592,7 @@ pub async fn add_torrent_by_path(
         }
     }
 
-    let manager = engine::get_manager()
-        .await
-        .ok_or("Engine not running")?;
+    let manager = engine::get_manager().await.ok_or("Engine not running")?;
 
     manager.add_torrent_task(bytes, options).await
 }
@@ -617,9 +620,7 @@ pub async fn add_uri(
         _ => Map::new(),
     };
 
-    let manager = engine::get_manager()
-        .await
-        .ok_or("Engine not running")?;
+    let manager = engine::get_manager().await.ok_or("Engine not running")?;
 
     let mut results = Vec::with_capacity(normalized_uris.len());
 
@@ -672,10 +673,7 @@ pub async fn add_uri(
                 Err(e) => results.push(json!({"code": 1, "message": e})),
             }
         } else {
-            match manager
-                .add_http_task(vec![uri.clone()], task_options)
-                .await
-            {
+            match manager.add_http_task(vec![uri.clone()], task_options).await {
                 Ok(gid) => results.push(Value::Array(vec![Value::String(gid)])),
                 Err(e) => results.push(json!({"code": 1, "message": e})),
             }
@@ -747,9 +745,7 @@ pub async fn sync_selected_task_order(
         });
     }
 
-    let manager = engine::get_manager()
-        .await
-        .ok_or("Engine not running")?;
+    let manager = engine::get_manager().await.ok_or("Engine not running")?;
 
     let selected_gid_set: HashSet<String> = selected_gids.iter().cloned().collect();
     let mut sync_error = false;
@@ -767,25 +763,25 @@ pub async fn sync_selected_task_order(
     }
 
     // Move tasks one position at a time, matching frontend behavior
-    
+
     // For "up": iterate in forward order so earlier items move first
     //   preserving relative order among selected tasks
     // For "down": iterate in reverse order so later items move first
     let ordered_gids: Vec<String> = if normalized_direction == "up" {
         // Get current waiting queue order, filter to selected
-        manager
-            .get_waiting_gids_in_order(&selected_gid_set)
-            .await
+        manager.get_waiting_gids_in_order(&selected_gid_set).await
     } else {
-        let mut v = manager
-            .get_waiting_gids_in_order(&selected_gid_set)
-            .await;
+        let mut v = manager.get_waiting_gids_in_order(&selected_gid_set).await;
         v.reverse();
         v
     };
 
     for gid in &ordered_gids {
-        let pos = if normalized_direction == "up" { -1i64 } else { 1i64 };
+        let pos = if normalized_direction == "up" {
+            -1i64
+        } else {
+            1i64
+        };
         match manager.change_position(gid, pos, "POS_CUR").await {
             Ok(_) => moved += 1,
             Err(_) => sync_error = true,
@@ -994,22 +990,21 @@ pub async fn multicall_engine(
     let mut results: Vec<Value> = Vec::with_capacity(gids.len());
     for gid in &gids {
         let result = match method.as_str() {
-            "motrix.changeOption" => {
-                manager
-                    .change_option(gid, opts.clone())
-                    .await
-                    .map(|_| Value::String("OK".into()))
-            }
-            "motrix.remove" => manager.remove(gid).await.map(|_| Value::String(gid.clone())),
+            "motrix.changeOption" => manager
+                .change_option(gid, opts.clone())
+                .await
+                .map(|_| Value::String("OK".into())),
+            "motrix.remove" => manager
+                .remove(gid)
+                .await
+                .map(|_| Value::String(gid.clone())),
             "motrix.pause" | "motrix.forcePause" => {
                 manager.pause(gid).await.map(|_| Value::String(gid.clone()))
             }
-            "motrix.unpause" => {
-                manager
-                    .unpause(gid)
-                    .await
-                    .map(|_| Value::String(gid.clone()))
-            }
+            "motrix.unpause" => manager
+                .unpause(gid)
+                .await
+                .map(|_| Value::String(gid.clone())),
             _ => Err(format!("Unsupported multicall method: {}", method)),
         };
         match result {
@@ -1108,14 +1103,26 @@ mod tests {
 
     #[test]
     fn retry_exponential_backoff() {
-        assert_eq!(compute_auto_retry_delay_ms("exponential", 2000, 1, 60_000), 2000);
-        assert_eq!(compute_auto_retry_delay_ms("exponential", 2000, 2, 60_000), 4000);
-        assert_eq!(compute_auto_retry_delay_ms("exponential", 2000, 3, 60_000), 8000);
+        assert_eq!(
+            compute_auto_retry_delay_ms("exponential", 2000, 1, 60_000),
+            2000
+        );
+        assert_eq!(
+            compute_auto_retry_delay_ms("exponential", 2000, 2, 60_000),
+            4000
+        );
+        assert_eq!(
+            compute_auto_retry_delay_ms("exponential", 2000, 3, 60_000),
+            8000
+        );
     }
 
     #[test]
     fn retry_exponential_capped_by_max() {
-        assert_eq!(compute_auto_retry_delay_ms("exponential", 2000, 10, 10_000), 10_000);
+        assert_eq!(
+            compute_auto_retry_delay_ms("exponential", 2000, 10, 10_000),
+            10_000
+        );
     }
 
     #[test]
@@ -1140,9 +1147,18 @@ mod tests {
 
     #[test]
     fn infer_out_m3u8_uri() {
-        assert_eq!(infer_out_from_uri_inner("http://example.com/video.m3u8"), "video.ts");
-        assert_eq!(infer_out_from_uri_inner("http://example.com/video.m3u8?token=abc"), "video.ts");
-        assert_eq!(infer_out_from_uri_inner("http://example.com/video.m3u"), "video.ts");
+        assert_eq!(
+            infer_out_from_uri_inner("http://example.com/video.m3u8"),
+            "video.ts"
+        );
+        assert_eq!(
+            infer_out_from_uri_inner("http://example.com/video.m3u8?token=abc"),
+            "video.ts"
+        );
+        assert_eq!(
+            infer_out_from_uri_inner("http://example.com/video.m3u"),
+            "video.ts"
+        );
     }
 
     #[test]
@@ -1159,7 +1175,10 @@ mod tests {
 
     #[test]
     fn infer_out_no_extension() {
-        assert_eq!(infer_out_from_uri_inner("http://example.com/path/noext"), "");
+        assert_eq!(
+            infer_out_from_uri_inner("http://example.com/path/noext"),
+            ""
+        );
     }
 
     #[test]

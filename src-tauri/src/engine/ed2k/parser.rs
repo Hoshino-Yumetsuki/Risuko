@@ -86,8 +86,12 @@ mod tests {
 
     #[test]
     fn test_is_ed2k_uri() {
-        assert!(is_ed2k_uri("ed2k://|file|test.txt|1234|0123456789abcdef0123456789abcdef|/"));
-        assert!(is_ed2k_uri("ED2K://|file|test.txt|1234|0123456789abcdef0123456789abcdef|/"));
+        assert!(is_ed2k_uri(
+            "ed2k://|file|test.txt|1234|0123456789abcdef0123456789abcdef|/"
+        ));
+        assert!(is_ed2k_uri(
+            "ED2K://|file|test.txt|1234|0123456789abcdef0123456789abcdef|/"
+        ));
         assert!(is_ed2k_uri("  ed2k://|file|test.txt|1234|aaaa|/  "));
         assert!(!is_ed2k_uri("http://example.com"));
         assert!(!is_ed2k_uri("magnet:?xt=urn:btih:abc"));
@@ -98,7 +102,10 @@ mod tests {
     fn test_parse_basic_link() {
         let uri = "ed2k://|file|The_Two_Towers-The_Purist_Edit-Trailer.avi|14997504|965c013e991ee246d63d45ea71954c4d|/";
         let parsed = parse_ed2k_link(uri).unwrap();
-        assert_eq!(parsed.file_name, "The_Two_Towers-The_Purist_Edit-Trailer.avi");
+        assert_eq!(
+            parsed.file_name,
+            "The_Two_Towers-The_Purist_Edit-Trailer.avi"
+        );
         assert_eq!(parsed.file_size, 14997504);
         assert_eq!(parsed.file_hash, "965c013e991ee246d63d45ea71954c4d");
         assert!(parsed.sources.is_empty());
@@ -118,7 +125,10 @@ mod tests {
     fn test_parse_link_with_aich() {
         let uri = "ed2k://|file|test.avi|14997504|965c013e991ee246d63d45ea71954c4d|h=H52BRVWPBBTAED5NXQDH2RJDDAKRUWST|/";
         let parsed = parse_ed2k_link(uri).unwrap();
-        assert_eq!(parsed.aich_hash.as_deref(), Some("H52BRVWPBBTAED5NXQDH2RJDDAKRUWST"));
+        assert_eq!(
+            parsed.aich_hash.as_deref(),
+            Some("H52BRVWPBBTAED5NXQDH2RJDDAKRUWST")
+        );
     }
 
     #[test]

@@ -6,7 +6,8 @@ use std::sync::Arc;
 
 use futures_util::StreamExt;
 use reqwest::header::{
-    HeaderMap, HeaderName, HeaderValue, ACCEPT_RANGES, CONTENT_LENGTH, CONTENT_RANGE, ETAG, IF_MATCH, LAST_MODIFIED, RANGE,
+    HeaderMap, HeaderName, HeaderValue, ACCEPT_RANGES, CONTENT_LENGTH, CONTENT_RANGE, ETAG,
+    IF_MATCH, LAST_MODIFIED, RANGE,
 };
 use reqwest::Client;
 use serde_json::{Map, Value};
@@ -279,7 +280,10 @@ pub async fn run_http_download(
 
     let split = options
         .get("split")
-        .and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse().ok())))
+        .and_then(|v| {
+            v.as_u64()
+                .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+        })
         .unwrap_or(1)
         .max(1) as usize;
 
@@ -391,9 +395,7 @@ pub async fn run_http_download(
             }
 
             if is_http && split > 1 {
-                if let Ok(Some(probe)) =
-                    probe_range_support(&client, uri, &headers).await
-                {
+                if let Ok(Some(probe)) = probe_range_support(&client, uri, &headers).await {
                     if probe.content_length > MIN_SEGMENT_SIZE * split as u64 {
                         if use_remote_time {
                             last_modified_header = probe.last_modified.clone();
@@ -505,7 +507,11 @@ async fn probe_range_support(
         {
             if let Some(slash) = cr.rfind('/') {
                 if let Ok(total) = cr[slash + 1..].trim().parse::<u64>() {
-                    return Ok(Some(ProbeResult { content_length: total, etag, last_modified }));
+                    return Ok(Some(ProbeResult {
+                        content_length: total,
+                        etag,
+                        last_modified,
+                    }));
                 }
             }
         }
@@ -527,7 +533,11 @@ async fn probe_range_support(
                 {
                     if let Ok(total) = cl.trim().parse::<u64>() {
                         if total > 0 {
-                            return Ok(Some(ProbeResult { content_length: total, etag, last_modified }));
+                            return Ok(Some(ProbeResult {
+                                content_length: total,
+                                etag,
+                                last_modified,
+                            }));
                         }
                     }
                 }
@@ -585,9 +595,7 @@ async fn run_multi_chunk(
                     cc.store(bytes, Ordering::Relaxed);
                 }
             }
-            tracing::info!(
-                "Resuming multi-chunk download: {total_resumed}/{content_length} bytes"
-            );
+            tracing::info!("Resuming multi-chunk download: {total_resumed}/{content_length} bytes");
             meta.chunk_bytes
         } else {
             vec![0u64; split]
@@ -643,8 +651,22 @@ async fn run_multi_chunk(
         let cc = chunk_completed.get(i).cloned();
 
         futures.push(tokio::spawn(async move {
-            download_chunk(&client, &uri, &headers, chunk, &file, &completed, cancel_token, i, &gl, &tl, etag.as_deref(), cc.as_ref(), initial)
-                .await
+            download_chunk(
+                &client,
+                &uri,
+                &headers,
+                chunk,
+                &file,
+                &completed,
+                cancel_token,
+                i,
+                &gl,
+                &tl,
+                etag.as_deref(),
+                cc.as_ref(),
+                initial,
+            )
+            .await
         }));
     }
 
@@ -664,7 +686,13 @@ async fn run_multi_chunk(
 
     if !errors.is_empty() {
         // Persist per-chunk progress for potential resume
-        save_chunk_meta(part_path, content_length, split, &expected_etag, chunk_completed);
+        save_chunk_meta(
+            part_path,
+            content_length,
+            split,
+            &expected_etag,
+            chunk_completed,
+        );
 
         if errors.iter().all(|e| e.contains("cancelled")) {
             return Err("Download cancelled".to_string());
@@ -831,7 +859,11 @@ async fn download_chunk_stream(
             )),
         };
     }
-    if let Some(cr) = resp.headers().get(CONTENT_RANGE).and_then(|v| v.to_str().ok()) {
+    if let Some(cr) = resp
+        .headers()
+        .get(CONTENT_RANGE)
+        .and_then(|v| v.to_str().ok())
+    {
         // Content-Range: bytes START-END/TOTAL
         if let Some(space) = cr.find(' ') {
             if let Some(dash) = cr[space + 1..].find('-') {
@@ -1177,11 +1209,7 @@ async fn run_speed_tracker(
 }
 
 /// Rename the .part file to the final filename
-fn finalize_download(
-    part_path: &Path,
-    filename: &str,
-    dir_path: &Path,
-) -> Result<PathBuf, String> {
+fn finalize_download(part_path: &Path, filename: &str, dir_path: &Path) -> Result<PathBuf, String> {
     let final_name = if filename.ends_with(PART_SUFFIX) {
         filename[..filename.len() - PART_SUFFIX.len()].to_string()
     } else {
@@ -1201,7 +1229,10 @@ fn apply_remote_file_time(path: &Path, last_modified_str: &str) {
         if let Err(e) = filetime::set_file_mtime(path, ft) {
             tracing::warn!("Failed to set remote file time on {}: {e}", path.display());
         } else {
-            tracing::info!("Set remote file time on {}: {last_modified_str}", path.display());
+            tracing::info!(
+                "Set remote file time on {}: {last_modified_str}",
+                path.display()
+            );
         }
     } else {
         tracing::warn!("Could not parse Last-Modified header: {last_modified_str}");
@@ -1218,12 +1249,14 @@ fn parse_http_date(s: &str) -> Option<filetime::FileTime> {
     let s = s.trim();
     // Use the simple approach: try to parse common HTTP date formats
     static MONTHS: &[&str] = &[
-        "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-        "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
     ];
 
     fn month_num(m: &str) -> Option<u32> {
-        MONTHS.iter().position(|&name| name.eq_ignore_ascii_case(m)).map(|i| i as u32 + 1)
+        MONTHS
+            .iter()
+            .position(|&name| name.eq_ignore_ascii_case(m))
+            .map(|i| i as u32 + 1)
     }
 
     // Try RFC 7231 preferred format: "Sun, 06 Nov 1994 08:49:37 GMT"

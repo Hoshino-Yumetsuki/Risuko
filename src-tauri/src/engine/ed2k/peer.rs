@@ -10,12 +10,21 @@ use super::types::*;
 #[derive(Debug)]
 pub enum PeerEvent {
     HelloAnswer,
-    FileStatus { file_hash: [u8; 16], parts: Vec<bool> },
-    HashsetAnswer { file_hash: [u8; 16], hashes: Vec<[u8; 16]> },
+    FileStatus {
+        file_hash: [u8; 16],
+        parts: Vec<bool>,
+    },
+    HashsetAnswer {
+        file_hash: [u8; 16],
+        hashes: Vec<[u8; 16]>,
+    },
     SlotGiven,
     SlotTaken,
     QueueRanking(u16),
-    DataReceived { start: u32, data: Vec<u8> },
+    DataReceived {
+        start: u32,
+        data: Vec<u8>,
+    },
     Disconnected(Option<String>),
 }
 

@@ -1293,12 +1293,18 @@ mod tests {
 
     #[test]
     fn normalize_path_backslashes() {
-        assert_eq!(normalize_torrent_path("folder\\file.txt"), "folder/file.txt");
+        assert_eq!(
+            normalize_torrent_path("folder\\file.txt"),
+            "folder/file.txt"
+        );
     }
 
     #[test]
     fn normalize_path_leading_slash() {
-        assert_eq!(normalize_torrent_path("/folder/file.txt"), "folder/file.txt");
+        assert_eq!(
+            normalize_torrent_path("/folder/file.txt"),
+            "folder/file.txt"
+        );
     }
 
     #[test]
