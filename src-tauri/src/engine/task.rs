@@ -120,7 +120,12 @@ pub struct DownloadTask {
 }
 
 impl DownloadTask {
-    pub fn new_http(gid: String, uris: Vec<String>, dir: String, options: Map<String, Value>) -> Self {
+    pub fn new_http(
+        gid: String,
+        uris: Vec<String>,
+        dir: String,
+        options: Map<String, Value>,
+    ) -> Self {
         let out = options
             .get("out")
             .and_then(|v| v.as_str())
@@ -421,13 +426,34 @@ impl DownloadTask {
     fn to_full_rpc_status(&self) -> Value {
         let mut m = Map::new();
         m.insert("gid".into(), Value::String(self.gid.clone()));
-        m.insert("status".into(), Value::String(self.status.as_str().to_string()));
-        m.insert("totalLength".into(), Value::String(self.total_length.to_string()));
-        m.insert("completedLength".into(), Value::String(self.completed_length.to_string()));
-        m.insert("downloadSpeed".into(), Value::String(self.download_speed.to_string()));
-        m.insert("uploadSpeed".into(), Value::String(self.upload_speed.to_string()));
-        m.insert("uploadLength".into(), Value::String(self.upload_length.to_string()));
-        m.insert("connections".into(), Value::String(self.connections.to_string()));
+        m.insert(
+            "status".into(),
+            Value::String(self.status.as_str().to_string()),
+        );
+        m.insert(
+            "totalLength".into(),
+            Value::String(self.total_length.to_string()),
+        );
+        m.insert(
+            "completedLength".into(),
+            Value::String(self.completed_length.to_string()),
+        );
+        m.insert(
+            "downloadSpeed".into(),
+            Value::String(self.download_speed.to_string()),
+        );
+        m.insert(
+            "uploadSpeed".into(),
+            Value::String(self.upload_speed.to_string()),
+        );
+        m.insert(
+            "uploadLength".into(),
+            Value::String(self.upload_length.to_string()),
+        );
+        m.insert(
+            "connections".into(),
+            Value::String(self.connections.to_string()),
+        );
         m.insert("dir".into(), Value::String(self.dir.clone()));
 
         if !self.files.is_empty() {
@@ -448,7 +474,10 @@ impl DownloadTask {
             m.insert("errorMessage".into(), Value::String(msg.clone()));
         }
 
-        m.insert("createdAt".into(), Value::String(self.created_at.to_string()));
+        m.insert(
+            "createdAt".into(),
+            Value::String(self.created_at.to_string()),
+        );
 
         // BitTorrent fields
         if self.kind == TaskKind::Torrent {
@@ -463,8 +492,14 @@ impl DownloadTask {
                 bt.insert("info".into(), Value::Object(info));
             }
             m.insert("bittorrent".into(), Value::Object(bt));
-            m.insert("seeder".into(), Value::String(if self.seeder { "true" } else { "false" }.into()));
-            m.insert("numSeeders".into(), Value::String(self.num_seeders.to_string()));
+            m.insert(
+                "seeder".into(),
+                Value::String(if self.seeder { "true" } else { "false" }.into()),
+            );
+            m.insert(
+                "numSeeders".into(),
+                Value::String(self.num_seeders.to_string()),
+            );
         }
 
         // ed2k fields
@@ -472,7 +507,10 @@ impl DownloadTask {
             if let Some(uri) = self.uris.first() {
                 m.insert("ed2kLink".into(), Value::String(uri.clone()));
             }
-            m.insert("numPeers".into(), Value::String(self.connections.to_string()));
+            m.insert(
+                "numPeers".into(),
+                Value::String(self.connections.to_string()),
+            );
         }
 
         // m3u8 fields
@@ -489,7 +527,10 @@ impl DownloadTask {
                 .iter()
                 .map(|cp| {
                     let mut cm = Map::new();
-                    cm.insert("completedLength".into(), Value::String(cp.completed.to_string()));
+                    cm.insert(
+                        "completedLength".into(),
+                        Value::String(cp.completed.to_string()),
+                    );
                     cm.insert("totalLength".into(), Value::String(cp.total.to_string()));
                     Value::Object(cm)
                 })

@@ -125,6 +125,11 @@ pub fn auto_hide_window(enabled: bool) -> Result<(), String> {
 }
 
 #[tauri::command]
+pub fn toggle_app_menu(handle: AppHandle, hidden: bool) -> Result<(), String> {
+    crate::managers::menu::toggle_app_menu(&handle, hidden)
+}
+
+#[tauri::command]
 pub fn is_opened_at_login() -> bool {
     std::env::args().any(|arg| arg == "--opened-at-login=1")
 }

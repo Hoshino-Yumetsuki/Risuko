@@ -85,7 +85,10 @@ impl RpcServer {
             .max_age(std::time::Duration::from_secs(1728000));
 
         let app = Router::new()
-            .route("/jsonrpc", post(handle_http_post).get(handle_http_get_or_ws))
+            .route(
+                "/jsonrpc",
+                post(handle_http_post).get(handle_http_get_or_ws),
+            )
             .layer(cors)
             .with_state(state);
 
@@ -122,10 +125,7 @@ impl RpcServer {
 
 // HTTP POST handler
 
-async fn handle_http_post(
-    State(state): State<RpcState>,
-    body: String,
-) -> Response {
+async fn handle_http_post(State(state): State<RpcState>, body: String) -> Response {
     let parsed = match serde_json::from_str::<Value>(&body) {
         Ok(v) => v,
         Err(_) => {
@@ -137,7 +137,11 @@ async fn handle_http_post(
     match parsed {
         Value::Array(batch) => {
             if batch.is_empty() {
-                return json_rpc_response(rpc_error(Value::Null, INVALID_REQUEST, "Invalid Request"));
+                return json_rpc_response(rpc_error(
+                    Value::Null,
+                    INVALID_REQUEST,
+                    "Invalid Request",
+                ));
             }
             let mut results = Vec::with_capacity(batch.len());
             for item in batch {
@@ -153,12 +157,10 @@ async fn handle_http_post(
                 json_rpc_response(Value::Array(results))
             }
         }
-        Value::Object(_) => {
-            match process_single_request(&state, parsed).await {
-                Some(resp) => json_rpc_response(resp),
-                None => (StatusCode::NO_CONTENT, "").into_response(),
-            }
-        }
+        Value::Object(_) => match process_single_request(&state, parsed).await {
+            Some(resp) => json_rpc_response(resp),
+            None => (StatusCode::NO_CONTENT, "").into_response(),
+        },
         _ => json_rpc_response(rpc_error(Value::Null, INVALID_REQUEST, "Invalid Request")),
     }
 }
@@ -190,10 +192,9 @@ async fn handle_http_get_or_ws(
 
     // Parse query params from URI
     let query_str = req.uri().query().unwrap_or("");
-    let params: HashMap<String, String> =
-        url::form_urlencoded::parse(query_str.as_bytes())
-            .map(|(k, v)| (k.into_owned(), v.into_owned()))
-            .collect();
+    let params: HashMap<String, String> = url::form_urlencoded::parse(query_str.as_bytes())
+        .map(|(k, v)| (k.into_owned(), v.into_owned()))
+        .collect();
 
     handle_get_query(state, params).await
 }
@@ -222,7 +223,11 @@ async fn handle_get_query(state: RpcState, params: HashMap<String, String>) -> R
     if method.is_empty() && id == Value::Null {
         if let Value::Array(batch) = rpc_params {
             if batch.is_empty() {
-                return json_rpc_response(rpc_error(Value::Null, INVALID_REQUEST, "Invalid Request"));
+                return json_rpc_response(rpc_error(
+                    Value::Null,
+                    INVALID_REQUEST,
+                    "Invalid Request",
+                ));
             }
             let mut results = Vec::with_capacity(batch.len());
             for item in batch {
@@ -398,11 +403,7 @@ async fn process_single_request(state: &RpcState, request: Value) -> Option<Valu
     // Auth check
     let (authed_params, auth_ok) = check_auth(&state.secret, params_vec);
     if !auth_ok {
-        return Some(rpc_error(
-            id.unwrap_or(Value::Null),
-            1,
-            "Unauthorized",
-        ));
+        return Some(rpc_error(id.unwrap_or(Value::Null), 1, "Unauthorized"));
     }
 
     // Normalize method prefix: aria2.X → motrix.X
@@ -496,283 +497,295 @@ fn dispatch_method<'a>(
     params: Vec<Value>,
 ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value, RpcError>> + Send + 'a>> {
     Box::pin(async move {
-    match method {
-        "motrix.addUri" => {
-            let uris = params
-                .first()
-                .and_then(|v| v.as_array())
-                .map(|a| {
-                    a.iter()
-                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_default();
+        match method {
+            "motrix.addUri" => {
+                let uris = params
+                    .first()
+                    .and_then(|v| v.as_array())
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
 
-            if uris.is_empty() {
-                return Err("URI required".to_string().into());
+                if uris.is_empty() {
+                    return Err("URI required".to_string().into());
+                }
+
+                let options = params
+                    .get(1)
+                    .and_then(|v| v.as_object())
+                    .cloned()
+                    .unwrap_or_default();
+
+                let gid = state
+                    .manager
+                    .add_http_task(uris, options)
+                    .await
+                    .map_err(RpcError::from)?;
+                Ok(Value::String(gid))
             }
 
-            let options = params
-                .get(1)
-                .and_then(|v| v.as_object())
-                .cloned()
-                .unwrap_or_default();
-
-            let gid = state.manager.add_http_task(uris, options).await.map_err(RpcError::from)?;
-            Ok(Value::String(gid))
-        }
-
-        "motrix.addTorrent" => {
-            let torrent_b64 = params
-                .first()
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| RpcError::from("Torrent data required".to_string()))?;
-
-            let torrent_data = base64::engine::general_purpose::STANDARD
-                .decode(torrent_b64)
-                .map_err(|e| RpcError::from(format!("Invalid base64: {e}")))?;
-
-            // aria2 convention: params[1] = uris (unused by us), params[2] = options
-            let options = params
-                .get(2)
-                .and_then(|v| v.as_object())
-                .cloned()
-                .unwrap_or_default();
-
-            let gid = state.manager.add_torrent_task(torrent_data, options).await.map_err(RpcError::from)?;
-            Ok(Value::String(gid))
-        }
-
-        "motrix.addEd2k" => {
-            let uri = params
-                .first()
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| RpcError::from("ed2k URI required".to_string()))?;
-
-            let options = params
-                .get(1)
-                .and_then(|v| v.as_object())
-                .cloned()
-                .unwrap_or_default();
-
-            let gid = state.manager.add_ed2k_task(uri, options).await.map_err(RpcError::from)?;
-            Ok(Value::String(gid))
-        }
-
-        "motrix.remove" | "motrix.forceRemove" => {
-            let gid = get_gid(&params)?;
-            state.manager.remove(&gid).await.map_err(RpcError::from)?;
-            Ok(Value::String(gid))
-        }
-
-        "motrix.pause" | "motrix.forcePause" => {
-            let gid = get_gid(&params)?;
-            state.manager.pause(&gid).await.map_err(RpcError::from)?;
-            Ok(Value::String(gid))
-        }
-
-        "motrix.pauseAll" | "motrix.forcePauseAll" => {
-            state.manager.pause_all().await;
-            Ok(Value::String("OK".into()))
-        }
-
-        "motrix.unpause" => {
-            let gid = get_gid(&params)?;
-            state.manager.unpause(&gid).await.map_err(RpcError::from)?;
-            Ok(Value::String(gid))
-        }
-
-        "motrix.unpauseAll" => {
-            state.manager.unpause_all().await;
-            Ok(Value::String("OK".into()))
-        }
-
-        "motrix.tellStatus" => {
-            let gid = get_gid(&params)?;
-            let keys = get_keys(&params, 1);
-            state.manager.tell_status(&gid, &keys).await.map_err(RpcError::from)
-        }
-
-        "motrix.tellActive" => {
-            let keys = get_keys(&params, 0);
-            Ok(state.manager.tell_active(&keys).await)
-        }
-
-        "motrix.tellWaiting" => {
-            let offset = params
-                .first()
-                .and_then(|v| v.as_i64())
-                .unwrap_or(0);
-            let num = params
-                .get(1)
-                .and_then(|v| v.as_u64())
-                .unwrap_or(1000) as usize;
-            let keys = get_keys(&params, 2);
-            Ok(state.manager.tell_waiting(offset, num, &keys).await)
-        }
-
-        "motrix.tellStopped" => {
-            let offset = params
-                .first()
-                .and_then(|v| v.as_i64())
-                .unwrap_or(0);
-            let num = params
-                .get(1)
-                .and_then(|v| v.as_u64())
-                .unwrap_or(1000) as usize;
-            let keys = get_keys(&params, 2);
-            Ok(state.manager.tell_stopped(offset, num, &keys).await)
-        }
-
-        "motrix.getGlobalStat" => Ok(state.manager.get_global_stat().await),
-
-        "motrix.changeOption" => {
-            let gid = get_gid(&params)?;
-            let opts = params
-                .get(1)
-                .and_then(|v| v.as_object())
-                .cloned()
-                .unwrap_or_default();
-            state.manager.change_option(&gid, opts).await.map_err(RpcError::from)?;
-            Ok(Value::String("OK".into()))
-        }
-
-        "motrix.changeGlobalOption" => {
-            let opts = params
-                .first()
-                .and_then(|v| v.as_object())
-                .cloned()
-                .unwrap_or_default();
-            state.manager.change_global_option(opts).await;
-            Ok(Value::String("OK".into()))
-        }
-
-        "motrix.getOption" => {
-            let gid = get_gid(&params)?;
-            state.manager.get_option(&gid).await.map_err(RpcError::from)
-        }
-
-        "motrix.getGlobalOption" => Ok(state.manager.get_global_option().await),
-
-        "motrix.changePosition" => {
-            let gid = get_gid(&params)?;
-            let pos = params
-                .get(1)
-                .and_then(|v| v.as_i64())
-                .unwrap_or(0);
-            let how = params
-                .get(2)
-                .and_then(|v| v.as_str())
-                .unwrap_or("POS_SET");
-            state.manager.change_position(&gid, pos, how).await.map_err(RpcError::from)
-        }
-
-        "motrix.getPeers" => {
-            let gid = get_gid(&params)?;
-            Ok(state.manager.get_peers(&gid).await)
-        }
-
-        "motrix.getUris" => {
-            let gid = get_gid(&params)?;
-            state.manager.get_uris(&gid).await.map_err(RpcError::from)
-        }
-
-        "motrix.getFiles" => {
-            let gid = get_gid(&params)?;
-            state.manager.get_files(&gid).await.map_err(RpcError::from)
-        }
-
-        "motrix.getServers" => {
-            let gid = get_gid(&params)?;
-            state.manager.get_servers(&gid).await.map_err(RpcError::from)
-        }
-
-        "motrix.getSessionInfo" => {
-            Ok(json!({ "sessionId": state.session_id }))
-        }
-
-        "motrix.shutdown" => {
-            state.manager.save_session().await.ok();
-            let _ = state.rpc_shutdown_tx.send(()).await;
-            Ok(Value::String("OK".into()))
-        }
-
-        "motrix.forceShutdown" => {
-            let _ = state.rpc_shutdown_tx.send(()).await;
-            Ok(Value::String("OK".into()))
-        }
-
-        "motrix.saveSession" => {
-            state.manager.save_session().await.map_err(RpcError::from)?;
-            Ok(Value::String("OK".into()))
-        }
-
-        "motrix.purgeDownloadResult" => {
-            state.manager.purge_download_result().await;
-            Ok(Value::String("OK".into()))
-        }
-
-        "motrix.removeDownloadResult" => {
-            let gid = get_gid(&params)?;
-            state.manager.remove_download_result(&gid).await.map_err(RpcError::from)?;
-            Ok(Value::String("OK".into()))
-        }
-
-        "motrix.getVersion" => Ok(json!({
-            "version": ENGINE_VERSION,
-            "enabledFeatures": [
-                "HTTP",
-                "HTTPS",
-                "FTP",
-                "FTPS",
-                "SFTP",
-                "BitTorrent",
-                "JSON-RPC",
-            ]
-        })),
-
-        "system.multicall" => {
-            let methods = params
-                .first()
-                .and_then(|v| v.as_array())
-                .cloned()
-                .unwrap_or_default();
-
-            let mut results = Vec::with_capacity(methods.len());
-            for call in methods {
-                let method_name = call
-                    .get("methodName")
+            "motrix.addTorrent" => {
+                let torrent_b64 = params
+                    .first()
                     .and_then(|v| v.as_str())
-                    .unwrap_or("");
-                let call_params = call
-                    .get("params")
+                    .ok_or_else(|| RpcError::from("Torrent data required".to_string()))?;
+
+                let torrent_data = base64::engine::general_purpose::STANDARD
+                    .decode(torrent_b64)
+                    .map_err(|e| RpcError::from(format!("Invalid base64: {e}")))?;
+
+                // aria2 convention: params[1] = uris (unused by us), params[2] = options
+                let options = params
+                    .get(2)
+                    .and_then(|v| v.as_object())
+                    .cloned()
+                    .unwrap_or_default();
+
+                let gid = state
+                    .manager
+                    .add_torrent_task(torrent_data, options)
+                    .await
+                    .map_err(RpcError::from)?;
+                Ok(Value::String(gid))
+            }
+
+            "motrix.addEd2k" => {
+                let uri = params
+                    .first()
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| RpcError::from("ed2k URI required".to_string()))?;
+
+                let options = params
+                    .get(1)
+                    .and_then(|v| v.as_object())
+                    .cloned()
+                    .unwrap_or_default();
+
+                let gid = state
+                    .manager
+                    .add_ed2k_task(uri, options)
+                    .await
+                    .map_err(RpcError::from)?;
+                Ok(Value::String(gid))
+            }
+
+            "motrix.remove" | "motrix.forceRemove" => {
+                let gid = get_gid(&params)?;
+                state.manager.remove(&gid).await.map_err(RpcError::from)?;
+                Ok(Value::String(gid))
+            }
+
+            "motrix.pause" | "motrix.forcePause" => {
+                let gid = get_gid(&params)?;
+                state.manager.pause(&gid).await.map_err(RpcError::from)?;
+                Ok(Value::String(gid))
+            }
+
+            "motrix.pauseAll" | "motrix.forcePauseAll" => {
+                state.manager.pause_all().await;
+                Ok(Value::String("OK".into()))
+            }
+
+            "motrix.unpause" => {
+                let gid = get_gid(&params)?;
+                state.manager.unpause(&gid).await.map_err(RpcError::from)?;
+                Ok(Value::String(gid))
+            }
+
+            "motrix.unpauseAll" => {
+                state.manager.unpause_all().await;
+                Ok(Value::String("OK".into()))
+            }
+
+            "motrix.tellStatus" => {
+                let gid = get_gid(&params)?;
+                let keys = get_keys(&params, 1);
+                state
+                    .manager
+                    .tell_status(&gid, &keys)
+                    .await
+                    .map_err(RpcError::from)
+            }
+
+            "motrix.tellActive" => {
+                let keys = get_keys(&params, 0);
+                Ok(state.manager.tell_active(&keys).await)
+            }
+
+            "motrix.tellWaiting" => {
+                let offset = params.first().and_then(|v| v.as_i64()).unwrap_or(0);
+                let num = params.get(1).and_then(|v| v.as_u64()).unwrap_or(1000) as usize;
+                let keys = get_keys(&params, 2);
+                Ok(state.manager.tell_waiting(offset, num, &keys).await)
+            }
+
+            "motrix.tellStopped" => {
+                let offset = params.first().and_then(|v| v.as_i64()).unwrap_or(0);
+                let num = params.get(1).and_then(|v| v.as_u64()).unwrap_or(1000) as usize;
+                let keys = get_keys(&params, 2);
+                Ok(state.manager.tell_stopped(offset, num, &keys).await)
+            }
+
+            "motrix.getGlobalStat" => Ok(state.manager.get_global_stat().await),
+
+            "motrix.changeOption" => {
+                let gid = get_gid(&params)?;
+                let opts = params
+                    .get(1)
+                    .and_then(|v| v.as_object())
+                    .cloned()
+                    .unwrap_or_default();
+                state
+                    .manager
+                    .change_option(&gid, opts)
+                    .await
+                    .map_err(RpcError::from)?;
+                Ok(Value::String("OK".into()))
+            }
+
+            "motrix.changeGlobalOption" => {
+                let opts = params
+                    .first()
+                    .and_then(|v| v.as_object())
+                    .cloned()
+                    .unwrap_or_default();
+                state.manager.change_global_option(opts).await;
+                Ok(Value::String("OK".into()))
+            }
+
+            "motrix.getOption" => {
+                let gid = get_gid(&params)?;
+                state.manager.get_option(&gid).await.map_err(RpcError::from)
+            }
+
+            "motrix.getGlobalOption" => Ok(state.manager.get_global_option().await),
+
+            "motrix.changePosition" => {
+                let gid = get_gid(&params)?;
+                let pos = params.get(1).and_then(|v| v.as_i64()).unwrap_or(0);
+                let how = params.get(2).and_then(|v| v.as_str()).unwrap_or("POS_SET");
+                state
+                    .manager
+                    .change_position(&gid, pos, how)
+                    .await
+                    .map_err(RpcError::from)
+            }
+
+            "motrix.getPeers" => {
+                let gid = get_gid(&params)?;
+                Ok(state.manager.get_peers(&gid).await)
+            }
+
+            "motrix.getUris" => {
+                let gid = get_gid(&params)?;
+                state.manager.get_uris(&gid).await.map_err(RpcError::from)
+            }
+
+            "motrix.getFiles" => {
+                let gid = get_gid(&params)?;
+                state.manager.get_files(&gid).await.map_err(RpcError::from)
+            }
+
+            "motrix.getServers" => {
+                let gid = get_gid(&params)?;
+                state
+                    .manager
+                    .get_servers(&gid)
+                    .await
+                    .map_err(RpcError::from)
+            }
+
+            "motrix.getSessionInfo" => Ok(json!({ "sessionId": state.session_id })),
+
+            "motrix.shutdown" => {
+                state.manager.save_session().await.ok();
+                let _ = state.rpc_shutdown_tx.send(()).await;
+                Ok(Value::String("OK".into()))
+            }
+
+            "motrix.forceShutdown" => {
+                let _ = state.rpc_shutdown_tx.send(()).await;
+                Ok(Value::String("OK".into()))
+            }
+
+            "motrix.saveSession" => {
+                state.manager.save_session().await.map_err(RpcError::from)?;
+                Ok(Value::String("OK".into()))
+            }
+
+            "motrix.purgeDownloadResult" => {
+                state.manager.purge_download_result().await;
+                Ok(Value::String("OK".into()))
+            }
+
+            "motrix.removeDownloadResult" => {
+                let gid = get_gid(&params)?;
+                state
+                    .manager
+                    .remove_download_result(&gid)
+                    .await
+                    .map_err(RpcError::from)?;
+                Ok(Value::String("OK".into()))
+            }
+
+            "motrix.getVersion" => Ok(json!({
+                "version": ENGINE_VERSION,
+                "enabledFeatures": [
+                    "HTTP",
+                    "HTTPS",
+                    "FTP",
+                    "FTPS",
+                    "SFTP",
+                    "BitTorrent",
+                    "JSON-RPC",
+                ]
+            })),
+
+            "system.multicall" => {
+                let methods = params
+                    .first()
                     .and_then(|v| v.as_array())
                     .cloned()
                     .unwrap_or_default();
 
-                let (clean_params, _) = check_auth(&state.secret, call_params);
-                let normalized = normalize_method(method_name);
+                let mut results = Vec::with_capacity(methods.len());
+                for call in methods {
+                    let method_name = call
+                        .get("methodName")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    let call_params = call
+                        .get("params")
+                        .and_then(|v| v.as_array())
+                        .cloned()
+                        .unwrap_or_default();
 
-                match dispatch_method(state, &normalized, clean_params).await {
-                    Ok(value) => results.push(Value::Array(vec![value])),
-                    Err(e) => results.push(json!({
-                        "code": e.code,
-                        "message": e.message,
-                    })),
+                    let (clean_params, _) = check_auth(&state.secret, call_params);
+                    let normalized = normalize_method(method_name);
+
+                    match dispatch_method(state, &normalized, clean_params).await {
+                        Ok(value) => results.push(Value::Array(vec![value])),
+                        Err(e) => results.push(json!({
+                            "code": e.code,
+                            "message": e.message,
+                        })),
+                    }
                 }
+                Ok(Value::Array(results))
             }
-            Ok(Value::Array(results))
+
+            "system.listMethods" => Ok(list_methods()),
+
+            "system.listNotifications" => Ok(list_notifications()),
+
+            _ => Err(RpcError {
+                code: METHOD_NOT_FOUND,
+                message: format!("Method not found: {method}"),
+            }),
         }
-
-        "system.listMethods" => Ok(list_methods()),
-
-        "system.listNotifications" => Ok(list_notifications()),
-
-        _ => Err(RpcError {
-            code: METHOD_NOT_FOUND,
-            message: format!("Method not found: {method}"),
-        }),
-    }
     })
 }
 

@@ -62,10 +62,7 @@ pub async fn run_sftp_download(
     fs::create_dir_all(dir_path).map_err(|e| format!("Failed to create dir: {e}"))?;
 
     let filename = if out.is_empty() {
-        super::infer_filename_from_ftp_uri(&format!(
-            "sftp://{}{}",
-            parsed.host, parsed.path
-        ))
+        super::infer_filename_from_ftp_uri(&format!("sftp://{}{}", parsed.host, parsed.path))
     } else {
         out.to_string()
     };
@@ -323,10 +320,7 @@ async fn try_authenticate(
 }
 
 /// Load an SSH private key from either a file path or inline PEM content
-async fn load_private_key(
-    source: &str,
-    passphrase: Option<&str>,
-) -> Result<key::KeyPair, String> {
+async fn load_private_key(source: &str, passphrase: Option<&str>) -> Result<key::KeyPair, String> {
     let pem_content = if source.contains("-----BEGIN") {
         // Inline PEM content
         source.to_string()

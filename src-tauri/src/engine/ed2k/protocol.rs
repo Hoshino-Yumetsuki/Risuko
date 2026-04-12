@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use super::types::*;
 use bytes::{Buf, BytesMut};
 use std::io;
@@ -44,7 +42,10 @@ impl Ed2kPacket {
         let data_len = u32::from_le_bytes([buf[1], buf[2], buf[3], buf[4]]) as usize;
 
         if data_len == 0 {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "Zero-length ed2k packet"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Zero-length ed2k packet",
+            ));
         }
 
         let total_len = 5 + data_len;
@@ -71,10 +72,7 @@ impl Ed2kPacket {
 
 /// Build a Hello Server packet (opcode 0x01)
 /// Contains: client_hash(16) + client_id(4) + port(2) + meta_tags
-pub fn build_hello_server(
-    client_hash: &[u8; 16],
-    client_port: u16,
-) -> Ed2kPacket {
+pub fn build_hello_server(client_hash: &[u8; 16], client_port: u16) -> Ed2kPacket {
     let mut payload = Vec::with_capacity(64);
     payload.extend_from_slice(client_hash);
     payload.extend_from_slice(&0u32.to_le_bytes()); // client_id = 0 (connecting)
@@ -109,29 +107,6 @@ pub fn build_offer_files_empty() -> Ed2kPacket {
     Ed2kPacket::new(PROTO_EDONKEY, OP_OFFER_FILES, payload)
 }
 
-/// Build a Get Server List packet (opcode 0x14)
-pub fn build_get_server_list() -> Ed2kPacket {
-    Ed2kPacket::new(PROTO_EDONKEY, OP_GET_SERVER_LIST, vec![])
-}
-
-/// Build UDP Get Sources packet (opcode 0x9a)
-pub fn build_udp_get_sources(file_hash: &[u8; 16]) -> Vec<u8> {
-    let mut buf = Vec::with_capacity(17);
-    buf.push(PROTO_EDONKEY);
-    buf.push(OP_UDP_GET_SOURCES);
-    buf.extend_from_slice(file_hash);
-    buf
-}
-
-/// Build UDP Server Status Request (opcode 0x96)
-pub fn build_udp_server_status_req(challenge: u32) -> Vec<u8> {
-    let mut buf = Vec::with_capacity(6);
-    buf.push(PROTO_EDONKEY);
-    buf.push(OP_UDP_SERVER_STATUS_REQ);
-    buf.extend_from_slice(&challenge.to_le_bytes());
-    buf
-}
-
 // ── Packet parsers ──────────────────────────────────────────────────
 
 /// Parse ID Change packet (opcode 0x40): returns client_id
@@ -139,7 +114,9 @@ pub fn parse_id_change(payload: &[u8]) -> Result<u32, String> {
     if payload.len() < 4 {
         return Err("ID Change packet too short".to_string());
     }
-    Ok(u32::from_le_bytes([payload[0], payload[1], payload[2], payload[3]]))
+    Ok(u32::from_le_bytes([
+        payload[0], payload[1], payload[2], payload[3],
+    ]))
 }
 
 /// Parse Server Status packet (opcode 0x34): returns (users, files)
@@ -195,41 +172,6 @@ pub fn parse_found_sources(payload: &[u8]) -> Result<([u8; 16], Vec<(u32, u16)>)
     }
 
     Ok((hash, sources))
-}
-
-/// Parse Server List packet (opcode 0x32): returns list of (ip, port)
-pub fn parse_server_list(payload: &[u8]) -> Result<Vec<(u32, u16)>, String> {
-    if payload.len() < 1 {
-        return Err("Server List packet too short".to_string());
-    }
-
-    let count = payload[0] as usize;
-    let expected_len = 1 + count * 6;
-    if payload.len() < expected_len {
-        return Err("Server List truncated".to_string());
-    }
-
-    let mut servers = Vec::with_capacity(count);
-    let mut offset = 1;
-    for _ in 0..count {
-        let ip = u32::from_le_bytes([
-            payload[offset],
-            payload[offset + 1],
-            payload[offset + 2],
-            payload[offset + 3],
-        ]);
-        let port = u16::from_le_bytes([payload[offset + 4], payload[offset + 5]]);
-        servers.push((ip, port));
-        offset += 6;
-    }
-
-    Ok(servers)
-}
-
-/// Parse UDP Found Sources (opcode 0x9b)
-pub fn parse_udp_found_sources(data: &[u8]) -> Result<([u8; 16], Vec<(u32, u16)>), String> {
-    // Same format as TCP found sources, minus the protocol/length header
-    parse_found_sources(data)
 }
 
 /// Parse Hashset Answer (opcode 0x52): returns (file_hash, chunk_hashes)
@@ -397,10 +339,7 @@ pub fn build_slot_request(file_hash: &[u8; 16]) -> Ed2kPacket {
 }
 
 /// Build Request Parts (opcode 0x47): request up to 3 ranges
-pub fn build_request_parts(
-    file_hash: &[u8; 16],
-    ranges: &[(u32, u32)],
-) -> Ed2kPacket {
+pub fn build_request_parts(file_hash: &[u8; 16], ranges: &[(u32, u32)]) -> Ed2kPacket {
     let mut payload = Vec::with_capacity(16 + 24);
     payload.extend_from_slice(file_hash);
 
@@ -415,9 +354,4 @@ pub fn build_request_parts(
     }
 
     Ed2kPacket::new(PROTO_EDONKEY, OP_REQUEST_PARTS, payload)
-}
-
-/// Build Slot Release (opcode 0x56)
-pub fn build_slot_release() -> Ed2kPacket {
-    Ed2kPacket::new(PROTO_EDONKEY, OP_SLOT_RELEASE, vec![])
 }

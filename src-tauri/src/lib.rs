@@ -1,6 +1,7 @@
+pub mod cli;
 mod commands;
-mod config;
-mod engine;
+pub mod config;
+pub mod engine;
 mod managers;
 mod state;
 
@@ -67,6 +68,26 @@ pub fn run() {
             });
 
             managers::menu::setup_menu(app)?;
+
+            // On non-macOS, respect the hide-app-menu user preference
+            #[cfg(not(target_os = "macos"))]
+            {
+                let hide_menu = app
+                    .state::<state::AppState>()
+                    .config
+                    .lock()
+                    .ok()
+                    .and_then(|cfg| {
+                        cfg.get_user_config()
+                            .get("hide-app-menu")
+                            .and_then(|v| v.as_bool())
+                    })
+                    .unwrap_or(true);
+                if hide_menu {
+                    let _ = app.handle().remove_menu();
+                }
+            }
+
             managers::tray::setup_tray(app)?;
 
             // Start RSS background polling
@@ -104,6 +125,7 @@ pub fn run() {
             commands::app_cmds::check_for_updates,
             commands::app_cmds::reset_session,
             commands::app_cmds::auto_hide_window,
+            commands::app_cmds::toggle_app_menu,
             commands::app_cmds::is_opened_at_login,
             commands::file_cmds::reveal_in_folder,
             commands::file_cmds::open_path,
@@ -113,7 +135,6 @@ pub fn run() {
             commands::file_cmds::resolve_torrent_path,
             commands::file_cmds::trash_generated_torrent_sidecars,
             commands::file_cmds::cleanup_generated_torrent_sidecars_for_task,
-
             commands::engine_cmds::restart_engine,
             commands::engine_cmds::get_engine_status,
             commands::engine_cmds::add_uri,

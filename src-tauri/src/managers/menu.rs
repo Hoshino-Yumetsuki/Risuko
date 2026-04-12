@@ -33,6 +33,16 @@ pub fn update_menu_labels(
     Ok(())
 }
 
+pub fn toggle_app_menu(handle: &AppHandle, hidden: bool) -> Result<(), String> {
+    if hidden {
+        handle.remove_menu().map_err(|e| e.to_string())?;
+    } else {
+        let menu = build_menu(handle, &HashMap::new()).map_err(|e| e.to_string())?;
+        handle.set_menu(menu).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 fn build_menu(
     handle: &AppHandle,
     labels: &HashMap<String, String>,

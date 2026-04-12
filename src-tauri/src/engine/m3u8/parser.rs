@@ -197,7 +197,10 @@ fn parse_key_tag(key: &m3u8_rs::Key, base_url: &str) -> Option<EncryptionInfo> {
 
 /// Parse hex IV string like "0x00000000000000000000000000000001" into bytes
 fn parse_hex_iv(iv_str: &str) -> Option<Vec<u8>> {
-    let hex = iv_str.strip_prefix("0x").or_else(|| iv_str.strip_prefix("0X")).unwrap_or(iv_str);
+    let hex = iv_str
+        .strip_prefix("0x")
+        .or_else(|| iv_str.strip_prefix("0X"))
+        .unwrap_or(iv_str);
     if hex.len() != 32 {
         return None;
     }
@@ -236,19 +239,14 @@ mod tests {
 
     #[test]
     fn test_resolve_segment_url_relative() {
-        let result = resolve_segment_url(
-            "https://cdn.example.com/hls/master.m3u8",
-            "seg0.ts",
-        );
+        let result = resolve_segment_url("https://cdn.example.com/hls/master.m3u8", "seg0.ts");
         assert_eq!(result.unwrap(), "https://cdn.example.com/hls/seg0.ts");
     }
 
     #[test]
     fn test_resolve_segment_url_absolute_path() {
-        let result = resolve_segment_url(
-            "https://cdn.example.com/hls/master.m3u8",
-            "/videos/seg0.ts",
-        );
+        let result =
+            resolve_segment_url("https://cdn.example.com/hls/master.m3u8", "/videos/seg0.ts");
         assert_eq!(result.unwrap(), "https://cdn.example.com/videos/seg0.ts");
     }
 
@@ -300,9 +298,7 @@ mod tests {
         let result = parse_playlist_bytes(data, "https://example.com/hls/playlist.m3u8");
         assert!(result.is_ok());
         if let ParsedPlaylist::Media {
-            segments,
-            end_list,
-            ..
+            segments, end_list, ..
         } = result.unwrap()
         {
             assert!(end_list);

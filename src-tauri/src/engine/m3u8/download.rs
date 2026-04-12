@@ -10,7 +10,7 @@ use super::parser::{self, ParsedPlaylist, Variant};
 use super::segment;
 use crate::engine::speed_limiter::SpeedLimiter;
 
-/// Run an M3U8/HLS download 
+/// Run an M3U8/HLS download
 /// Main entry point called from manager.rs
 /// Returns the final output file path on success.
 #[allow(clippy::too_many_arguments)]
@@ -85,7 +85,10 @@ pub async fn run_m3u8_download(
 
     let split = options
         .get("split")
-        .and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse().ok())))
+        .and_then(|v| {
+            v.as_u64()
+                .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+        })
         .unwrap_or(5)
         .max(1) as usize;
 
@@ -166,17 +169,11 @@ pub async fn run_m3u8_download(
     let _ = tokio::fs::remove_dir_all(&temp_dir).await;
     speed.store(0, Ordering::Relaxed);
 
-    tracing::info!(
-        "[m3u8] Download complete: {}",
-        final_path.display()
-    );
+    tracing::info!("[m3u8] Download complete: {}", final_path.display());
     Ok(final_path)
 }
 
-fn check_cancelled(
-    cancelled: &AtomicBool,
-    cancel_token: &CancellationToken,
-) -> Result<(), String> {
+fn check_cancelled(cancelled: &AtomicBool, cancel_token: &CancellationToken) -> Result<(), String> {
     if cancelled.load(Ordering::Relaxed) || cancel_token.is_cancelled() {
         return Err("cancelled".to_string());
     }
@@ -254,7 +251,9 @@ fn build_client(options: &Map<String, Value>) -> Result<reqwest::Client, String>
         }
     }
 
-    builder.build().map_err(|e| format!("Failed to build HTTP client: {e}"))
+    builder
+        .build()
+        .map_err(|e| format!("Failed to build HTTP client: {e}"))
 }
 
 fn infer_filename_from_uri(uri: &str) -> String {
@@ -263,7 +262,10 @@ fn infer_filename_from_uri(uri: &str) -> String {
     let name = path.rsplit('/').next().unwrap_or("download");
 
     // Replace .m3u8 extension with .ts
-    if let Some(stem) = name.strip_suffix(".m3u8").or_else(|| name.strip_suffix(".m3u")) {
+    if let Some(stem) = name
+        .strip_suffix(".m3u8")
+        .or_else(|| name.strip_suffix(".m3u"))
+    {
         format!("{stem}.ts")
     } else if name.is_empty() {
         "download.ts".to_string()
@@ -274,15 +276,18 @@ fn infer_filename_from_uri(uri: &str) -> String {
 
 fn sanitize_filename(name: &str) -> String {
     name.chars()
-        .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' || c == '.' { c } else { '_' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' || c == '_' || c == '.' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect()
 }
 
 /// Concatenate segment files into a single output file
-async fn concatenate_segments(
-    segment_paths: &[PathBuf],
-    output_path: &Path,
-) -> Result<(), String> {
+async fn concatenate_segments(segment_paths: &[PathBuf], output_path: &Path) -> Result<(), String> {
     let mut output = tokio::fs::File::create(output_path)
         .await
         .map_err(|e| format!("Failed to create output file: {e}"))?;

@@ -33,7 +33,10 @@ impl TorrentEngine {
         .await
         .map_err(|e| format!("Failed to create torrent session: {}", e))?;
 
-        log::info!("Torrent engine initialized, output_dir={}", output_dir.display());
+        log::info!(
+            "Torrent engine initialized, output_dir={}",
+            output_dir.display()
+        );
 
         Ok(Self {
             session: Some(session),
@@ -78,7 +81,11 @@ impl TorrentEngine {
                     return None;
                 }
                 s.parse::<usize>().ok().and_then(|i| {
-                    if i >= 1 { Some(i - 1) } else { None } // Convert 1-based to 0-based
+                    if i >= 1 {
+                        Some(i - 1)
+                    } else {
+                        None
+                    } // Convert 1-based to 0-based
                 })
             })
             .collect();
@@ -109,7 +116,11 @@ impl TorrentEngine {
         let add_opts = librqbit::AddTorrentOptions {
             output_folder: Some(dir.to_string()),
             overwrite: true,
-            trackers: if trackers.is_empty() { None } else { Some(trackers) },
+            trackers: if trackers.is_empty() {
+                None
+            } else {
+                Some(trackers)
+            },
             only_files,
             ..Default::default()
         };
@@ -125,7 +136,11 @@ impl TorrentEngine {
             .map_err(|e| format!("Failed to add torrent: {}", e))?;
 
         let handle = extract_handle(response)?;
-        log::info!("Torrent added: id={}, info_hash={:?}", handle.id, handle.info_hash);
+        log::info!(
+            "Torrent added: id={}, info_hash={:?}",
+            handle.id,
+            handle.info_hash
+        );
         Ok(handle)
     }
 
@@ -148,7 +163,11 @@ impl TorrentEngine {
         let add_opts = librqbit::AddTorrentOptions {
             output_folder: Some(dir.to_string()),
             overwrite: true,
-            trackers: if trackers.is_empty() { None } else { Some(trackers) },
+            trackers: if trackers.is_empty() {
+                None
+            } else {
+                Some(trackers)
+            },
             only_files,
             ..Default::default()
         };
@@ -156,15 +175,16 @@ impl TorrentEngine {
         log::info!("Adding magnet to dir={}: {}", dir, magnet_uri);
 
         let response = session
-            .add_torrent(
-                librqbit::AddTorrent::Url(magnet_uri.into()),
-                Some(add_opts),
-            )
+            .add_torrent(librqbit::AddTorrent::Url(magnet_uri.into()), Some(add_opts))
             .await
             .map_err(|e| format!("Failed to add magnet: {}", e))?;
 
         let handle = extract_handle(response)?;
-        log::info!("Magnet added: id={}, info_hash={:?}", handle.id, handle.info_hash);
+        log::info!(
+            "Magnet added: id={}, info_hash={:?}",
+            handle.id,
+            handle.info_hash
+        );
         Ok(handle)
     }
 
@@ -200,21 +220,21 @@ impl TorrentEngine {
 
         // Collect per-file information from metadata
         let file_details = handle.metadata.load().as_ref().and_then(|r| {
-            r.info
-                .iter_file_details()
-                .ok()
-                .map(|iter| {
-                    iter.enumerate()
-                        .map(|(idx, d)| {
-                            let filename = d.filename.to_string().unwrap_or_else(|_| format!("file_{}", idx));
-                            TorrentFileInfo {
-                                index: idx,
-                                path: filename,
-                                length: d.len,
-                            }
-                        })
-                        .collect::<Vec<_>>()
-                })
+            r.info.iter_file_details().ok().map(|iter| {
+                iter.enumerate()
+                    .map(|(idx, d)| {
+                        let filename = d
+                            .filename
+                            .to_string()
+                            .unwrap_or_else(|_| format!("file_{}", idx));
+                        TorrentFileInfo {
+                            index: idx,
+                            path: filename,
+                            length: d.len,
+                        }
+                    })
+                    .collect::<Vec<_>>()
+            })
         });
 
         Some(TorrentStats {
@@ -259,10 +279,7 @@ impl TorrentEngine {
     pub async fn remove(&self, torrent_id: usize) -> Result<(), String> {
         let session = self.get_session()?;
         session
-            .delete(
-                librqbit::api::TorrentIdOrHash::Id(torrent_id),
-                false,
-            )
+            .delete(librqbit::api::TorrentIdOrHash::Id(torrent_id), false)
             .await
             .map_err(|e| format!("Failed to remove torrent: {}", e))
     }

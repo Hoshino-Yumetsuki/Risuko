@@ -9,10 +9,18 @@ use super::types::*;
 /// Events emitted by the server connection
 #[derive(Debug)]
 pub enum ServerEvent {
-    Connected { client_id: u32 },
+    Connected {
+        client_id: u32,
+    },
     ServerMessage(String),
-    ServerStatus { users: u32, files: u32 },
-    FoundSources { file_hash: [u8; 16], sources: Vec<(u32, u16)> },
+    ServerStatus {
+        users: u32,
+        files: u32,
+    },
+    FoundSources {
+        file_hash: [u8; 16],
+        sources: Vec<(u32, u16)>,
+    },
     ServerList,
     Disconnected(Option<String>),
 }
@@ -83,14 +91,14 @@ impl ServerConnection {
             loop {
                 match reader.read_buf(&mut buf).await {
                     Ok(0) => {
-                        let _ = event_tx_clone
-                            .send(ServerEvent::Disconnected(None))
-                            .await;
+                        let _ = event_tx_clone.send(ServerEvent::Disconnected(None)).await;
                         break;
                     }
                     Ok(_) => {
                         while let Ok(Some(packet)) = Ed2kPacket::decode(&mut buf) {
-                            if let Err(_) = Self::handle_server_packet(&event_tx_clone, &packet).await {
+                            if let Err(_) =
+                                Self::handle_server_packet(&event_tx_clone, &packet).await
+                            {
                                 break;
                             }
                         }
@@ -132,9 +140,7 @@ impl ServerConnection {
                     sources,
                 }
             }
-            OP_SERVER_LIST => {
-                ServerEvent::ServerList
-            }
+            OP_SERVER_LIST => ServerEvent::ServerList,
             _ => return Ok(()), // Ignore unknown opcodes
         };
 
@@ -149,5 +155,4 @@ impl ServerConnection {
             .await
             .map_err(|_| "Send channel closed".to_string())
     }
-
 }

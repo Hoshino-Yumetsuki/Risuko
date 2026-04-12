@@ -37,7 +37,8 @@ impl EngineOptions {
 
     pub fn get_u64(&self, key: &str) -> Option<u64> {
         self.global.get(key).and_then(|v| {
-            v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+            v.as_u64()
+                .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
         })
     }
 
@@ -75,7 +76,10 @@ impl EngineOptions {
     pub fn seed_ratio(&self) -> f64 {
         self.global
             .get("seed-ratio")
-            .and_then(|v| v.as_f64().or_else(|| v.as_str().and_then(|s| s.parse().ok())))
+            .and_then(|v| {
+                v.as_f64()
+                    .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+            })
             .unwrap_or(0.0)
     }
 

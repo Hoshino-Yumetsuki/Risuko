@@ -84,22 +84,27 @@ macro_rules! ftp_transfer {
             0
         };
 
-        let effective_size = if remote_size > 0 { remote_size } else { $file_size };
-        let resume_offset = if existing_size > 0 && effective_size > 0 && existing_size < effective_size {
-            match $ftp.resume_transfer(existing_size as usize).await {
-                Ok(()) => {
-                    $completed.store(existing_size, Ordering::Relaxed);
-                    tracing::info!("Resuming FTP download from byte {existing_size}");
-                    existing_size
-                }
-                Err(e) => {
-                    tracing::warn!("FTP resume not supported: {e}");
-                    0
-                }
-            }
+        let effective_size = if remote_size > 0 {
+            remote_size
         } else {
-            0
+            $file_size
         };
+        let resume_offset =
+            if existing_size > 0 && effective_size > 0 && existing_size < effective_size {
+                match $ftp.resume_transfer(existing_size as usize).await {
+                    Ok(()) => {
+                        $completed.store(existing_size, Ordering::Relaxed);
+                        tracing::info!("Resuming FTP download from byte {existing_size}");
+                        existing_size
+                    }
+                    Err(e) => {
+                        tracing::warn!("FTP resume not supported: {e}");
+                        0
+                    }
+                }
+            } else {
+                0
+            };
 
         let mut file = if resume_offset > 0 {
             tokio::fs::OpenOptions::new()
@@ -197,7 +202,11 @@ pub async fn run_ftp_ftps_download(
 ) -> Result<PathBuf, String> {
     tracing::info!(
         "Starting FTP{} download: host={}, path={}",
-        if parsed.protocol == FtpProtocol::Ftps { "S" } else { "" },
+        if parsed.protocol == FtpProtocol::Ftps {
+            "S"
+        } else {
+            ""
+        },
         parsed.host,
         parsed.path,
     );
@@ -237,25 +246,31 @@ pub async fn run_ftp_ftps_download(
             .dangerous()
             .with_custom_certificate_verifier(Arc::new(AcceptAnyCert))
             .with_no_client_auth();
-        let connector = AsyncRustlsConnector::from(
-            futures_rustls::TlsConnector::from(Arc::new(rustls_config)),
-        );
+        let connector =
+            AsyncRustlsConnector::from(futures_rustls::TlsConnector::from(Arc::new(rustls_config)));
 
         // Use implicit TLS connection for FTPS
-        let mut ftp = AsyncRustlsFtpStream::connect_secure_implicit(
-            &addr, connector, &parsed.host,
-        )
-        .await
-        .map_err(|e| format!("FTPS connect failed: {e}"))?;
+        let mut ftp = AsyncRustlsFtpStream::connect_secure_implicit(&addr, connector, &parsed.host)
+            .await
+            .map_err(|e| format!("FTPS connect failed: {e}"))?;
 
         ftp.login(&user, &password)
             .await
             .map_err(|e| format!("FTP login failed: {e}"))?;
 
         ftp_transfer!(
-            ftp, parsed, part_path, file_size,
-            total, completed, speed, cancelled,
-            connections, cancel_token, global_limiter, task_limiter
+            ftp,
+            parsed,
+            part_path,
+            file_size,
+            total,
+            completed,
+            speed,
+            cancelled,
+            connections,
+            cancel_token,
+            global_limiter,
+            task_limiter
         )?;
     } else {
         let mut ftp = AsyncFtpStream::connect(&addr)
@@ -267,9 +282,18 @@ pub async fn run_ftp_ftps_download(
             .map_err(|e| format!("FTP login failed: {e}"))?;
 
         ftp_transfer!(
-            ftp, parsed, part_path, file_size,
-            total, completed, speed, cancelled,
-            connections, cancel_token, global_limiter, task_limiter
+            ftp,
+            parsed,
+            part_path,
+            file_size,
+            total,
+            completed,
+            speed,
+            cancelled,
+            connections,
+            cancel_token,
+            global_limiter,
+            task_limiter
         )?;
     }
 
@@ -311,8 +335,8 @@ pub(super) fn dedup_path(dir: &Path, name: &str) -> PathBuf {
     }
 
     let (stem, ext) = match name.rfind('.') {
-        Some(dot) if dot > 0 => (&name[..dot], &name[dot..]),   // "file.txt" -> ("file", ".txt")
-        _ => (name, ""),                                         // "noext" -> ("noext", "")
+        Some(dot) if dot > 0 => (&name[..dot], &name[dot..]), // "file.txt" -> ("file", ".txt")
+        _ => (name, ""),                                      // "noext" -> ("noext", "")
     };
 
     for n in 1u32.. {
