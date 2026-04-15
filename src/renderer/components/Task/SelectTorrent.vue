@@ -369,7 +369,7 @@ export default {
 				});
 			} catch (err: unknown) {
 				logger.warn(
-					"[Motrix] parse torrent failed:",
+					"[Risuko] parse torrent failed:",
 					err instanceof Error ? err.message : err,
 				);
 				if (parseVersion !== this.parseVersion) {
@@ -964,7 +964,7 @@ export default {
 				);
 			} catch (err: unknown) {
 				logger.warn(
-					"[Motrix] load folder preview failed:",
+					"[Risuko] load folder preview failed:",
 					err instanceof Error ? err.message : err,
 				);
 				this.$msg.error(this.$t("task.new-task-torrent-required"));
@@ -1072,7 +1072,7 @@ export default {
 				this.emitPreviewSelectionChange();
 			} catch (err: unknown) {
 				logger.warn(
-					"[Motrix] force preview torrent failed:",
+					"[Risuko] force preview torrent failed:",
 					err instanceof Error ? err.message : err,
 				);
 				this.$msg.error(this.$t("task.new-task-torrent-required"));
@@ -1128,7 +1128,7 @@ export default {
 				this.handleChange([{ name, path }]);
 			} catch (err: unknown) {
 				logger.warn(
-					"[Motrix] pick torrent path failed:",
+					"[Risuko] pick torrent path failed:",
 					err instanceof Error ? err.message : err,
 				);
 			}

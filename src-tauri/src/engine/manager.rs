@@ -14,7 +14,7 @@ use super::speed_limiter::{parse_speed_limit, SpeedLimiter};
 use super::task::{
     generate_gid, ChunkProgress, DownloadFile, DownloadTask, FileUri, TaskKind, TaskStatus,
 };
-use super::torrent::TorrentEngine;
+use super::torrent::{self, TorrentEngine};
 
 struct ActiveDownload {
     cancel: Arc<AtomicBool>,
@@ -251,6 +251,21 @@ impl TaskManager {
         Ok(gid)
     }
 
+    pub async fn resolve_magnet_metadata(
+        &self,
+        magnet_uri: &str,
+        options: Map<String, Value>,
+        timeout_secs: u64,
+    ) -> Result<Vec<torrent::TorrentFileInfo>, String> {
+        let merged = self.options.read().await.merge_task_options(&options);
+        let te_guard = self.torrent_engine.read().await;
+        if let Some(ref te) = *te_guard {
+            te.resolve_magnet(magnet_uri, &merged, timeout_secs).await
+        } else {
+            Err("Torrent engine not available".to_string())
+        }
+    }
+
     pub async fn add_ed2k_task(
         &self,
         uri: &str,
@@ -425,7 +440,7 @@ impl TaskManager {
                     .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
             })
             .unwrap_or(1)
-            .max(1) as u32;
+            .clamp(1, u32::MAX as u64) as u32;
 
         // split task speed limit from merged options
         let per_task_limit = merged_options
@@ -1290,10 +1305,9 @@ impl TaskManager {
         self.torrent_ids.write().await.remove(gid);
 
         let mut tasks = self.tasks.write().await;
-        if let Some(task) = tasks.iter_mut().find(|t| t.gid == gid) {
-            task.status = TaskStatus::Removed;
-            task.download_speed = 0;
-            task.upload_speed = 0;
+        let len_before = tasks.len();
+        tasks.retain(|t| t.gid != gid);
+        if tasks.len() < len_before {
             self.events.send(EngineEvent::DownloadStop {
                 gid: gid.to_string(),
             });
@@ -1719,6 +1733,37 @@ impl TaskManager {
         self.try_start_next().await;
     }
 
+    /// Resolve a GID prefix to the full 16-char GID.
+    /// Accepts full GIDs as-is, or unique prefixes (minimum 4 chars).
+    pub async fn resolve_gid(&self, prefix: &str) -> Result<String, String> {
+        let tasks = self.tasks.read().await;
+
+        // Exact match first
+        if tasks.iter().any(|t| t.gid == prefix) {
+            return Ok(prefix.to_string());
+        }
+
+        // Prefix match (require at least 4 chars to avoid excessive ambiguity)
+        if prefix.len() < 4 {
+            return Err(format!("GID prefix too short: {prefix} (minimum 4 chars)"));
+        }
+
+        let matches: Vec<&str> = tasks
+            .iter()
+            .filter(|t| t.gid.starts_with(prefix))
+            .map(|t| t.gid.as_str())
+            .collect();
+
+        match matches.len() {
+            0 => Err(format!("Task {prefix} not found")),
+            1 => Ok(matches[0].to_string()),
+            _ => Err(format!(
+                "Ambiguous GID prefix {prefix}, matches: {}",
+                matches.join(", ")
+            )),
+        }
+    }
+
     pub async fn shutdown(&self) {
         // Cancel all active downloads
         let active = self.active_downloads.read().await;
@@ -1768,7 +1813,7 @@ fn looks_like_url(path: &str) -> bool {
 mod tests {
     use super::*;
 
-    // --- infer_m3u8_output_name ---
+    // -- infer_m3u8_output_name --
 
     #[test]
     fn m3u8_name_strips_extension() {
@@ -1812,7 +1857,7 @@ mod tests {
         assert_eq!(infer_m3u8_output_name("download"), "download.ts");
     }
 
-    // --- looks_like_url ---
+    // -- looks_like_url --
 
     #[test]
     fn looks_like_url_protocols() {
@@ -1829,7 +1874,7 @@ mod tests {
         assert!(!looks_like_url(""));
     }
 
-    // --- TaskManager async query tests ---
+    // -- TaskManager async query tests --
 
     use tokio::sync::RwLock;
 

@@ -7,12 +7,12 @@ declare module "*?worker" {
 	export default WorkerFactory;
 }
 
-interface MotrixApp {
+interface RisukoApp {
 	commands: import("@/components/CommandManager").default;
 	trayWorker: Worker;
 	[key: string]: unknown;
 }
 
 interface Window {
-	__app: MotrixApp;
+	__app: RisukoApp;
 }

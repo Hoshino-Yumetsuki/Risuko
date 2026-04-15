@@ -94,7 +94,7 @@
                 <div class="form-info" style="margin-top: 8px">
                   <a
                     target="_blank"
-                    href="https://github.com/agalwood/Motrix/wiki/Proxy"
+                    href="https://github.com/YueMiyuki/Risuko/wiki/Proxy"
                     rel="noopener noreferrer"
                   >
                     {{ $t('preferences.proxy-tips') }}
@@ -271,7 +271,7 @@
               </div>
               <div class="settings-select-item">
                 <label class="settings-select-item-label">{{ $t('preferences.ftp-password') }}</label>
-                <Input type="password" placeholder="motrix@" v-model="form.ftpPasswd" />
+                <Input type="password" placeholder="risuko@" v-model="form.ftpPasswd" />
               </div>
             </div>
             <div class="settings-select-group" style="margin-top: 10px">
@@ -375,7 +375,7 @@
             <div class="form-info" style="margin-top: 8px">
               <a
                 target="_blank"
-                href="https://github.com/agalwood/Motrix/wiki/RPC"
+                href="https://github.com/YueMiyuki/Risuko/wiki/RPC"
                 rel="noopener noreferrer"
               >
                 {{ $t('preferences.rpc-secret-tips') }}
@@ -1085,7 +1085,7 @@ export default {
 				data.rpcListenPort = this.rpcDefaultPort;
 			}
 
-			logger.log("[Motrix] preference changed data:", data);
+			logger.log("[Risuko] preference changed data:", data);
 
 			usePreferenceStore()
 				.save(data)
@@ -1102,7 +1102,7 @@ export default {
 						}
 						if ("hideAppMenu" in data) {
 							invoke("toggle_app_menu", {
-								hidden: !!this.form.hideAppMenu,
+								hidden: !!data.hideAppMenu,
 							}).catch(() => {
 								/* noop */
 							});

@@ -10,7 +10,6 @@
 </template>
 
 <script lang="ts">
-import { getVersion } from "@tauri-apps/api/app";
 import AppInfo from "@/components/About/AppInfo.vue";
 import Copyright from "@/components/About/Copyright.vue";
 import { Dialog, DialogContent, DialogFooter } from "@/components/ui/dialog";
@@ -38,6 +37,7 @@ export default {
 	},
 	async created() {
 		try {
+			const { getVersion } = await import("@tauri-apps/api/app");
 			this.version = await getVersion();
 		} catch {
 			this.version = "";

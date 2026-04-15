@@ -51,7 +51,7 @@ fn build_tray_menu(
     let sep1 = PredefinedMenuItem::separator(handle)?;
     let show = MenuItemBuilder::with_id(
         "tray-show",
-        get_tray_menu_text(labels, "tray-show", "Show Motrix"),
+        get_tray_menu_text(labels, "tray-show", "Show Risuko"),
     )
     .build(handle)?;
     let manual = MenuItemBuilder::with_id(
@@ -110,7 +110,7 @@ pub fn setup_tray(app: &App) -> Result<(), Box<dyn std::error::Error>> {
     let _tray = TrayIconBuilder::with_id("main")
         .icon(icon)
         .menu(&menu)
-        .tooltip("Motrix")
+        .tooltip("Risuko")
         .icon_as_template(true)
         .show_menu_on_left_click(false)
         .on_tray_icon_event(|tray, event| {
@@ -133,7 +133,7 @@ pub fn setup_tray(app: &App) -> Result<(), Box<dyn std::error::Error>> {
                     let _ = crate::commands::app_cmds::show_main_window(app);
                 }
                 "tray-manual" => {
-                    let _ = open::that("https://github.com/agalwood/Motrix/wiki");
+                    let _ = open::that("https://github.com/YueMiyuki/Risuko/wiki");
                 }
                 "tray-check-updates" => emit_command(app, "application:check-for-updates"),
                 "tray-task-list" => show_and_emit(app, "application:task-list"),

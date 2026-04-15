@@ -1,7 +1,7 @@
 export default {
 	"task-list": "Attività",
 	"add-task": "Aggiungi Attività",
-	about: "A proposito di Motrix",
+	about: "A proposito di Risuko",
 	preferences: "Preferenze...",
 	"check-for-updates": "Verifica la disponibilità di aggiornamenti...",
 	"check-updates-now": "Verifica ora",
@@ -9,7 +9,7 @@ export default {
 		"Sto verificando la disponibilità di aggiornamenti ...",
 	"check-for-updates-title": "Verifica la disponibilità di aggiornamenti",
 	"update-available-message":
-		"Una nuova versione di Motrix è disponibile, aggiornare ora?",
+		"Una nuova versione di Risuko è disponibile, aggiornare ora?",
 	"update-not-available-message": "Applicazione già aggiornata!",
 	"update-downloaded-message": "Pronto per l'installazione...",
 	"update-error-message": "Errore nell'aggiornamento",
@@ -19,11 +19,11 @@ export default {
 		"Il motore è assente, per favore, reinstalla l'app : (",
 	"system-error-title": "Errore di sistema",
 	"system-error-message": "L'applicazione non si è avviata: {{message}}",
-	hide: "Nascondi Motrix",
+	hide: "Nascondi Risuko",
 	"hide-others": "Nascondi Altro",
 	unhide: "Mostra Tutto",
-	show: "Mostra Motrix",
-	quit: "Esci da Motrix",
+	show: "Mostra Risuko",
+	quit: "Esci da Risuko",
 	"under-development-message":
 		"Scusa, questa funzione è in fase di sviluppo...",
 	yes: "Si",

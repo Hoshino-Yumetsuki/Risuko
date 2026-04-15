@@ -4,7 +4,7 @@
 )]
 
 use clap::Parser;
-use motrix_lib::cli;
+use risuko_lib::cli;
 
 fn main() {
     let parsed = cli::Cli::parse();
@@ -30,5 +30,5 @@ fn main() {
     }
 
     // GUI mode: launch Tauri app
-    motrix_lib::run();
+    risuko_lib::run();
 }

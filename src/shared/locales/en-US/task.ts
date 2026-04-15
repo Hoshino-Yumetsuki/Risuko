@@ -1,4 +1,5 @@
 export default {
+	all: "All",
 	active: "Downloading",
 	waiting: "Waiting",
 	stopped: "Stopped",
@@ -78,6 +79,11 @@ export default {
 	"show-advanced-options": "Advanced Options",
 	"loading-add-task": "Adding task...",
 	"loading-resolve-torrent": "Resolving torrent metadata...",
+	"loading-resolve-magnet": "Resolving magnet metadata...",
+	"resolve-magnet-error": "Failed to resolve magnet metadata",
+	"resolve-magnet-timeout":
+		"Timed out resolving magnet. Trackers may be unavailable.",
+	"resolve-magnet-retry": "Retry",
 	"loading-delete-task": "Deleting task...",
 	"loading-delete-task-files": "Deleting task and files...",
 	"loading-remove-record": "Removing task record...",

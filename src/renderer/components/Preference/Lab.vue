@@ -48,7 +48,7 @@ export default {
 		},
 		url() {
 			const { currentTheme, locale } = this;
-			const result = `https://motrix.app/lab?lite=true&theme=${currentTheme}&lang=${locale}`;
+			const result = `https://risuko.vercel.app/lab?lite=true&theme=${currentTheme}&lang=${locale}`;
 			return result;
 		},
 		title() {

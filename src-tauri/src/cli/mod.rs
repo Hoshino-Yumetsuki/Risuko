@@ -6,7 +6,7 @@ pub mod rpc_client;
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(name = "motrix", about = "A full-featured download manager", version)]
+#[command(name = "risuko", about = "A full-featured download manager", version)]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Option<Command>,
@@ -32,6 +32,9 @@ pub enum Command {
 
     /// Remove a download
     Remove(RemoveArgs),
+
+    /// Start headless engine (RPC server only, no GUI)
+    Serve(ServeArgs),
 }
 
 #[derive(clap::Args)]
@@ -79,9 +82,13 @@ pub struct DownloadArgs {
     #[arg(long)]
     pub seed_time: Option<u64>,
 
-    /// RPC port to connect to (default: 16800)
+    /// RPC port to connect to
     #[arg(long, default_value_t = 16800)]
     pub rpc_port: u16,
+
+    /// RPC secret for authentication
+    #[arg(long)]
+    pub rpc_secret: Option<String>,
 
     /// Output as JSON
     #[arg(long)]
@@ -94,9 +101,13 @@ pub struct StatusArgs {
     #[arg(long)]
     pub gid: Option<String>,
 
-    /// RPC port to connect to (default: 16800)
+    /// RPC port to connect to
     #[arg(long, default_value_t = 16800)]
     pub rpc_port: u16,
+
+    /// RPC secret for authentication
+    #[arg(long)]
+    pub rpc_secret: Option<String>,
 
     /// Output as JSON
     #[arg(long)]
@@ -108,9 +119,13 @@ pub struct PauseArgs {
     /// Task GID to pause
     pub gid: String,
 
-    /// RPC port to connect to (default: 16800)
+    /// RPC port to connect to
     #[arg(long, default_value_t = 16800)]
     pub rpc_port: u16,
+
+    /// RPC secret for authentication
+    #[arg(long)]
+    pub rpc_secret: Option<String>,
 }
 
 #[derive(clap::Args)]
@@ -118,9 +133,13 @@ pub struct ResumeArgs {
     /// Task GID to resume
     pub gid: String,
 
-    /// RPC port to connect to (default: 16800)
+    /// RPC port to connect to
     #[arg(long, default_value_t = 16800)]
     pub rpc_port: u16,
+
+    /// RPC secret for authentication
+    #[arg(long)]
+    pub rpc_secret: Option<String>,
 }
 
 #[derive(clap::Args)]
@@ -128,7 +147,18 @@ pub struct RemoveArgs {
     /// Task GID to remove
     pub gid: String,
 
-    /// RPC port to connect to (default: 16800)
+    /// RPC port to connect to
+    #[arg(long, default_value_t = 16800)]
+    pub rpc_port: u16,
+
+    /// RPC secret for authentication
+    #[arg(long)]
+    pub rpc_secret: Option<String>,
+}
+
+#[derive(clap::Args)]
+pub struct ServeArgs {
+    /// RPC port to listen on
     #[arg(long, default_value_t = 16800)]
     pub rpc_port: u16,
 }
@@ -140,5 +170,6 @@ pub async fn run(command: Command) -> Result<(), Box<dyn std::error::Error>> {
         Command::Pause(args) => commands::pause(args).await,
         Command::Resume(args) => commands::resume(args).await,
         Command::Remove(args) => commands::remove(args).await,
+        Command::Serve(args) => commands::serve(args).await,
     }
 }

@@ -41,7 +41,7 @@ export const usePreferenceStore = defineStore("preference", {
 				this.updatePreference(config);
 				return config;
 			} catch (err: unknown) {
-				logger.warn("[Motrix] fetchPreference failed:", (err as Error).message);
+				logger.warn("[Risuko] fetchPreference failed:", (err as Error).message);
 				return {} as AppConfig;
 			}
 		},
@@ -229,9 +229,9 @@ export const usePreferenceStore = defineStore("preference", {
 					btTracker: reduceTrackerString(tracker),
 					lastSyncTrackerTime: Date.now(),
 				});
-				logger.info("[Motrix] auto-sync tracker done");
+				logger.info("[Risuko] auto-sync tracker done");
 			} catch (err) {
-				logger.warn("[Motrix] auto-sync tracker failed:", err);
+				logger.warn("[Risuko] auto-sync tracker failed:", err);
 			}
 		},
 		toggleEngineMode() {

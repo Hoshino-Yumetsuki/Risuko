@@ -203,7 +203,7 @@ function injectBaseTag(html: string, baseUrl: string, isDark: boolean): string {
 	const codeBg = isDark ? "#2a2a2a" : "#f5f5f5";
 	const muted = isDark ? "#bbb" : "#555";
 	// Injected at the END of the document so it wins the cascade
-	const readerStyle = `<style data-motrix-reader>
+	const readerStyle = `<style data-risuko-reader>
 :root{color-scheme:${isDark ? "dark" : "light"}}
 *:not(img):not(video):not(picture):not(svg):not(canvas){background-color:${bg}!important;color:${fg}!important;border-color:${border}!important}
 html,body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif!important;line-height:1.7!important;font-size:15px!important;word-wrap:break-word}
@@ -430,7 +430,9 @@ export default {
 			this.viewerError = "";
 		},
 		openLink(url: string) {
-			invoke("plugin:shell|open", { path: url });
+			invoke("plugin:shell|open", { path: url }).catch(() => {
+				window.open(url, "_blank");
+			});
 		},
 		formatDate(timestamp: number): string {
 			return new Date(timestamp * 1000).toLocaleDateString(undefined, {

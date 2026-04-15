@@ -3,11 +3,11 @@ use std::sync::Arc;
 
 use serde_json::{Map, Value};
 
-use crate::config::defaults;
-use crate::engine::events::EventBroadcaster;
-use crate::engine::manager::TaskManager;
-use crate::engine::options::EngineOptions;
-use crate::engine::rpc::RpcServer;
+use risuko_engine::config::defaults;
+use risuko_engine::engine::events::EventBroadcaster;
+use risuko_engine::engine::manager::TaskManager;
+use risuko_engine::engine::options::EngineOptions;
+use risuko_engine::engine::rpc::RpcServer;
 
 /// Start the engine in headless mode (no Tauri, no GUI).
 /// Returns a handle to shut down when done.
@@ -26,12 +26,14 @@ pub async fn start_headless_engine(
 
     let dir = options.dir();
     if !dir.is_empty() {
-        std::fs::create_dir_all(&dir).ok();
+        std::fs::create_dir_all(&dir)
+            .map_err(|e| format!("Failed to create download directory '{}': {}", dir, e))?;
     }
 
     let events = EventBroadcaster::default();
     let rpc_host = options.rpc_host();
     let rpc_secret = options.rpc_secret();
+    let rpc_secret_clone = rpc_secret.clone();
 
     log::info!("Starting headless engine on port {}", rpc_port);
 
@@ -41,7 +43,7 @@ pub async fn start_headless_engine(
             .map_err(|e| format!("Failed to create task manager: {}", e))?,
     );
 
-    let (rpc_shutdown_tx, _rpc_shutdown_rx) = tokio::sync::mpsc::channel::<()>(1);
+    let (rpc_shutdown_tx, mut rpc_shutdown_rx) = tokio::sync::mpsc::channel::<()>(1);
 
     let mut rpc_server = RpcServer::new(
         rpc_host,
@@ -78,11 +80,27 @@ pub async fn start_headless_engine(
         }
     });
 
+    // Monitor for RPC-initiated shutdown requests
+    let shutdown_notify = Arc::new(tokio::sync::Notify::new());
+    let shutdown_notify_clone = shutdown_notify.clone();
+    tokio::spawn(async move {
+        if rpc_shutdown_rx.recv().await.is_some() {
+            log::info!("Shutdown requested via RPC (headless)");
+            shutdown_notify_clone.notify_one();
+        }
+    });
+
     Ok(HeadlessEngine {
         manager,
         rpc_server,
         progress_task,
         auto_save_task,
+        shutdown_notify,
+        rpc_secret: if rpc_secret_clone.is_empty() {
+            None
+        } else {
+            Some(rpc_secret_clone)
+        },
     })
 }
 
@@ -91,9 +109,21 @@ pub struct HeadlessEngine {
     rpc_server: RpcServer,
     progress_task: tokio::task::JoinHandle<()>,
     auto_save_task: tokio::task::JoinHandle<()>,
+    shutdown_notify: Arc<tokio::sync::Notify>,
+    rpc_secret: Option<String>,
 }
 
 impl HeadlessEngine {
+    /// Returns the RPC secret configured for this engine, if any.
+    pub fn rpc_secret(&self) -> Option<&str> {
+        self.rpc_secret.as_deref()
+    }
+
+    /// Returns a future that resolves when an RPC shutdown request is received.
+    pub fn shutdown_requested(&self) -> impl std::future::Future<Output = ()> + '_ {
+        self.shutdown_notify.notified()
+    }
+
     pub async fn shutdown(mut self) {
         self.progress_task.abort();
         self.auto_save_task.abort();
@@ -105,7 +135,7 @@ impl HeadlessEngine {
 
 fn get_config_dir() -> PathBuf {
     dirs::config_dir()
-        .map(|d| d.join("dev.nicepkg.motrix"))
+        .map(|d| d.join("dev.risuko.app"))
         .unwrap_or_else(|| PathBuf::from("."))
 }
 

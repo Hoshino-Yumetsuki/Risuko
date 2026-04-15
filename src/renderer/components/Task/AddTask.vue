@@ -60,6 +60,12 @@
                 v-model="form.uris"
                 class="atd-uri-input resize-none"
               />
+              <mo-magnet-files
+                v-if="singleMagnetUri"
+                :magnet-uri="singleMagnetUri"
+                @change="handleMagnetFileChange"
+                class="mt-3"
+              />
             </div>
           </div>
           <div class="atd-source-body" :class="{ 'atd-source-body--active': type === 'torrent' }">
@@ -218,7 +224,7 @@
                   <a
                     class="atd-field-help"
                     target="_blank"
-                    href="https://github.com/agalwood/Motrix/wiki/Proxy"
+                    href="https://github.com/YueMiyuki/Risuko/wiki/Proxy"
                     rel="noopener noreferrer"
                   >
                     {{ $t('preferences.proxy-tips') }}
@@ -305,6 +311,7 @@ import api from "@/api";
 import SelectDirectory from "@/components/Native/SelectDirectory.vue";
 import HistoryDirectory from "@/components/Preference/HistoryDirectory.vue";
 import CredentialSuggest from "@/components/Task/CredentialSuggest.vue";
+import MagnetFiles from "@/components/Task/MagnetFiles.vue";
 import SelectTorrent from "@/components/Task/SelectTorrent.vue";
 import UiButton from "@/components/ui/compat/UiButton.vue";
 import {
@@ -329,6 +336,7 @@ import {
 	extractCredentialFromForm,
 	extractHostFromUri,
 	extractProtocolFromUri,
+	extractSingleMagnetUri,
 	inferOutFromUri,
 	initTaskForm,
 } from "@/utils/task";
@@ -338,6 +346,7 @@ export default {
 	components: {
 		[HistoryDirectory.name]: HistoryDirectory,
 		[SelectDirectory.name]: SelectDirectory,
+		[MagnetFiles.name]: MagnetFiles,
 		[SelectTorrent.name]: SelectTorrent,
 		[LoadingOverlay.name]: LoadingOverlay,
 		[CredentialSuggest.name]: CredentialSuggest,
@@ -398,6 +407,9 @@ export default {
 			}
 			const firstUri = uris.split("\n")[0].trim();
 			return isSftpLink(firstUri);
+		},
+		singleMagnetUri() {
+			return extractSingleMagnetUri(this.form.uris || "");
 		},
 	},
 	watch: {
@@ -566,6 +578,9 @@ export default {
 					? SELECTED_ALL_FILES
 					: selectedFileIndex;
 		},
+		handleMagnetFileChange(selectFile: string) {
+			this.form.selectFile = selectFile;
+		},
 		onNewTaskShowDownloadingChange(enable) {
 			this.form.newTaskShowDownloading = !!enable;
 		},
@@ -587,7 +602,7 @@ export default {
 				await this.resolveTaskNameConflicts(payload, type);
 				return useTaskStore().addTorrent(payload);
 			} else {
-				logger.error("[Motrix] Add task fail", form);
+				logger.error("[Risuko] Add task fail", form);
 				throw new Error("task.new-task-unsupported-type");
 			}
 		},

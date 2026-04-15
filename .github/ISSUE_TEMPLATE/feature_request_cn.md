@@ -1,6 +1,6 @@
 ---
 name: 新功能请求
-about: 你期望 Motrix 未来添加的新功能
+about: 你期望 Risuko 未来添加的新功能
 title: ''
 labels: enhancement ✨
 assignees: ''
@@ -8,7 +8,7 @@ assignees: ''
 
 <!--
 反馈之前请搜索一下已有 issues 和 帮助文档，看是否已经有人提交了类似的新功能请求
-https://github.com/agalwood/Motrix/issues
+https://github.com/YueMiyuki/Risuko/issues
 http://motrix.app/support
 
 按以下格式填写反馈信息，谢谢

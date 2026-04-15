@@ -527,7 +527,7 @@ async fn fetch_feed_bytes(url: &str) -> Result<Vec<u8>, String> {
 
     let resp = client
         .get(url)
-        .header("User-Agent", "Motrix/1.0")
+        .header("User-Agent", "Risuko/1.0")
         .send()
         .await
         .map_err(|e| format!("Failed to fetch feed: {e}"))?;

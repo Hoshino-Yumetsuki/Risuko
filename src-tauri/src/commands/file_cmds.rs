@@ -1207,7 +1207,7 @@ pub fn cleanup_generated_torrent_sidecars_for_task(task: Value) -> Result<u32, S
 mod tests {
     use super::*;
 
-    // --- strip_temp_download_suffix ---
+    // -- strip_temp_download_suffix --
 
     #[test]
     fn strip_suffix_removes_part() {
@@ -1236,7 +1236,7 @@ mod tests {
         assert_eq!(strip_temp_download_suffix("a.par"), None);
     }
 
-    // --- push_index_to_ranges ---
+    // -- push_index_to_ranges --
 
     #[test]
     fn push_index_ignores_zero() {
@@ -1266,7 +1266,7 @@ mod tests {
         assert_eq!(ranges, vec![(1, 3), (5, 5)]);
     }
 
-    // --- encode_index_ranges ---
+    // -- encode_index_ranges --
 
     #[test]
     fn encode_ranges_empty() {
@@ -1289,7 +1289,7 @@ mod tests {
         assert_eq!(encode_index_ranges(&ranges), Some("1-3,5,7-9".to_string()));
     }
 
-    // --- normalize_torrent_path ---
+    // -- normalize_torrent_path --
 
     #[test]
     fn normalize_path_backslashes() {
@@ -1312,7 +1312,7 @@ mod tests {
         assert_eq!(normalize_torrent_path("folder/file.txt"), "folder/file.txt");
     }
 
-    // --- normalize_info_hash ---
+    // -- normalize_info_hash --
 
     #[test]
     fn info_hash_sha1_hex() {
@@ -1341,7 +1341,7 @@ mod tests {
         assert_eq!(normalize_info_hash(base32), expected);
     }
 
-    // --- percent_decode_lossy ---
+    // -- percent_decode_lossy --
 
     #[test]
     fn decode_space() {
@@ -1364,7 +1364,7 @@ mod tests {
         assert_eq!(percent_decode_lossy("hello"), "hello");
     }
 
-    // --- inspect_torrent_metadata ---
+    // -- inspect_torrent_metadata --
 
     #[test]
     fn inspect_empty_bytes() {

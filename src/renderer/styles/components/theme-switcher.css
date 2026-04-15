@@ -68,21 +68,21 @@
 	.preview-sidebar--dark {
 		width: 20px;
 		flex-shrink: 0;
-		background: #1a1a1a;
+		background: #000000;
 	}
 	.preview-content--dark {
 		flex: 1;
 		display: flex;
 		flex-direction: column;
-		background: #2d2d2d;
+		background: #111111;
 	}
 	.preview-header--dark {
 		height: 12px;
-		background: #3a3a3a;
-		border-bottom: 1px solid #404040;
+		background: #161616;
+		border-bottom: 1px solid rgba(255, 255, 255, 0.06);
 	}
 	.preview-line--dark {
-		background: #4a4a4a;
+		background: #1a1a1a;
 	}
 	.preview-split {
 		display: flex;
@@ -108,10 +108,10 @@
 		background: #fff;
 	}
 	.preview-half--dark .mini-sidebar {
-		background: #1a1a1a;
+		background: #000000;
 	}
 	.preview-half--dark .mini-content {
-		background: #2d2d2d;
+		background: #111111;
 	}
 	.theme-label {
 		display: block;
@@ -125,16 +125,16 @@
 		border-color: #4b5563;
 	}
 	.dark .theme-option:hover .theme-preview {
-		border-color: rgba(139, 139, 255, 0.5);
+		border-color: rgba(97, 158, 255, 0.5);
 	}
 	.dark .theme-option.active .theme-preview {
-		border-color: #8b8bff;
-		box-shadow: 0 0 0 3px rgba(139, 139, 255, 0.2);
+		border-color: #619eff;
+		box-shadow: 0 0 0 3px rgba(97, 158, 255, 0.2);
 	}
 	.dark .theme-option.active .theme-label {
-		color: #8b8bff;
+		color: #8cc0ff;
 	}
 	.dark .theme-label {
-		color: #9ca3af;
+		color: #818181;
 	}
 }

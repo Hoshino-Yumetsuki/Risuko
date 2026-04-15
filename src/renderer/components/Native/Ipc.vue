@@ -3,15 +3,13 @@
 </template>
 
 <script lang="ts">
-import type { UnlistenFn } from "@tauri-apps/api/event";
-import { listen } from "@tauri-apps/api/event";
 import { commands } from "@/components/CommandManager/instance";
 
 export default {
 	name: "mo-ipc",
 	data() {
 		return {
-			unlisten: null as UnlistenFn | null,
+			unlisten: null as (() => void) | null,
 			alive: true,
 			bindToken: 0,
 		};
@@ -19,6 +17,7 @@ export default {
 	methods: {
 		async bindIpcEvents() {
 			const token = ++this.bindToken;
+			const { listen } = await import("@tauri-apps/api/event");
 			const unlisten = await listen("command", (event) => {
 				const payload = event.payload as
 					| { command?: string; args?: unknown[] }

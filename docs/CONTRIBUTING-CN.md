@@ -1,10 +1,10 @@
-# Motrix 贡献指南
+# Risuko 贡献指南
 
 开始贡献之前，确保你已经理解了 [GitHub 的协作流程](https://guides.github.com/introduction/flow/)。
 
 ## 🌍 翻译指南
 
-Motrix 使用 [i18next](https://www.i18next.com/overview/getting-started) 作为翻译支持库，所以你可能需要简单了解一下它的使用方法。
+Risuko 使用 [i18next](https://www.i18next.com/overview/getting-started) 作为翻译支持库，所以你可能需要简单了解一下它的使用方法。
 
 配置文件按照语言 (**locale**) 划分目录：`src/shared/locales`，如：`src/shared/locales/en-US` 和 `src/shared/locales/zh-CN`。
 

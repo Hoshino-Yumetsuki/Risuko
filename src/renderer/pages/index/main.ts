@@ -1,7 +1,6 @@
 import type { AppConfig } from "@shared/types/config";
 import logger from "@shared/utils/logger";
 import { invoke } from "@tauri-apps/api/core";
-import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import axios from "axios";
 import { createApp } from "vue";
 import VueVirtualScroller from "vue-virtual-scroller";
@@ -37,7 +36,7 @@ const updateTray = (payload: {
 	}
 
 	invoke("update_tray", { imageData: rgba, width, height }).catch((err) => {
-		logger.warn("[Motrix] update_tray failed:", err);
+		logger.warn("[Risuko] update_tray failed:", err);
 	});
 };
 
@@ -55,7 +54,7 @@ const updateTrayMenuLabels = (i18n: { t: (key: string) => string }) => {
 	};
 
 	invoke("update_tray_menu_labels", { labels }).catch((err) => {
-		logger.warn("[Motrix] update_tray_menu_labels failed:", err);
+		logger.warn("[Risuko] update_tray_menu_labels failed:", err);
 	});
 };
 
@@ -95,7 +94,7 @@ const updateAppMenuLabels = (i18n: { t: (key: string) => string }) => {
 	};
 
 	invoke("update_app_menu_labels", { labels }).catch((err) => {
-		logger.warn("[Motrix] update_app_menu_labels failed:", err);
+		logger.warn("[Risuko] update_app_menu_labels failed:", err);
 	});
 };
 
@@ -108,14 +107,14 @@ function initTrayWorker() {
 		switch (type) {
 			case "initialized":
 			case "log":
-				logger.log("[Motrix] Log from Tray Worker: ", payload);
+				logger.log("[Risuko] Log from Tray Worker: ", payload);
 				break;
 			case "tray:drawed":
 				updateTray(payload);
 				break;
 			default:
 				logger.warn(
-					"[Motrix] Tray Worker unhandled message type:",
+					"[Risuko] Tray Worker unhandled message type:",
 					type,
 					payload,
 				);
@@ -154,7 +153,7 @@ async function init(config: AppConfig) {
 	) => i18n.t(key, value);
 
 	router.isReady().then(async () => {
-		window.__app = app.mount("#app") as unknown as MotrixApp;
+		window.__app = app.mount("#app") as unknown as RisukoApp;
 		window.__app.commands = commands;
 		window.__app.trayWorker = initTrayWorker();
 
@@ -164,6 +163,9 @@ async function init(config: AppConfig) {
 			() => false,
 		);
 		if (!isOpenedAtLogin) {
+			const { getCurrentWebviewWindow } = await import(
+				"@tauri-apps/api/webviewWindow"
+			);
 			getCurrentWebviewWindow()
 				.show()
 				.catch(() => {
@@ -176,7 +178,7 @@ async function init(config: AppConfig) {
 usePreferenceStore()
 	.fetchPreference()
 	.then((config) => {
-		logger.info("[Motrix] load preference:", config);
+		logger.info("[Risuko] load preference:", config);
 		init(config);
 		usePreferenceStore().autoSyncTracker();
 	})

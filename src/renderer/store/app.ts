@@ -3,6 +3,7 @@ import type { EngineInfo } from "@shared/types/task";
 import logger from "@shared/utils/logger";
 import { defineStore } from "pinia";
 import api from "@/api";
+import { useTaskStore } from "@/store/task";
 import { getSystemTheme } from "@/utils/native";
 
 const BASE_INTERVAL = 1500;
@@ -91,7 +92,7 @@ export const useAppStore = defineStore("app", {
 				this.engineInfo = { ...this.engineInfo, ...data };
 				return data;
 			} catch (err: unknown) {
-				logger.warn("[Motrix] fetchEngineInfo failed:", (err as Error).message);
+				logger.warn("[Risuko] fetchEngineInfo failed:", (err as Error).message);
 				return null;
 			}
 		},
@@ -102,7 +103,7 @@ export const useAppStore = defineStore("app", {
 				return data;
 			} catch (err: unknown) {
 				logger.warn(
-					"[Motrix] fetchEngineOptions failed:",
+					"[Risuko] fetchEngineOptions failed:",
 					(err as Error).message,
 				);
 				return null;
@@ -125,8 +126,9 @@ export const useAppStore = defineStore("app", {
 					this.increaseInterval();
 				}
 				this.stat = stat;
+				useTaskStore().updateTaskCountsFromStat(stat);
 			} catch (err: unknown) {
-				logger.warn("[Motrix] fetchGlobalStat failed:", (err as Error).message);
+				logger.warn("[Risuko] fetchGlobalStat failed:", (err as Error).message);
 			}
 		},
 		increaseInterval(millisecond = 100) {
@@ -199,7 +201,7 @@ export const useAppStore = defineStore("app", {
 						: calcRendererProgress(tasks);
 				} catch (nativeErr) {
 					logger.warn(
-						"[Motrix] calculateActiveTaskProgress failed, fallback to renderer:",
+						"[Risuko] calculateActiveTaskProgress failed, fallback to renderer:",
 						(nativeErr as Error)?.message || nativeErr,
 					);
 					progress = calcRendererProgress(tasks);
@@ -207,7 +209,7 @@ export const useAppStore = defineStore("app", {
 
 				this.progress = progress === 2 ? -1 : progress;
 			} catch (err: unknown) {
-				logger.warn("[Motrix] fetchProgress failed:", (err as Error).message);
+				logger.warn("[Risuko] fetchProgress failed:", (err as Error).message);
 			}
 		},
 	},

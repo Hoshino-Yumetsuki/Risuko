@@ -4,11 +4,11 @@ use std::{collections::HashMap, collections::HashSet};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 use tokio::time::sleep;
 
-use crate::engine;
-use crate::engine::torrent;
+use risuko_engine::engine;
+use risuko_engine::engine::torrent;
 
 const TEMP_DOWNLOAD_SUFFIX: &str = ".part";
 
@@ -464,7 +464,17 @@ pub fn plan_auto_retry(
 
 #[tauri::command]
 pub async fn restart_engine(handle: AppHandle) -> Result<(), String> {
-    crate::engine::restart_engine(&handle)
+    let config_dir = handle
+        .path()
+        .app_config_dir()
+        .unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let config =
+        risuko_engine::config::ConfigManager::with_dir(config_dir).map_err(|e| e.to_string())?;
+    let event_sink: std::sync::Arc<dyn risuko_engine::EventSink> =
+        std::sync::Arc::new(crate::bridge::TauriEventSink::new(&handle));
+    let storage: std::sync::Arc<dyn risuko_engine::StorageBackend> =
+        std::sync::Arc::new(crate::bridge::TauriStorage::new(&handle));
+    risuko_engine::engine::restart_engine(&config, event_sink, storage)
         .await
         .map_err(|e| e.to_string())
 }
@@ -703,13 +713,60 @@ pub async fn add_uri(
         }
 
         log::warn!(
-            "[Motrix] add_uri partially failed: {} succeeded, {} failed",
+            "[Risuko] add_uri partially failed: {} succeeded, {} failed",
             success_count,
             failed_count
         );
     }
 
     Ok(Value::Array(results))
+}
+
+const RESOLVE_MAGNET_TIMEOUT_SECS: u64 = 60;
+
+#[tauri::command]
+pub async fn resolve_magnet(
+    _state: tauri::State<'_, crate::state::AppState>,
+    uri: String,
+    options: Option<Value>,
+) -> Result<Value, String> {
+    let magnet_uri = uri.trim().to_string();
+    if !torrent::is_magnet_uri(&magnet_uri) {
+        return Err("Not a valid magnet URI".to_string());
+    }
+
+    let base_options = match options {
+        Some(Value::Object(map)) => map,
+        _ => Map::new(),
+    };
+
+    let manager = engine::get_manager().await.ok_or("Engine not running")?;
+
+    let files = manager
+        .resolve_magnet_metadata(&magnet_uri, base_options, RESOLVE_MAGNET_TIMEOUT_SECS)
+        .await?;
+
+    let file_count = files.len();
+    let result_files: Vec<Value> = files
+        .iter()
+        .map(|f| {
+            let name = std::path::Path::new(&f.path)
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| f.path.clone());
+            json!({
+                "path": f.path,
+                "length": f.length,
+                "name": name,
+                "index": f.index + 1,  // Convert 0-based to 1-based for frontend
+            })
+        })
+        .collect();
+
+    Ok(json!({
+        "files": result_files,
+        "fileCount": file_count,
+    }))
 }
 
 #[tauri::command]
@@ -805,7 +862,7 @@ pub async fn sync_selected_task_order(
 
 // Tauri commands wrapping TaskManager for direct invoke() calls
 
-const ENGINE_VERSION: &str = "motrix-engine/0.1";
+const ENGINE_VERSION: &str = "risuko-engine/0.1";
 
 #[tauri::command]
 pub async fn tell_status(gid: String, keys: Option<Vec<String>>) -> Result<Value, String> {
@@ -990,18 +1047,18 @@ pub async fn multicall_engine(
     let mut results: Vec<Value> = Vec::with_capacity(gids.len());
     for gid in &gids {
         let result = match method.as_str() {
-            "motrix.changeOption" => manager
+            "risuko.changeOption" => manager
                 .change_option(gid, opts.clone())
                 .await
                 .map(|_| Value::String("OK".into())),
-            "motrix.remove" => manager
+            "risuko.remove" => manager
                 .remove(gid)
                 .await
                 .map(|_| Value::String(gid.clone())),
-            "motrix.pause" | "motrix.forcePause" => {
+            "risuko.pause" | "risuko.forcePause" => {
                 manager.pause(gid).await.map(|_| Value::String(gid.clone()))
             }
-            "motrix.unpause" => manager
+            "risuko.unpause" => manager
                 .unpause(gid)
                 .await
                 .map(|_| Value::String(gid.clone())),
@@ -1020,7 +1077,7 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    // --- normalize_non_negative ---
+    // -- normalize_non_negative --
 
     #[test]
     fn normalize_non_negative_positive_float() {
@@ -1048,7 +1105,7 @@ mod tests {
         assert_eq!(normalize_non_negative(1e20), u64::MAX);
     }
 
-    // --- parse_length_like ---
+    // -- parse_length_like --
 
     #[test]
     fn parse_length_like_u64_number() {
@@ -1086,7 +1143,7 @@ mod tests {
         assert_eq!(parse_length_like(&json!(null)), 0);
     }
 
-    // --- parse_counter_like ---
+    // -- parse_counter_like --
 
     #[test]
     fn parse_counter_like_normal() {
@@ -1099,7 +1156,7 @@ mod tests {
         assert_eq!(parse_counter_like(&json!(u32::MAX as u64 + 1)), u32::MAX);
     }
 
-    // --- compute_auto_retry_delay_ms ---
+    // -- compute_auto_retry_delay_ms --
 
     #[test]
     fn retry_exponential_backoff() {
@@ -1137,7 +1194,7 @@ mod tests {
         assert_eq!(compute_auto_retry_delay_ms("static", 100, 1, 60_000), 1000);
     }
 
-    // --- infer_out_from_uri_inner ---
+    // -- infer_out_from_uri_inner --
 
     #[test]
     fn infer_out_empty() {
@@ -1188,7 +1245,7 @@ mod tests {
         assert_eq!(result, "test file.bin");
     }
 
-    // --- resolve_file_category_inner ---
+    // -- resolve_file_category_inner --
 
     #[test]
     fn category_video() {

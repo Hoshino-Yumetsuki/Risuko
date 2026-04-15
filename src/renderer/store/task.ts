@@ -13,14 +13,14 @@ import { useAppStore } from "@/store/app";
 
 const DEFAULT_TASKS_PER_PAGE = 20;
 const TASKS_PER_PAGE_OPTIONS = [10, 20, 30, 40, 50];
-const TASKS_PER_PAGE_STORAGE_KEY = "motrix.tasks-per-page";
-const SORT_BY_STORAGE_KEY = "motrix.task-sort-by";
-const SORT_ORDER_STORAGE_KEY = "motrix.task-sort-order";
+const TASKS_PER_PAGE_STORAGE_KEY = "risuko.tasks-per-page";
+const SORT_BY_STORAGE_KEY = "risuko.task-sort-by";
+const SORT_ORDER_STORAGE_KEY = "risuko.task-sort-order";
 
 /** Maximum number of speed samples retained per task */
 export const SPEED_HISTORY_LIMIT = 60;
 
-export type SpeedSample = { download: number; upload: number };
+type SpeedSample = { download: number; upload: number };
 
 /** Module cache: gid -> speed samples. */
 // please work please work please work
@@ -138,16 +138,25 @@ export const useTaskStore = defineStore("task", {
 		selectedGidList: [] as string[],
 		speedHistoryRev: 0,
 		taskOrderMap: {
+			all: [] as string[],
 			active: [] as string[],
 			waiting: [] as string[],
 			completed: [] as string[],
 			stopped: [] as string[],
 		},
+		taskCountMap: {
+			all: 0,
+			active: 0,
+			waiting: 0,
+			completed: 0,
+			stopped: 0,
+		} as Record<string, number>,
 		tasksPerPage: loadTasksPerPage(),
 		filterText: "",
 		sortBy: loadSortBy() as TaskSortBy,
 		sortOrder: loadSortOrder() as TaskSortOrder,
 		currentPageMap: {
+			all: 1,
 			active: 1,
 			waiting: 1,
 			completed: 1,
@@ -366,6 +375,7 @@ export const useTaskStore = defineStore("task", {
 
 				const orderedData = this.applyTaskOrder(type, data);
 				this.taskList = orderedData;
+				this.taskCountMap = { ...this.taskCountMap, [type]: data.length };
 				this.ensurePageInRange(type);
 				this.updateTaskOrder(
 					type,
@@ -376,11 +386,45 @@ export const useTaskStore = defineStore("task", {
 				this.selectedGidList = intersection(this.selectedGidList, gids);
 				return orderedData;
 			} catch (err: unknown) {
-				logger.warn("[Motrix] fetchList failed:", (err as Error).message);
+				logger.warn("[Risuko] fetchList failed:", (err as Error).message);
 				this.taskList = [];
 				this.selectedGidList = [];
 				return [];
 			}
+		},
+		async updateTaskCountsFromStat(stat: Record<string, number>) {
+			const numActive = stat.numActive || 0;
+			const numWaiting = stat.numWaiting || 0;
+			const numStoppedTotal = stat.numStoppedTotal || 0;
+
+			let completedCount = this.taskCountMap.completed || 0;
+			let stoppedCount = this.taskCountMap.stopped || 0;
+
+			if (numStoppedTotal > 0) {
+				try {
+					const stoppedTasks = (await api.fetchTaskList({
+						type: "stopped",
+						keys: ["gid", "status"],
+					})) as DownloadTask[];
+					completedCount = stoppedTasks.filter(
+						(t) => t.status === TASK_STATUS.COMPLETE,
+					).length;
+					stoppedCount = stoppedTasks.length - completedCount;
+				} catch {
+					// keep previous counts on failure
+				}
+			} else {
+				completedCount = 0;
+				stoppedCount = 0;
+			}
+
+			this.taskCountMap = {
+				all: numActive + numWaiting + numStoppedTotal,
+				active: numActive,
+				waiting: numWaiting,
+				completed: completedCount,
+				stopped: stoppedCount,
+			};
 		},
 		/**
 		 * Sample speeds for all active/seeding tasks.
@@ -427,7 +471,7 @@ export const useTaskStore = defineStore("task", {
 				this.updateCurrentTaskItem(data);
 				return data;
 			} catch (err: unknown) {
-				logger.warn("[Motrix] fetchItem failed:", (err as Error).message);
+				logger.warn("[Risuko] fetchItem failed:", (err as Error).message);
 				this.updateCurrentTaskItem(null);
 				return null;
 			}
@@ -443,7 +487,7 @@ export const useTaskStore = defineStore("task", {
 				return data;
 			} catch (err: unknown) {
 				logger.warn(
-					"[Motrix] fetchItemWithPeers failed:",
+					"[Risuko] fetchItemWithPeers failed:",
 					(err as Error).message,
 				);
 				this.updateCurrentTaskItem(null);
@@ -462,7 +506,7 @@ export const useTaskStore = defineStore("task", {
 				return task;
 			} catch (err: unknown) {
 				logger.warn(
-					"[Motrix] showTaskDetailByGid failed:",
+					"[Risuko] showTaskDetailByGid failed:",
 					(err as Error).message,
 				);
 				return null;
@@ -519,7 +563,7 @@ export const useTaskStore = defineStore("task", {
 		},
 		getTaskOption(gid: string) {
 			return api.getOption({ gid }).catch((err: unknown) => {
-				logger.warn("[Motrix] getTaskOption failed:", (err as Error).message);
+				logger.warn("[Risuko] getTaskOption failed:", (err as Error).message);
 				return {};
 			});
 		},
@@ -772,7 +816,7 @@ export const useTaskStore = defineStore("task", {
 			this.syncSelectedTaskOrder(direction, selectedGids).catch(
 				(err: unknown) => {
 					logger.warn(
-						"[Motrix] syncSelectedTaskOrder failed:",
+						"[Risuko] syncSelectedTaskOrder failed:",
 						(err as Error).message,
 					);
 					if (typeof onSyncError === "function") {

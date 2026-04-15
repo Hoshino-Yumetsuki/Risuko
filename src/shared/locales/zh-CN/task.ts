@@ -1,4 +1,5 @@
 export default {
+	all: "全部",
 	active: "下载中",
 	waiting: "等待中",
 	stopped: "已停止",
@@ -74,6 +75,10 @@ export default {
 	"show-advanced-options": "高级选项",
 	"loading-add-task": "正在添加任务...",
 	"loading-resolve-torrent": "正在解析种子元数据...",
+	"loading-resolve-magnet": "正在解析磁力链接元数据...",
+	"resolve-magnet-error": "解析磁力链接元数据失败",
+	"resolve-magnet-timeout": "解析磁力链接超时，Tracker 可能不可用。",
+	"resolve-magnet-retry": "重试",
 	"loading-delete-task": "正在移除任务...",
 	"loading-delete-task-files": "正在移除任务并删除文件...",
 	"loading-remove-record": "正在移除下载记录...",

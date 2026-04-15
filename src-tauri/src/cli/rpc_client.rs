@@ -2,15 +2,25 @@ use serde_json::{json, Value};
 
 pub struct RpcClient {
     url: String,
+    secret: Option<String>,
     client: reqwest::Client,
     id_counter: std::sync::atomic::AtomicU64,
 }
 
 impl RpcClient {
-    pub fn new(port: u16) -> Self {
+    pub fn new(port: u16, secret: Option<String>) -> Self {
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .connect_timeout(std::time::Duration::from_secs(5))
+            .build()
+            .unwrap_or_else(|e| {
+                log::warn!("Failed to build HTTP client with custom config: {e}, using defaults");
+                reqwest::Client::default()
+            });
         Self {
             url: format!("http://127.0.0.1:{}/jsonrpc", port),
-            client: reqwest::Client::new(),
+            secret,
+            client,
             id_counter: std::sync::atomic::AtomicU64::new(1),
         }
     }
@@ -19,6 +29,14 @@ impl RpcClient {
         let id = self
             .id_counter
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
+        let params = if let Some(ref secret) = self.secret {
+            let mut with_token = vec![json!(format!("token:{}", secret))];
+            with_token.extend(params);
+            with_token
+        } else {
+            params
+        };
 
         let body = json!({
             "jsonrpc": "2.0",
@@ -48,11 +66,14 @@ impl RpcClient {
             return Err(RpcError::Rpc(message.to_string()));
         }
 
-        Ok(result.get("result").cloned().unwrap_or(Value::Null))
+        result
+            .get("result")
+            .cloned()
+            .ok_or_else(|| RpcError::Parse("Missing 'result' in RPC response".to_string()))
     }
 
     pub async fn is_engine_running(&self) -> bool {
-        self.call("motrix.getVersion", vec![]).await.is_ok()
+        self.call("risuko.getVersion", vec![]).await.is_ok()
     }
 }
 

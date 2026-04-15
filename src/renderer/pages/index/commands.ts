@@ -1,7 +1,6 @@
 import { ADD_TASK_TYPE } from "@shared/constants";
 import logger from "@shared/utils/logger";
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
 import { toast } from "vue-sonner";
 import { commands } from "@/components/CommandManager/instance";
 import { getLocaleManager } from "@/components/Locale";
@@ -232,24 +231,26 @@ commands.register("application:update-locale", updateLocale);
 commands.register("application:update-tray-focused", updateTrayFocused);
 
 // Handle quit confirmation from Tauri (Cmd+Q, tray quit).
-listen("confirm-quit", async () => {
-	const numActive = getAppStore().stat?.numActive ?? 0;
-	const message =
-		numActive > 0
-			? i18n.t("app.quit-confirm-active", { count: numActive })
-			: i18n.t("app.quit-confirm");
+import("@tauri-apps/api/event").then(({ listen }) => {
+	listen("confirm-quit", async () => {
+		const numActive = getAppStore().stat?.numActive ?? 0;
+		const message =
+			numActive > 0
+				? i18n.t("app.quit-confirm-active", { count: numActive })
+				: i18n.t("app.quit-confirm");
 
-	const { confirmed } = await confirm({
-		title: i18n.t("app.quit"),
-		message,
-		kind: numActive > 0 ? "warning" : "info",
-		confirmText: i18n.t("app.yes"),
-		cancelText: i18n.t("app.no"),
-	});
-
-	if (confirmed) {
-		invoke("quit_app").catch(() => {
-			/* noop */
+		const { confirmed } = await confirm({
+			title: i18n.t("app.quit"),
+			message,
+			kind: numActive > 0 ? "warning" : "info",
+			confirmText: i18n.t("app.yes"),
+			cancelText: i18n.t("app.no"),
 		});
-	}
+
+		if (confirmed) {
+			invoke("quit_app").catch(() => {
+				/* noop */
+			});
+		}
+	});
 });

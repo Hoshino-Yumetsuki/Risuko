@@ -30,7 +30,7 @@ import { useAppStore } from "@/store/app";
 import { usePreferenceStore } from "@/store/preference";
 
 export default {
-	name: "motrix-app",
+	name: "risuko-app",
 	components: {
 		[DynamicTray.name]: DynamicTray,
 		[EngineClient.name]: EngineClient,

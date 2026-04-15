@@ -3,20 +3,26 @@ use serde_json::{json, Value};
 use super::headless;
 use super::progress::{self, format_size, format_size_speed};
 use super::rpc_client::RpcClient;
-use super::{DownloadArgs, PauseArgs, RemoveArgs, ResumeArgs, StatusArgs};
+use super::{DownloadArgs, PauseArgs, RemoveArgs, ResumeArgs, ServeArgs, StatusArgs};
 
 pub async fn download(args: DownloadArgs) -> Result<(), Box<dyn std::error::Error>> {
-    let client = RpcClient::new(args.rpc_port);
+    let mut secret = args.rpc_secret.clone();
+    let client = RpcClient::new(args.rpc_port, secret.clone());
     let mut headless_engine = None;
 
     if !client.is_engine_running().await {
-        eprintln!("No running Motrix instance found. Starting headless engine...");
+        eprintln!("No running Risuko instance found. Starting headless engine...");
         let engine = headless::start_headless_engine(args.rpc_port).await?;
+        // Use the engine's configured secret if no CLI secret was provided
+        if secret.is_none() {
+            secret = engine.rpc_secret().map(|s| s.to_string());
+        }
         headless_engine = Some(engine);
         // Wait briefly for engine to be ready
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
     }
 
+    let client = RpcClient::new(args.rpc_port, secret);
     let result = do_download(&client, &args).await;
 
     if let Some(engine) = headless_engine {
@@ -93,14 +99,14 @@ async fn do_download(
         let b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &torrent_data);
         let result = client
             .call(
-                "motrix.addTorrent",
+                "risuko.addTorrent",
                 vec![json!(b64), json!([]), json!(options)],
             )
             .await?;
         result.as_str().unwrap_or("").to_string()
     } else {
         let result = client
-            .call("motrix.addUri", vec![json!([&args.url]), json!(options)])
+            .call("risuko.addUri", vec![json!([&args.url]), json!(options)])
             .await?;
         result.as_str().unwrap_or("").to_string()
     };
@@ -117,11 +123,11 @@ async fn do_download(
 }
 
 pub async fn status(args: StatusArgs) -> Result<(), Box<dyn std::error::Error>> {
-    let client = RpcClient::new(args.rpc_port);
+    let client = RpcClient::new(args.rpc_port, args.rpc_secret);
     require_engine(&client).await?;
 
     if let Some(ref gid) = args.gid {
-        let status = client.call("motrix.tellStatus", vec![json!(gid)]).await?;
+        let status = client.call("risuko.tellStatus", vec![json!(gid)]).await?;
 
         if args.json {
             println!("{}", serde_json::to_string_pretty(&status)?);
@@ -139,27 +145,34 @@ pub async fn status(args: StatusArgs) -> Result<(), Box<dyn std::error::Error>> 
             "files"
         ]);
         let active = client
-            .call("motrix.tellActive", vec![all_keys.clone()])
-            .await?;
-        let waiting = client
-            .call(
-                "motrix.tellWaiting",
-                vec![json!(0), json!(100), all_keys.clone()],
-            )
-            .await?;
-        let stopped = client
-            .call("motrix.tellStopped", vec![json!(0), json!(100), all_keys])
+            .call("risuko.tellActive", vec![all_keys.clone()])
             .await?;
 
         let mut tasks: Vec<Value> = Vec::new();
         if let Some(arr) = active.as_array() {
             tasks.extend(arr.iter().cloned());
         }
-        if let Some(arr) = waiting.as_array() {
-            tasks.extend(arr.iter().cloned());
-        }
-        if let Some(arr) = stopped.as_array() {
-            tasks.extend(arr.iter().cloned());
+
+        let page_size = 100;
+        for method in ["risuko.tellWaiting", "risuko.tellStopped"] {
+            let mut offset = 0;
+            loop {
+                let page = client
+                    .call(
+                        method,
+                        vec![json!(offset), json!(page_size), all_keys.clone()],
+                    )
+                    .await?;
+                let arr = page.as_array();
+                let count = arr.map(|a| a.len()).unwrap_or(0);
+                if let Some(items) = arr {
+                    tasks.extend(items.iter().cloned());
+                }
+                if count < page_size {
+                    break;
+                }
+                offset += page_size;
+            }
         }
 
         if args.json {
@@ -175,35 +188,35 @@ pub async fn status(args: StatusArgs) -> Result<(), Box<dyn std::error::Error>> 
 }
 
 pub async fn pause(args: PauseArgs) -> Result<(), Box<dyn std::error::Error>> {
-    let client = RpcClient::new(args.rpc_port);
+    let client = RpcClient::new(args.rpc_port, args.rpc_secret);
     require_engine(&client).await?;
 
-    client.call("motrix.pause", vec![json!(args.gid)]).await?;
+    client.call("risuko.pause", vec![json!(args.gid)]).await?;
     println!("Paused: {}", args.gid);
     Ok(())
 }
 
 pub async fn resume(args: ResumeArgs) -> Result<(), Box<dyn std::error::Error>> {
-    let client = RpcClient::new(args.rpc_port);
+    let client = RpcClient::new(args.rpc_port, args.rpc_secret);
     require_engine(&client).await?;
 
-    client.call("motrix.unpause", vec![json!(args.gid)]).await?;
+    client.call("risuko.unpause", vec![json!(args.gid)]).await?;
     println!("Resumed: {}", args.gid);
     Ok(())
 }
 
 pub async fn remove(args: RemoveArgs) -> Result<(), Box<dyn std::error::Error>> {
-    let client = RpcClient::new(args.rpc_port);
+    let client = RpcClient::new(args.rpc_port, args.rpc_secret);
     require_engine(&client).await?;
 
-    client.call("motrix.remove", vec![json!(args.gid)]).await?;
+    client.call("risuko.remove", vec![json!(args.gid)]).await?;
     println!("Removed: {}", args.gid);
     Ok(())
 }
 
 async fn require_engine(client: &RpcClient) -> Result<(), Box<dyn std::error::Error>> {
     if !client.is_engine_running().await {
-        return Err("No Motrix instance running. Start the app or run a download first.".into());
+        return Err("No Risuko instance running. Start the app or run a download first.".into());
     }
     Ok(())
 }
@@ -250,8 +263,9 @@ fn print_task_table(tasks: &[Value]) {
             "0.0%".into()
         };
 
-        let display_name = if name.len() > 28 {
-            format!("{}...", &name[..25])
+        let display_name = if name.chars().count() > 28 {
+            let truncated: String = name.chars().take(25).collect();
+            format!("{}...", truncated)
         } else {
             name
         };
@@ -302,4 +316,15 @@ fn print_task_detail(task: &Value) {
             println!("Error:     {}", err);
         }
     }
+}
+
+pub async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
+    eprintln!("Starting Risuko engine on port {}...", args.rpc_port);
+    let engine = headless::start_headless_engine(args.rpc_port).await?;
+    eprintln!("Risuko engine running. Press Ctrl+C to stop.");
+
+    tokio::signal::ctrl_c().await?;
+    eprintln!("\nShutting down...");
+    engine.shutdown().await;
+    Ok(())
 }

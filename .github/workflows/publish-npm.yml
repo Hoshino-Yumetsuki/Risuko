@@ -1,0 +1,391 @@
+name: Publish npm packages
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to publish (e.g. 0.1.2)'
+        required: true
+      dry_run:
+        description: 'Dry run (skip actual publish)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+env:
+  CARGO_INCREMENTAL: 0
+  CARGO_NET_RETRY: 10
+
+jobs:
+  build-cli:
+    name: CLI (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            binary: risuko
+            npm_dir: darwin-arm64
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            binary: risuko
+            npm_dir: darwin-x64
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            binary: risuko
+            npm_dir: linux-x64-gnu
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-24.04-arm
+            binary: risuko
+            npm_dir: linux-arm64-gnu
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            binary: risuko.exe
+            npm_dir: win32-x64-msvc
+          - target: aarch64-pc-windows-msvc
+            os: windows-latest
+            binary: risuko.exe
+            npm_dir: win32-arm64-msvc
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          key: cli-${{ matrix.target }}
+
+      - name: Install Linux build deps
+        if: startsWith(matrix.os, 'ubuntu')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libssl-dev pkg-config
+
+      - name: Build risuko-cli
+        working-directory: src-tauri
+        run: cargo build --release --target ${{ matrix.target }} -p risuko-cli
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cli-${{ matrix.npm_dir }}
+          path: src-tauri/target/${{ matrix.target }}/release/${{ matrix.binary }}
+
+      # Also upload as a standalone release asset
+      - name: Prepare standalone binary
+        shell: bash
+        run: |
+          mkdir -p dist
+          cp "src-tauri/target/${{ matrix.target }}/release/${{ matrix.binary }}" dist/
+          cd dist
+          if [[ "${{ matrix.binary }}" == *.exe ]]; then
+            7z a "../risuko-${{ matrix.npm_dir }}.zip" "${{ matrix.binary }}"
+          else
+            chmod +x "${{ matrix.binary }}"
+            tar czf "../risuko-${{ matrix.npm_dir }}.tar.gz" "${{ matrix.binary }}"
+          fi
+
+      - name: Upload standalone archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: standalone-${{ matrix.npm_dir }}
+          path: risuko-${{ matrix.npm_dir }}.*
+
+  # ───────────────────────────────────────────────────────
+  # Build risuko-napi native modules for all platforms
+  # ───────────────────────────────────────────────────────
+  build-napi:
+    name: NAPI (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            node_file: risuko.darwin-arm64.node
+            npm_dir: darwin-arm64
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            node_file: risuko.darwin-x64.node
+            npm_dir: darwin-x64
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            node_file: risuko.linux-x64-gnu.node
+            npm_dir: linux-x64-gnu
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-24.04-arm
+            node_file: risuko.linux-arm64-gnu.node
+            npm_dir: linux-arm64-gnu
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            node_file: risuko.win32-x64-msvc.node
+            npm_dir: win32-x64-msvc
+          - target: aarch64-pc-windows-msvc
+            os: windows-latest
+            node_file: risuko.win32-arm64-msvc.node
+            npm_dir: win32-arm64-msvc
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          key: napi-${{ matrix.target }}
+
+      - name: Install Linux build deps
+        if: startsWith(matrix.os, 'ubuntu')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libssl-dev pkg-config
+
+      - name: Build risuko-napi
+        working-directory: src-tauri
+        run: cargo build --release --target ${{ matrix.target }} -p risuko-napi
+
+      - name: Rename .node artifact
+        shell: bash
+        run: |
+          # cdylib output varies by platform
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            src="src-tauri/target/${{ matrix.target }}/release/risuko_napi.dll"
+          elif [[ "${{ runner.os }}" == "macOS" ]]; then
+            src="src-tauri/target/${{ matrix.target }}/release/librisuko_napi.dylib"
+          else
+            src="src-tauri/target/${{ matrix.target }}/release/librisuko_napi.so"
+          fi
+          cp "$src" "${{ matrix.node_file }}"
+
+      - name: Upload .node artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: napi-${{ matrix.npm_dir }}
+          path: ${{ matrix.node_file }}
+
+  # ───────────────────────────────────────────────────────
+  # Build web UI bundle for @risuko/app
+  # ───────────────────────────────────────────────────────
+  build-web:
+    name: Build Web UI
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build web UI
+        run: node scripts/build-web.mjs
+
+      - name: Upload web dist artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-dist
+          path: packages/risuko-app/dist/
+
+  # ───────────────────────────────────────────────────────
+  # Publish all npm packages
+  # ───────────────────────────────────────────────────────
+  publish:
+    name: Publish to npm
+    needs: [build-cli, build-napi, build-web]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      - name: Download all CLI artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: cli-*
+          path: artifacts/cli
+
+      - name: Download all NAPI artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: napi-*
+          path: artifacts/napi
+
+      - name: Download web UI dist
+        uses: actions/download-artifact@v4
+        with:
+          name: web-dist
+          path: packages/risuko-app/dist
+
+      - name: Set version in all package.json files
+        run: node scripts/set-npm-version.mjs ${{ inputs.version }}
+
+      - name: Stage CLI platform packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          for dir in packages/risuko-cli/npm/*/; do
+            platform=$(basename "$dir")
+            echo "Staging CLI binary for $platform"
+            artifact_dir="artifacts/cli/cli-${platform}"
+            if [ -d "$artifact_dir" ]; then
+              cp "$artifact_dir"/* "$dir"
+              # Ensure binary is executable
+              chmod +x "$dir"risuko 2>/dev/null || true
+              ls -la "$dir"
+            else
+              echo "::warning::No CLI artifact for $platform"
+            fi
+          done
+
+      - name: Stage NAPI platform packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          for dir in packages/risuko-js/npm/*/; do
+            platform=$(basename "$dir")
+            echo "Staging NAPI module for $platform"
+            artifact_dir="artifacts/napi/napi-${platform}"
+            if [ -d "$artifact_dir" ]; then
+              cp "$artifact_dir"/* "$dir"
+              ls -la "$dir"
+            else
+              echo "::warning::No NAPI artifact for $platform"
+            fi
+          done
+
+      - name: Publish @risuko/cli-* platform packages
+        if: ${{ !inputs.dry_run }}
+        shell: bash
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          for dir in packages/risuko-cli/npm/*/; do
+            echo "Publishing $(basename "$dir")..."
+            (cd "$dir" && npm publish --access public) || echo "::warning::Failed to publish $(basename "$dir")"
+          done
+
+      - name: Publish risuko-cli main package
+        if: ${{ !inputs.dry_run }}
+        working-directory: packages/risuko-cli
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --access public
+
+      - name: Publish @risuko/js-* platform packages
+        if: ${{ !inputs.dry_run }}
+        shell: bash
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          for dir in packages/risuko-js/npm/*/; do
+            echo "Publishing $(basename "$dir")..."
+            (cd "$dir" && npm publish --access public) || echo "::warning::Failed to publish $(basename "$dir")"
+          done
+
+      - name: Publish risuko-js main package
+        if: ${{ !inputs.dry_run }}
+        working-directory: packages/risuko-js
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --access public
+
+      - name: Publish @risuko/app
+        if: ${{ !inputs.dry_run }}
+        working-directory: packages/risuko-app
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --access public
+
+      - name: Dry run summary
+        if: ${{ inputs.dry_run }}
+        run: |
+          echo "## Dry run — would publish these packages:" >> $GITHUB_STEP_SUMMARY
+          for dir in packages/risuko-cli/npm/*/; do
+            pkg=$(node -p "require('./$dir/package.json').name")
+            echo "- $pkg@${{ inputs.version }}" >> $GITHUB_STEP_SUMMARY
+          done
+          echo "- risuko-cli@${{ inputs.version }}" >> $GITHUB_STEP_SUMMARY
+          for dir in packages/risuko-js/npm/*/; do
+            pkg=$(node -p "require('./$dir/package.json').name")
+            echo "- $pkg@${{ inputs.version }}" >> $GITHUB_STEP_SUMMARY
+          done
+          echo "- risuko-js@${{ inputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "- @risuko/app@${{ inputs.version }}" >> $GITHUB_STEP_SUMMARY
+
+  # ───────────────────────────────────────────────────────
+  # Create GitHub release with standalone binaries
+  # ───────────────────────────────────────────────────────
+  release:
+    name: GitHub Release
+    needs: [build-cli]
+    runs-on: ubuntu-latest
+    if: ${{ !inputs.dry_run }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download standalone archives
+        uses: actions/download-artifact@v4
+        with:
+          pattern: standalone-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: List release assets
+        run: ls -la release-assets/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: cli-v${{ inputs.version }}
+          name: risuko-cli v${{ inputs.version }}
+          body: |
+            ## risuko-cli v${{ inputs.version }}
+
+            Standalone CLI binaries — no Node.js required.
+
+            ### Install via npm
+            ```bash
+            npm install -g risuko-cli
+            ```
+
+            ### Or download binary directly
+            | Platform | Architecture | File |
+            |----------|-------------|------|
+            | macOS | ARM64 (Apple Silicon) | `risuko-darwin-arm64.tar.gz` |
+            | macOS | x64 (Intel) | `risuko-darwin-x64.tar.gz` |
+            | Linux | x64 | `risuko-linux-x64-gnu.tar.gz` |
+            | Linux | ARM64 | `risuko-linux-arm64-gnu.tar.gz` |
+            | Windows | x64 | `risuko-win32-x64-msvc.zip` |
+            | Windows | ARM64 | `risuko-win32-arm64-msvc.zip` |
+          files: release-assets/*
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

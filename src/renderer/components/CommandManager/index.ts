@@ -12,13 +12,13 @@ export default class CommandManager extends EventEmitter {
 	register(id: string, fn: (...args: unknown[]) => unknown) {
 		if (this.commands[id]) {
 			logger.log(
-				`[Motrix] Attempting to register an already-registered command: ${id}`,
+				`[Risuko] Attempting to register an already-registered command: ${id}`,
 			);
 			return null;
 		}
 		if (!id || !fn) {
 			logger.error(
-				"[Motrix] Attempting to register a command with a missing id, or command function.",
+				"[Risuko] Attempting to register a command with a missing id, or command function.",
 			);
 			return null;
 		}

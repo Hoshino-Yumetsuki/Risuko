@@ -113,7 +113,7 @@ pub async fn start_engine(handle: &AppHandle) -> Result<(), Box<dyn std::error::
     let rpc_port = options.rpc_listen_port();
     let rpc_secret = options.rpc_secret();
 
-    log::info!("Starting Motrix engine (in-process)");
+    log::info!("Starting Risuko engine (in-process)");
 
     let manager = Arc::new(
         TaskManager::new(&config_dir, options, events.clone())
@@ -224,7 +224,7 @@ pub async fn start_engine(handle: &AppHandle) -> Result<(), Box<dyn std::error::
         }
     });
 
-    log::info!("Motrix engine started on port {}", rpc_port);
+    log::info!("Risuko engine started on port {}", rpc_port);
     Ok(())
 }
 
@@ -252,7 +252,7 @@ pub async fn stop_engine(handle: &AppHandle) -> Result<(), Box<dyn std::error::E
 
     let state = handle.state::<AppState>();
     *state.engine_running.lock().unwrap() = false;
-    log::info!("Motrix engine stopped");
+    log::info!("Risuko engine stopped");
     Ok(())
 }
 

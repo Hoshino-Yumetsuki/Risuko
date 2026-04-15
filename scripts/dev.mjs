@@ -9,9 +9,9 @@ function greeting() {
 	let text = "";
 
 	if (cols > 104) {
-		text = "motrix-dev";
+		text = "risuko-dev";
 	} else if (cols > 76) {
-		text = "motrix-|dev";
+		text = "risuko-|dev";
 	} else {
 		text = false;
 	}
@@ -23,7 +23,7 @@ function greeting() {
 			space: false,
 		});
 	} else {
-		console.log(chalk.magentaBright.bold("\n  motrix-dev"));
+		console.log(chalk.magentaBright.bold("\n  risuko-dev"));
 	}
 
 	console.log(`${chalk.blue("  getting ready...")}\n`);

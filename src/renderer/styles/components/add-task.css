@@ -56,7 +56,7 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		background: linear-gradient(135deg, var(--primary) 0%, #7c7cff 100%);
+		background: linear-gradient(135deg, #619eff 0%, #a78bfa 100%);
 		border-radius: calc(var(--radius) - 2px);
 		color: #fff;
 		flex-shrink: 0;
@@ -272,60 +272,60 @@
 	}
 	/* Dark mode overrides */
 	.dark .add-task-dialog {
-		background-color: #2d2d2d;
+		background-color: #111111;
 		color: var(--foreground);
 	}
 	.dark .atd-header {
-		border-bottom-color: rgba(255, 255, 255, 0.08);
+		border-bottom-color: rgba(255, 255, 255, 0.06);
 	}
 	.dark .atd-header-title {
-		color: #f3f4f6;
+		color: #ececec;
 	}
 	.dark .atd-close-btn,
 	.dark .atd-source-tab,
 	.dark .atd-field-label {
-		color: #9ca3af;
+		color: #818181;
 	}
 	.dark .atd-close-btn:hover {
-		color: #e5e7eb;
-		background: rgba(255, 255, 255, 0.08);
+		color: #ececec;
+		background: rgba(255, 255, 255, 0.06);
 	}
 	.dark .atd-source-tabs {
-		background: rgba(255, 255, 255, 0.06);
+		background: rgba(255, 255, 255, 0.04);
 	}
 	.dark .atd-source-tab svg {
 		color: currentColor;
 	}
 	.dark .atd-source-tab--active {
-		background: rgba(255, 255, 255, 0.1) !important;
-		color: #f3f4f6 !important;
-		box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+		background: rgba(97, 158, 255, 0.1) !important;
+		color: #ececec !important;
+		box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
 	}
 	.dark .atd-source-tab:hover:not(.atd-source-tab--active) {
-		color: #e5e7eb;
+		color: #b0b0b0;
 	}
 	.dark .atd-advanced {
-		border-top-color: rgba(255, 255, 255, 0.08);
+		border-top-color: rgba(255, 255, 255, 0.06);
 	}
 	.dark .atd-footer {
-		background: rgba(255, 255, 255, 0.03);
-		border-top-color: rgba(255, 255, 255, 0.08);
+		background: rgba(0, 0, 0, 0.2);
+		border-top-color: rgba(255, 255, 255, 0.06);
 	}
 	.dark .atd-advanced-toggle {
-		border-color: rgba(255, 255, 255, 0.12);
-		color: #9ca3af;
+		border-color: rgba(255, 255, 255, 0.08);
+		color: #818181;
 	}
 	.dark .atd-advanced-toggle--active {
-		border-color: #7c7cff;
-		color: #a5a5ff;
-		background: color-mix(in srgb, var(--primary) 10%, transparent);
+		border-color: rgba(97, 158, 255, 0.4);
+		color: #8cc0ff;
+		background: rgba(97, 158, 255, 0.08);
 	}
 	.dark .atd-advanced-toggle:hover:not(.atd-advanced-toggle--active) {
-		background: rgba(255, 255, 255, 0.06);
-		color: #e5e7eb;
+		background: rgba(255, 255, 255, 0.04);
+		color: #b0b0b0;
 	}
 	.dark .atd-field--checkbox {
-		color: #e5e7eb;
+		color: #ececec;
 	}
 
 	/* Credential suggest bar */
@@ -438,10 +438,10 @@
 	.dark .credential-suggest-bar {
 		background: color-mix(in srgb, var(--primary) 10%, transparent);
 		border-color: color-mix(in srgb, var(--primary) 20%, transparent);
-		color: #a5a5ff;
+		color: #8cc0ff;
 	}
 	.dark .credential-suggest-btn {
-		color: #a5a5ff;
+		color: #8cc0ff;
 		border-color: color-mix(in srgb, var(--primary) 30%, transparent);
 	}
 	.dark .credential-suggest-btn:hover {
