@@ -1,5 +1,5 @@
 {
-	"name": "risuko-js",
+	"name": "@risuko/risuko-js",
 	"version": "0.1.4",
 	"description": "Risuko download engine — Node.js native bindings for multi-protocol downloads (HTTP, BitTorrent, ED2K, M3U8, FTP/SFTP)",
 	"main": "index.js",

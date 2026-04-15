@@ -1,5 +1,5 @@
 {
-	"name": "risuko-cli",
+	"name": "@risuko/cli",
 	"version": "0.1.4",
 	"description": "Risuko download engine CLI — multi-protocol downloads (HTTP, BitTorrent, ED2K, M3U8, FTP/SFTP)",
 	"license": "MIT",
