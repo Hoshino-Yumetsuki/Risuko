@@ -176,40 +176,11 @@ jobs:
           path: ${{ matrix.node_file }}
 
   # ───────────────────────────────────────────────────────
-  # Build web UI bundle for @risuko/app
-  # ───────────────────────────────────────────────────────
-  build-web:
-    name: Build Web UI
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: pnpm/action-setup@v4
-        with:
-          run_install: false
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Build web UI
-        run: node scripts/build-web.mjs
-
-      - name: Upload web dist artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: web-dist
-          path: packages/risuko-app/dist/
-
-  # ───────────────────────────────────────────────────────
   # Publish all npm packages
   # ───────────────────────────────────────────────────────
   publish:
     name: Publish to npm
-    needs: [build-cli, build-napi, build-web]
+    needs: [build-cli, build-napi]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -234,12 +205,6 @@ jobs:
         with:
           pattern: napi-*
           path: artifacts/napi
-
-      - name: Download web UI dist
-        uses: actions/download-artifact@v4
-        with:
-          name: web-dist
-          path: packages/risuko-app/dist
 
       - name: Set version in all package.json files
         run: node scripts/set-npm-version.mjs ${{ inputs.version }}
@@ -316,7 +281,7 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: npm publish --access public
 
-      - name: Publish @risuko/app
+      - name: Publish @risuko/app launcher package
         if: ${{ !inputs.dry_run }}
         working-directory: packages/risuko-app
         env:
