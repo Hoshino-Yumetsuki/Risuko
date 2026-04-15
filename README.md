@@ -35,7 +35,7 @@ risuko-app --port 8080
 
 Or Install CLI only
 ```
-pnpm install -g risuko-cli
+pnpm install -g @risuko/cli
 risuko-cli --help
 ```
 
