@@ -128,11 +128,11 @@
 	.task-status-indicator {
 		width: 4px;
 		flex-shrink: 0;
-		background: linear-gradient(180deg, var(--primary), #2563eb);
+		background: linear-gradient(180deg, var(--primary), #4a7fd4);
 		transition: width 0.3s cubic-bezier(0.25, 0.1, 0.25, 1);
 	}
 	.task-status-indicator.status-active {
-		background: linear-gradient(180deg, #3b82f6, #2563eb);
+		background: linear-gradient(180deg, #619eff, #4a7fd4);
 	}
 	.task-status-indicator.status-waiting,
 	.task-status-indicator.status-paused {
@@ -275,8 +275,8 @@
 		border-color: rgba(255, 255, 255, 0.06);
 	}
 	.dark .task-filter-field:focus {
-		border-color: rgba(59, 130, 246, 0.4);
-		background: rgba(59, 130, 246, 0.06);
+		border-color: rgba(97, 158, 255, 0.4);
+		background: rgba(97, 158, 255, 0.06);
 	}
 	.dark .task-filter-clear:hover {
 		background: rgba(255, 255, 255, 0.08);
@@ -544,8 +544,8 @@
 	}
 	.tag-task-status--info {
 		color: #4d515a;
-		background: rgba(148, 163, 184, 0.18);
-		border-color: rgba(148, 163, 184, 0.35);
+		background: rgba(115, 115, 115, 0.18);
+		border-color: rgba(115, 115, 115, 0.35);
 	}
 	.tag-task-status--danger {
 		color: #a33232;
@@ -558,9 +558,9 @@
 		border-color: rgba(34, 197, 94, 0.42);
 	}
 	.dark .tag-task-status--info {
-		color: #d0d3db;
-		background: rgba(148, 163, 184, 0.2);
-		border-color: rgba(148, 163, 184, 0.4);
+		color: #d0d0d0;
+		background: rgba(115, 115, 115, 0.2);
+		border-color: rgba(115, 115, 115, 0.4);
 	}
 	.dark .tag-task-status--danger {
 		color: #ffb4b4;

@@ -9,6 +9,9 @@
 	"cpu": [
 		"x64"
 	],
+	"libc": [
+		"glibc"
+	],
 	"main": "risuko.linux-x64-gnu.node",
 	"files": [
 		"risuko.linux-x64-gnu.node"

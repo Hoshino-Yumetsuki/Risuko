@@ -75,11 +75,7 @@ impl StorageBackend for TauriStorage {
             .handle
             .store(key)
             .map_err(|e| format!("Failed to open store '{key}': {e}"))?;
-        if let Some(data) = value.get("data") {
-            store.set("data", data.clone());
-        } else {
-            store.set("data", value.clone());
-        }
+        store.set("data", value.clone());
         store
             .save()
             .map_err(|e| format!("Failed to save store '{key}': {e}"))?;

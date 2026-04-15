@@ -473,7 +473,7 @@ export default class Api {
 		return this.multicall("risuko.forcePause", params);
 	}
 
-	// ── RSS ──────────────────────────────────────────────────────
+	// -- RSS --
 
 	addRssFeed(url: string) {
 		return invoke("add_rss_feed", { url });

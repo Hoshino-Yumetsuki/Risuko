@@ -36,12 +36,21 @@ impl SpeedLimiter {
     /// Blocks asynchronously if the rate limit would be exceeded
     /// Returns immediately if limit is 0 (unlimited)
     pub async fn acquire(&self, bytes: usize) {
+        if bytes == 0 {
+            return;
+        }
         let limit = self.limit_bps.load(Ordering::Relaxed);
-        if limit == 0 || bytes == 0 {
+        if limit == 0 {
             return;
         }
 
         loop {
+            // Reload limit each iteration so runtime changes via set_limit take effect
+            let limit = self.limit_bps.load(Ordering::Relaxed);
+            if limit == 0 {
+                return;
+            }
+
             let wait_secs = {
                 let mut state = self.state.lock().await;
                 let now = tokio::time::Instant::now();

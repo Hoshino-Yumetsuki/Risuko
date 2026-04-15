@@ -722,6 +722,53 @@ pub async fn add_uri(
     Ok(Value::Array(results))
 }
 
+const RESOLVE_MAGNET_TIMEOUT_SECS: u64 = 60;
+
+#[tauri::command]
+pub async fn resolve_magnet(
+    _state: tauri::State<'_, crate::state::AppState>,
+    uri: String,
+    options: Option<Value>,
+) -> Result<Value, String> {
+    let magnet_uri = uri.trim().to_string();
+    if !torrent::is_magnet_uri(&magnet_uri) {
+        return Err("Not a valid magnet URI".to_string());
+    }
+
+    let base_options = match options {
+        Some(Value::Object(map)) => map,
+        _ => Map::new(),
+    };
+
+    let manager = engine::get_manager().await.ok_or("Engine not running")?;
+
+    let files = manager
+        .resolve_magnet_metadata(&magnet_uri, base_options, RESOLVE_MAGNET_TIMEOUT_SECS)
+        .await?;
+
+    let file_count = files.len();
+    let result_files: Vec<Value> = files
+        .iter()
+        .map(|f| {
+            let name = std::path::Path::new(&f.path)
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| f.path.clone());
+            json!({
+                "path": f.path,
+                "length": f.length,
+                "name": name,
+                "index": f.index + 1,  // Convert 0-based to 1-based for frontend
+            })
+        })
+        .collect();
+
+    Ok(json!({
+        "files": result_files,
+        "fileCount": file_count,
+    }))
+}
+
 #[tauri::command]
 pub async fn sync_selected_task_order(
     _state: tauri::State<'_, crate::state::AppState>,

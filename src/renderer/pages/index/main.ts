@@ -1,7 +1,6 @@
 import type { AppConfig } from "@shared/types/config";
 import logger from "@shared/utils/logger";
 import { invoke } from "@tauri-apps/api/core";
-import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import axios from "axios";
 import { createApp } from "vue";
 import VueVirtualScroller from "vue-virtual-scroller";
@@ -164,6 +163,9 @@ async function init(config: AppConfig) {
 			() => false,
 		);
 		if (!isOpenedAtLogin) {
+			const { getCurrentWebviewWindow } = await import(
+				"@tauri-apps/api/webviewWindow"
+			);
 			getCurrentWebviewWindow()
 				.show()
 				.catch(() => {

@@ -20,7 +20,7 @@ const SORT_ORDER_STORAGE_KEY = "risuko.task-sort-order";
 /** Maximum number of speed samples retained per task */
 export const SPEED_HISTORY_LIMIT = 60;
 
-export type SpeedSample = { download: number; upload: number };
+type SpeedSample = { download: number; upload: number };
 
 /** Module cache: gid -> speed samples. */
 // please work please work please work

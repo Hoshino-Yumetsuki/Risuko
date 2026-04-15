@@ -430,7 +430,9 @@ export default {
 			this.viewerError = "";
 		},
 		openLink(url: string) {
-			invoke("plugin:shell|open", { path: url });
+			invoke("plugin:shell|open", { path: url }).catch(() => {
+				window.open(url, "_blank");
+			});
 		},
 		formatDate(timestamp: number): string {
 			return new Date(timestamp * 1000).toLocaleDateString(undefined, {

@@ -129,7 +129,7 @@ const buildOption = (type: string, form: TaskForm) => {
 		result.referer = referer;
 	}
 
-	if (type === ADD_TASK_TYPE.TORRENT) {
+	if (type === ADD_TASK_TYPE.TORRENT || type === ADD_TASK_TYPE.URI) {
 		const normalizedSelectFile = `${selectFile || ""}`.trim();
 		const hasExplicitSelection =
 			normalizedSelectFile &&
@@ -307,4 +307,30 @@ export function credentialHasContent(
 		const val = credential[key];
 		return typeof val === "string" && val.trim().length > 0;
 	});
+}
+
+function isMagnetUri(uri: string): boolean {
+	return uri.trim().toLowerCase().startsWith("magnet:");
+}
+
+/**
+ * If the textarea contains exactly one magnet URI (and no other URIs),
+ * return it. Otherwise return null.
+ */
+export function extractSingleMagnetUri(text: string): string | null {
+	const raw = (text || "").trim();
+	if (!raw) {
+		return null;
+	}
+
+	const lines = raw
+		.split("\n")
+		.map((l) => l.trim())
+		.filter(Boolean);
+	if (lines.length !== 1) {
+		return null;
+	}
+
+	const uri = lines[0];
+	return isMagnetUri(uri) ? uri : null;
 }

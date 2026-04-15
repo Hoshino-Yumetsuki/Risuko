@@ -201,8 +201,12 @@ pub async fn resume(args: ResumeArgs) -> Result<(), Box<dyn std::error::Error>> 
 pub async fn remove(args: RemoveArgs) -> Result<(), Box<dyn std::error::Error>> {
     let client = RpcClient::new(args.rpc_port, args.rpc_secret.clone());
     require_engine(&client).await?;
-    client.call("risuko.remove", vec![json!(args.gid)]).await?;
-    println!("Removed: {}", args.gid);
+    for gid in &args.gids {
+        match client.call("risuko.remove", vec![json!(gid)]).await {
+            Ok(_) => println!("Removed: {gid}"),
+            Err(e) => eprintln!("Failed to remove {gid}: {e}"),
+        }
+    }
     Ok(())
 }
 
@@ -617,10 +621,10 @@ fn extract_name(task: &Value) -> String {
 
 fn print_task_table(tasks: &[Value]) {
     println!(
-        "{:<12} {:<10} {:<30} {:>9} {:>12} {:>10}",
+        "{:<18} {:<10} {:<30} {:>9} {:>12} {:>10}",
         "GID", "Status", "Name", "Progress", "Speed", "Size"
     );
-    println!("{}", "-".repeat(87));
+    println!("{}", "-".repeat(93));
 
     for task in tasks {
         let gid = task.get("gid").and_then(|v| v.as_str()).unwrap_or("-");
@@ -650,8 +654,8 @@ fn print_task_table(tasks: &[Value]) {
         };
 
         println!(
-            "{:<12} {:<10} {:<30} {:>9} {:>12} {:>10}",
-            &gid[..gid.len().min(10)],
+            "{:<18} {:<10} {:<30} {:>9} {:>12} {:>10}",
+            gid,
             status,
             display_name,
             pct,

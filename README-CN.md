@@ -8,40 +8,34 @@
 
 ## 一款全能的下载工具
 
-[![GitHub release](https://img.shields.io/github/v/release/YueMiyuki/Risuko.svg)](https://github.com/YueMiyuki/Risuko/releases) ![Build/release](https://github.com/YueMiyuki/Risuko/workflows/Build/release/badge.svg) ![Total Downloads](https://img.shields.io/github/downloads/YueMiyuki/Risuko/total.svg) ![Support Platforms](https://camo.githubusercontent.com/a50c47295f350646d08f2e1ccd797ceca3840e52/68747470733a2f2f696d672e736869656c64732e696f2f62616467652f706c6174666f726d2d6d61634f5325323025374325323057696e646f77732532302537432532304c696e75782d6c69676874677265792e737667)
+![GitHub_Release](https://img.shields.io/github/v/release/yuemiyuki/risuko?include_prereleases&style=for-the-badge&link=https%3A%2F%2Fgithub.com%2FYueMiyuki%2FRisuko%2Freleases)
+![Rust](https://img.shields.io/badge/Rust-black?style=for-the-badge&logo=rust&logoColor=#E57324)
+![Vue](https://img.shields.io/badge/Vue%20js-35495E?style=for-the-badge&logo=vuedotjs&logoColor=4FC08D)
+![Vite](https://img.shields.io/badge/Vite-B73BFE?style=for-the-badge&logo=vite&logoColor=FFD62E)
 
 [English](./README.md) | 简体中文
 
-我是个兴趣使然的桌面应用开发者🤓，利用搬砖之余开发了 Risuko。
-
 Risuko 是一款全能的下载工具，支持下载 HTTP、FTP、BT、磁力链等资源。它的界面简洁易用，希望大家喜欢 👻。
 
-✈️ 去 [官网](https://motrix-next.vercel.app) 逛逛 | 📖 查看 [帮助手册](http://motrix.app/support/issues)
+✈️ 去 [官网](https://risuko.vercel.app) 逛逛
 
-## 💽 安装稳定版
+## 💽 安装
 
-[GitHub](https://github.com/YueMiyuki/Risuko/releases) 提供了已经编译好的稳定版安装包，当然你也可以自己克隆代码编译打包。
+### Github 下载
+从 [GitHub Releases](https://github.com/YueMiyuki/Risuko/releases) 下载并安装
 
+### NPM 包
+Risuko 提供 NPM 包，包含 WebUI 和 Risuko 引擎
+```
+pnpm install -g @risuko/app
+risuko-app --port 8080
+```
 
-## ✨ 特性
-
-- 🕹 简洁明了的图形操作界面
-- 🦄 支持BT和磁力链任务
-- ☑️ 支持选择性下载BT部分文件
-- 📡 每天自动更新 Tracker 服务器列表
-- 🔌 UPnP & NAT-PMP 端口映射
-- 🎛 最高支持 10 个任务同时下载
-- 🚀 单任务最高支持 64 线程下载
-- 🚥 设置上传/下载限速
-- 🕶 模拟用户代理UA
-- 🔔 下载完成后通知
-- 💻 支持触控栏快捷键 (Mac 专享)
-- 🤖 常驻系统托盘，操作更加便捷
-- 📟 系统托盘速度仪表显示实时速度 (Mac 专享)
-- 🌑 深色模式
-- 🗑 移除任务时可同时删除相关文件
-- 🌍 国际化，[查看已可选的语言](#-国际化)
-- 🛠 更多特性开发中
+或只安装CLI
+```
+pnpm install -g risuko-cli
+risuko-cli --help
+```
 
 ## 🖥 应用界面
 

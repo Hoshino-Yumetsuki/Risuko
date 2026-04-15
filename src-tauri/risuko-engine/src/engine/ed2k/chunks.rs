@@ -91,6 +91,16 @@ impl ChunkManager {
 
     /// Write data at an absolute file offset
     pub async fn write_data(&mut self, offset: u64, data: &[u8]) -> Result<(), String> {
+        let end = offset.saturating_add(data.len() as u64);
+        if end > self.file_size {
+            return Err(format!(
+                "Write out of bounds: offset {} + len {} exceeds file size {}",
+                offset,
+                data.len(),
+                self.file_size
+            ));
+        }
+
         let mut file = OpenOptions::new()
             .write(true)
             .open(&self.file_path)
@@ -105,7 +115,7 @@ impl ChunkManager {
             .await
             .map_err(|e| format!("Write failed: {}", e))?;
 
-        self.completed_length += data.len() as u64;
+        self.completed_length = (self.completed_length + data.len() as u64).min(self.file_size);
 
         // Update chunk status
         let chunk_idx = offset / ED2K_CHUNK_SIZE;

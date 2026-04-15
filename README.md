@@ -8,7 +8,10 @@
 
 ## A full-featured download manager
 
-[![GitHub release](https://img.shields.io/github/v/release/YueMiyuki/Risuko.svg)](https://github.com/YueMiyuki/Risuko/releases) ![Build/release](https://github.com/YueMiyuki/Risuko/workflows/Build/release/badge.svg) ![Total Downloads](https://img.shields.io/github/downloads/YueMiyuki/Risuko/total.svg) ![Support Platforms](https://camo.githubusercontent.com/a50c47295f350646d08f2e1ccd797ceca3840e52/68747470733a2f2f696d672e736869656c64732e696f2f62616467652f706c6174666f726d2d6d61634f5325323025374325323057696e646f77732532302537432532304c696e75782d6c69676874677265792e737667)
+![GitHub_Release](https://img.shields.io/github/v/release/yuemiyuki/risuko?include_prereleases&style=for-the-badge&link=https%3A%2F%2Fgithub.com%2FYueMiyuki%2FRisuko%2Freleases)
+![Rust](https://img.shields.io/badge/Rust-black?style=for-the-badge&logo=rust&logoColor=#E57324)
+![Vue](https://img.shields.io/badge/Vue%20js-35495E?style=for-the-badge&logo=vuedotjs&logoColor=4FC08D)
+![Vite](https://img.shields.io/badge/Vite-B73BFE?style=for-the-badge&logo=vite&logoColor=FFD62E)
 
 English | [简体中文](./README-CN.md)
 
@@ -16,30 +19,26 @@ Risuko is a full-featured download manager that supports downloading HTTP, FTP, 
 
 Risuko has a clean and easy to use interface. I hope you will like it 👻.
 
-✈️ [Official Website](https://motrix-next.vercel.app) | 📖 [Manual](https://github.com/YueMiyuki/Risuko/wiki)
+✈️ [Official Website](https://risuko.vercel.app)
 
 ## 💽 Installation
 
+### Github release
 Download from [GitHub Releases](https://github.com/YueMiyuki/Risuko/releases) and install it.
 
-## ✨ Features
+### NPM Package
+Risuko provide a WebUI together with the engine
+```
+pnpm install -g @risuko/app
+risuko-app --port 8080
+```
 
-- 🕹 Simple and clear user interface
-- 🦄 Supports BitTorrent & Magnet
-- ☑️ BitTorrent selective download
-- 📡 Update tracker list every day automatically
-- 🔌 UPnP & NAT-PMP Port Mapping
-- 🎛 Up to 10 concurrent download tasks
-- 🚀 Supports 64 threads in a single task
-- 🚥 Supports speed limit
-- 🕶 Mock User-Agent
-- 🔔 Download completed Notification
-- 🤖 Resident system tray for quick operation
-- 📟 Tray speed meter displays real-time speed (Mac only)
-- 🌑 Dark mode
-- 🗑 Delete related files when removing tasks (optional)
-- 🌍 I18n, [View supported languages](#-internationalization).
-- 🛠 More features in development
+Or Install CLI only
+```
+pnpm install -g risuko-cli
+risuko-cli --help
+```
+
 
 ## 🖥 User Interface
 

@@ -123,6 +123,66 @@ jobs:
           fi
           find "$bundle_dir" -maxdepth 3 -type f | sed 's/^/built: /'
 
+      # ── Package app bundle with standardized name ──
+      # Naming: Risuko_{version}_{os}_{arch}.{ext}
+      # Matches process.platform / process.arch in Node.js exactly.
+      - name: Package app bundle with standardized name (unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          IFS='/' read -r os arch <<< "${{ matrix.platform }}"
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            version="${{ github.ref_name }}"; version="${version#v}"
+          else
+            version=$(grep -m1 '^version' src-tauri/Cargo.toml | sed 's/.*"\(.*\)"/\1/')
+          fi
+          bundle_dir="src-tauri/target/${{ matrix.target }}/release/bundle"
+          if [[ "$os" == "darwin" ]]; then
+            asset="Risuko_${version}_${os}_${arch}.app.tar.gz"
+            tar czf "$asset" -C "$bundle_dir/macos" "Risuko.app"
+          else
+            appimage=$(find "$bundle_dir/appimage" -name "*.AppImage" -type f | head -1)
+            asset="Risuko_${version}_${os}_${arch}.AppImage"
+            cp "$appimage" "$asset"
+          fi
+          echo "APP_ASSET=$asset" >> "$GITHUB_ENV"
+          echo "APP_PLATFORM_LABEL=${os}-${arch}" >> "$GITHUB_ENV"
+
+      - name: Package app bundle with standardized name (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $parts = "${{ matrix.platform }}" -split "/"
+          $os = $parts[0]; $arch = $parts[1]
+          if ("${{ github.ref }}" -match "^refs/tags/") {
+            $version = "${{ github.ref_name }}" -replace "^v", ""
+          } else {
+            $cargo = Get-Content "src-tauri/Cargo.toml" -Raw
+            $version = [regex]::Match($cargo, '^version\s*=\s*"([^"]+)"', [System.Text.RegularExpressions.RegexOptions]::Multiline).Groups[1].Value
+          }
+          $setup = Get-ChildItem "src-tauri/target/${{ matrix.target }}/release/bundle/nsis" -Filter "*-setup.exe" | Select-Object -First 1
+          $asset = "Risuko_${version}_${os}_${arch}.setup.exe"
+          Copy-Item $setup.FullName $asset
+          "APP_ASSET=$asset" | Out-File -Append -FilePath $env:GITHUB_ENV -Encoding utf8
+          "APP_PLATFORM_LABEL=${os}-${arch}" | Out-File -Append -FilePath $env:GITHUB_ENV -Encoding utf8
+
+      - name: Upload standardized app bundle to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: ${{ env.APP_ASSET }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload standardized app bundle artifact (manual builds)
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-${{ env.APP_PLATFORM_LABEL }}
+          path: ${{ env.APP_ASSET }}
+
       # ── Build standalone risuko-cli binary ──
       - name: Build risuko-cli binary
         if: matrix.target != 'i686-pc-windows-msvc'

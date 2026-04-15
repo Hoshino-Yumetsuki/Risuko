@@ -122,5 +122,5 @@ pub fn chunk_count(file_size: u64) -> u64 {
     if file_size == 0 {
         return 0;
     }
-    (file_size + ED2K_CHUNK_SIZE - 1) / ED2K_CHUNK_SIZE
+    file_size.div_ceil(ED2K_CHUNK_SIZE)
 }

@@ -78,7 +78,7 @@ export default {
 	props: {
 		current: {
 			type: String,
-			default: "active",
+			default: "all",
 		},
 	},
 	computed: {

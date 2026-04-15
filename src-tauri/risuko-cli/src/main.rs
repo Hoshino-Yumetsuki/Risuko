@@ -162,8 +162,9 @@ pub struct ResumeArgs {
 
 #[derive(clap::Args)]
 pub struct RemoveArgs {
-    /// Task GID to remove
-    pub gid: String,
+    /// Task GID(s) to remove
+    #[arg(required = true, num_args = 1..)]
+    pub gids: Vec<String>,
 
     #[arg(long, default_value_t = 16800)]
     pub rpc_port: u16,

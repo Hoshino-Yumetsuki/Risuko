@@ -121,7 +121,7 @@ export default {
 					return;
 				}
 				event.preventDefault();
-				const allGids = this.paginatedTaskList.map((t) => t.gid);
+				const allGids = [...new Set(this.paginatedTaskList.map((t) => t.gid))];
 				this.selectedList = allGids;
 				useTaskStore().selectTasks(cloneDeep(allGids));
 			}

@@ -90,7 +90,7 @@ macro_rules! ftp_transfer {
             $file_size
         };
         let resume_offset =
-            if existing_size > 0 && (effective_size == 0 || existing_size < effective_size) {
+            if existing_size > 0 && effective_size > 0 && existing_size < effective_size {
                 match $ftp.resume_transfer(existing_size as usize).await {
                     Ok(()) => {
                         $completed.store(existing_size, Ordering::Relaxed);

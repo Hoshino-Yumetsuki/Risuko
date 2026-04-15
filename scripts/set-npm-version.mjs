@@ -25,11 +25,13 @@ function updatePackageJson(filePath) {
   const oldVersion = pkg.version;
   pkg.version = version;
 
-  // Update optionalDependencies versions that point to @risuko/* packages
-  if (pkg.optionalDependencies) {
-    for (const dep of Object.keys(pkg.optionalDependencies)) {
-      if (dep.startsWith("@risuko/")) {
-        pkg.optionalDependencies[dep] = version;
+  // Update dependency versions that point to risuko packages
+  for (const depField of ["dependencies", "optionalDependencies"]) {
+    if (pkg[depField]) {
+      for (const dep of Object.keys(pkg[depField])) {
+        if (dep.startsWith("@risuko/") || dep === "risuko-js" || dep === "risuko-cli") {
+          pkg[depField][dep] = version;
+        }
       }
     }
   }
@@ -54,6 +56,7 @@ console.log(`Setting version to ${version}:\n`);
 // Main packages
 updatePackageJson(join(root, "packages/risuko-cli/package.json"));
 updatePackageJson(join(root, "packages/risuko-js/package.json"));
+updatePackageJson(join(root, "packages/risuko-app/package.json"));
 
 // Platform sub-packages
 walkPackageJsons(join(root, "packages/risuko-cli/npm"));

@@ -1,6 +1,5 @@
 import type { RssFeed, RssItem, RssRule } from "@shared/types/rss";
 import logger from "@shared/utils/logger";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { defineStore } from "pinia";
 import api from "@/api";
 import { usePreferenceStore } from "@/store/preference";
@@ -33,7 +32,7 @@ export const useRssStore = defineStore("rss", {
 		filterText: "",
 		itemsPerPage: loadItemsPerPage(),
 		currentPage: 1,
-		_eventUnlisteners: [] as UnlistenFn[],
+		_eventUnlisteners: [] as (() => void)[],
 	}),
 
 	getters: {
@@ -84,36 +83,51 @@ export const useRssStore = defineStore("rss", {
 	},
 
 	actions: {
+		_handleRssDownloadComplete(data: {
+			feedId?: string;
+			itemId?: string;
+			downloadPath?: string;
+		}) {
+			const { feedId, itemId, downloadPath } = data;
+			if (!feedId || !itemId) {
+				return;
+			}
+			const feedItems = this.items[feedId];
+			if (feedItems) {
+				const item = feedItems.find((i) => i.id === itemId);
+				if (item) {
+					item.is_downloaded = true;
+					item.download_path = downloadPath;
+				}
+			}
+		},
+		_handleRssDownloadError(data: {
+			feedId?: string;
+			itemId?: string;
+			reason?: string;
+		}) {
+			const { feedId, itemId, reason } = data;
+			logger.warn(
+				`[Risuko] RSS download failed: feed=${feedId} item=${itemId} reason=${reason || "error"}`,
+			);
+		},
 		async initEventListeners() {
 			this.cleanupEventListeners();
 			try {
+				const { listen } = await import("@tauri-apps/api/event");
 				const unlistenComplete = await listen<{
 					feedId?: string;
 					itemId?: string;
 					downloadPath?: string;
 				}>("rss:download-complete", (event) => {
-					const { feedId, itemId, downloadPath } = event.payload ?? {};
-					if (!feedId || !itemId) {
-						return;
-					}
-					const feedItems = this.items[feedId];
-					if (feedItems) {
-						const item = feedItems.find((i) => i.id === itemId);
-						if (item) {
-							item.is_downloaded = true;
-							item.download_path = downloadPath;
-						}
-					}
+					this._handleRssDownloadComplete(event.payload ?? {});
 				});
 				const unlistenError = await listen<{
 					feedId?: string;
 					itemId?: string;
 					reason?: string;
 				}>("rss:download-error", (event) => {
-					const { feedId, itemId, reason } = event.payload ?? {};
-					logger.warn(
-						`[Risuko] RSS download failed: feed=${feedId} item=${itemId} reason=${reason || "error"}`,
-					);
+					this._handleRssDownloadError(event.payload ?? {});
 				});
 				this._eventUnlisteners.push(unlistenComplete, unlistenError);
 			} catch (err) {

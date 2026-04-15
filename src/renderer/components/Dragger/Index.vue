@@ -4,7 +4,6 @@
 
 <script lang="ts">
 import { ADD_TASK_TYPE } from "@shared/constants";
-import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { useAppStore } from "@/store/app";
 
 export default {
@@ -73,22 +72,28 @@ export default {
 		document.body.addEventListener("dragleave", this.onDragLeave);
 		document.body.addEventListener("drop", this.onDrop);
 
-		const webview = getCurrentWebviewWindow();
-		webview
-			.onDragDropEvent((event) => {
-				if (event?.payload?.type !== "drop") {
-					return;
-				}
-				count = 0;
-				this.dragPreviewOpened = false;
-				const paths = event?.payload?.paths || [];
-				if (!Array.isArray(paths) || paths.length === 0) {
-					return;
-				}
-				this.injectTorrentPaths(paths);
-			})
-			.then((unlisten) => {
-				this.unlistenWindowDragDrop = unlisten;
+		import("@tauri-apps/api/webviewWindow")
+			.then(({ getCurrentWebviewWindow }) => {
+				const webview = getCurrentWebviewWindow();
+				webview
+					.onDragDropEvent((event) => {
+						if (event?.payload?.type !== "drop") {
+							return;
+						}
+						count = 0;
+						this.dragPreviewOpened = false;
+						const paths = event?.payload?.paths || [];
+						if (!Array.isArray(paths) || paths.length === 0) {
+							return;
+						}
+						this.injectTorrentPaths(paths);
+					})
+					.then((unlisten) => {
+						this.unlistenWindowDragDrop = unlisten;
+					})
+					.catch(() => {
+						/* noop */
+					});
 			})
 			.catch(() => {
 				/* noop */

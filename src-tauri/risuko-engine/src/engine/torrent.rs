@@ -1,6 +1,7 @@
 use serde_json::{Map, Value};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
 /// BitTorrent download management via librqbit
 ///
@@ -186,6 +187,64 @@ impl TorrentEngine {
             handle.info_hash
         );
         Ok(handle)
+    }
+
+    /// Resolve magnet URI metadata without starting a download.
+    /// Uses librqbit's `list_only` mode to fetch torrent info via DHT/trackers,
+    /// then returns the file list.
+    pub async fn resolve_magnet(
+        &self,
+        magnet_uri: &str,
+        options: &Map<String, Value>,
+        timeout_secs: u64,
+    ) -> Result<Vec<TorrentFileInfo>, String> {
+        let session = self.get_session()?;
+        let trackers = Self::parse_trackers(options);
+
+        let add_opts = librqbit::AddTorrentOptions {
+            list_only: true,
+            trackers: if trackers.is_empty() {
+                None
+            } else {
+                Some(trackers)
+            },
+            ..Default::default()
+        };
+
+        log::info!("Resolving magnet metadata: {}", magnet_uri);
+
+        let response = tokio::time::timeout(
+            Duration::from_secs(timeout_secs),
+            session.add_torrent(librqbit::AddTorrent::Url(magnet_uri.into()), Some(add_opts)),
+        )
+        .await
+        .map_err(|_| "Timed out resolving magnet metadata".to_string())?
+        .map_err(|e| format!("Failed to resolve magnet: {}", e))?;
+
+        match response {
+            librqbit::AddTorrentResponse::ListOnly(list_only) => {
+                let files = list_only
+                    .info
+                    .iter_file_details()
+                    .map_err(|e| format!("Failed to read file details: {}", e))?
+                    .enumerate()
+                    .map(|(idx, d)| {
+                        let filename = d
+                            .filename
+                            .to_string()
+                            .unwrap_or_else(|_| format!("file_{}", idx));
+                        TorrentFileInfo {
+                            index: idx,
+                            path: filename,
+                            length: d.len,
+                        }
+                    })
+                    .collect();
+                log::info!("Magnet metadata resolved successfully");
+                Ok(files)
+            }
+            _ => Err("Unexpected response: expected ListOnly mode".to_string()),
+        }
     }
 
     /// Parse user's bt-tracker config into a list of tracker URLs

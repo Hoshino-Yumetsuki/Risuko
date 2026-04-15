@@ -13,7 +13,10 @@ impl RpcClient {
             .timeout(std::time::Duration::from_secs(30))
             .connect_timeout(std::time::Duration::from_secs(5))
             .build()
-            .unwrap_or_default();
+            .unwrap_or_else(|e| {
+                log::warn!("Failed to build HTTP client with custom config: {e}, using defaults");
+                reqwest::Client::default()
+            });
         Self {
             url: format!("http://127.0.0.1:{}/jsonrpc", port),
             secret,
@@ -63,7 +66,10 @@ impl RpcClient {
             return Err(RpcError::Rpc(message.to_string()));
         }
 
-        Ok(result.get("result").cloned().unwrap_or(Value::Null))
+        result
+            .get("result")
+            .cloned()
+            .ok_or_else(|| RpcError::Parse("Missing 'result' in RPC response".to_string()))
     }
 
     pub async fn is_engine_running(&self) -> bool {

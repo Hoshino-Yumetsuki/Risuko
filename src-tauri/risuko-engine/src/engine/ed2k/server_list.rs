@@ -56,6 +56,7 @@ impl ServerList {
             .filter_map(|s| {
                 let parts: Vec<&str> = s.splitn(2, ':').collect();
                 if parts.len() == 2 {
+                    let _: std::net::Ipv4Addr = parts[0].parse().ok()?;
                     let port: u16 = parts[1].parse().ok()?;
                     Some(ServerEntry::new(parts[0], port, "Custom"))
                 } else {

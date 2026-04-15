@@ -37,6 +37,12 @@ function getBinaryPath() {
 		const packageDir = require.resolve(`${packageName}/package.json`);
 		return join(packageDir, "..", binaryName);
 	} catch {
+		// Fallback: try local npm/<platform-arch>/ directory (development)
+		const localPath = join(__dirname, "npm", `${platform}-${arch}`, binaryName);
+		if (require("node:fs").existsSync(localPath)) {
+			return localPath;
+		}
+
 		throw new Error(
 			`Failed to find binary for ${platform}-${arch}.\n` +
 				`Package ${packageName} is not installed.\n` +

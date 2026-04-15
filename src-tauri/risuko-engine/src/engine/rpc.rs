@@ -573,13 +573,13 @@ fn dispatch_method<'a>(
             }
 
             "risuko.remove" | "risuko.forceRemove" => {
-                let gid = get_gid(&params)?;
+                let gid = resolve_gid(&params, &state.manager).await?;
                 state.manager.remove(&gid).await.map_err(RpcError::from)?;
                 Ok(Value::String(gid))
             }
 
             "risuko.pause" | "risuko.forcePause" => {
-                let gid = get_gid(&params)?;
+                let gid = resolve_gid(&params, &state.manager).await?;
                 state.manager.pause(&gid).await.map_err(RpcError::from)?;
                 Ok(Value::String(gid))
             }
@@ -590,7 +590,7 @@ fn dispatch_method<'a>(
             }
 
             "risuko.unpause" => {
-                let gid = get_gid(&params)?;
+                let gid = resolve_gid(&params, &state.manager).await?;
                 state.manager.unpause(&gid).await.map_err(RpcError::from)?;
                 Ok(Value::String(gid))
             }
@@ -601,7 +601,7 @@ fn dispatch_method<'a>(
             }
 
             "risuko.tellStatus" => {
-                let gid = get_gid(&params)?;
+                let gid = resolve_gid(&params, &state.manager).await?;
                 let keys = get_keys(&params, 1);
                 state
                     .manager
@@ -632,7 +632,7 @@ fn dispatch_method<'a>(
             "risuko.getGlobalStat" => Ok(state.manager.get_global_stat().await),
 
             "risuko.changeOption" => {
-                let gid = get_gid(&params)?;
+                let gid = resolve_gid(&params, &state.manager).await?;
                 let opts = params
                     .get(1)
                     .and_then(|v| v.as_object())
@@ -657,14 +657,14 @@ fn dispatch_method<'a>(
             }
 
             "risuko.getOption" => {
-                let gid = get_gid(&params)?;
+                let gid = resolve_gid(&params, &state.manager).await?;
                 state.manager.get_option(&gid).await.map_err(RpcError::from)
             }
 
             "risuko.getGlobalOption" => Ok(state.manager.get_global_option().await),
 
             "risuko.changePosition" => {
-                let gid = get_gid(&params)?;
+                let gid = resolve_gid(&params, &state.manager).await?;
                 let pos = params.get(1).and_then(|v| v.as_i64()).unwrap_or(0);
                 let how = params.get(2).and_then(|v| v.as_str()).unwrap_or("POS_SET");
                 state
@@ -675,22 +675,22 @@ fn dispatch_method<'a>(
             }
 
             "risuko.getPeers" => {
-                let gid = get_gid(&params)?;
+                let gid = resolve_gid(&params, &state.manager).await?;
                 Ok(state.manager.get_peers(&gid).await)
             }
 
             "risuko.getUris" => {
-                let gid = get_gid(&params)?;
+                let gid = resolve_gid(&params, &state.manager).await?;
                 state.manager.get_uris(&gid).await.map_err(RpcError::from)
             }
 
             "risuko.getFiles" => {
-                let gid = get_gid(&params)?;
+                let gid = resolve_gid(&params, &state.manager).await?;
                 state.manager.get_files(&gid).await.map_err(RpcError::from)
             }
 
             "risuko.getServers" => {
-                let gid = get_gid(&params)?;
+                let gid = resolve_gid(&params, &state.manager).await?;
                 state
                     .manager
                     .get_servers(&gid)
@@ -722,7 +722,7 @@ fn dispatch_method<'a>(
             }
 
             "risuko.removeDownloadResult" => {
-                let gid = get_gid(&params)?;
+                let gid = resolve_gid(&params, &state.manager).await?;
                 state
                     .manager
                     .remove_download_result(&gid)
@@ -863,6 +863,12 @@ fn get_gid(params: &[Value]) -> Result<String, RpcError> {
         .and_then(|v| v.as_str())
         .map(|s| s.to_string())
         .ok_or_else(|| RpcError::from("GID required".to_string()))
+}
+
+/// Parse a GID from params and resolve prefix to full GID via the manager.
+async fn resolve_gid(params: &[Value], manager: &TaskManager) -> Result<String, RpcError> {
+    let prefix = get_gid(params)?;
+    manager.resolve_gid(&prefix).await.map_err(RpcError::from)
 }
 
 fn get_keys(params: &[Value], index: usize) -> Vec<String> {

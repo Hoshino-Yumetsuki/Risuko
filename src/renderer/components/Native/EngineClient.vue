@@ -7,8 +7,8 @@ import type { DownloadTask } from "@shared/types/task";
 import { checkTaskIsBT, getTaskName, parseBooleanConfig } from "@shared/utils";
 import logger from "@shared/utils/logger";
 import { invoke } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { block, NoSleepType, unblock } from "tauri-plugin-nosleep-api";
+import { listen } from "@tauri-apps/api/event";
+import * as nosleep from "tauri-plugin-nosleep-api";
 import api from "@/api";
 import { useAppStore } from "@/store/app";
 import { usePreferenceStore } from "@/store/preference";
@@ -58,7 +58,7 @@ export default {
 			lowSpeedStrikeMap: {} as Record<string, number>,
 			lowSpeedRecoverAtMap: {} as Record<string, number>,
 			lowSpeedRecoveringMap: {} as Record<string, boolean>,
-			eventUnlisteners: [] as UnlistenFn[],
+			eventUnlisteners: [] as (() => void)[],
 		};
 	},
 	computed: {
@@ -438,7 +438,7 @@ export default {
 			if (!downloading) {
 				if (this.noSleepSource === "plugin") {
 					try {
-						await unblock();
+						await nosleep.unblock();
 						this.noSleepSource = null;
 						return true;
 					} catch {
@@ -448,7 +448,9 @@ export default {
 
 				if (this.noSleepSource === "rust") {
 					try {
-						await invoke("on_download_status_change", { downloading: false });
+						await invoke("on_download_status_change", {
+							downloading: false,
+						});
 						this.noSleepSource = null;
 						return true;
 					} catch {
@@ -460,7 +462,9 @@ export default {
 			}
 
 			try {
-				await block(NoSleepType.PreventUserIdleSystemSleep);
+				await nosleep.block(
+					nosleep.NoSleepType.PreventUserIdleSystemSleep as never,
+				);
 				this.noSleepSource = "plugin";
 				return true;
 			} catch {
@@ -669,9 +673,10 @@ export default {
 				["engine:download-error", this.onDownloadError],
 				["engine:bt-download-complete", this.onBtDownloadComplete],
 			];
+
 			for (const [event, handler] of handlers) {
-				const unlisten = await listen<{ gid: string }>(event, (e) =>
-					handler(e.payload),
+				const unlisten = await listen(event, (e: { payload: unknown }) =>
+					handler(e.payload as { gid: string }),
 				);
 				this.eventUnlisteners.push(unlisten);
 			}

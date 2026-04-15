@@ -89,8 +89,13 @@ pub fn run() {
                 let event_sink_clone = event_sink.clone();
                 let storage_clone = storage.clone();
                 tauri::async_runtime::spawn(async move {
-                    let config =
-                        risuko_engine::config::ConfigManager::with_dir(config_dir).unwrap();
+                    let config = match risuko_engine::config::ConfigManager::with_dir(config_dir) {
+                        Ok(c) => c,
+                        Err(e) => {
+                            log::error!("Failed to create ConfigManager: {}", e);
+                            return;
+                        }
+                    };
                     if let Err(e) = risuko_engine::engine::start_engine(
                         &config,
                         event_sink_clone,
@@ -179,6 +184,7 @@ pub fn run() {
             commands::engine_cmds::get_engine_status,
             commands::engine_cmds::add_uri,
             commands::engine_cmds::add_torrent_by_path,
+            commands::engine_cmds::resolve_magnet,
             commands::engine_cmds::probe_m3u8,
             commands::engine_cmds::calculate_active_task_progress,
             commands::engine_cmds::evaluate_low_speed_tasks,

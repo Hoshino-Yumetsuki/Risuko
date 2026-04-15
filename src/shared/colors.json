@@ -1,9 +1,9 @@
 {
-	"active": "#3B82F6",
-	"waiting": "#64748B",
-	"paused": "#64748B",
+	"active": "#619EFF",
+	"waiting": "#737373",
+	"paused": "#737373",
 	"error": "#EF4444",
 	"complete": "#22C55E",
-	"removed": "#64748B",
+	"removed": "#737373",
 	"seeding": "#A78BFA"
 }

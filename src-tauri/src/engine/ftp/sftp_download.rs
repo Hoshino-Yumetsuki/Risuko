@@ -321,7 +321,7 @@ async fn try_authenticate(
 
 /// Load an SSH private key from either a file path or inline PEM content
 async fn load_private_key(source: &str, passphrase: Option<&str>) -> Result<key::KeyPair, String> {
-    let pem_content = if source.contains("----BEGIN") {
+    let pem_content = if source.contains("-----BEGIN") {
         // Inline PEM content
         source.to_string()
     } else {

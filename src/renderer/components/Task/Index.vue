@@ -71,7 +71,6 @@ import {
 	X,
 } from "lucide-vue-next";
 import api from "@/api";
-
 import { commands } from "@/components/CommandManager/instance";
 import SubnavSwitcher from "@/components/Subnav/SubnavSwitcher.vue";
 import TaskSubnav from "@/components/Subnav/TaskSubnav.vue";
@@ -297,11 +296,6 @@ export default {
 		async removeTask(task, taskName, isRemoveWithFiles = false) {
 			const loadingText = this.$t("task.loading-delete-task");
 			return this.withTaskActionLoading(loadingText, async () => {
-				try {
-					await useTaskStore().forcePauseTask(task);
-				} catch (err) {
-					logger.warn("[Risuko] forcePauseTask before removeTask failed:", err);
-				}
 				await this.removeTaskItem(task, taskName);
 			}).then(() => {
 				if (isRemoveWithFiles) {
@@ -314,14 +308,6 @@ export default {
 		async removeTaskRecord(task, taskName, isRemoveWithFiles = false) {
 			const loadingText = this.$t("task.loading-remove-record");
 			return this.withTaskActionLoading(loadingText, async () => {
-				try {
-					await useTaskStore().forcePauseTask(task);
-				} catch (err) {
-					logger.warn(
-						"[Risuko] forcePauseTask before removeTaskRecord failed:",
-						err,
-					);
-				}
 				await this.removeTaskRecordItem(task, taskName);
 			}).then(() => {
 				if (isRemoveWithFiles) {
@@ -371,14 +357,6 @@ export default {
 			const loadingText = this.$t("task.loading-batch-delete-task");
 			return this.withTaskActionLoading(loadingText, async () => {
 				const gids = taskList.map((task) => task.gid);
-				try {
-					await useTaskStore().batchForcePauseTask(gids);
-				} catch (err) {
-					logger.warn(
-						"[Risuko] batchForcePauseTask before removeTasks failed:",
-						err,
-					);
-				}
 				await this.removeTaskItems(gids);
 			}).then(() => {
 				if (isRemoveWithFiles) {
