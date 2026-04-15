@@ -425,7 +425,7 @@ impl TaskManager {
                     .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
             })
             .unwrap_or(1)
-            .max(1) as u32;
+            .clamp(1, u32::MAX as u64) as u32;
 
         // split task speed limit from merged options
         let per_task_limit = merged_options
@@ -1768,7 +1768,7 @@ fn looks_like_url(path: &str) -> bool {
 mod tests {
     use super::*;
 
-    // --- infer_m3u8_output_name ---
+    // -- infer_m3u8_output_name --
 
     #[test]
     fn m3u8_name_strips_extension() {
@@ -1812,7 +1812,7 @@ mod tests {
         assert_eq!(infer_m3u8_output_name("download"), "download.ts");
     }
 
-    // --- looks_like_url ---
+    // -- looks_like_url --
 
     #[test]
     fn looks_like_url_protocols() {
@@ -1829,7 +1829,7 @@ mod tests {
         assert!(!looks_like_url(""));
     }
 
-    // --- TaskManager async query tests ---
+    // -- TaskManager async query tests --
 
     use tokio::sync::RwLock;
 

@@ -1,8 +1,8 @@
 /* Aside sidebar navigation */
 @layer components {
 	.aside {
-		width: 86px;
-		flex: 0 0 86px;
+		width: 72px;
+		flex: 0 0 72px;
 		position: relative;
 		background-color: var(--mo-bg-aside);
 		color: var(--mo-aside-text-color);
@@ -17,8 +17,8 @@
 		background: linear-gradient(
 			180deg,
 			transparent 0%,
-			rgba(255, 255, 255, 0.1) 20%,
-			rgba(255, 255, 255, 0.1) 80%,
+			rgba(59, 130, 246, 0.15) 20%,
+			rgba(59, 130, 246, 0.15) 80%,
 			transparent 100%
 		);
 	}
@@ -31,45 +31,21 @@
 	.aside-brand {
 		margin-top: 20px;
 	}
-	.aside-next {
-		margin-top: 0px !important;
-		text-align: center;
-		font-size: 10px;
-		line-height: 1;
-		font-weight: 700;
-		letter-spacing: 1.5px;
-		color: rgba(255, 255, 255, 0.5);
-		text-transform: uppercase;
-		animation: text-glow 3s ease-in-out infinite;
-		--stagger-index: 0;
-	}
 	.aside-version {
-		margin: 8px auto 0px;
-		min-width: 46px;
-		padding: 4px 8px;
+		margin: 6px auto 0px;
+		padding: 2px 6px;
 		text-align: center;
-		font-size: 10px;
-		line-height: 1;
-		font-weight: 600;
-		letter-spacing: 0.3px;
-		color: rgba(255, 255, 255, 0.9);
-		background: linear-gradient(
-			135deg,
-			rgba(255, 255, 255, 0.15),
-			rgba(255, 255, 255, 0.08)
-		);
-		border: 1px solid rgba(255, 255, 255, 0.15);
-		border-radius: calc(var(--radius) - 2px);
-		backdrop-filter: blur(4px);
-		transition: all 0.2s ease;
+		font-size: 9px;
+		line-height: 1.2;
+		font-weight: 500;
+		letter-spacing: 0.5px;
+		color: rgba(148, 163, 184, 0.7);
+		background: rgba(255, 255, 255, 0.04);
+		border-radius: 4px;
+		transition: color 0.2s ease;
 	}
 	.aside-version:hover {
-		background: linear-gradient(
-			135deg,
-			rgba(255, 255, 255, 0.2),
-			rgba(255, 255, 255, 0.12)
-		);
-		transform: scale(1.02);
+		color: rgba(148, 163, 184, 0.9);
 	}
 	.menu {
 		list-style: none;
@@ -98,7 +74,7 @@
 		position: absolute;
 		inset: 0;
 		border-radius: calc(var(--radius) - 2px);
-		background: linear-gradient(135deg, rgba(255, 255, 255, 0.15), transparent);
+		background: linear-gradient(135deg, rgba(59, 130, 246, 0.15), transparent);
 		opacity: 0;
 	}
 	.menu > li:hover {

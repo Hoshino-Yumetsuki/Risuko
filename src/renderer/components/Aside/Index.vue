@@ -3,7 +3,6 @@
     <div class="aside-inner">
       <div class="aside-brand">
         <mo-logo-mini />
-        <p class="aside-next">NEXT</p>
         <div class="aside-version" v-if="appVersion">
           {{ appVersion }}
         </div>
@@ -38,7 +37,7 @@ import { Info, ListTodo, Plus, Rss, Settings2 } from "lucide-vue-next";
 import LogoMini from "@/components/Logo/LogoMini.vue";
 import is from "@/shims/platform";
 import { useAppStore } from "@/store/app";
-import { getMotrixVersion } from "@/utils/version";
+import { getRisukoVersion } from "@/utils/version";
 
 export default {
 	name: "mo-aside",
@@ -56,7 +55,7 @@ export default {
 		};
 	},
 	async created() {
-		this.appVersion = await getMotrixVersion();
+		this.appVersion = await getRisukoVersion();
 	},
 	computed: {
 		asideDraggable() {

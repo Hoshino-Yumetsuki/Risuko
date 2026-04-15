@@ -58,7 +58,7 @@ pub async fn relaunch_app(handle: AppHandle) -> Result<(), String> {
         .state::<crate::state::AppState>()
         .is_quitting
         .store(true, Ordering::SeqCst);
-    crate::engine::stop_engine(&handle)
+    risuko_engine::engine::stop_engine()
         .await
         .map_err(|e| e.to_string())?;
     handle.restart();
@@ -70,7 +70,7 @@ pub async fn quit_app(handle: AppHandle) -> Result<(), String> {
         .state::<crate::state::AppState>()
         .is_quitting
         .store(true, Ordering::SeqCst);
-    crate::engine::stop_engine(&handle)
+    risuko_engine::engine::stop_engine()
         .await
         .map_err(|e| e.to_string())?;
     handle.exit(0);
@@ -105,14 +105,25 @@ pub fn check_for_updates() -> Result<(), String> {
 
 #[tauri::command]
 pub async fn reset_session(handle: AppHandle) -> Result<(), String> {
-    crate::engine::stop_engine(&handle)
+    risuko_engine::engine::stop_engine()
         .await
         .map_err(|e| e.to_string())?;
     if let Ok(config_dir) = handle.path().app_config_dir() {
-        let session_path = config_dir.join(crate::engine::SESSION_FILENAME);
+        let session_path = config_dir.join(risuko_engine::engine::SESSION_FILENAME);
         let _ = std::fs::remove_file(&session_path);
     }
-    crate::engine::start_engine(&handle)
+    // Restart engine with fresh config
+    let config_dir = handle
+        .path()
+        .app_config_dir()
+        .unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let config =
+        risuko_engine::config::ConfigManager::with_dir(config_dir).map_err(|e| e.to_string())?;
+    let event_sink: std::sync::Arc<dyn risuko_engine::EventSink> =
+        std::sync::Arc::new(crate::bridge::TauriEventSink::new(&handle));
+    let storage: std::sync::Arc<dyn risuko_engine::StorageBackend> =
+        std::sync::Arc::new(crate::bridge::TauriStorage::new(&handle));
+    risuko_engine::engine::start_engine(&config, event_sink, storage)
         .await
         .map_err(|e| e.to_string())?;
     Ok(())

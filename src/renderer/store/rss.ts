@@ -7,7 +7,7 @@ import { usePreferenceStore } from "@/store/preference";
 
 const DEFAULT_ITEMS_PER_PAGE = 20;
 const ITEMS_PER_PAGE_OPTIONS = [10, 20, 30, 50, 100];
-const STORAGE_KEY = "motrix.rss-items-per-page";
+const STORAGE_KEY = "risuko.rss-items-per-page";
 
 function loadItemsPerPage(): number {
 	try {
@@ -112,13 +112,13 @@ export const useRssStore = defineStore("rss", {
 				}>("rss:download-error", (event) => {
 					const { feedId, itemId, reason } = event.payload ?? {};
 					logger.warn(
-						`[Motrix] RSS download failed: feed=${feedId} item=${itemId} reason=${reason || "error"}`,
+						`[Risuko] RSS download failed: feed=${feedId} item=${itemId} reason=${reason || "error"}`,
 					);
 				});
 				this._eventUnlisteners.push(unlistenComplete, unlistenError);
 			} catch (err) {
 				logger.warn(
-					"[Motrix] RSS event listener setup failed:",
+					"[Risuko] RSS event listener setup failed:",
 					(err as Error)?.message || err,
 				);
 			}
@@ -242,7 +242,7 @@ export const useRssStore = defineStore("rss", {
 				);
 			} catch (err) {
 				logger.warn(
-					"[Motrix] RSS download failed:",
+					"[Risuko] RSS download failed:",
 					(err as Error)?.message || err,
 				);
 			}

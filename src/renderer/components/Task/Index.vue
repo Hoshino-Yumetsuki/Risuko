@@ -131,6 +131,11 @@ export default {
 		subnavs() {
 			return [
 				{
+					key: "all",
+					title: this.$t("task.all"),
+					route: "/task/all",
+				},
+				{
 					key: "active",
 					title: this.$t("task.active"),
 					route: "/task/active",
@@ -243,7 +248,7 @@ export default {
 			options: { header?: string; [key: string]: unknown } = {},
 		) {
 			const { header, ...rest } = options;
-			logger.log("[Motrix] show add task dialog options: ", options);
+			logger.log("[Risuko] show add task dialog options: ", options);
 
 			const headers = parseHeader(header as string);
 			const newOptions = {
@@ -272,7 +277,7 @@ export default {
 						}
 					} catch (err) {
 						logger.warn(
-							"[Motrix] fetch full task before delete files failed:",
+							"[Risuko] fetch full task before delete files failed:",
 							err,
 						);
 					}
@@ -295,13 +300,13 @@ export default {
 				try {
 					await useTaskStore().forcePauseTask(task);
 				} catch (err) {
-					logger.warn("[Motrix] forcePauseTask before removeTask failed:", err);
+					logger.warn("[Risuko] forcePauseTask before removeTask failed:", err);
 				}
 				await this.removeTaskItem(task, taskName);
 			}).then(() => {
 				if (isRemoveWithFiles) {
 					this.deleteTaskFiles(task).catch((err) => {
-						logger.warn("[Motrix] background file delete failed:", err);
+						logger.warn("[Risuko] background file delete failed:", err);
 					});
 				}
 			});
@@ -313,7 +318,7 @@ export default {
 					await useTaskStore().forcePauseTask(task);
 				} catch (err) {
 					logger.warn(
-						"[Motrix] forcePauseTask before removeTaskRecord failed:",
+						"[Risuko] forcePauseTask before removeTaskRecord failed:",
 						err,
 					);
 				}
@@ -321,7 +326,7 @@ export default {
 			}).then(() => {
 				if (isRemoveWithFiles) {
 					this.deleteTaskFiles(task).catch((err) => {
-						logger.warn("[Motrix] background file delete failed:", err);
+						logger.warn("[Risuko] background file delete failed:", err);
 					});
 				}
 			});
@@ -370,7 +375,7 @@ export default {
 					await useTaskStore().batchForcePauseTask(gids);
 				} catch (err) {
 					logger.warn(
-						"[Motrix] batchForcePauseTask before removeTasks failed:",
+						"[Risuko] batchForcePauseTask before removeTasks failed:",
 						err,
 					);
 				}
@@ -378,7 +383,7 @@ export default {
 			}).then(() => {
 				if (isRemoveWithFiles) {
 					this.batchDeleteTaskFiles(taskList).catch((err) => {
-						logger.warn("[Motrix] background batch file delete failed:", err);
+						logger.warn("[Risuko] background batch file delete failed:", err);
 					});
 				}
 			});
@@ -387,7 +392,7 @@ export default {
 			const results = await Promise.allSettled(
 				taskList.map((task) => this.deleteTaskFiles(task)),
 			);
-			logger.log("[Motrix] batch delete task files: ", results);
+			logger.log("[Risuko] batch delete task files: ", results);
 			const failed = results.some((r) => r.status === "rejected" || !r.value);
 			if (failed) {
 				this.$msg.error(this.$t("task.remove-task-file-fail"));
@@ -446,7 +451,7 @@ export default {
 			useTaskStore()
 				.getTaskOption(gid)
 				.then((data: Record<string, string>) => {
-					logger.log("[Motrix] get task option:", data);
+					logger.log("[Risuko] get task option:", data);
 					const { dir, header, split } = data;
 					const options = {
 						dir,

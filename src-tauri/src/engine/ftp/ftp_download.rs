@@ -90,7 +90,7 @@ macro_rules! ftp_transfer {
             $file_size
         };
         let resume_offset =
-            if existing_size > 0 && effective_size > 0 && existing_size < effective_size {
+            if existing_size > 0 && (effective_size == 0 || existing_size < effective_size) {
                 match $ftp.resume_transfer(existing_size as usize).await {
                     Ok(()) => {
                         $completed.store(existing_size, Ordering::Relaxed);
@@ -236,7 +236,7 @@ pub async fn run_ftp_ftps_download(
         .password
         .clone()
         .or_else(|| option_str(options, "ftp-passwd"))
-        .unwrap_or_else(|| "motrix@".to_string());
+        .unwrap_or_else(|| "risuko@".to_string());
 
     let addr = format!("{}:{}", parsed.host, parsed.port);
     let file_size = total.load(Ordering::Relaxed);

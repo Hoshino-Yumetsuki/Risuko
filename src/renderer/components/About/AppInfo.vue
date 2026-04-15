@@ -1,10 +1,10 @@
 <template>
   <div class="app-info">
     <div class="app-version">
-      <mo-logo :width="93" :height="21" style="vertical-align: bottom" />
-      <span>Version {{ version }}</span>
+      <mo-logo :width="48" :height="48" style="vertical-align: bottom" />
+      <span>Risuko</span>
+      <span class="app-version-number">v{{ version }}</span>
     </div>
-    <div class="app-icon"></div>
     <div class="engine-info" v-if="!!engine">
       <h4>{{ $t('about.engine-version') }} {{ engine.version }}</h4>
       <ul v-if="!isMas()">

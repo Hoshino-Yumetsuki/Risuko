@@ -1,26 +1,26 @@
-# Motrix
+# Risuko
 
 <p>
-  <a href="https://motrix.app">
-    <img src="./static/512x512.png" width="256" alt="Motrix App Icon" />
+  <a href="https://risuko.vercel.app">
+    <img src="./static/512x512.png" width="256" alt="Risuko App Icon" />
   </a>
 </p>
 
 ## 一款全能的下载工具
 
-[![GitHub release](https://img.shields.io/github/v/release/agalwood/Motrix.svg)](https://github.com/agalwood/Motrix/releases) ![Build/release](https://github.com/agalwood/Motrix/workflows/Build/release/badge.svg) ![Total Downloads](https://img.shields.io/github/downloads/agalwood/Motrix/total.svg) ![Support Platforms](https://camo.githubusercontent.com/a50c47295f350646d08f2e1ccd797ceca3840e52/68747470733a2f2f696d672e736869656c64732e696f2f62616467652f706c6174666f726d2d6d61634f5325323025374325323057696e646f77732532302537432532304c696e75782d6c69676874677265792e737667)
+[![GitHub release](https://img.shields.io/github/v/release/YueMiyuki/Risuko.svg)](https://github.com/YueMiyuki/Risuko/releases) ![Build/release](https://github.com/YueMiyuki/Risuko/workflows/Build/release/badge.svg) ![Total Downloads](https://img.shields.io/github/downloads/YueMiyuki/Risuko/total.svg) ![Support Platforms](https://camo.githubusercontent.com/a50c47295f350646d08f2e1ccd797ceca3840e52/68747470733a2f2f696d672e736869656c64732e696f2f62616467652f706c6174666f726d2d6d61634f5325323025374325323057696e646f77732532302537432532304c696e75782d6c69676874677265792e737667)
 
 [English](./README.md) | 简体中文
 
-我是个兴趣使然的桌面应用开发者🤓，利用搬砖之余开发了 Motrix。
+我是个兴趣使然的桌面应用开发者🤓，利用搬砖之余开发了 Risuko。
 
-Motrix 是一款全能的下载工具，支持下载 HTTP、FTP、BT、磁力链等资源。它的界面简洁易用，希望大家喜欢 👻。
+Risuko 是一款全能的下载工具，支持下载 HTTP、FTP、BT、磁力链等资源。它的界面简洁易用，希望大家喜欢 👻。
 
 ✈️ 去 [官网](https://motrix-next.vercel.app) 逛逛 | 📖 查看 [帮助手册](http://motrix.app/support/issues)
 
 ## 💽 安装稳定版
 
-[GitHub](https://github.com/YueMiyuki/Motrix/releases) 提供了已经编译好的稳定版安装包，当然你也可以自己克隆代码编译打包。
+[GitHub](https://github.com/YueMiyuki/Risuko/releases) 提供了已经编译好的稳定版安装包，当然你也可以自己克隆代码编译打包。
 
 
 ## ✨ 特性
@@ -52,7 +52,7 @@ Motrix 是一款全能的下载工具，支持下载 HTTP、FTP、BT、磁力链
 ### 克隆代码
 
 ```bash
-git clone https://github.com/YueMiyuki/Motrix-NEXT
+git clone https://github.com/YueMiyuki/Risuko
 ```
 
 ### 安装依赖
@@ -60,7 +60,7 @@ git clone https://github.com/YueMiyuki/Motrix-NEXT
 需要 Node.js >= 22。
 
 ```bash
-cd Motrix-NEXT
+cd risuko
 pnpm install
 ```
 
@@ -120,7 +120,7 @@ This is generated with ![psrecord](https://github.com/astrofrog/psrecord)
 
 ## 🌍 国际化
 
-欢迎大家将 Motrix 翻译成更多的语言版本 🧐，开工之前请先阅读一下 [翻译指南](./docs/CONTRIBUTING-CN.md#-翻译指南)。
+欢迎大家将 Risuko 翻译成更多的语言版本 🧐，开工之前请先阅读一下 [翻译指南](./docs/CONTRIBUTING-CN.md#-翻译指南)。
 
 | Key   | Name                | Status                                                                                                      |
 | ----- | :------------------ | :---------------------------------------------------------------------------------------------------------- |

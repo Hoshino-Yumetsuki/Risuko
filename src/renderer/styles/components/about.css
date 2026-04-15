@@ -3,25 +3,27 @@
 	.app-info {
 		position: relative;
 	}
+	.app-info .app-version {
+		display: flex;
+		align-items: center;
+		gap: 12px;
+	}
 	.app-info .app-version span {
 		display: inline-block;
 		vertical-align: bottom;
 		font-size: 18px;
-		margin-left: 20px;
-		color: var(--mo-app-version-color);
-		line-height: 18px;
+		font-weight: 600;
+		color: var(--foreground);
+		line-height: 1;
 	}
-	.app-info .app-icon {
-		position: absolute;
-		top: 0;
-		right: 0;
-		background: transparent url("@/assets/app-icon.png") center center no-repeat;
-		background-size: 128px 128px;
-		width: 128px;
-		height: 128px;
+	.app-info .app-version .app-version-number {
+		font-size: 13px;
+		font-weight: 500;
+		color: var(--muted-foreground);
+		font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
 	}
 	.app-info .engine-info {
-		margin: 50px 35% 0 8px;
+		margin: 24px 0 0 0;
 	}
 	.app-info .engine-info h4 {
 		font-size: 14px;

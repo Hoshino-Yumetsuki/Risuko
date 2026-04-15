@@ -16,7 +16,7 @@
 		color: var(--mo-app-logo-color);
 	}
 	.logo svg {
-		fill: currentColor;
+		/* SVG uses its own gradient fills */
 	}
 	.logo-mini {
 		margin: 20px auto 0px !important;

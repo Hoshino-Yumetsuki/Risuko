@@ -2,15 +2,22 @@ use serde_json::{json, Value};
 
 pub struct RpcClient {
     url: String,
+    secret: Option<String>,
     client: reqwest::Client,
     id_counter: std::sync::atomic::AtomicU64,
 }
 
 impl RpcClient {
-    pub fn new(port: u16) -> Self {
+    pub fn new(port: u16, secret: Option<String>) -> Self {
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .connect_timeout(std::time::Duration::from_secs(5))
+            .build()
+            .unwrap_or_default();
         Self {
             url: format!("http://127.0.0.1:{}/jsonrpc", port),
-            client: reqwest::Client::new(),
+            secret,
+            client,
             id_counter: std::sync::atomic::AtomicU64::new(1),
         }
     }
@@ -19,6 +26,14 @@ impl RpcClient {
         let id = self
             .id_counter
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
+        let params = if let Some(ref secret) = self.secret {
+            let mut with_token = vec![json!(format!("token:{}", secret))];
+            with_token.extend(params);
+            with_token
+        } else {
+            params
+        };
 
         let body = json!({
             "jsonrpc": "2.0",
@@ -52,7 +67,7 @@ impl RpcClient {
     }
 
     pub async fn is_engine_running(&self) -> bool {
-        self.call("motrix.getVersion", vec![]).await.is_ok()
+        self.call("risuko.getVersion", vec![]).await.is_ok()
     }
 }
 

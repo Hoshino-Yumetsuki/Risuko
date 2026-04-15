@@ -1,5 +1,5 @@
 export default {
-	app: "Motrix",
+	app: "Risuko",
 	file: "파일",
 	task: "작업",
 	edit: "편집",

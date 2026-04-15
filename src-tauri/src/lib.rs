@@ -1,14 +1,20 @@
+mod bridge;
 pub mod cli;
 mod commands;
-pub mod config;
-pub mod engine;
 mod managers;
 mod state;
 
+// Re-export risuko_engine modules for use by commands and other app code
+pub use risuko_engine::config;
+pub use risuko_engine::engine;
+
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 
 use tauri::{Emitter, Manager};
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
+
+use risuko_engine::engine::rss::RssManager;
 
 pub fn run() {
     tracing_subscriber::fmt().init();
@@ -42,7 +48,16 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_deep_link::init())
         .setup(|app| {
-            let app_state = state::AppState::new(app.handle())?;
+            let handle = app.handle();
+
+            // Create Tauri-backed trait implementations
+            let config_dir_provider = bridge::TauriConfigDir::new(handle);
+            let event_sink: Arc<dyn risuko_engine::EventSink> =
+                Arc::new(bridge::TauriEventSink::new(handle));
+            let storage: Arc<dyn risuko_engine::StorageBackend> =
+                Arc::new(bridge::TauriStorage::new(handle));
+
+            let app_state = state::AppState::new(&config_dir_provider, storage.clone())?;
             app.manage(app_state);
             sync_open_at_login_setting(app);
 
@@ -60,12 +75,33 @@ pub fn run() {
                 }
             }
 
-            let handle = app.handle().clone();
-            tauri::async_runtime::spawn(async move {
-                if let Err(e) = engine::start_engine(&handle).await {
-                    log::error!("Failed to start engine: {}", e);
-                }
-            });
+            let config_guard = app.state::<state::AppState>();
+            let should_start = {
+                let config = config_guard.config.lock().unwrap();
+                risuko_engine::engine::should_start_embedded_engine(&config)
+            };
+
+            if should_start {
+                let config_ref = config_guard.config.lock().unwrap();
+                let config_dir = config_ref.config_dir().to_path_buf();
+                drop(config_ref);
+
+                let event_sink_clone = event_sink.clone();
+                let storage_clone = storage.clone();
+                tauri::async_runtime::spawn(async move {
+                    let config =
+                        risuko_engine::config::ConfigManager::with_dir(config_dir).unwrap();
+                    if let Err(e) = risuko_engine::engine::start_engine(
+                        &config,
+                        event_sink_clone,
+                        storage_clone,
+                    )
+                    .await
+                    {
+                        log::error!("Failed to start engine: {}", e);
+                    }
+                });
+            }
 
             managers::menu::setup_menu(app)?;
 
@@ -93,7 +129,11 @@ pub fn run() {
             // Start RSS background polling
             if let Ok(guard) = app.state::<state::AppState>().rss.lock() {
                 if let Some(rss) = guard.clone() {
-                    engine::rss::RssManager::start_polling(rss);
+                    // Must spawn into Tauri's async runtime so the tokio
+                    // reactor is available for the inner tokio::spawn call.
+                    tauri::async_runtime::spawn(async move {
+                        let _ = RssManager::start_polling(rss);
+                    });
                 }
             }
 
@@ -192,7 +232,7 @@ pub fn run() {
             commands::rss_cmds::download_rss_item_tracked,
         ])
         .build(tauri::generate_context!())
-        .expect("error while building Motrix");
+        .expect("error while building Risuko");
 
     app.run(|_, event| {
         if matches!(

@@ -92,7 +92,7 @@ jobs:
         with:
           args: --target ${{ matrix.target }} ${{ matrix.tauri_args }}
           tagName: ${{ github.ref_name }}
-          releaseName: Motrix ${{ github.ref_name }}
+          releaseName: Risuko ${{ github.ref_name }}
           releaseBody: See the assets for this release.
           releaseDraft: false
           prerelease: ${{ contains(github.ref_name, '-') }}
@@ -122,6 +122,56 @@ jobs:
             exit 1
           fi
           find "$bundle_dir" -maxdepth 3 -type f | sed 's/^/built: /'
+
+      # ── Build standalone risuko-cli binary ──
+      - name: Build risuko-cli binary
+        if: matrix.target != 'i686-pc-windows-msvc'
+        working-directory: src-tauri
+        run: cargo build --release --target ${{ matrix.target }} -p risuko-cli
+
+      - name: Package risuko-cli binary (unix)
+        if: matrix.target != 'i686-pc-windows-msvc' && runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          bin="src-tauri/target/${{ matrix.target }}/release/risuko"
+          chmod +x "$bin"
+          # Derive a short platform label: darwin-arm64, linux-x64, etc.
+          case "${{ matrix.platform }}" in
+            darwin/arm64) label="darwin-arm64" ;;
+            darwin/x64)   label="darwin-x64" ;;
+            linux/x64)    label="linux-x64" ;;
+            linux/arm64)  label="linux-arm64" ;;
+            *)            label="${{ matrix.target }}" ;;
+          esac
+          tar czf "risuko-cli-${label}.tar.gz" -C "$(dirname "$bin")" risuko
+          echo "CLI_ASSET=risuko-cli-${label}.tar.gz" >> "$GITHUB_ENV"
+
+      - name: Package risuko-cli binary (windows)
+        if: matrix.target != 'i686-pc-windows-msvc' && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $bin = "src-tauri/target/${{ matrix.target }}/release/risuko.exe"
+          $label = "win32-x64"
+          if ("${{ matrix.target }}" -match "aarch64") { $label = "win32-arm64" }
+          Compress-Archive -Path $bin -DestinationPath "risuko-cli-${label}.zip"
+          echo "CLI_ASSET=risuko-cli-${label}.zip" >> $env:GITHUB_ENV
+
+      - name: Upload risuko-cli to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/') && matrix.target != 'i686-pc-windows-msvc'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: ${{ env.CLI_ASSET }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload risuko-cli artifact (manual builds)
+        if: ${{ !startsWith(github.ref, 'refs/tags/') && matrix.target != 'i686-pc-windows-msvc' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: risuko-cli-${{ matrix.target }}
+          path: ${{ env.CLI_ASSET }}
 
       - name: Dump macOS DMG diagnostics on failure
         if: failure() && startsWith(matrix.platform, 'darwin')

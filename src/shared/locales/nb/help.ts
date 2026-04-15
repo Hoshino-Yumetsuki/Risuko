@@ -1,5 +1,5 @@
 export default {
-	"official-website": "Motrix' nettside",
+	"official-website": "Risuko' nettside",
 	manual: "Brukerhåndbok",
 	"release-notes": "Utgivelsesnotater...",
 	"report-problem": "Rapporter problem",

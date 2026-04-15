@@ -1,5 +1,5 @@
 export default {
-	"official-website": "Lloc web de Motrix",
+	"official-website": "Lloc web de Risuko",
 	manual: "Manual",
 	"release-notes": "Notes de la versió...",
 	"report-problem": "Informar d'un problema",

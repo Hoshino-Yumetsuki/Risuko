@@ -54,7 +54,7 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		background: linear-gradient(135deg, var(--primary) 0%, #7c7cff 100%);
+		background: linear-gradient(135deg, #3b82f6 0%, #a78bfa 100%);
 		border-radius: calc(var(--radius) - 2px);
 		color: #fff;
 		flex-shrink: 0;
@@ -208,7 +208,7 @@
 		text-decoration: underline;
 	}
 	.dark .section-icon {
-		background: linear-gradient(135deg, #6b6bff 0%, #8b8bff 100%);
+		background: linear-gradient(135deg, #3b82f6 0%, #60a5fa 100%);
 	}
 	.proxy-scope-group {
 		display: flex;

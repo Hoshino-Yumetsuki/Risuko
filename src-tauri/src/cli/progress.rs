@@ -12,6 +12,7 @@ const POLL_KEYS: &[&str] = &[
     "downloadSpeed",
     "uploadSpeed",
     "files",
+    "errorMessage",
 ];
 
 pub async fn watch_download(
@@ -24,7 +25,7 @@ pub async fn watch_download(
     loop {
         let keys: Vec<Value> = POLL_KEYS.iter().map(|k| json!(k)).collect();
         let status = client
-            .call("motrix.tellStatus", vec![json!(gid), json!(keys)])
+            .call("risuko.tellStatus", vec![json!(gid), json!(keys)])
             .await?;
 
         let task_status = status
@@ -105,7 +106,7 @@ fn print_progress(name: &str, status: &str, total: u64, completed: u64, speed: u
 
     let bar_width = 30;
     let filled = if total > 0 {
-        (completed as f64 / total as f64 * bar_width as f64) as usize
+        ((completed as f64 / total as f64 * bar_width as f64) as usize).min(bar_width)
     } else {
         0
     };
@@ -119,8 +120,9 @@ fn print_progress(name: &str, status: &str, total: u64, completed: u64, speed: u
         "-".to_string()
     };
 
-    let display_name = if name.len() > 30 {
-        format!("{}...", &name[..27])
+    let display_name = if name.chars().count() > 30 {
+        let truncated: String = name.chars().take(27).collect();
+        format!("{}...", truncated)
     } else {
         name.to_string()
     };

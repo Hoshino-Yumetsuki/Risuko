@@ -1,8 +1,8 @@
 {
 	"$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-	"productName": "Motrix",
-	"version": "0.1.2",
-	"identifier": "app.motrix.native",
+	"productName": "Risuko",
+	"version": "0.1.3",
+	"identifier": "app.risuko.native",
 	"build": {
 		"devUrl": "http://127.0.0.1:9080",
 		"frontendDist": "../dist/outputs",
@@ -13,7 +13,7 @@
 		"windows": [
 			{
 				"label": "main",
-				"title": "Motrix",
+				"title": "Risuko",
 				"width": 1024,
 				"height": 768,
 				"minWidth": 478,
@@ -53,12 +53,12 @@
 	"plugins": {
 		"deep-link": {
 			"desktop": {
-				"schemes": ["mo", "motrix", "magnet", "thunder", "ed2k"]
+				"schemes": ["mo", "risuko", "magnet", "thunder", "ed2k"]
 			}
 		},
 		"updater": {
 			"endpoints": [
-				"https://motrix.app/api/update/{{target}}/{{arch}}/{{current_version}}"
+				"https://risuko.vercel.app/api/update/{{target}}/{{arch}}/{{current_version}}"
 			],
 			"pubkey": ""
 		}

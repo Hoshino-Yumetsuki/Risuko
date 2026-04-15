@@ -51,10 +51,10 @@
 		width: 188px;
 		height: 44px;
 		padding: 6px 12px 6px 8px;
-		border-radius: calc(var(--radius) - 2px);
+		border-radius: var(--radius);
 		border: 1px solid var(--mo-speedometer-border-color);
 		background: var(--mo-speedometer-bg);
-		box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+		box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
 		backdrop-filter: blur(8px);
 		transition:
 			width 0.4s cubic-bezier(0.25, 0.1, 0.25, 1),

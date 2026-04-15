@@ -1,0 +1,48 @@
+[package]
+name = "risuko-engine"
+version = "0.1.3"
+description = "Risuko download engine — multi-protocol download library"
+authors = ["YueMiyuki"]
+edition = "2021"
+license = "MIT"
+
+[lib]
+name = "risuko_engine"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["process", "sync", "time", "rt", "net", "macros"] }
+log = "0.4"
+dirs = "6"
+sha1 = "0.11"
+sha2 = "0.11"
+librqbit = "8"
+axum = { version = "0.8", features = ["ws"] }
+uuid = { version = "1", features = ["v4"] }
+base64 = "0.22"
+futures-util = "0.3"
+rand = "0.9"
+tower-http = { version = "0.6", features = ["cors"] }
+tracing = "0.1"
+reqwest = { version = "0.12", features = ["stream", "gzip", "brotli", "deflate"] }
+tokio-util = { version = "0.7", features = ["io"] }
+bytes = "1"
+url = "2"
+filetime = "0.2"
+m3u8-rs = "6.0.0"
+aes = "0.8"
+cbc = "0.1"
+feed-rs = "2.3.1"
+regex = "1.12.3"
+urlencoding = "2.1.3"
+async-trait = "0.1"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+futures-rustls = "0.26"
+suppaftp = { version = "6", features = ["async-rustls", "deprecated"] }
+russh = "0.46"
+russh-sftp = "2"
+russh-keys = "0.46"
+
+[dev-dependencies]
+tempfile = "3"

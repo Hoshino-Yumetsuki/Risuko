@@ -1,5 +1,5 @@
 export default {
-	app: "Motrix",
+	app: "Risuko",
 	file: "Tập tin",
 	task: "Tác vụ",
 	edit: "Chỉnh sửa",

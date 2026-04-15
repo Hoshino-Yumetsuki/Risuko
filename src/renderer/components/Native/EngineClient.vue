@@ -267,7 +267,7 @@ export default {
 						delete this.autoRetryPlanTicketMap[taskGid];
 					}
 					logger.warn(
-						"[Motrix] planAutoRetry produced invalid plan, skip scheduling",
+						"[Risuko] planAutoRetry produced invalid plan, skip scheduling",
 						result,
 					);
 					return;
@@ -297,7 +297,7 @@ export default {
 				}
 
 				delete this.autoRetryPlanTicketMap[taskGid];
-				logger.warn("[Motrix] planAutoRetry failed:", err?.message || err);
+				logger.warn("[Risuko] planAutoRetry failed:", err?.message || err);
 				return;
 			}
 
@@ -314,12 +314,12 @@ export default {
 					.resumeTask({ gid: taskGid } as DownloadTask)
 					.then(() => {
 						logger.info(
-							`[Motrix] auto retry resume requested for gid: ${taskGid}, attempt: ${nextAttempt}`,
+							`[Risuko] auto retry resume requested for gid: ${taskGid}, attempt: ${nextAttempt}`,
 						);
 					})
 					.catch((err) => {
 						logger.warn(
-							`[Motrix] auto retry resume failed for gid: ${taskGid}, attempt: ${nextAttempt}, ${err?.message || err}`,
+							`[Risuko] auto retry resume failed for gid: ${taskGid}, attempt: ${nextAttempt}, ${err?.message || err}`,
 						);
 					})
 					.finally(() => {
@@ -354,10 +354,10 @@ export default {
 				);
 				await api.resumeTask({ gid });
 				useTaskStore().saveSession();
-				logger.info(`[Motrix] auto recovered low speed task: ${gid}`);
+				logger.info(`[Risuko] auto recovered low speed task: ${gid}`);
 			} catch (err) {
 				logger.warn(
-					`[Motrix] auto recover low speed task failed: ${gid}, ${err?.message || err}`,
+					`[Risuko] auto recover low speed task failed: ${gid}, ${err?.message || err}`,
 				);
 			} finally {
 				this.lowSpeedRecoveringMap[gid] = false;
@@ -408,7 +408,7 @@ export default {
 				);
 			} catch (err) {
 				logger.warn(
-					"[Motrix] evaluateLowSpeedTasks failed:",
+					"[Risuko] evaluateLowSpeedTasks failed:",
 					err?.message || err,
 				);
 			}
@@ -570,10 +570,10 @@ export default {
 				const taskName = getTaskName(task);
 				const { errorCode, errorMessage } = task;
 				logger.error(
-					`[Motrix] download error gid: ${gid}, #${errorCode}, ${errorMessage}`,
+					`[Risuko] download error gid: ${gid}, #${errorCode}, ${errorMessage}`,
 				);
 				const message = this.$t("task.download-error-message", { taskName });
-				const link = `https://github.com/agalwood/Motrix/wiki/Error#${errorCode}`;
+				const link = `https://github.com/YueMiyuki/Risuko/wiki/Error#${errorCode}`;
 				this.$msg.error({
 					duration: 5000,
 					message: `${message} (${errorCode}) ${link}`,
@@ -726,7 +726,7 @@ export default {
 							})
 							.catch((err) => {
 								logger.warn(
-									"[Motrix] low speed detection fetch active tasks failed:",
+									"[Risuko] low speed detection fetch active tasks failed:",
 									err?.message || err,
 								);
 							}),
@@ -767,7 +767,7 @@ export default {
 				.resumeAllTask()
 				.catch((err) => {
 					logger.warn(
-						"[Motrix] auto resume unfinished tasks failed:",
+						"[Risuko] auto resume unfinished tasks failed:",
 						err?.message || err,
 					);
 				});
@@ -775,7 +775,7 @@ export default {
 	},
 	created() {
 		this.bindEngineEvents().catch((err) => {
-			logger.warn("[Motrix] bindEngineEvents failed:", err.message);
+			logger.warn("[Risuko] bindEngineEvents failed:", err.message);
 		});
 	},
 	mounted() {

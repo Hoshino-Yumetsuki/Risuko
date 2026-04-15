@@ -1,21 +1,25 @@
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
-use tauri::AppHandle;
 
-use crate::config;
-use crate::engine::rss::RssManager;
+use risuko_engine::config::ConfigManager;
+use risuko_engine::engine::rss::RssManager;
+use risuko_engine::traits::{ConfigDirProvider, StorageBackend};
 
 pub struct AppState {
-    pub config: Mutex<config::ConfigManager>,
+    pub config: Mutex<ConfigManager>,
     pub engine_running: Mutex<bool>,
     pub is_quitting: AtomicBool,
     pub rss: Mutex<Option<Arc<RssManager>>>,
 }
 
 impl AppState {
-    pub fn new(handle: &AppHandle) -> Result<Self, Box<dyn std::error::Error>> {
-        let config = config::ConfigManager::new(handle)?;
-        let rss_manager = RssManager::new(handle);
+    pub fn new(
+        config_dir_provider: &dyn ConfigDirProvider,
+        storage: Arc<dyn StorageBackend>,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        let config = ConfigManager::new(config_dir_provider)?;
+        let event_sink: Arc<dyn risuko_engine::EventSink> = Arc::new(risuko_engine::NoopEventSink);
+        let rss_manager = RssManager::new(storage, event_sink);
         if let Err(e) = rss_manager.load() {
             log::warn!("Failed to load RSS data: {}", e);
         }

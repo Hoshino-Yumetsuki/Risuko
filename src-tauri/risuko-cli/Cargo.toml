@@ -1,0 +1,24 @@
+[package]
+name = "risuko-cli"
+version.workspace = true
+description = "Risuko download engine — standalone CLI"
+authors.workspace = true
+edition.workspace = true
+license = "MIT"
+
+[[bin]]
+name = "risuko"
+path = "src/main.rs"
+
+[dependencies]
+risuko-engine = { workspace = true }
+clap = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true, features = ["full"] }
+log = { workspace = true }
+dirs = { workspace = true }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+base64 = "0.22"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

@@ -270,6 +270,8 @@ pub async fn run_http_download(
     } else {
         out.to_string()
     };
+    // Sanitize: strip path separators and traversal components
+    let filename = sanitize_filename(&filename);
 
     let part_name = if filename.ends_with(PART_SUFFIX) {
         filename.clone()
@@ -1297,6 +1299,20 @@ fn days_from_civil(y: i64, m: u32, d: u32) -> Option<i64> {
     let doy = (153 * (if m > 2 { m - 3 } else { m + 9 }) + 2) / 5 + d - 1;
     let doe = yoe as i64 * 365 + yoe as i64 / 4 - yoe as i64 / 100 + doy;
     Some(era * 146097 + doe - 719468)
+}
+
+/// Sanitize a filename to prevent path traversal attacks.
+/// Strips directory components, `..`, and path separators.
+fn sanitize_filename(name: &str) -> String {
+    let base = Path::new(name)
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "download".to_string());
+    if base.is_empty() || base == "." || base == ".." {
+        "download".to_string()
+    } else {
+        base
+    }
 }
 
 pub fn infer_filename_from_uri(uri: &str) -> String {

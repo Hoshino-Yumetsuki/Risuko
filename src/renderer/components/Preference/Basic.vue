@@ -469,7 +469,7 @@
           <div class="settings-section-content version-section">
             <div class="version-indicator">
               <div class="version-item">
-                <span class="version-name">Motrix</span>
+                <span class="version-name">Risuko</span>
                 <span class="version-value">{{ appVersion || '--' }}</span>
               </div>
               <div class="version-item">
@@ -538,7 +538,7 @@ import {
 import is from "@/shims/platform";
 import { useAppStore } from "@/store/app";
 import { usePreferenceStore } from "@/store/preference";
-import { getMotrixVersion } from "@/utils/version";
+import { getRisukoVersion } from "@/utils/version";
 
 const RETRY_STRATEGY_STATIC = "static";
 const RETRY_STRATEGY_EXPONENTIAL = "exponential";
@@ -674,7 +674,7 @@ export default {
 		};
 	},
 	created() {
-		getMotrixVersion().then((v) => {
+		getRisukoVersion().then((v) => {
 			this.appVersion = v;
 		});
 
@@ -919,7 +919,7 @@ export default {
 						: RETRY_STRATEGY_STATIC;
 			}
 
-			logger.log("[Motrix] preference changed data:", data);
+			logger.log("[Risuko] preference changed data:", data);
 
 			usePreferenceStore()
 				.save(data)
@@ -936,7 +936,7 @@ export default {
 						}
 						if ("hideAppMenu" in data) {
 							invoke("toggle_app_menu", {
-								hidden: !!this.form.hideAppMenu,
+								hidden: !!data.hideAppMenu,
 							}).catch(() => {
 								/* noop */
 							});

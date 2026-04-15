@@ -47,7 +47,7 @@ const clampTaskListFetchSize = (value: unknown) => {
 	const normalized = Math.trunc(parsed);
 	if (normalized > MAX_TASK_LIST_FETCH_SIZE) {
 		logger.warn(
-			`[Motrix] task list fetch size ${normalized} exceeds cap ${MAX_TASK_LIST_FETCH_SIZE}, clamping`,
+			`[Risuko] task list fetch size ${normalized} exceeds cap ${MAX_TASK_LIST_FETCH_SIZE}, clamping`,
 		);
 		return MAX_TASK_LIST_FETCH_SIZE;
 	}
@@ -117,12 +117,12 @@ export default class Api {
 		const config: Record<string, Record<string, unknown>> = {};
 
 		if (!isEmpty(user)) {
-			logger.info("[Motrix] save user config: ", user);
+			logger.info("[Risuko] save user config: ", user);
 			config.user = user;
 		}
 
 		if (!isEmpty(system)) {
-			logger.info("[Motrix] save system config: ", system);
+			logger.info("[Risuko] save system config: ", system);
 			config.system = system;
 
 			// Startup-only keys cannot be applied to active tasks via changeOption.
@@ -133,7 +133,7 @@ export default class Api {
 			if (!isEmpty(runtimeSystem)) {
 				await this.changeGlobalOption(runtimeSystem).catch((err) => {
 					logger.warn(
-						"[Motrix] changeGlobalOption failed:",
+						"[Risuko] changeGlobalOption failed:",
 						err?.message || err,
 					);
 				});
@@ -142,7 +142,7 @@ export default class Api {
 		}
 
 		if (!isEmpty(others)) {
-			logger.info("[Motrix] save config found illegal key: ", others);
+			logger.info("[Risuko] save config found illegal key: ", others);
 		}
 
 		return invoke("save_preference", { config });
@@ -347,6 +347,8 @@ export default class Api {
 	) {
 		const { type } = params;
 		switch (type) {
+			case "all":
+				return this.fetchAllTaskList(params);
 			case "active":
 				return this.fetchDownloadingTaskList(params);
 			case "waiting":
@@ -356,6 +358,22 @@ export default class Api {
 			default:
 				return this.fetchDownloadingTaskList(params);
 		}
+	}
+
+	async fetchAllTaskList(
+		params: { offset?: number; num?: number; keys?: string[] } = {},
+	) {
+		const { offset = 0, num = TASK_LIST_FETCH_SIZE, keys } = params;
+		const safeNum = clampTaskListFetchSize(num);
+		const [active, waiting, stopped] = await Promise.all([
+			invoke<DownloadTask[]>("tell_active", { keys }),
+			invoke<DownloadTask[]>("tell_waiting", { offset, num: safeNum, keys }),
+			invoke<DownloadTask[]>("tell_stopped", { offset, num: safeNum, keys }),
+		]);
+		const activeArr = Array.isArray(active) ? active : [];
+		const waitingArr = Array.isArray(waiting) ? waiting : [];
+		const stoppedArr = Array.isArray(stopped) ? stopped : [];
+		return [...activeArr, ...waitingArr, ...stoppedArr];
 	}
 
 	fetchTaskItem(params: { gid: string }) {
@@ -436,23 +454,23 @@ export default class Api {
 	batchChangeOption(
 		params: { gids?: string[]; options?: Record<string, unknown> } = {},
 	) {
-		return this.multicall("motrix.changeOption", params);
+		return this.multicall("risuko.changeOption", params);
 	}
 
 	batchRemoveTask(params: { gids?: string[] } = {}) {
-		return this.multicall("motrix.remove", params);
+		return this.multicall("risuko.remove", params);
 	}
 
 	batchResumeTask(params: { gids?: string[] } = {}) {
-		return this.multicall("motrix.unpause", params);
+		return this.multicall("risuko.unpause", params);
 	}
 
 	batchPauseTask(params: { gids?: string[] } = {}) {
-		return this.multicall("motrix.pause", params);
+		return this.multicall("risuko.pause", params);
 	}
 
 	batchForcePauseTask(params: { gids?: string[] } = {}) {
-		return this.multicall("motrix.forcePause", params);
+		return this.multicall("risuko.forcePause", params);
 	}
 
 	// ── RSS ──────────────────────────────────────────────────────

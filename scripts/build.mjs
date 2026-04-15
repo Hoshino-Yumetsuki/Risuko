@@ -40,7 +40,7 @@ function greeting() {
 		console.log(chalk.magentaBright.bold("\n  lets-build"));
 	}
 
-	console.log(`${chalk.blue("  building Motrix for production...")}\n`);
+	console.log(`${chalk.blue("  building Risuko for production...")}\n`);
 }
 
 greeting();

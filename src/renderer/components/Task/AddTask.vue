@@ -218,7 +218,7 @@
                   <a
                     class="atd-field-help"
                     target="_blank"
-                    href="https://github.com/agalwood/Motrix/wiki/Proxy"
+                    href="https://github.com/YueMiyuki/Risuko/wiki/Proxy"
                     rel="noopener noreferrer"
                   >
                     {{ $t('preferences.proxy-tips') }}
@@ -587,7 +587,7 @@ export default {
 				await this.resolveTaskNameConflicts(payload, type);
 				return useTaskStore().addTorrent(payload);
 			} else {
-				logger.error("[Motrix] Add task fail", form);
+				logger.error("[Risuko] Add task fail", form);
 				throw new Error("task.new-task-unsupported-type");
 			}
 		},

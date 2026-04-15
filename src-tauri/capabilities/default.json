@@ -1,6 +1,6 @@
 {
 	"identifier": "default",
-	"description": "Default capabilities for Motrix",
+	"description": "Default capabilities for Risuko",
 	"windows": ["main"],
 	"permissions": [
 		"core:default",

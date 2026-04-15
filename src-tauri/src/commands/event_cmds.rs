@@ -35,7 +35,7 @@ pub fn on_speed_change(
     let app_name = app_name
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| "Motrix".to_string());
+        .unwrap_or_else(|| "Risuko".to_string());
     let download_label = download_label
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
@@ -260,7 +260,7 @@ fn linux_apply_download_inhibit(downloading: bool) {
                     "--print-reply",
                     "/org/freedesktop/ScreenSaver",
                     "org.freedesktop.ScreenSaver.Inhibit",
-                    "string:Motrix",
+                    "string:Risuko",
                     "string:Downloading active tasks",
                 ])
                 .output()

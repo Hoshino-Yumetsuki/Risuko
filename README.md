@@ -1,26 +1,26 @@
-# Motrix
+# Risuko
 
 <p>
-  <a href="https://motrix.app">
-    <img src="./static/512x512.png" width="256" alt="Motrix App Icon" />
+  <a href="https://risuko.vercel.app">
+    <img src="./static/512x512.png" width="256" alt="Risuko App Icon" />
   </a>
 </p>
 
 ## A full-featured download manager
 
-[![GitHub release](https://img.shields.io/github/v/release/agalwood/Motrix.svg)](https://github.com/agalwood/Motrix/releases) ![Build/release](https://github.com/agalwood/Motrix/workflows/Build/release/badge.svg) ![Total Downloads](https://img.shields.io/github/downloads/agalwood/Motrix/total.svg) ![Support Platforms](https://camo.githubusercontent.com/a50c47295f350646d08f2e1ccd797ceca3840e52/68747470733a2f2f696d672e736869656c64732e696f2f62616467652f706c6174666f726d2d6d61634f5325323025374325323057696e646f77732532302537432532304c696e75782d6c69676874677265792e737667)
+[![GitHub release](https://img.shields.io/github/v/release/YueMiyuki/Risuko.svg)](https://github.com/YueMiyuki/Risuko/releases) ![Build/release](https://github.com/YueMiyuki/Risuko/workflows/Build/release/badge.svg) ![Total Downloads](https://img.shields.io/github/downloads/YueMiyuki/Risuko/total.svg) ![Support Platforms](https://camo.githubusercontent.com/a50c47295f350646d08f2e1ccd797ceca3840e52/68747470733a2f2f696d672e736869656c64732e696f2f62616467652f706c6174666f726d2d6d61634f5325323025374325323057696e646f77732532302537432532304c696e75782d6c69676874677265792e737667)
 
 English | [简体中文](./README-CN.md)
 
-Motrix is a full-featured download manager that supports downloading HTTP, FTP, BitTorrent, Magnet, etc.
+Risuko is a full-featured download manager that supports downloading HTTP, FTP, BitTorrent, Magnet, etc.
 
-Motrix has a clean and easy to use interface. I hope you will like it 👻.
+Risuko has a clean and easy to use interface. I hope you will like it 👻.
 
-✈️ [Official Website](https://motrix-next.vercel.app) | 📖 [Manual](https://github.com/agalwood/Motrix/wiki)
+✈️ [Official Website](https://motrix-next.vercel.app) | 📖 [Manual](https://github.com/YueMiyuki/Risuko/wiki)
 
 ## 💽 Installation
 
-Download from [GitHub Releases](https://github.com/YueMiyuki/Motrix/releases) and install it.
+Download from [GitHub Releases](https://github.com/YueMiyuki/Risuko/releases) and install it.
 
 ## ✨ Features
 
@@ -43,14 +43,14 @@ Download from [GitHub Releases](https://github.com/YueMiyuki/Motrix/releases) an
 
 ## 🖥 User Interface
 
-![motrix-screenshot-task-en.png](./static/readme/UI.png)
+![risuko-screenshot-task-en.png](./static/readme/UI.png)
 
 ## ⌨️ Development
 
 ### Clone Code
 
 ```bash
-git clone https://github.com/YueMiyuki/Motrix-NEXT
+git clone https://github.com/YueMiyuki/Risuko
 ```
 
 ### Install Dependencies
@@ -58,7 +58,7 @@ git clone https://github.com/YueMiyuki/Motrix-NEXT
 Requires Node.js >= 22 and Rust >= 1.77.
 
 ```bash
-cd Motrix-NEXT
+cd risuko
 pnpm install
 ```
 

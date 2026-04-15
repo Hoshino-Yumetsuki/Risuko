@@ -5,7 +5,7 @@
 	}
 	.panel .panel-header {
 		position: relative;
-		padding: 28px 0 8px;
+		padding: 20px 0 8px;
 		margin: 0 16px;
 		border-bottom: 1px solid var(--mo-panel-border-color);
 		user-select: none;
@@ -18,7 +18,7 @@
 		left: 0;
 		width: 60px;
 		height: 2px;
-		background: linear-gradient(90deg, var(--color-primary), transparent);
+		background: linear-gradient(90deg, #3b82f6, transparent);
 		border-radius: calc(var(--radius) - 2px);
 	}
 	.panel .panel-header h4 {
@@ -27,7 +27,7 @@
 		font-size: 18px;
 		font-weight: 600;
 		line-height: 28px;
-		letter-spacing: -0.02em;
+		letter-spacing: -0.025em;
 	}
 	.panel .panel-content {
 		position: relative;

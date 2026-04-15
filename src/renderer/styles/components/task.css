@@ -98,8 +98,8 @@
 		padding: 0;
 		background-color: var(--mo-task-item-bg);
 		border: 1px solid var(--mo-task-item-border-color);
-		border-radius: calc(var(--radius) - 2px);
-		margin-bottom: 12px;
+		border-radius: var(--radius);
+		margin-bottom: 8px;
 		box-shadow: var(--mo-task-item-shadow);
 		overflow: hidden;
 		transition:
@@ -116,7 +116,7 @@
 		animation: pulse-indicator 2s ease-in-out infinite;
 	}
 	.task-item.is-complete .task-status-indicator {
-		background: linear-gradient(180deg, #67c23a, #4caf50);
+		background: linear-gradient(180deg, #22c55e, #16a34a);
 	}
 	.selected .task-item {
 		border-color: var(--mo-task-item-hover-border-color);
@@ -128,24 +128,24 @@
 	.task-status-indicator {
 		width: 4px;
 		flex-shrink: 0;
-		background: linear-gradient(180deg, var(--primary), #4d4dd5);
+		background: linear-gradient(180deg, var(--primary), #2563eb);
 		transition: width 0.3s cubic-bezier(0.25, 0.1, 0.25, 1);
 	}
 	.task-status-indicator.status-active {
-		background: linear-gradient(180deg, var(--primary), #4d4dd5);
+		background: linear-gradient(180deg, #3b82f6, #2563eb);
 	}
 	.task-status-indicator.status-waiting,
 	.task-status-indicator.status-paused {
-		background: linear-gradient(180deg, #e6a23c, #c48a33);
+		background: linear-gradient(180deg, #f59e0b, #d97706);
 	}
 	.task-status-indicator.status-complete {
-		background: linear-gradient(180deg, #67c23a, #58a531);
+		background: linear-gradient(180deg, #22c55e, #16a34a);
 	}
 	.task-status-indicator.status-error {
-		background: linear-gradient(180deg, #f56c6c, #d05c5c);
+		background: linear-gradient(180deg, #ef4444, #dc2626);
 	}
 	.task-status-indicator.status-seeding {
-		background: linear-gradient(180deg, #9c27b0, #7b1fa2);
+		background: linear-gradient(180deg, #a78bfa, #7c3aed);
 	}
 	.task-content {
 		flex: 1;
@@ -184,7 +184,7 @@
 	}
 	.task-actions {
 		position: absolute;
-		top: 28px;
+		top: 20px;
 		right: 0;
 		height: 28px;
 		padding: 0;
@@ -271,10 +271,15 @@
 		background: rgba(0, 0, 0, 0.06);
 	}
 	.dark .task-filter-field {
-		background: rgba(255, 255, 255, 0.06);
+		background: rgba(255, 255, 255, 0.04);
+		border-color: rgba(255, 255, 255, 0.06);
+	}
+	.dark .task-filter-field:focus {
+		border-color: rgba(59, 130, 246, 0.4);
+		background: rgba(59, 130, 246, 0.06);
 	}
 	.dark .task-filter-clear:hover {
-		background: rgba(255, 255, 255, 0.1);
+		background: rgba(255, 255, 255, 0.08);
 	}
 	.task-toolbar-select {
 		min-width: 90px;

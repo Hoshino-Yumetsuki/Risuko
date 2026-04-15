@@ -37,20 +37,20 @@ export const showItemInFolder = async (
 	}
 
 	logger.info(
-		`[Motrix] showItemInFolder: path="${revealPath}", fallback="${fallback}"`,
+		`[Risuko] showItemInFolder: path="${revealPath}", fallback="${fallback}"`,
 	);
 
 	try {
 		await invoke("reveal_in_folder", { path: revealPath || fallback });
 	} catch (err) {
-		logger.warn(`[Motrix] showItemInFolder fail: ${err}`);
+		logger.warn(`[Risuko] showItemInFolder fail: ${err}`);
 
 		if (fallback && fallback !== revealPath) {
 			try {
 				await invoke("reveal_in_folder", { path: fallback });
 				return;
 			} catch (fallbackErr) {
-				logger.warn(`[Motrix] showItemInFolder fallback fail: ${fallbackErr}`);
+				logger.warn(`[Risuko] showItemInFolder fallback fail: ${fallbackErr}`);
 			}
 		}
 
@@ -111,7 +111,7 @@ export const getTaskRevealPath = (task: DownloadTask): string => {
 
 	if (isMagnetTask(task)) {
 		const result = `${task?.dir || ""}`.trim();
-		logger.info(`[Motrix] getTaskRevealPath (magnet): "${result}"`);
+		logger.info(`[Risuko] getTaskRevealPath (magnet): "${result}"`);
 		return result;
 	}
 
@@ -121,7 +121,7 @@ export const getTaskRevealPath = (task: DownloadTask): string => {
 	if (!candidate) {
 		const fallback = getTaskFullPath(task);
 		logger.info(
-			`[Motrix] getTaskRevealPath (no file.path, using getTaskFullPath): "${fallback}"`,
+			`[Risuko] getTaskRevealPath (no file.path, using getTaskFullPath): "${fallback}"`,
 		);
 		return fallback;
 	}
@@ -130,7 +130,7 @@ export const getTaskRevealPath = (task: DownloadTask): string => {
 		task?.status === TASK_STATUS.COMPLETE
 			? stripTempDownloadSuffix(candidate)
 			: candidate;
-	logger.info(`[Motrix] getTaskRevealPath (from file.path): "${result}"`);
+	logger.info(`[Risuko] getTaskRevealPath (from file.path): "${result}"`);
 	return result;
 };
 
@@ -164,7 +164,7 @@ export const finalizeCompletedDownloadPath = async (
 		});
 		return targetPath;
 	} catch (err) {
-		logger.warn(`[Motrix] rename completed temp file failed: ${err}`);
+		logger.warn(`[Risuko] rename completed temp file failed: ${err}`);
 		return sourcePath;
 	}
 };
@@ -183,23 +183,23 @@ export const moveTaskFilesToTrash = async (
 	}
 
 	logger.info(
-		`[Motrix] moveTaskFilesToTrash: dir="${dir}", status="${status}", files=${files.length}`,
+		`[Risuko] moveTaskFilesToTrash: dir="${dir}", status="${status}", files=${files.length}`,
 	);
 
 	// For multi-file BT tasks, trash the torrent folder
 	const isBtMultiFile = !!bittorrent?.info?.name && files.length > 1;
 	if (isBtMultiFile) {
 		const torrentFolder = joinPath(dir, bittorrent.info.name);
-		logger.info(`[Motrix] trashing torrent folder: "${torrentFolder}"`);
+		logger.info(`[Risuko] trashing torrent folder: "${torrentFolder}"`);
 		try {
 			const found: boolean = await invoke("trash_item", {
 				path: torrentFolder,
 			});
 			if (found) {
-				logger.info(`[Motrix] trashed torrent folder: "${torrentFolder}"`);
+				logger.info(`[Risuko] trashed torrent folder: "${torrentFolder}"`);
 			}
 		} catch (err) {
-			logger.warn(`[Motrix] trash torrent folder failed: ${err}`);
+			logger.warn(`[Risuko] trash torrent folder failed: ${err}`);
 			// Fall through to try individual files
 			let trashedAny = false;
 			for (const file of files) {
@@ -213,7 +213,7 @@ export const moveTaskFilesToTrash = async (
 						trashedAny = true;
 					}
 				} catch (fileErr) {
-					logger.warn(`[Motrix] trash file "${filePath}" failed: ${fileErr}`);
+					logger.warn(`[Risuko] trash file "${filePath}" failed: ${fileErr}`);
 				}
 			}
 			if (!trashedAny) {
@@ -228,7 +228,7 @@ export const moveTaskFilesToTrash = async (
 	// Single file task (HTTP or single-file BT)
 	const path = getTaskFullPath(task);
 	logger.info(
-		`[Motrix] moveTaskFilesToTrash: path="${path}", dir="${dir}", status="${status}"`,
+		`[Risuko] moveTaskFilesToTrash: path="${path}", dir="${dir}", status="${status}"`,
 	);
 
 	if (!path || dir === path) {
@@ -245,28 +245,28 @@ export const moveTaskFilesToTrash = async (
 	try {
 		const found: boolean = await invoke("trash_item", { path });
 		if (found) {
-			logger.info(`[Motrix] trashed: "${path}"`);
+			logger.info(`[Risuko] trashed: "${path}"`);
 		} else if (partPath) {
 			const partFound: boolean = await invoke("trash_item", { path: partPath });
 			if (partFound) {
-				logger.info(`[Motrix] trashed .part file: "${partPath}"`);
+				logger.info(`[Risuko] trashed .part file: "${partPath}"`);
 			}
 		}
 	} catch (err) {
-		logger.warn(`[Motrix] trash "${path}" failed: ${err}`);
+		logger.warn(`[Risuko] trash "${path}" failed: ${err}`);
 		if (partPath) {
 			try {
 				const partFound: boolean = await invoke("trash_item", {
 					path: partPath,
 				});
 				if (partFound) {
-					logger.info(`[Motrix] trashed .part file: "${partPath}"`);
+					logger.info(`[Risuko] trashed .part file: "${partPath}"`);
 					await cleanupGeneratedTorrentSidecars(task);
 					return true;
 				}
 			} catch (partErr) {
 				logger.warn(
-					`[Motrix] trash .part "${partPath}" also failed: ${partErr}`,
+					`[Risuko] trash .part "${partPath}" also failed: ${partErr}`,
 				);
 			}
 		}
@@ -291,7 +291,7 @@ const cleanupGeneratedTorrentSidecars = async (
 		);
 		return Number.isFinite(result) ? result : 0;
 	} catch (err) {
-		logger.warn(`[Motrix] cleanup generated torrent sidecars failed: ${err}`);
+		logger.warn(`[Risuko] cleanup generated torrent sidecars failed: ${err}`);
 		return 0;
 	}
 };

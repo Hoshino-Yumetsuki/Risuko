@@ -179,7 +179,7 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    // --- parse_keep_seeding_option ---
+    // -- parse_keep_seeding_option --
 
     #[test]
     fn keep_seeding_bool() {
@@ -224,7 +224,7 @@ mod tests {
         assert_eq!(parse_keep_seeding_option(Some(&json!("random"))), None);
     }
 
-    // --- parse_f64_like ---
+    // -- parse_f64_like --
 
     #[test]
     fn f64_like_number() {
@@ -245,7 +245,7 @@ mod tests {
         assert_eq!(parse_f64_like(Some(&json!(null))), None);
     }
 
-    // --- load_or_default ---
+    // -- load_or_default --
 
     #[test]
     fn load_or_default_missing_file_returns_defaults() {
@@ -284,7 +284,7 @@ mod tests {
         assert_eq!(result.get("missing").unwrap(), "filled"); // filled from defaults
     }
 
-    // --- get_merged_config ---
+    // -- get_merged_config --
 
     #[test]
     fn merged_config_combines_system_and_user() {
@@ -312,7 +312,7 @@ mod tests {
         assert!(obj.contains_key("arch"));
     }
 
-    // --- migrate_legacy_keep_seeding_defaults ---
+    // -- migrate_legacy_keep_seeding_defaults --
 
     #[test]
     fn migration_resets_legacy_seed_values() {

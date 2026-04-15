@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::Mutex;
 
 use tauri::{
     menu::{AboutMetadataBuilder, Menu, MenuBuilder, MenuItemBuilder, Submenu, SubmenuBuilder},
@@ -6,6 +7,8 @@ use tauri::{
 };
 
 use super::{emit_command, show_and_emit};
+
+static CACHED_LABELS: Mutex<Option<HashMap<String, String>>> = Mutex::new(None);
 
 fn get_menu_text(labels: &HashMap<String, String>, id: &str, fallback: &str) -> String {
     labels
@@ -28,6 +31,10 @@ pub fn update_menu_labels(
     handle: &AppHandle,
     labels: &HashMap<String, String>,
 ) -> Result<(), String> {
+    // Cache labels so toggle_app_menu can restore them
+    if let Ok(mut cached) = CACHED_LABELS.lock() {
+        *cached = Some(labels.clone());
+    }
     let menu = build_menu(handle, labels).map_err(|e| e.to_string())?;
     handle.set_menu(menu).map_err(|e| e.to_string())?;
     Ok(())
@@ -37,7 +44,12 @@ pub fn toggle_app_menu(handle: &AppHandle, hidden: bool) -> Result<(), String> {
     if hidden {
         handle.remove_menu().map_err(|e| e.to_string())?;
     } else {
-        let menu = build_menu(handle, &HashMap::new()).map_err(|e| e.to_string())?;
+        let labels = CACHED_LABELS
+            .lock()
+            .ok()
+            .and_then(|c| c.clone())
+            .unwrap_or_default();
+        let menu = build_menu(handle, &labels).map_err(|e| e.to_string())?;
         handle.set_menu(menu).map_err(|e| e.to_string())?;
     }
     Ok(())
@@ -58,10 +70,10 @@ fn build_macos_menu(
     handle: &AppHandle,
     labels: &HashMap<String, String>,
 ) -> Result<Menu<tauri::Wry>, Box<dyn std::error::Error>> {
-    let app_menu = SubmenuBuilder::new(handle, get_menu_text(labels, "menu-app", "Motrix"))
+    let app_menu = SubmenuBuilder::new(handle, get_menu_text(labels, "menu-app", "Risuko"))
         .about(Some(
             AboutMetadataBuilder::new()
-                .name(Some("Motrix"))
+                .name(Some("Risuko"))
                 .version(Some(env!("CARGO_PKG_VERSION")))
                 .build(),
         ))
@@ -87,7 +99,7 @@ fn build_macos_menu(
         .show_all()
         .separator()
         .item(
-            &MenuItemBuilder::with_id("quit", get_menu_text(labels, "quit", "Quit Motrix"))
+            &MenuItemBuilder::with_id("quit", get_menu_text(labels, "quit", "Quit Risuko"))
                 .accelerator("CmdOrCtrl+Q")
                 .build(handle)?,
         )
@@ -131,7 +143,7 @@ fn build_default_menu(
 ) -> Result<Menu<tauri::Wry>, Box<dyn std::error::Error>> {
     let file_menu = SubmenuBuilder::new(handle, get_menu_text(labels, "menu-file", "File"))
         .item(
-            &MenuItemBuilder::with_id("about", get_menu_text(labels, "about", "About Motrix"))
+            &MenuItemBuilder::with_id("about", get_menu_text(labels, "about", "About Risuko"))
                 .build(handle)?,
         )
         .separator()
@@ -153,13 +165,13 @@ fn build_default_menu(
         .item(
             &MenuItemBuilder::with_id(
                 "show-window",
-                get_menu_text(labels, "show-window", "Show Motrix"),
+                get_menu_text(labels, "show-window", "Show Risuko"),
             )
             .build(handle)?,
         )
         .separator()
         .item(
-            &MenuItemBuilder::with_id("quit", get_menu_text(labels, "quit", "Quit Motrix"))
+            &MenuItemBuilder::with_id("quit", get_menu_text(labels, "quit", "Quit Risuko"))
                 .accelerator("CmdOrCtrl+Q")
                 .build(handle)?,
         )
@@ -385,16 +397,16 @@ fn setup_menu_event_handler(app: &App) {
                 }
             }
             "official-website" => {
-                let _ = open::that("https://motrix.app");
+                let _ = open::that("https://risuko.vercel.app");
             }
             "manual" => {
-                let _ = open::that("https://github.com/agalwood/Motrix/wiki");
+                let _ = open::that("https://github.com/YueMiyuki/Risuko/wiki");
             }
             "release-notes" => {
-                let _ = open::that("https://github.com/agalwood/Motrix/releases");
+                let _ = open::that("https://github.com/YueMiyuki/Risuko/releases");
             }
             "report-problem" => {
-                let _ = open::that("https://github.com/agalwood/Motrix/issues");
+                let _ = open::that("https://github.com/YueMiyuki/Risuko/issues");
             }
             "reload" => {
                 if let Some(window) = app.get_webview_window("main") {
