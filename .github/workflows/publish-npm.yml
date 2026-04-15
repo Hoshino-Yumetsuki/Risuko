@@ -337,7 +337,7 @@ jobs:
 
             ### Install via npm
             ```bash
-            npm install -g risuko-cli
+            npm install -g @risuko/cli
             ```
 
             ### Or download binary directly
