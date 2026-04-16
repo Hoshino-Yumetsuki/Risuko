@@ -27,7 +27,7 @@ Risuko has a clean and easy to use interface. I hope you will like it 👻.
 Download from [GitHub Releases](https://github.com/YueMiyuki/Risuko/releases) and install it.
 
 ### NPM Package
-Risuko provide a WebUI together with the engine
+Risuko provide a npm package together with the engine
 ```
 pnpm install -g @risuko/app
 risuko-app --port 8080
