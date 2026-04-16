@@ -451,7 +451,15 @@ export default {
 		async autofillResourceLink() {
 			let content = "";
 			try {
-				content = await readText();
+				// Race clipboard read against a timeout to prevent GTK main-thread
+				// deadlock on Linux (WebKitGTK clipboard IPC can block indefinitely
+				// if fired while the dialog portal is still mounting).
+				content = await Promise.race([
+					readText(),
+					new Promise<string>((_resolve, reject) =>
+						setTimeout(() => reject(new Error("clipboard timeout")), 1000),
+					),
+				]);
 			} catch (_err) {
 				return;
 			}
@@ -481,9 +489,12 @@ export default {
 			}, 100);
 
 			if (this.type === ADD_TASK_TYPE.URI && isEmpty(this.form.uris)) {
+				// Delay clipboard read to let the dialog fully render first.
+				// On Linux (WebKitGTK), firing too early can deadlock the GTK
+				// main loop because clipboard IPC competes with portal rendering.
 				setTimeout(() => {
 					this.autofillResourceLink();
-				}, 0);
+				}, 300);
 			}
 
 			setTimeout(() => {

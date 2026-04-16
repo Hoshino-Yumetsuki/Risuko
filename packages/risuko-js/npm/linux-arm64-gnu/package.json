@@ -1,6 +1,6 @@
 {
 	"name": "@risuko/js-linux-arm64-gnu",
-	"version": "0.1.4",
+	"version": "0.1.5",
 	"description": "Risuko JS native module for Linux ARM64",
 	"license": "MIT",
 	"os": [

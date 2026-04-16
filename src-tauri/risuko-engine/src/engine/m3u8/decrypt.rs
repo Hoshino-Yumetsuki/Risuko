@@ -1,4 +1,4 @@
-use aes::cipher::{block_padding::Pkcs7, BlockDecryptMut, KeyIvInit};
+use aes::cipher::{block_padding::Pkcs7, BlockModeDecrypt, KeyIvInit};
 
 type Aes128CbcDec = cbc::Decryptor<aes::Aes128>;
 
@@ -56,7 +56,7 @@ pub fn decrypt_segment(data: &[u8], key: &[u8; 16], iv: &[u8; 16]) -> Result<Vec
 
     let mut buf = data.to_vec();
     let decrypted = Aes128CbcDec::new(key.into(), iv.into())
-        .decrypt_padded_mut::<Pkcs7>(&mut buf)
+        .decrypt_padded::<Pkcs7>(&mut buf)
         .map_err(|e| format!("AES decryption failed: {e}"))?;
 
     Ok(decrypted.to_vec())

@@ -209,6 +209,10 @@ pub struct GidArgs {
 pub struct ServeArgs {
     #[arg(long, default_value_t = 16800)]
     pub rpc_port: u16,
+
+    /// Enable verbose logging (maximize log output)
+    #[arg(short, long)]
+    pub verbose: bool,
 }
 
 #[derive(clap::Args)]
@@ -293,14 +297,20 @@ pub enum RssAction {
 }
 
 fn main() {
+    let cli = Cli::parse();
+
+    let default_level = match &cli.command {
+        Command::Serve(args) if args.verbose => "debug,risuko_engine=trace",
+        Command::Serve(_) => "info",
+        _ => "warn",
+    };
+
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn")),
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(default_level)),
         )
         .init();
-
-    let cli = Cli::parse();
 
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()

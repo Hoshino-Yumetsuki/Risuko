@@ -14,7 +14,7 @@ use tower_http::cors::{Any, CorsLayer};
 use super::events::EventBroadcaster;
 use super::manager::TaskManager;
 
-const ENGINE_VERSION: &str = "risuko-engine/0.1";
+const ENGINE_VERSION: &str = concat!("risuko-engine/", env!("CARGO_PKG_VERSION"));
 
 // JSON-RPC 2.0 error codes
 const PARSE_ERROR: i64 = -32700;
