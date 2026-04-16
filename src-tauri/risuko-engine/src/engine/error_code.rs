@@ -224,11 +224,11 @@ pub fn classify_error(msg: &str, protocol: &str) -> ErrorCode {
             }
         }
         "ed2k" => {
-            if lower.contains("server") || lower.contains("unreachable") {
-                return ErrorCode::ED2K_SERVER_UNREACHABLE;
-            }
             if lower.contains("not found") {
                 return ErrorCode::ED2K_FILE_NOT_FOUND;
+            }
+            if lower.contains("unreachable") || lower.contains("server") {
+                return ErrorCode::ED2K_SERVER_UNREACHABLE;
             }
         }
         "m3u8" => {

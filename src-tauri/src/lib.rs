@@ -26,7 +26,9 @@ fn init_logging(
     use tracing_subscriber::util::SubscriberInitExt;
     use tracing_subscriber::EnvFilter;
 
-    std::fs::create_dir_all(log_dir).ok();
+    if let Err(e) = std::fs::create_dir_all(log_dir) {
+        eprintln!("Failed to create log directory {:?}: {}", log_dir, e);
+    }
 
     let file_appender = tracing_appender::rolling::daily(log_dir, "risuko.log");
     let (file_writer, guard) = tracing_appender::non_blocking(file_appender);
