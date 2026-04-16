@@ -543,7 +543,7 @@ impl DownloadTask {
 }
 
 pub fn generate_gid() -> String {
-    use rand::Rng;
+    use rand::RngExt;
     use std::fmt::Write;
     let mut rng = rand::rng();
     let bytes: [u8; 8] = rng.random();

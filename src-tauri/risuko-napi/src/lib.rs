@@ -402,10 +402,7 @@ pub async fn remove_download_result(gid: String) -> Result<()> {
 /// Returns an unsubscribe function ID.
 #[napi(ts_args_type = "callback: (eventName: string, gid: string) => void")]
 pub fn on_event(
-    callback: napi::threadsafe_function::ThreadsafeFunction<
-        (String, String),
-        napi::threadsafe_function::ErrorStrategy::Fatal,
-    >,
+    callback: napi::threadsafe_function::ThreadsafeFunction<(String, String)>,
 ) -> Result<()> {
     let _guard_handle = std::thread::spawn(move || {
         let rt = tokio::runtime::Builder::new_current_thread()
@@ -424,7 +421,7 @@ pub fn on_event(
                             let name = event.method_name().to_string();
                             let gid = event.gid().to_string();
                             callback.call(
-                                (name, gid),
+                                Ok((name, gid)),
                                 napi::threadsafe_function::ThreadsafeFunctionCallMode::NonBlocking,
                             );
                         }

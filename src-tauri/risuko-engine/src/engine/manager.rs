@@ -6,6 +6,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 
+use super::error_code::classify_error;
 use super::events::{EngineEvent, EventBroadcaster};
 use super::http;
 use super::options::EngineOptions;
@@ -125,6 +126,7 @@ impl TaskManager {
         options: Map<String, Value>,
     ) -> Result<String, String> {
         let gid = generate_gid();
+        log::info!("[task:{}] Adding HTTP task, uris={:?}", gid, uris);
         let dir = {
             let merged = self.options.read().await.merge_task_options(&options);
             merged
@@ -189,12 +191,14 @@ impl TaskManager {
                 Err(e) => {
                     log::error!("Torrent task {} failed to add: {}", gid, e);
                     task.status = TaskStatus::Error;
+                    task.error_code = Some(classify_error(&e, "torrent").to_string());
                     task.error_message = Some(e);
                 }
             }
         } else {
             log::error!("Torrent task {} failed: engine not available", gid);
             task.status = TaskStatus::Error;
+            task.error_code = Some(super::error_code::ErrorCode::ENGINE_NOT_RUNNING.to_string());
             task.error_message = Some("Torrent engine not available".to_string());
         }
         drop(te_guard);
@@ -235,11 +239,13 @@ impl TaskManager {
                 }
                 Err(e) => {
                     task.status = TaskStatus::Error;
+                    task.error_code = Some(classify_error(&e, "torrent").to_string());
                     task.error_message = Some(e);
                 }
             }
         } else {
             task.status = TaskStatus::Error;
+            task.error_code = Some(super::error_code::ErrorCode::ENGINE_NOT_RUNNING.to_string());
             task.error_message = Some("Torrent engine not available".to_string());
         }
         drop(te_guard);
@@ -540,6 +546,11 @@ impl TaskManager {
 
                 match download_result {
                     Ok(path) => {
+                        log::info!(
+                            "[task:{}] HTTP download complete: {}",
+                            gid_clone,
+                            path.display()
+                        );
                         task.status = TaskStatus::Complete;
                         task.files = vec![DownloadFile {
                             index: "1".to_string(),
@@ -572,7 +583,7 @@ impl TaskManager {
                         } else {
                             tracing::error!("Download failed for {}: {}", gid_clone, e);
                             task.status = TaskStatus::Error;
-                            task.error_code = Some("1".to_string());
+                            task.error_code = Some(classify_error(&e, "http").to_string());
                             task.error_message = Some(e);
                             events.send(EngineEvent::DownloadError {
                                 gid: gid_clone.clone(),
@@ -666,6 +677,11 @@ impl TaskManager {
 
                 match download_result {
                     Ok(path) => {
+                        log::info!(
+                            "[task:{}] ED2K download complete: {}",
+                            gid_clone,
+                            path.display()
+                        );
                         task.status = TaskStatus::Complete;
                         task.files = vec![DownloadFile {
                             index: "1".to_string(),
@@ -698,7 +714,7 @@ impl TaskManager {
                         } else {
                             tracing::error!("[ed2k] Download failed for {}: {}", gid_clone, e);
                             task.status = TaskStatus::Error;
-                            task.error_code = Some("1".to_string());
+                            task.error_code = Some(classify_error(&e, "ed2k").to_string());
                             task.error_message = Some(e);
                             events.send(EngineEvent::DownloadError {
                                 gid: gid_clone.clone(),
@@ -788,6 +804,11 @@ impl TaskManager {
 
                 match download_result {
                     Ok(path) => {
+                        log::info!(
+                            "[task:{}] M3U8 download complete: {}",
+                            gid_clone,
+                            path.display()
+                        );
                         task.status = TaskStatus::Complete;
                         task.files = vec![DownloadFile {
                             index: "1".to_string(),
@@ -820,7 +841,7 @@ impl TaskManager {
                         } else {
                             tracing::error!("[m3u8] Download failed for {}: {}", gid_clone, e);
                             task.status = TaskStatus::Error;
-                            task.error_code = Some("1".to_string());
+                            task.error_code = Some(classify_error(&e, "m3u8").to_string());
                             task.error_message = Some(e);
                             events.send(EngineEvent::DownloadError {
                                 gid: gid_clone.clone(),
@@ -909,6 +930,11 @@ impl TaskManager {
 
                 match download_result {
                     Ok(path) => {
+                        log::info!(
+                            "[task:{}] FTP download complete: {}",
+                            gid_clone,
+                            path.display()
+                        );
                         task.status = TaskStatus::Complete;
                         task.files = vec![DownloadFile {
                             index: "1".to_string(),
@@ -941,7 +967,7 @@ impl TaskManager {
                         } else {
                             tracing::error!("[ftp] Download failed for {}: {}", gid_clone, e);
                             task.status = TaskStatus::Error;
-                            task.error_code = Some("1".to_string());
+                            task.error_code = Some(classify_error(&e, "ftp").to_string());
                             task.error_message = Some(e);
                             events.send(EngineEvent::DownloadError {
                                 gid: gid_clone.clone(),
@@ -1232,6 +1258,7 @@ impl TaskManager {
         let mut tasks = self.tasks.write().await;
         if let Some(task) = tasks.iter_mut().find(|t| t.gid == gid) {
             if task.status == TaskStatus::Active || task.status == TaskStatus::Waiting {
+                log::info!("[task:{}] Paused (was {:?})", gid, task.status);
                 task.status = TaskStatus::Paused;
                 task.download_speed = 0;
                 task.upload_speed = 0;
@@ -1245,6 +1272,7 @@ impl TaskManager {
     }
 
     pub async fn unpause(&self, gid: &str) -> Result<(), String> {
+        log::info!("[task:{}] Resuming", gid);
         let is_torrent;
         {
             let mut tasks = self.tasks.write().await;
@@ -1283,6 +1311,7 @@ impl TaskManager {
     }
 
     pub async fn remove(&self, gid: &str) -> Result<(), String> {
+        log::info!("[task:{}] Removing", gid);
         // Cancel any active download
         {
             let active = self.active_downloads.read().await;
@@ -1766,6 +1795,7 @@ impl TaskManager {
     }
 
     pub async fn shutdown(&self) {
+        log::info!("Engine shutting down");
         // Cancel all active downloads
         let active = self.active_downloads.read().await;
         for (_, ad) in active.iter() {

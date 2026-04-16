@@ -862,7 +862,7 @@ pub async fn sync_selected_task_order(
 
 // Tauri commands wrapping TaskManager for direct invoke() calls
 
-const ENGINE_VERSION: &str = "risuko-engine/0.1";
+const ENGINE_VERSION: &str = concat!("risuko-engine/", env!("CARGO_PKG_VERSION"));
 
 #[tauri::command]
 pub async fn tell_status(gid: String, keys: Option<Vec<String>>) -> Result<Value, String> {

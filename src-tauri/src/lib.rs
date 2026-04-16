@@ -16,9 +16,37 @@ use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 
 use risuko_engine::engine::rss::RssManager;
 
-pub fn run() {
-    tracing_subscriber::fmt().init();
+/// Set up tracing subscriber with both stdout and file output.
+/// Returns a guard that must be held for the lifetime of the application.
+fn init_logging(
+    log_dir: &std::path::Path,
+    log_level: &str,
+) -> tracing_appender::non_blocking::WorkerGuard {
+    use tracing_subscriber::layer::SubscriberExt;
+    use tracing_subscriber::util::SubscriberInitExt;
+    use tracing_subscriber::EnvFilter;
 
+    std::fs::create_dir_all(log_dir).ok();
+
+    let file_appender = tracing_appender::rolling::daily(log_dir, "risuko.log");
+    let (file_writer, guard) = tracing_appender::non_blocking(file_appender);
+
+    let filter = EnvFilter::try_new(log_level).unwrap_or_else(|_| EnvFilter::new("warn"));
+
+    tracing_subscriber::registry()
+        .with(filter)
+        .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_ansi(false)
+                .with_writer(file_writer),
+        )
+        .init();
+
+    guard
+}
+
+pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_dialog::init())
@@ -57,7 +85,27 @@ pub fn run() {
             let storage: Arc<dyn risuko_engine::StorageBackend> =
                 Arc::new(bridge::TauriStorage::new(handle));
 
-            let app_state = state::AppState::new(&config_dir_provider, storage.clone())?;
+            // Resolve log directory and read log level from user config before AppState
+            let log_dir = handle.path().app_log_dir().unwrap_or_else(|_| {
+                handle
+                    .path()
+                    .app_config_dir()
+                    .unwrap_or_else(|_| std::path::PathBuf::from("."))
+                    .join("logs")
+            });
+            let config = risuko_engine::config::ConfigManager::new(&config_dir_provider)
+                .map_err(|e| e.to_string())?;
+            let log_level = config
+                .get_user_config()
+                .get("log-level")
+                .and_then(|v| v.as_str())
+                .unwrap_or("warn")
+                .to_string();
+
+            let log_guard = init_logging(&log_dir, &log_level);
+            log::info!("Log directory: {}", log_dir.display());
+
+            let app_state = state::AppState::new(config, storage.clone(), log_dir, log_guard)?;
             app.manage(app_state);
             sync_open_at_login_setting(app);
 

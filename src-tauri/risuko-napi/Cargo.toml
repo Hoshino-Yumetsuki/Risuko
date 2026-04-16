@@ -17,8 +17,8 @@ tokio = { workspace = true, features = ["full"] }
 log = { workspace = true }
 dirs = { workspace = true }
 base64 = "0.22"
-napi = { version = "2", features = ["async", "serde-json", "tokio_rt"] }
-napi-derive = "2"
+napi = { version = "3", features = ["async", "serde-json", "tokio_rt"] }
+napi-derive = "3"
 
 [build-dependencies]
 napi-build = "2"

@@ -577,7 +577,7 @@ export default {
 					`[Risuko] download error gid: ${gid}, #${errorCode}, ${errorMessage}`,
 				);
 				const message = this.$t("task.download-error-message", { taskName });
-				const link = `https://github.com/YueMiyuki/Risuko/wiki/Error#${errorCode}`;
+				const link = `https://risuko.vercel.app/docs/reference/error-codes#${errorCode}`;
 				this.$msg.error({
 					duration: 5000,
 					message: `${message} (${errorCode}) ${link}`,

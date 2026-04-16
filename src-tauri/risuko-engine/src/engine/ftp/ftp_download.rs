@@ -4,9 +4,9 @@ use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 
-use futures_util::AsyncReadExt;
 use serde_json::{Map, Value};
-use suppaftp::{AsyncFtpStream, AsyncRustlsConnector, AsyncRustlsFtpStream};
+use suppaftp::tokio::{AsyncFtpStream, AsyncRustlsConnector, AsyncRustlsFtpStream};
+use tokio::io::AsyncReadExt as _;
 use tokio::io::AsyncWriteExt;
 use tokio_util::sync::CancellationToken;
 
@@ -246,8 +246,9 @@ pub async fn run_ftp_ftps_download(
             .dangerous()
             .with_custom_certificate_verifier(Arc::new(AcceptAnyCert))
             .with_no_client_auth();
-        let connector =
-            AsyncRustlsConnector::from(futures_rustls::TlsConnector::from(Arc::new(rustls_config)));
+        let connector = AsyncRustlsConnector::from(suppaftp::tokio_rustls::TlsConnector::from(
+            Arc::new(rustls_config),
+        ));
 
         // Use implicit TLS connection for FTPS
         let mut ftp = AsyncRustlsFtpStream::connect_secure_implicit(&addr, connector, &parsed.host)

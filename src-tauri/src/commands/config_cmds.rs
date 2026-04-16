@@ -15,6 +15,14 @@ pub fn get_app_config(handle: AppHandle, state: State<'_, AppState>) -> Result<V
         }
     }
 
+    // Inject app-log-path so the frontend can display it
+    if let Some(map) = merged.as_object_mut() {
+        map.insert(
+            "app-log-path".into(),
+            Value::String(state.log_dir.to_string_lossy().to_string()),
+        );
+    }
+
     Ok(merged)
 }
 

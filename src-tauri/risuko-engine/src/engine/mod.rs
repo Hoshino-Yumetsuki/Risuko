@@ -1,4 +1,5 @@
 pub mod ed2k;
+pub mod error_code;
 pub mod events;
 pub mod ftp;
 pub mod http;

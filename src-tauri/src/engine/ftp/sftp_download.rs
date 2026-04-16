@@ -4,9 +4,8 @@ use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 
-use async_trait::async_trait;
 use russh::client;
-use russh_keys::key;
+use russh::keys::key;
 use russh_sftp::client::SftpSession;
 use serde_json::{Map, Value};
 use tokio::io::AsyncWriteExt;
@@ -23,13 +22,12 @@ const SPEED_EMA_ALPHA: f64 = 0.3;
 /// TODO: TOFU verification: v0.1.1
 struct SshHandler;
 
-#[async_trait]
 impl client::Handler for SshHandler {
     type Error = russh::Error;
 
     async fn check_server_key(
         &mut self,
-        _server_public_key: &key::PublicKey,
+        _server_public_key: &russh::keys::PublicKey,
     ) -> Result<bool, Self::Error> {
         // Accept all host keys for now
         Ok(true)
@@ -320,7 +318,7 @@ async fn try_authenticate(
 }
 
 /// Load an SSH private key from either a file path or inline PEM content
-async fn load_private_key(source: &str, passphrase: Option<&str>) -> Result<key::KeyPair, String> {
+async fn load_private_key(source: &str, passphrase: Option<&str>) -> Result<russh::keys::PrivateKey, String> {
     let pem_content = if source.contains("-----BEGIN") {
         // Inline PEM content
         source.to_string()
@@ -341,7 +339,7 @@ async fn load_private_key(source: &str, passphrase: Option<&str>) -> Result<key:
             .map_err(|e| format!("Failed to read SSH key file '{}': {e}", path.display()))?
     };
 
-    russh_keys::decode_secret_key(&pem_content, passphrase)
+    russh::keys::decode_secret_key(&pem_content, passphrase)
         .map_err(|e| format!("Failed to decode SSH key: {e}"))
 }
 

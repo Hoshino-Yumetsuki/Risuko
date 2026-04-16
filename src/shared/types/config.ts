@@ -48,5 +48,6 @@ export interface AppConfig {
 	lowSpeedThreshold?: number;
 	lowSpeedStrikeThreshold?: number;
 	lowSpeedCooldownMs?: number;
+	appLogPath?: string;
 	[key: string]: unknown;
 }

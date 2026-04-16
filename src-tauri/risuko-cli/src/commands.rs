@@ -456,12 +456,12 @@ pub async fn rss(cmd: RssCommand) -> Result<(), Box<dyn std::error::Error>> {
 // Serve (headless engine)
 
 pub async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
-    eprintln!("Starting Risuko engine on port {}...", args.rpc_port);
+    tracing::info!("Starting Risuko engine on port {}", args.rpc_port);
     let engine = start_headless_engine(args.rpc_port).await?;
-    eprintln!("Risuko engine running. Press Ctrl+C to stop.");
+    tracing::info!("Risuko engine running, press Ctrl+C to stop");
 
     tokio::signal::ctrl_c().await?;
-    eprintln!("\nShutting down...");
+    tracing::info!("Received Ctrl+C, shutting down...");
     engine.shutdown().await;
     Ok(())
 }
@@ -500,6 +500,7 @@ async fn start_headless_engine(
 ) -> Result<HeadlessEngine, Box<dyn std::error::Error>> {
     let config_dir = get_config_dir();
     std::fs::create_dir_all(&config_dir)?;
+    tracing::debug!("Config directory: {}", config_dir.display());
 
     let system_config = load_config(&config_dir.join("system.json"), defaults::system_defaults());
     let user_config = load_config(&config_dir.join("user.json"), defaults::user_defaults());
@@ -510,13 +511,14 @@ async fn start_headless_engine(
     let dir = options.dir();
     if !dir.is_empty() {
         std::fs::create_dir_all(&dir).ok();
+        tracing::debug!("Download directory: {}", dir);
     }
 
     let events = EventBroadcaster::default();
     let rpc_host = options.rpc_host();
     let rpc_secret = options.rpc_secret();
 
-    tracing::info!("Starting headless engine on port {}", rpc_port);
+    tracing::info!("Initializing task manager");
 
     let manager = Arc::new(
         TaskManager::new(&config_dir, options, events.clone())
@@ -524,10 +526,12 @@ async fn start_headless_engine(
             .map_err(|e| format!("Failed to create task manager: {}", e))?,
     );
 
+    tracing::info!("Task manager ready");
+
     let (rpc_shutdown_tx, _rpc_shutdown_rx) = tokio::sync::mpsc::channel::<()>(1);
 
     let mut rpc_server = RpcServer::new(
-        rpc_host,
+        rpc_host.clone(),
         rpc_port,
         rpc_secret,
         manager.clone(),
@@ -538,6 +542,8 @@ async fn start_headless_engine(
         .start()
         .await
         .map_err(|e| format!("Failed to start RPC server: {}", e))?;
+
+    tracing::info!("RPC server listening on {}:{}", rpc_host, rpc_port);
 
     let mgr_progress = manager.clone();
     let progress_task = tokio::spawn(async move {

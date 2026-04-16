@@ -2,7 +2,7 @@
 members = ["risuko-engine", "risuko-cli", "risuko-napi"]
 
 [workspace.package]
-version = "0.1.4"
+version = "0.1.5"
 authors = ["YueMiyuki"]
 edition = "2021"
 
@@ -61,11 +61,12 @@ tauri-plugin-nosleep = { git = "https://github.com/pevers/tauri-plugin-nosleep",
 tauri-plugin-single-instance = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-appender = "0.2"
 regex = "1.12.3"
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
 base64 = "0.22"
-sha1 = "0.10"
-sha2 = "0.10"
+sha1 = "0.11"
+sha2 = "0.11"
 urlencoding = "2"
 
 [dev-dependencies]

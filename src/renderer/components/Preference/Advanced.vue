@@ -531,22 +531,6 @@
             <div class="dev-paths-grid">
               <div class="dev-path-card">
                 <div class="dev-path-card-header">
-                  <Database :size="13" class="dev-path-card-icon" />
-                  <span class="dev-path-card-label">{{
-                    $t('preferences.download-session-path')
-                  }}</span>
-                </div>
-                <div class="dev-path-card-body">
-                  <div class="mo-input-group">
-                    <Input disabled :model-value="sessionPath" class="dev-path-input" />
-                    <span class="mo-input-append">
-                      <mo-show-in-folder v-if="isRenderer" :path="sessionPath" />
-                    </span>
-                  </div>
-                </div>
-              </div>
-              <div class="dev-path-card">
-                <div class="dev-path-card-header">
                   <ScrollText :size="13" class="dev-path-card-icon" />
                   <span class="dev-path-card-label">{{ $t('preferences.app-log-path') }}</span>
                 </div>
@@ -657,7 +641,6 @@ import {
 	Check,
 	ChevronDown,
 	Code,
-	Database,
 	Dices,
 	ExternalLink,
 	FileKey,
@@ -788,7 +771,6 @@ export default {
 		FileKey,
 		FileText,
 		KeyRound,
-		Database,
 		ScrollText,
 		AlertTriangle,
 		Settings,
@@ -846,10 +828,7 @@ export default {
 			return LOG_LEVELS;
 		},
 		logPath() {
-			return usePreferenceStore().config.logPath;
-		},
-		sessionPath() {
-			return usePreferenceStore().config.sessionPath;
+			return usePreferenceStore().config.appLogPath;
 		},
 	},
 	watch: {
