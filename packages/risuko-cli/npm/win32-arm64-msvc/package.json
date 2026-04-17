@@ -1,6 +1,6 @@
 {
 	"name": "@risuko/cli-win32-arm64-msvc",
-	"version": "0.1.5",
+	"version": "0.1.6",
 	"description": "Risuko CLI binary for Windows ARM64",
 	"license": "MIT",
 	"os": [
