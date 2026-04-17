@@ -129,9 +129,35 @@ importers:
 
   packages/risuko-app: {}
 
-  packages/risuko-cli: {}
+  packages/risuko-cli:
+    optionalDependencies:
+      '@risuko/cli-darwin-arm64':
+        specifier: 0.1.7
+        version: 0.1.7
+      '@risuko/cli-darwin-x64':
+        specifier: 0.1.7
+        version: 0.1.7
+      '@risuko/cli-linux-arm64-gnu':
+        specifier: 0.1.7
+        version: 0.1.7
+      '@risuko/cli-linux-x64-gnu':
+        specifier: 0.1.7
+        version: 0.1.7
+      '@risuko/cli-win32-arm64-msvc':
+        specifier: 0.1.7
+        version: 0.1.7
+      '@risuko/cli-win32-x64-msvc':
+        specifier: 0.1.7
+        version: 0.1.7
 
-  packages/risuko-js: {}
+  packages/risuko-js:
+    optionalDependencies:
+      '@risuko/js-darwin-arm64':
+        specifier: 0.1.7
+        version: 0.1.7
+      '@risuko/js-darwin-x64':
+        specifier: 0.1.7
+        version: 0.1.7
 
 packages:
 
@@ -461,6 +487,46 @@ packages:
   '@parcel/watcher@2.5.6':
     resolution: {integrity: sha512-tmmZ3lQxAe/k/+rNnXQRawJ4NjxO2hqiOLTHvWchtGZULp4RyFeh6aU4XdOYBFe2KE1oShQTv4AblOs2iOrNnQ==}
     engines: {node: '>= 10.0.0'}
+
+  '@risuko/cli-darwin-arm64@0.1.7':
+    resolution: {integrity: sha512-z9v/Bl5aEflWCDdopKrWcLRv2CWPqzeZsvEkByUX1/wx3ofUwolkgkMcWQLA3nS0n2vzwxu2z7iEyPkgQf3NaA==}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@risuko/cli-darwin-x64@0.1.7':
+    resolution: {integrity: sha512-pxr+cC1trFscs0jx0nyckkhwtsiNj+DbGTbk8TRW0+sNHYa45UWgHZGrYaT6suFfyJEPB8b4GyRAA4UqQmbUMg==}
+    cpu: [x64]
+    os: [darwin]
+
+  '@risuko/cli-linux-arm64-gnu@0.1.7':
+    resolution: {integrity: sha512-Cqd1r/rZl5cx5URgxhSfJnTrH8pnbe/fNLyAFRihCw/0C3WGJslRcbD6O12ldjIm5DdgelTqI2OUMtK5jWsr4Q==}
+    cpu: [arm64]
+    os: [linux]
+
+  '@risuko/cli-linux-x64-gnu@0.1.7':
+    resolution: {integrity: sha512-RzRlCx8M5KOwGEIulWV7vHB4b+p1cvkXq48Zakyfotk0+0717sWzuZW41OHI5TgwbB+Hc3H7TJii4Kk+wWu+NQ==}
+    cpu: [x64]
+    os: [linux]
+
+  '@risuko/cli-win32-arm64-msvc@0.1.7':
+    resolution: {integrity: sha512-4/LizLSNqTb0RIPPEqgfKvjY/1QRZ1qz1rZQvzs7f8N6xcxAbgbokQOnBMhEMIkY8ssUXjONq8KgYimuMhnxPw==}
+    cpu: [arm64]
+    os: [win32]
+
+  '@risuko/cli-win32-x64-msvc@0.1.7':
+    resolution: {integrity: sha512-CYS+ihA6ucQT0YXG5cdmygc/SWRStrq3zkRO4coif7NAFiTRNgWcYnfs6x3UmwpVmvd+jlcRp/QWT9IRAOTAtQ==}
+    cpu: [x64]
+    os: [win32]
+
+  '@risuko/js-darwin-arm64@0.1.7':
+    resolution: {integrity: sha512-K5y1USt3wuS8/Ikooh+eXji93IOO0HIZhChoby/YPh3gM7KpLd3gXGFah6XUGwEH+aQ2/celS9qmuYg8+hgCUw==}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@risuko/js-darwin-x64@0.1.7':
+    resolution: {integrity: sha512-F1x1EOdm2RAG2VMVejPTrCee2b7gQeTBqLxtg4vuoBivLZWxotRZAmC7l7Qv2T5/tRGr2vlatngvPhQOjT/3Jg==}
+    cpu: [x64]
+    os: [darwin]
 
   '@rolldown/binding-android-arm64@1.0.0-rc.15':
     resolution: {integrity: sha512-YYe6aWruPZDtHNpwu7+qAHEMbQ/yRl6atqb/AhznLTnD3UY99Q1jE7ihLSahNWkF4EqRPVC4SiR4O0UkLK02tA==}
@@ -1858,6 +1924,30 @@ snapshots:
       '@parcel/watcher-win32-arm64': 2.5.6
       '@parcel/watcher-win32-ia32': 2.5.6
       '@parcel/watcher-win32-x64': 2.5.6
+    optional: true
+
+  '@risuko/cli-darwin-arm64@0.1.7':
+    optional: true
+
+  '@risuko/cli-darwin-x64@0.1.7':
+    optional: true
+
+  '@risuko/cli-linux-arm64-gnu@0.1.7':
+    optional: true
+
+  '@risuko/cli-linux-x64-gnu@0.1.7':
+    optional: true
+
+  '@risuko/cli-win32-arm64-msvc@0.1.7':
+    optional: true
+
+  '@risuko/cli-win32-x64-msvc@0.1.7':
+    optional: true
+
+  '@risuko/js-darwin-arm64@0.1.7':
+    optional: true
+
+  '@risuko/js-darwin-x64@0.1.7':
     optional: true
 
   '@rolldown/binding-android-arm64@1.0.0-rc.15':
