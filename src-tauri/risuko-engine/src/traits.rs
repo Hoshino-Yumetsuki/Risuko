@@ -4,7 +4,7 @@ use std::path::PathBuf;
 /// Provides the directory used for app configuration and data files
 ///
 /// - Tauri impl: uses `AppHandle::path().app_config_dir()`
-/// - Standalone impl: uses `dirs::config_dir().join("risuko")`
+/// - Standalone impl: uses `dirs::config_dir().join("dev.risuko.app")`
 pub trait ConfigDirProvider: Send + Sync {
     fn config_dir(&self) -> PathBuf;
 }

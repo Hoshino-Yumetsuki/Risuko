@@ -350,8 +350,8 @@ export const useTaskStore = defineStore("task", {
 			this.setSortOrder(this.sortOrder === "asc" ? "desc" : "asc");
 		},
 		async fetchList() {
+			const type = this.currentList;
 			try {
-				const type = this.currentList;
 				let fetchType = type;
 				if (type === "completed") {
 					fetchType = "stopped";
@@ -359,6 +359,11 @@ export const useTaskStore = defineStore("task", {
 				const rawData = (await api.fetchTaskList({
 					type: fetchType,
 				})) as DownloadTask[];
+
+				// Discard stale results when the user switched tabs mid-flight.
+				if (type !== this.currentList) {
+					return [];
+				}
 
 				let data: DownloadTask[];
 				if (type === "completed") {
@@ -387,6 +392,9 @@ export const useTaskStore = defineStore("task", {
 				return orderedData;
 			} catch (err: unknown) {
 				logger.warn("[Risuko] fetchList failed:", (err as Error).message);
+				if (type !== this.currentList) {
+					return [];
+				}
 				this.taskList = [];
 				this.selectedGidList = [];
 				return [];
