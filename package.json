@@ -1,6 +1,6 @@
 {
 	"name": "risuko",
-	"version": "0.1.5",
+	"version": "0.1.6",
 	"description": "A full-featured download manager",
 	"homepage": "https://risuko.vercel.app",
 	"author": {
@@ -64,7 +64,7 @@
 		"sass": "1.99.0",
 		"tailwindcss": "^4.2.2",
 		"terser": "^5.46.1",
-		"typescript": "^6.0.2",
+		"typescript": "^6.0.3",
 		"vite": "^8.0.8",
 		"vite-plugin-static-copy": "^4.0.1",
 		"vue": "^3.5.32",

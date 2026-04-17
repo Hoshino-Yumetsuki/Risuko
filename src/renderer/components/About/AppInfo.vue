@@ -8,7 +8,7 @@
     <div class="engine-info" v-if="!!engine">
       <h4>{{ $t('about.engine-version') }} {{ engine.version }}</h4>
       <ul v-if="!isMas()">
-        <li v-for="(feature, index) in engine.enabledFeatures" v-bind:key="`feature-${index}`">
+        <li v-for="(feature, index) in engine.enabledFeatures" :key="`feature-${index}`">
           {{ feature }}
         </li>
       </ul>

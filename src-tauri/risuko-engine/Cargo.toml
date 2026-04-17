@@ -1,6 +1,6 @@
 [package]
 name = "risuko-engine"
-version = "0.1.5"
+version = "0.1.6"
 description = "Risuko download engine — multi-protocol download library"
 authors = ["YueMiyuki"]
 edition = "2021"
@@ -17,7 +17,9 @@ log = "0.4"
 dirs = "6"
 sha1 = "0.11"
 sha2 = "0.11"
-librqbit = "8"
+# Pinned to the exact commit for v9.0.0-beta.2 so the dependency remains
+# immutable even if the upstream tag is rewritten.
+librqbit = { git = "https://github.com/ikatson/rqbit.git", rev = "1f207f5cab3663940c58a0f424fe61d4174377ae" }
 axum = { version = "0.8", features = ["ws"] }
 uuid = { version = "1", features = ["v4"] }
 base64 = "0.22"
