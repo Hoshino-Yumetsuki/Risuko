@@ -1,13 +1,14 @@
 [workspace]
-members = ["risuko-engine", "risuko-cli", "risuko-napi"]
+members = ["risuko-engine", "risuko-bt", "risuko-cli", "risuko-napi"]
 
 [workspace.package]
-version = "0.1.6"
+version = "0.1.7"
 authors = ["YueMiyuki"]
 edition = "2021"
 
 [workspace.dependencies]
 risuko-engine = { path = "risuko-engine" }
+risuko-bt = { path = "risuko-bt" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["process", "sync", "time", "rt", "net", "macros", "signal"] }

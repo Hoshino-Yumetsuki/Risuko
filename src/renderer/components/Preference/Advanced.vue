@@ -229,6 +229,46 @@
               </div>
             </div>
 
+            <div class="settings-row" style="margin-top: 8px">
+              <div class="settings-row-content">
+                <div class="settings-row-title">
+                  {{ $t('preferences.bt-max-peers-per-torrent') }}
+                </div>
+                <div class="settings-row-description">
+                  {{ $t('preferences.bt-max-peers-per-torrent-tips') }}
+                </div>
+              </div>
+              <div class="settings-row-action">
+                <Input
+                  type="number"
+                  min="10"
+                  max="500"
+                  style="width: 100px"
+                  v-model="form.btMaxPeersPerTorrent"
+                />
+              </div>
+            </div>
+
+            <div class="settings-row" style="margin-top: 8px">
+              <div class="settings-row-content">
+                <div class="settings-row-title">
+                  {{ $t('preferences.bt-max-outstanding-per-peer') }}
+                </div>
+                <div class="settings-row-description">
+                  {{ $t('preferences.bt-max-outstanding-per-peer-tips') }}
+                </div>
+              </div>
+              <div class="settings-row-action">
+                <Input
+                  type="number"
+                  min="8"
+                  max="512"
+                  style="width: 100px"
+                  v-model="form.btMaxOutstandingPerPeer"
+                />
+              </div>
+            </div>
+
           </div>
         </div>
 
@@ -688,6 +728,8 @@ const initForm = (config) => {
 		autoCheckUpdate,
 		autoSyncTracker,
 		btTracker,
+		btMaxPeersPerTorrent,
+		btMaxOutstandingPerPeer,
 		dhtListenPort,
 		ed2KPort: ed2kPort,
 		ed2KServer: ed2kServer,
@@ -710,6 +752,8 @@ const initForm = (config) => {
 		autoCheckUpdate: parseBooleanConfig(autoCheckUpdate),
 		autoSyncTracker: parseBooleanConfig(autoSyncTracker),
 		btTracker: convertCommaToLine(btTracker),
+		btMaxPeersPerTorrent: btMaxPeersPerTorrent ?? 100,
+		btMaxOutstandingPerPeer: btMaxOutstandingPerPeer ?? 128,
 		dhtListenPort,
 		ed2kPort: ed2kPort || 4662,
 		ed2kServer: convertCommaToLine(ed2kServer || DEFAULT_ED2K_SERVERS),
@@ -1054,6 +1098,13 @@ export default {
 
 			if (btTracker) {
 				data.btTracker = reduceTrackerString(convertLineToComma(btTracker));
+			}
+
+			for (const key of ["btMaxPeersPerTorrent", "btMaxOutstandingPerPeer"]) {
+				if (key in data) {
+					const n = Number(data[key]);
+					data[key] = Number.isFinite(n) ? n : 0;
+				}
 			}
 
 			if (ed2kServer !== undefined) {

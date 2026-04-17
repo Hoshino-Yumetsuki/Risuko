@@ -1,6 +1,6 @@
 [package]
 name = "risuko-engine"
-version = "0.1.6"
+version = "0.1.7"
 description = "Risuko download engine — multi-protocol download library"
 authors = ["YueMiyuki"]
 edition = "2021"
@@ -12,14 +12,18 @@ name = "risuko_engine"
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tokio = { version = "1", features = ["process", "sync", "time", "rt", "net", "macros"] }
+tokio = { version = "1", features = ["process", "sync", "time", "rt", "net", "macros", "io-util", "fs"] }
+byteorder = "1"
+hex = "0.4"
+parking_lot = "0.12"
+thiserror = "2"
+socket2 = "0.6"
+percent-encoding = "2"
 log = "0.4"
 dirs = "6"
 sha1 = "0.11"
 sha2 = "0.11"
-# Pinned to the exact commit for v9.0.0-beta.2 so the dependency remains
-# immutable even if the upstream tag is rewritten.
-librqbit = { git = "https://github.com/ikatson/rqbit.git", rev = "1f207f5cab3663940c58a0f424fe61d4174377ae" }
+risuko-bt = { workspace = true }
 axum = { version = "0.8", features = ["ws"] }
 uuid = { version = "1", features = ["v4"] }
 base64 = "0.22"
@@ -29,6 +33,7 @@ tower-http = { version = "0.6", features = ["cors"] }
 tracing = "0.1"
 reqwest = { version = "0.13", features = ["stream", "gzip", "brotli", "deflate"] }
 tokio-util = { version = "0.7", features = ["io"] }
+async-trait = "0.1"
 bytes = "1"
 url = "2"
 filetime = "0.2"
@@ -43,5 +48,9 @@ suppaftp = { version = "8", features = ["tokio-rustls-ring", "deprecated"] }
 russh = { version = "0.56", default-features = false, features = ["ring", "flate2"] }
 russh-sftp = "2"
 
+[features]
+default = []
+
 [dev-dependencies]
 tempfile = "3"
+env_logger = "0.11"

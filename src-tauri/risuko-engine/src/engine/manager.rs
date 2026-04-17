@@ -49,13 +49,16 @@ impl TaskManager {
         let saved_tasks = session.load();
 
         let output_dir = options.dir();
-        let torrent_engine = TorrentEngine::new(Path::new(&output_dir))
-            .await
-            .map_err(|e| {
-                log::warn!("Torrent engine init failed (non-fatal): {}", e);
-                e
-            })
-            .ok();
+        let max_outstanding = options.bt_max_outstanding_per_peer();
+        let max_peers = options.bt_max_peers_per_torrent();
+        let torrent_engine =
+            TorrentEngine::new_with_tuning(Path::new(&output_dir), max_outstanding, max_peers)
+                .await
+                .map_err(|e| {
+                    log::warn!("Torrent engine init failed (non-fatal): {}", e);
+                    e
+                })
+                .ok();
 
         let global_speed_limiter =
             Arc::new(SpeedLimiter::new(options.max_overall_download_limit()));
@@ -1087,7 +1090,17 @@ impl TaskManager {
             let (keep_seeding, seed_time_minutes, seed_ratio) = {
                 let opts = self.options.read().await;
                 let st = opts.seed_time();
-                (st > 0, st, opts.seed_ratio())
+                let ratio = opts.seed_ratio();
+                let manual = opts.keep_seeding();
+                // Seed on completion if the user enabled keep-seeding, or if
+                // a finite seed-time / seed-ratio goal was set (both imply
+                // the user wants to seed at least for some duration). When
+                // `keep-seeding` is true we ignore the seed-time/seed-ratio
+                // limits so the torrent runs until manually stopped.
+                let keep = manual || st > 0 || ratio > 0.0;
+                let effective_time = if manual { 0 } else { st };
+                let effective_ratio = if manual { 0.0 } else { ratio };
+                (keep, effective_time, effective_ratio)
             };
             if let Some(ref te) = *te_guard {
                 for task in tasks.iter_mut() {

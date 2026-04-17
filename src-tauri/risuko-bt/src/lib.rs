@@ -1,0 +1,27 @@
+//! BitTorrent v1 engine (in-tree replacement for librqbit)
+
+pub mod api;
+pub mod bencode;
+pub mod core;
+pub mod dht;
+pub mod lsd;
+pub mod magnet;
+pub mod peer;
+pub mod piece;
+pub mod session;
+pub mod storage;
+pub mod torrent;
+pub mod tracker;
+pub mod upnp;
+pub mod wire;
+
+pub use api::TorrentIdOrHash;
+pub use core::metainfo::{
+    parse_torrent, FileDetails, TorrentMeta, TorrentMetaInfo, ValidatedTorrentMetaV1Info,
+};
+pub use core::{generate_peer_id, Id20, Lengths, Magnet};
+pub use session::{
+    AddTorrent, AddTorrentOptions, AddTorrentResponse, ListOnlyResponse, ListenerOptions, Session,
+    SessionOptions, SessionPersistenceConfig,
+};
+pub use torrent::{ManagedTorrent, TorrentStats};
