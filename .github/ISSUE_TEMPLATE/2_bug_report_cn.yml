@@ -8,6 +8,7 @@ body:
       value: |
         感谢您抽出时间来填写这份 Bug 报告 🤗
         请确保此问题没有已存在的开放/关闭问题 😃
+        还请确保您使用测试 URL https://cdn.hotelnearmedanta.com/testfile.org/testfile.org-5GB.dat 进行了测试，以确认该 Bug 仍然存在。
 
   - type: textarea
     id: bug-description
@@ -73,4 +74,6 @@ body:
         - label: 确认此问题是一个具体的 Bug。若要进行问答，请开启 [GitHub 讨论](https://github.com/YueMiyuki/Risuko/discussions)。
           required: true
         - label: 提供的复现是该 Bug 的 [最小复现例子](https://stackoverflow.com/help/minimal-reproducible-example)。
+          required: true
+        - label: 您已经尝试使用测试 URL https://cdn.hotelnearmedanta.com/testfile.org/testfile.org-5GB.dat，并且该 Bug 仍然存在。
           required: true

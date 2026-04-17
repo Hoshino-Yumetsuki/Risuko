@@ -9,7 +9,6 @@ assignees: ''
 <!--
 反馈之前请搜索一下已有 issues 和 帮助文档，看是否已经有人提交了类似的新功能请求
 https://github.com/YueMiyuki/Risuko/issues
-http://motrix.app/support
 
 按以下格式填写反馈信息，谢谢
 -->
