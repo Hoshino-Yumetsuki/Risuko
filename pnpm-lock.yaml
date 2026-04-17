@@ -131,6 +131,9 @@ importers:
 
   packages/risuko-cli:
     optionalDependencies:
+      '@risuko/cli-darwin-arm64':
+        specifier: 0.1.6
+        version: 0.1.6
       '@risuko/cli-darwin-x64':
         specifier: 0.1.6
         version: 0.1.6
@@ -496,6 +499,11 @@ packages:
   '@parcel/watcher@2.5.6':
     resolution: {integrity: sha512-tmmZ3lQxAe/k/+rNnXQRawJ4NjxO2hqiOLTHvWchtGZULp4RyFeh6aU4XdOYBFe2KE1oShQTv4AblOs2iOrNnQ==}
     engines: {node: '>= 10.0.0'}
+
+  '@risuko/cli-darwin-arm64@0.1.6':
+    resolution: {integrity: sha512-rWMAz5eKJ3sGWPf+tVP05O9L6omAaUbTY5FILTLTx7CqdpmvPhu4/bQk0YolnX4f+LOXyQ9Ne1UhTgpI6MdeRA==}
+    cpu: [arm64]
+    os: [darwin]
 
   '@risuko/cli-darwin-x64@0.1.6':
     resolution: {integrity: sha512-jmniUcLyvL3GjQaq6Kwm5Be3j80A8QeozQyeytm7sGHjG+WefurKCq58LSjQG4cJB56zSjZlOAiNXzIArR9PIQ==}
@@ -1950,6 +1958,9 @@ snapshots:
       '@parcel/watcher-win32-arm64': 2.5.6
       '@parcel/watcher-win32-ia32': 2.5.6
       '@parcel/watcher-win32-x64': 2.5.6
+    optional: true
+
+  '@risuko/cli-darwin-arm64@0.1.6':
     optional: true
 
   '@risuko/cli-darwin-x64@0.1.6':
