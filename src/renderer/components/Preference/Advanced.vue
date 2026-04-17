@@ -1102,8 +1102,19 @@ export default {
 
 			for (const key of ["btMaxPeersPerTorrent", "btMaxOutstandingPerPeer"]) {
 				if (key in data) {
-					const n = Number(data[key]);
-					data[key] = Number.isFinite(n) ? n : 0;
+					const raw = data[key];
+					if (raw === "" || raw === null || raw === undefined) {
+						// Blank input means "use engine default"; drop the key
+						// instead of coercing to 0 so the stored value matches.
+						delete data[key];
+						continue;
+					}
+					const n = Number(raw);
+					if (Number.isFinite(n) && n >= 0) {
+						data[key] = n;
+					} else {
+						delete data[key];
+					}
 				}
 			}
 

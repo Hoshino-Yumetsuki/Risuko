@@ -76,7 +76,9 @@ impl ExtHandshake {
             if let Some(m_dict) = m.as_dict() {
                 for (k, v) in m_dict {
                     if let Some(id) = v.as_int() {
-                        if (0..=255).contains(&id) {
+                        // Extension ID 0 is reserved for the BEP-10 handshake itself
+                        // and must not appear in the `m` dict.
+                        if (1..=255).contains(&id) {
                             supported.insert(k.clone(), id as u8);
                         }
                     }

@@ -2,8 +2,8 @@
 //!
 //! A correct implementation discovers the IGD via SSDP M-SEARCH, parses the
 //! service description XML, and issues `AddPortMapping` SOAP requests. This
-//! is deferred; for now `map_port` returns `Ok(())` without forwarding so
-//! sessions configured with UPnP enabled still start
+//! is deferred; `map_port` reports `Unsupported` so enabling UPnP at the
+//! session level is not silently ignored.
 
 use std::net::SocketAddr;
 
@@ -13,6 +13,9 @@ pub struct PortMapping {
 }
 
 pub async fn map_port(port: u16) -> std::io::Result<PortMapping> {
-    log::debug!("upnp stub: skipping forward for port {port}");
-    Ok(PortMapping { external: None })
+    log::warn!("upnp port forwarding is not implemented; skipped for port {port}");
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "UPnP port forwarding not implemented",
+    ))
 }

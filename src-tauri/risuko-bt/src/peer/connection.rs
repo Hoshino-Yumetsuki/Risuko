@@ -128,17 +128,16 @@ fn finish_split(
     let (event_tx, event_rx) = mpsc::channel(1024);
     let (cmd_tx, cmd_rx) = mpsc::channel(1024);
 
-    // Notify handshake to consumer first.
-    let event_tx_clone = event_tx.clone();
-    tokio::spawn(async move {
-        let _ = event_tx_clone
-            .send(PeerEvent::Handshook {
-                peer_id: remote_hs.peer_id,
-                reserved: remote_hs.reserved,
-                info_hash: remote_hs.info_hash,
-            })
-            .await;
-    });
+    // Deliver the handshake synchronously before spawning the reader so that
+    // consumers always observe `Handshook` before any peer messages. The
+    // channel was just created with capacity 1024 so this cannot block.
+    event_tx
+        .try_send(PeerEvent::Handshook {
+            peer_id: remote_hs.peer_id,
+            reserved: remote_hs.reserved,
+            info_hash: remote_hs.info_hash,
+        })
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("{e}")))?;
 
     tokio::spawn(reader_task(reader, event_tx));
     tokio::spawn(writer_task(writer, cmd_rx));

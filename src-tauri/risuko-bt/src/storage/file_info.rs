@@ -97,15 +97,18 @@ impl Iterator for SpansIter<'_> {
     type Item = Span;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.remaining == 0 || self.idx >= self.files.len() {
+        if self.remaining == 0 {
+            return None;
+        }
+        // Skip over zero-length files iteratively to avoid unbounded recursion
+        // on torrents containing many empty entries.
+        while self.idx < self.files.len() && self.files[self.idx].length == 0 {
+            self.idx += 1;
+        }
+        if self.idx >= self.files.len() {
             return None;
         }
         let f = &self.files[self.idx];
-        // Guard against a zero-length file (allowed by BEP-3). Skip over it
-        if f.length == 0 {
-            self.idx += 1;
-            return self.next();
-        }
         let file_offset = self.cursor - f.offset;
         let available = f.length - file_offset;
         let take = available.min(self.remaining);

@@ -190,6 +190,10 @@ fn validate_info(value: &Value) -> Result<ValidatedTorrentMetaV1Info, MetaError>
         .and_then(|(_, v)| v.as_str())
         .ok_or(MetaError::BadUtf8 { field: "name" })?
         .to_string();
+    // Sanitize against directory traversal; apply the same rules as file path components
+    if name.is_empty() || name == "." || name == ".." || name.contains('/') || name.contains('\\') {
+        return Err(MetaError::BadInfo("torrent name unsafe"));
+    }
 
     let private = info
         .iter()
@@ -254,7 +258,13 @@ fn validate_info(value: &Value) -> Result<ValidatedTorrentMetaV1Info, MetaError>
         )
     };
 
-    if files.iter().map(|f| f.length).sum::<u64>() == 0 {
+    let mut total_len: u64 = 0;
+    for f in &files {
+        total_len = total_len
+            .checked_add(f.length)
+            .ok_or(MetaError::BadInfo("total file length overflow"))?;
+    }
+    if total_len == 0 {
         return Err(MetaError::ZeroLength);
     }
 

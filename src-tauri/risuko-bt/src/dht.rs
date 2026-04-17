@@ -46,6 +46,15 @@ pub struct Dht {
     our_id: Id20,
     bootstrap: Vec<String>,
     pending: Arc<Mutex<PendingMap>>,
+    reader_handle: Mutex<Option<tokio::task::JoinHandle<()>>>,
+}
+
+impl Drop for Dht {
+    fn drop(&mut self) {
+        if let Some(h) = self.reader_handle.lock().take() {
+            h.abort();
+        }
+    }
 }
 
 type PendingMap = std::collections::HashMap<u16, oneshot::Sender<KrpcResponse>>;
@@ -73,15 +82,18 @@ impl Dht {
             our_id,
             bootstrap,
             pending: pending.clone(),
+            reader_handle: Mutex::new(None),
         });
 
         let reader_sock = sock.clone();
-        tokio::spawn(async move {
+        let reader_handle = tokio::spawn(async move {
             let mut buf = vec![0u8; 2048];
             loop {
                 let (n, from) = match reader_sock.recv_from(&mut buf).await {
                     Ok(x) => x,
-                    Err(_) => continue,
+                    // Exit on unrecoverable socket error (e.g. socket closed
+                    // on Drop) instead of busy-looping forever.
+                    Err(_) => return,
                 };
                 let Ok(msg) = decode_all(&buf[..n]) else {
                     continue;
@@ -105,6 +117,7 @@ impl Dht {
                 }
             }
         });
+        *this.reader_handle.lock() = Some(reader_handle);
 
         log::debug!(
             "DHT started: id={}, bootstrap={} nodes",
@@ -174,8 +187,14 @@ impl Dht {
             queried.insert(*a);
         }
 
-        let mut futs: JoinSet<Option<(SocketAddr, Vec<SocketAddr>, Vec<(Id20, SocketAddr)>)>> =
-            JoinSet::new();
+        let mut futs: JoinSet<
+            Option<(
+                SocketAddr,
+                Option<Id20>,
+                Vec<SocketAddr>,
+                Vec<(Id20, SocketAddr)>,
+            )>,
+        > = JoinSet::new();
         for a in addrs {
             let this = self.clone();
             futs.spawn(async move { this.query_get_peers(a, info_hash).await });
@@ -191,7 +210,7 @@ impl Dht {
             };
             let res = joined.ok().flatten();
 
-            let Some((from, peers, nodes)) = res else {
+            let Some((from, responder_id, peers, nodes)) = res else {
                 continue;
             };
 
@@ -207,13 +226,12 @@ impl Dht {
             }
             total_peers += new_peers;
 
-            // Record the responder as a live DHT node (we need its distance)
-            // We don't know its id unless it returned nodes containing itself,
-            // but we keep it in the shortlist keyed by distance to info_hash
-            // using a hash of its socket addr as a pseudo-id. This is only
-            // used for ordering visits, which is fine
-            let pseudo = pseudo_id(from);
-            shortlist.insert(xor(&pseudo, &info_hash), from);
+            // Record the responder as a live DHT node. Prefer the id the node
+            // reported in its KRPC response; fall back to a pseudo-id only if
+            // the response omitted one. Using the real id keeps XOR distance
+            // accurate, which matters for lookup convergence.
+            let node_id = responder_id.unwrap_or_else(|| pseudo_id(from));
+            shortlist.insert(xor(&node_id, &info_hash), from);
 
             // Merge any learned nodes into the shortlist
             let mut progressed = false;
@@ -274,7 +292,12 @@ impl Dht {
         self: Arc<Self>,
         target: SocketAddr,
         info_hash: Id20,
-    ) -> Option<(SocketAddr, Vec<SocketAddr>, Vec<(Id20, SocketAddr)>)> {
+    ) -> Option<(
+        SocketAddr,
+        Option<Id20>,
+        Vec<SocketAddr>,
+        Vec<(Id20, SocketAddr)>,
+    )> {
         let (txn, rx) = self.register_transaction();
         let packet = build_get_peers(txn, &self.our_id, &info_hash);
         if self.sock.send_to(&packet, target).await.is_err() {
@@ -288,7 +311,8 @@ impl Dht {
                 return None;
             }
         };
-        parse_get_peers_response(&resp.body).map(|(peers, nodes)| (resp.from, peers, nodes))
+        parse_get_peers_response(&resp.body)
+            .map(|(rid, peers, nodes)| (resp.from, rid, peers, nodes))
     }
 
     fn register_transaction(&self) -> (u16, oneshot::Receiver<KrpcResponse>) {
@@ -352,9 +376,15 @@ fn build_get_peers(txn: u16, our_id: &Id20, info_hash: &Id20) -> Vec<u8> {
     encode_to_vec(&msg)
 }
 
-fn parse_get_peers_response(body: &Value) -> Option<(Vec<SocketAddr>, Vec<(Id20, SocketAddr)>)> {
+fn parse_get_peers_response(
+    body: &Value,
+) -> Option<(Option<Id20>, Vec<SocketAddr>, Vec<(Id20, SocketAddr)>)> {
     let r = body.get(b"r")?.as_dict()?;
     let r_val = Value::Dict(r.to_vec());
+    let responder_id = r_val
+        .get(b"id")
+        .and_then(|v| v.as_bytes())
+        .and_then(|b| Id20::from_slice(b).ok());
     let mut peers: Vec<SocketAddr> = Vec::new();
     if let Some(values) = r_val.get(b"values").and_then(|v| v.as_list()) {
         for v in values {
@@ -377,7 +407,7 @@ fn parse_get_peers_response(body: &Value) -> Option<(Vec<SocketAddr>, Vec<(Id20,
             nodes.push((id, SocketAddr::V4(SocketAddrV4::new(ip, port))));
         }
     }
-    Some((peers, nodes))
+    Some((responder_id, peers, nodes))
 }
 
 #[cfg(test)]

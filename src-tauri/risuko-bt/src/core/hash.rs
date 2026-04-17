@@ -48,6 +48,9 @@ impl Id20 {
 
     /// MSB-first bit access (bit 0 is the high bit of byte 0)
     pub fn get_bit(&self, bit: u8) -> bool {
+        if bit >= 160 {
+            return false;
+        }
         let byte = self.0[(bit / 8) as usize];
         byte & (1 << (7 - bit % 8)) != 0
     }

@@ -165,6 +165,12 @@ impl<'a> Parser<'a> {
                 reason: "empty",
             });
         }
+        if digits[0] == b'+' {
+            return Err(Error::BadInteger {
+                pos: start,
+                reason: "leading plus",
+            });
+        }
         if digits == b"-0" {
             return Err(Error::BadInteger {
                 pos: start,
@@ -319,11 +325,13 @@ pub fn encode_to_writer<W: Write>(v: &Value, w: &mut W) -> Result<(), Error> {
             w.write_all(b"e")?;
         }
         Value::Dict(items) => {
-            // Sort into a BTreeMap to enforce canonical key order. Duplicate
-            // keys collapse — callers should not produce them
+            // Sort into a BTreeMap to enforce canonical key order. Reject
+            // duplicates explicitly instead of silently dropping them.
             let mut sorted: BTreeMap<&[u8], &Value> = BTreeMap::new();
             for (k, vv) in items {
-                sorted.insert(k.as_slice(), vv);
+                if sorted.insert(k.as_slice(), vv).is_some() {
+                    return Err(Error::BadDictOrder(0));
+                }
             }
             w.write_all(b"d")?;
             for (k, vv) in sorted {

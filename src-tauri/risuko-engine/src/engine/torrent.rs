@@ -32,6 +32,11 @@ impl TorrentEngine {
                     enable_upnp_port_forwarding: true,
                 }),
                 fastresume: true,
+                // Persist session state so managed torrents survive restarts;
+                // without this, `fastresume` has nothing to resume from.
+                persistence: Some(bt::SessionPersistenceConfig::Json {
+                    folder: Some(output_dir.to_path_buf()),
+                }),
                 max_outstanding_requests_per_peer: max_outstanding_per_peer,
                 max_peers_per_torrent,
                 ..Default::default()
@@ -188,6 +193,17 @@ impl TorrentEngine {
                         };
                         let safe = sanitize_file_stem(&name);
                         let path = Path::new(dir).join(format!("{}.torrent", safe));
+                        // Ensure custom `dir` values exist before writing the
+                        // synthesized .torrent file.
+                        if let Some(parent) = path.parent() {
+                            if let Err(e) = tokio::fs::create_dir_all(parent).await {
+                                log::warn!(
+                                    "Failed to create metadata dir {}: {}",
+                                    parent.display(),
+                                    e
+                                );
+                            }
+                        }
                         match tokio::fs::write(&path, &bytes).await {
                             Ok(()) => log::info!("Saved torrent metadata to {}", path.display()),
                             Err(e) => log::warn!(

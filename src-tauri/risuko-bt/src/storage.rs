@@ -102,17 +102,31 @@ impl FilesystemStorage {
 #[async_trait::async_trait]
 impl StorageBackend for FilesystemStorage {
     async fn preallocate(&self) -> Result<(), StorageError> {
-        for (i, f) in self.layout.files().iter().enumerate() {
-            let handle = self.handle(i).await?;
+        // Open each file just long enough to preallocate, then drop the
+        // handle. Caching handles here would defeat lazy opening and can
+        // exhaust the process open-file limit on torrents with many files.
+        for f in self.layout.files().iter() {
+            let path = f.path.clone();
             let target_len = f.length;
             task::spawn_blocking(move || -> io::Result<()> {
+                if let Some(parent) = path.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                let file = std::fs::OpenOptions::new()
+                    .create(true)
+                    .read(true)
+                    .write(true)
+                    .truncate(false)
+                    .open(&path)?;
                 // Sparse allocation: setting length writes no data but reserves
                 // the file size in directory metadata. Modern filesystems
                 // (APFS, ext4, NTFS) support sparse files; set_len avoids
-                // upfront I/O while still surfacing ENOSPC on subsequent writes
-                let current = handle.metadata()?.len();
-                if current < target_len {
-                    handle.set_len(target_len)?;
+                // upfront I/O while still surfacing ENOSPC on subsequent writes.
+                // Truncate oversized files as well so stale tail bytes from a
+                // previous larger allocation do not survive a "complete" download.
+                let current = file.metadata()?.len();
+                if current != target_len {
+                    file.set_len(target_len)?;
                 }
                 Ok(())
             })

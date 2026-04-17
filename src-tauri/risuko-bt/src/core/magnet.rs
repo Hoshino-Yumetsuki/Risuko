@@ -92,6 +92,13 @@ impl Magnet {
                                 let b: usize = b.parse().map_err(|_| {
                                     MagnetError::Parse(format!("bad so range {part}"))
                                 })?;
+                                // Cap range expansion to prevent DoS from untrusted input
+                                const MAX_SO_RANGE: usize = 100_000;
+                                if b < a || b.saturating_sub(a) >= MAX_SO_RANGE {
+                                    return Err(MagnetError::Parse(format!(
+                                        "so range too large: {part}"
+                                    )));
+                                }
                                 for i in a..=b {
                                     indices.push(i);
                                 }

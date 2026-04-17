@@ -4,7 +4,7 @@ use std::time::Instant;
 
 use bytes::Bytes;
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy)]
 pub struct PeerFlags {
     /// We are choking the remote
     pub am_choking: bool,
@@ -25,6 +25,12 @@ impl PeerFlags {
             peer_choking: true,
             peer_interested: false,
         }
+    }
+}
+
+impl Default for PeerFlags {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

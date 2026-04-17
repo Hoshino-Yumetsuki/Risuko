@@ -54,13 +54,13 @@ async fn connect(sock: &UdpSocket) -> Result<u64, TrackerError> {
         // Shorter than BEP-15 (15 * 2^n) to keep resolve-magnet snappy
         let wait = Duration::from_secs(5u64 << attempt);
         match timeout(wait, sock.recv(&mut buf)).await {
-            Ok(Ok(n)) if n >= 16 => {
+            Ok(Ok(n)) if n >= 8 => {
                 let action = BigEndian::read_u32(&buf[0..4]);
                 let rtxn = BigEndian::read_u32(&buf[4..8]);
                 if action == ACTION_ERROR {
                     return Err(TrackerError::Rejected(read_error(&buf[8..n])));
                 }
-                if action != ACTION_CONNECT || rtxn != txn {
+                if n < 16 || action != ACTION_CONNECT || rtxn != txn {
                     continue;
                 }
                 return Ok(BigEndian::read_u64(&buf[8..16]));
@@ -92,21 +92,22 @@ async fn announce_inner(
     BigEndian::write_u32(&mut body[92..96], req.num_want);
     BigEndian::write_u16(&mut body[96..98], req.port);
 
+    let is_ipv6 = sock.peer_addr().map(|a| a.is_ipv6()).unwrap_or(false);
     let mut buf = vec![0u8; 2048];
     for attempt in 0..3u32 {
         sock.send(&body).await?;
         let wait = Duration::from_secs(5u64 << attempt);
         match timeout(wait, sock.recv(&mut buf)).await {
-            Ok(Ok(n)) if n >= 20 => {
+            Ok(Ok(n)) if n >= 8 => {
                 let action = BigEndian::read_u32(&buf[0..4]);
                 let rtxn = BigEndian::read_u32(&buf[4..8]);
                 if action == ACTION_ERROR {
                     return Err(TrackerError::Rejected(read_error(&buf[8..n])));
                 }
-                if action != ACTION_ANNOUNCE || rtxn != txn {
+                if n < 20 || action != ACTION_ANNOUNCE || rtxn != txn {
                     continue;
                 }
-                return Ok(parse_announce_response(&buf[..n]));
+                return Ok(parse_announce_response(&buf[..n], is_ipv6));
             }
             _ => continue,
         }
@@ -114,15 +115,26 @@ async fn announce_inner(
     Err(TrackerError::Timeout)
 }
 
-fn parse_announce_response(buf: &[u8]) -> AnnounceResponse {
+fn parse_announce_response(buf: &[u8], is_ipv6: bool) -> AnnounceResponse {
     let interval = BigEndian::read_u32(&buf[8..12]).max(1) as u64;
     let leechers = BigEndian::read_u32(&buf[12..16]);
     let seeders = BigEndian::read_u32(&buf[16..20]);
     let mut peers = Vec::new();
-    for chunk in buf[20..].chunks_exact(6) {
-        let ip = Ipv4Addr::new(chunk[0], chunk[1], chunk[2], chunk[3]);
-        let port = u16::from_be_bytes([chunk[4], chunk[5]]);
-        peers.push(SocketAddr::new(IpAddr::V4(ip), port));
+    if is_ipv6 {
+        // BEP-15 IPv6 extension: 18-byte compact peer entries (16 addr + 2 port)
+        for chunk in buf[20..].chunks_exact(18) {
+            let mut octets = [0u8; 16];
+            octets.copy_from_slice(&chunk[0..16]);
+            let ip = std::net::Ipv6Addr::from(octets);
+            let port = u16::from_be_bytes([chunk[16], chunk[17]]);
+            peers.push(SocketAddr::new(IpAddr::V6(ip), port));
+        }
+    } else {
+        for chunk in buf[20..].chunks_exact(6) {
+            let ip = Ipv4Addr::new(chunk[0], chunk[1], chunk[2], chunk[3]);
+            let port = u16::from_be_bytes([chunk[4], chunk[5]]);
+            peers.push(SocketAddr::new(IpAddr::V4(ip), port));
+        }
     }
     AnnounceResponse {
         interval: Duration::from_secs(interval),

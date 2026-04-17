@@ -225,7 +225,7 @@ async fn try_fetch_from_peer(
     info_hash: Id20,
     our_peer_id: Id20,
 ) -> Option<Vec<u8>> {
-    let (handle, mut rx) = connect(SpawnPeer {
+    let (handle, rx) = connect(SpawnPeer {
         addr,
         info_hash,
         our_peer_id,
@@ -235,6 +235,18 @@ async fn try_fetch_from_peer(
     .await
     .ok()?;
 
+    // Run the protocol inside a helper so every exit path disconnects the
+    // peer actor below. Otherwise timed-out or rejected probes leak the
+    // socket and reader task.
+    let result = try_fetch_from_peer_inner(&handle, rx).await;
+    let _ = handle.tx.send(PeerCommand::Disconnect).await;
+    result
+}
+
+async fn try_fetch_from_peer_inner(
+    handle: &super::peer::PeerHandle,
+    mut rx: tokio::sync::mpsc::Receiver<PeerEvent>,
+) -> Option<Vec<u8>> {
     // Pipeline our extended handshake immediately; we'll validate that the
     // peer actually supports extensions when we see their Handshook event
     // This saves one async round-trip per peer
@@ -248,28 +260,34 @@ async fn try_fetch_from_peer(
         .await
         .ok()?;
 
-    let peer_supports_ext;
-    loop {
-        match rx.recv().await? {
-            PeerEvent::Handshook { reserved, .. } => {
-                peer_supports_ext = reserved[5] & 0x10 != 0;
-                break;
-            }
-            PeerEvent::Disconnected { .. } => return None,
-            _ => continue,
-        }
-    }
-    if !peer_supports_ext {
-        return None;
-    }
-
+    // Collect Handshook and the peer's extended handshake from a single
+    // receive loop. The peer's extended handshake message can arrive before
+    // the BT handshake event under some orderings; draining two sequential
+    // loops would drop whichever arrives first in the other arm.
+    let mut peer_supports_ext: Option<bool> = None;
     let peer_ext = loop {
         match rx.recv().await? {
-            PeerEvent::Message(Message::Extended { ext_id: 0, payload }) => {
-                if let Some(h) = ExtHandshake::decode(&payload) {
-                    break h;
+            PeerEvent::Handshook { reserved, .. } => {
+                let supports = reserved[5] & 0x10 != 0;
+                if !supports {
+                    return None;
                 }
-                return None;
+                peer_supports_ext = Some(true);
+            }
+            PeerEvent::Message(Message::Extended { ext_id: 0, payload }) => {
+                let Some(h) = ExtHandshake::decode(&payload) else {
+                    return None;
+                };
+                if peer_supports_ext.is_none() {
+                    // Extended handshake must be preceded by Handshook with
+                    // the extension bit set. Keep looping until Handshook
+                    // confirms support, but stash the decoded dict.
+                    match wait_for_handshook(&mut rx).await {
+                        Some(true) => break h,
+                        _ => return None,
+                    }
+                }
+                break h;
             }
             PeerEvent::Disconnected { .. } => return None,
             _ => continue,
@@ -333,8 +351,19 @@ async fn try_fetch_from_peer(
         return None;
     }
 
-    let _ = handle.tx.send(PeerCommand::Disconnect).await;
     Some(out)
+}
+
+async fn wait_for_handshook(rx: &mut tokio::sync::mpsc::Receiver<PeerEvent>) -> Option<bool> {
+    loop {
+        match rx.recv().await? {
+            PeerEvent::Handshook { reserved, .. } => {
+                return Some(reserved[5] & 0x10 != 0);
+            }
+            PeerEvent::Disconnected { .. } => return None,
+            _ => continue,
+        }
+    }
 }
 
 /// Build a minimal `.torrent` blob from a raw info dict plus optional

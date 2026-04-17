@@ -109,11 +109,19 @@ pub async fn spawn(
         cmd_tx,
         stats: stats.clone(),
     });
-    tokio::spawn(torrent_loop(init, our_peer_id, listen_port, cmd_rx, stats));
+    tokio::spawn(torrent_loop(
+        id,
+        init,
+        our_peer_id,
+        listen_port,
+        cmd_rx,
+        stats,
+    ));
     Ok(handle)
 }
 
 struct Peer {
+    addr: SocketAddr,
     cmd_tx: mpsc::Sender<PeerCommand>,
     bitfield: Vec<u8>,
     am_choking: bool,
@@ -130,6 +138,7 @@ struct VerifyResult {
 }
 
 async fn torrent_loop(
+    torrent_id: usize,
     init: TorrentInit,
     our_peer_id: Id20,
     listen_port: u16,
@@ -154,6 +163,7 @@ async fn torrent_loop(
     {
         let mut s = stats.lock();
         s.progress_bytes = completed_bytes(&piece_tracker, &lengths);
+        s.file_progress = compute_file_progress(&piece_tracker, &lengths, storage.layout());
         s.finished = piece_tracker.is_complete();
     }
 
@@ -176,6 +186,10 @@ async fn torrent_loop(
     let mut peers: HashMap<u32, Peer> = HashMap::new();
     let mut next_pid: u32 = 1;
     let mut known_addrs: HashSet<SocketAddr> = HashSet::new();
+    // Outbound dials that have been spawned but whose peer has not completed
+    // the BT handshake yet. Tracked separately so the max-peer cap accounts
+    // for in-flight connection bursts, not just handshook peers.
+    let mut pending_dials: HashMap<u32, SocketAddr> = HashMap::new();
     let mut paused = false;
     let mut tick = interval(Duration::from_millis(500));
     tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
@@ -186,15 +200,22 @@ async fn torrent_loop(
         tokio::select! {
             Some(cmd) = cmd_rx.recv() => match cmd {
                 TorrentCommand::AddPeer(addr) => {
-                    if !paused && known_addrs.insert(addr) && peers.len() < max_peers {
+                    if !paused
+                        && known_addrs.insert(addr)
+                        && peers.len() + pending_dials.len() < max_peers
+                    {
                         let pid = next_pid; next_pid += 1;
-                        spawn_outbound_peer(pid, addr, info_hash, our_peer_id, peer_event_tx.clone());
+                        pending_dials.insert(pid, addr);
+                        spawn_outbound_peer(torrent_id, pid, addr, info_hash, our_peer_id, peer_event_tx.clone());
                     }
                 }
                 TorrentCommand::AddInboundPeer { addr, cmd_tx, event_rx } => {
-                    if !paused && known_addrs.insert(addr) {
+                    if !paused
+                        && known_addrs.insert(addr)
+                        && peers.len() + pending_dials.len() < max_peers
+                    {
                         let pid = next_pid; next_pid += 1;
-                        adopt_inbound_peer(pid, cmd_tx, event_rx, peer_event_tx.clone(), &mut peers, &lengths, &mut piece_tracker).await;
+                        adopt_inbound_peer(pid, addr, cmd_tx, event_rx, peer_event_tx.clone(), &mut peers, &lengths, &mut piece_tracker).await;
                     }
                 }
                 TorrentCommand::Pause(ack) => {
@@ -202,6 +223,7 @@ async fn torrent_loop(
                     for (_, p) in peers.drain() {
                         let _ = p.cmd_tx.send(PeerCommand::Disconnect).await;
                     }
+                    pending_dials.clear();
                     known_addrs.clear();
                     let _ = ack.send(());
                 }
@@ -213,20 +235,26 @@ async fn torrent_loop(
                     for (_, p) in peers.drain() {
                         let _ = p.cmd_tx.send(PeerCommand::Disconnect).await;
                     }
+                    pending_dials.clear();
                     let _ = ack.send(());
                     break;
                 }
             },
             Some(addr) = peer_addr_rx.recv() => {
-                if !paused && known_addrs.insert(addr) && peers.len() < max_peers {
+                if !paused
+                    && known_addrs.insert(addr)
+                    && peers.len() + pending_dials.len() < max_peers
+                {
                     let pid = next_pid; next_pid += 1;
-                    spawn_outbound_peer(pid, addr, info_hash, our_peer_id, peer_event_tx.clone());
+                    pending_dials.insert(pid, addr);
+                    spawn_outbound_peer(torrent_id, pid, addr, info_hash, our_peer_id, peer_event_tx.clone());
                 }
             }
             Some((pid, ev)) = peer_event_rx.recv() => {
                 let kick = process_peer_event(
-                    pid, ev, &mut peers, &mut piece_tracker, &mut chunk_tracker,
+                    torrent_id, pid, ev, &mut peers, &mut piece_tracker, &mut chunk_tracker,
                     &lengths, &storage, &stats, &mut bytes_this_tick,
+                    &mut pending_dials, &mut known_addrs,
                     &verify_tx,
                 ).await;
                 if kick && !paused {
@@ -236,7 +264,7 @@ async fn torrent_loop(
             Some(vr) = verify_rx.recv() => {
                 process_verify_result(
                     vr, &info, &lengths, &mut piece_tracker,
-                    &mut chunk_tracker, &mut peers, &stats,
+                    &mut chunk_tracker, &mut peers, &storage, &stats,
                 ).await;
                 // New work may be available; re-drive all peers immediately
                 // instead of waiting for the next 500 ms tick
@@ -263,22 +291,25 @@ async fn torrent_loop(
 }
 
 /// Side-channel registry to pass outbound peer cmd_tx handles from the spawn
-/// task into the main loop on first `Handshook`
+/// task into the main loop on first `Handshook`. Keyed by `(torrent_id, pid)`
+/// because `pid` is only unique within a single torrent loop; a global
+/// `pid` keying would collide across torrents.
 mod peer_registry {
     use super::*;
     use once_cell::sync::Lazy;
     use std::sync::Mutex as StdMutex;
-    static REG: Lazy<StdMutex<HashMap<u32, mpsc::Sender<PeerCommand>>>> =
+    static REG: Lazy<StdMutex<HashMap<(usize, u32), mpsc::Sender<PeerCommand>>>> =
         Lazy::new(|| StdMutex::new(HashMap::new()));
-    pub fn put(pid: u32, tx: mpsc::Sender<PeerCommand>) {
-        REG.lock().unwrap().insert(pid, tx);
+    pub fn put(torrent_id: usize, pid: u32, tx: mpsc::Sender<PeerCommand>) {
+        REG.lock().unwrap().insert((torrent_id, pid), tx);
     }
-    pub fn take(pid: u32) -> Option<mpsc::Sender<PeerCommand>> {
-        REG.lock().unwrap().remove(&pid)
+    pub fn take(torrent_id: usize, pid: u32) -> Option<mpsc::Sender<PeerCommand>> {
+        REG.lock().unwrap().remove(&(torrent_id, pid))
     }
 }
 
 fn spawn_outbound_peer(
+    torrent_id: usize,
     pid: u32,
     addr: SocketAddr,
     info_hash: Id20,
@@ -295,7 +326,7 @@ fn spawn_outbound_peer(
         };
         match connect(spawn).await {
             Ok((handle, mut rx)) => {
-                peer_registry::put(pid, handle.tx.clone());
+                peer_registry::put(torrent_id, pid, handle.tx.clone());
                 while let Some(ev) = rx.recv().await {
                     if event_tx.send((pid, ev)).await.is_err() {
                         break;
@@ -318,6 +349,7 @@ fn spawn_outbound_peer(
 
 async fn adopt_inbound_peer(
     pid: u32,
+    addr: SocketAddr,
     cmd_tx: mpsc::Sender<PeerCommand>,
     mut event_rx: mpsc::Receiver<PeerEvent>,
     fwd_tx: mpsc::Sender<(u32, PeerEvent)>,
@@ -328,6 +360,7 @@ async fn adopt_inbound_peer(
     peers.insert(
         pid,
         Peer {
+            addr,
             cmd_tx: cmd_tx.clone(),
             bitfield: vec![0u8; lengths.piece_bitfield_bytes()],
             am_choking: true,
@@ -358,6 +391,7 @@ async fn adopt_inbound_peer(
 
 #[allow(clippy::too_many_arguments)]
 async fn process_peer_event(
+    torrent_id: usize,
     pid: u32,
     ev: PeerEvent,
     peers: &mut HashMap<u32, Peer>,
@@ -367,6 +401,8 @@ async fn process_peer_event(
     storage: &Arc<FilesystemStorage>,
     stats: &Arc<Mutex<TorrentStats>>,
     bytes_this_tick: &mut (u64, u64),
+    pending_dials: &mut HashMap<u32, SocketAddr>,
+    known_addrs: &mut HashSet<SocketAddr>,
     verify_tx: &mpsc::Sender<VerifyResult>,
 ) -> bool {
     // Return value: `true` if the caller should immediately kick the peer
@@ -376,10 +412,16 @@ async fn process_peer_event(
     match ev {
         PeerEvent::Handshook { .. } => {
             if !peers.contains_key(&pid) {
-                if let Some(cmd_tx) = peer_registry::take(pid) {
+                if let Some(cmd_tx) = peer_registry::take(torrent_id, pid) {
+                    // Move from pending dial to live peer if we tracked it.
+                    let addr = pending_dials.remove(&pid).unwrap_or_else(|| {
+                        // Fallback: unknown addr (shouldn't happen for outbound)
+                        "0.0.0.0:0".parse().unwrap()
+                    });
                     peers.insert(
                         pid,
                         Peer {
+                            addr,
                             cmd_tx: cmd_tx.clone(),
                             bitfield: vec![0u8; lengths.piece_bitfield_bytes()],
                             am_choking: true,
@@ -445,6 +487,12 @@ async fn process_peer_event(
                     if length > 1024 * 1024 {
                         return false;
                     }
+                    // Reject requests that straddle the piece boundary so a
+                    // malicious peer cannot trigger an out-of-bounds read.
+                    let piece_len = lengths.piece_length_of(vpi) as u64;
+                    if (begin as u64).saturating_add(length as u64) > piece_len {
+                        return false;
+                    }
                     let offset = lengths.piece_offset(vpi) + begin as u64;
                     let mut buf = vec![0u8; length as usize];
                     if storage.read_at(offset, &mut buf).await.is_ok() {
@@ -464,8 +512,20 @@ async fn process_peer_event(
                     let Ok(vpi) = lengths.validate_piece(index) else {
                         return false;
                     };
-                    peer.outstanding
-                        .retain(|&(p, b, _)| !(p == index && b == begin));
+                    // Only accept pieces that match an outstanding request;
+                    // reject unsolicited or mismatched frames.
+                    let requested = peer.outstanding.iter().position(|&(p, b, l)| {
+                        p == index && b == begin && l as usize == data.len()
+                    });
+                    let Some(req_idx) = requested else {
+                        return false;
+                    };
+                    // Reject if data extends past the piece boundary.
+                    let piece_len = lengths.piece_length_of(vpi) as u64;
+                    if (begin as u64).saturating_add(data.len() as u64) > piece_len {
+                        return false;
+                    }
+                    peer.outstanding.swap_remove(req_idx);
                     let offset = lengths.piece_offset(vpi) + begin as u64;
                     if storage.write_at(offset, &data).await.is_err() {
                         return false;
@@ -514,6 +574,18 @@ async fn process_peer_event(
             }
         }
         PeerEvent::Disconnected { .. } => {
+            // Clear from either in-flight or live, and release the address
+            // for future retries (otherwise a single drop permanently
+            // blacklists the peer).
+            let addr = pending_dials
+                .remove(&pid)
+                .or_else(|| peers.get(&pid).map(|p| p.addr));
+            if let Some(a) = addr {
+                known_addrs.remove(&a);
+            }
+            // Drop the registry slot in case the peer disconnected before
+            // the Handshook event moved it into `peers`.
+            let _ = peer_registry::take(torrent_id, pid);
             if let Some(dead) = peers.remove(&pid) {
                 piece_tracker.remove_peer_bitfield(&dead.bitfield);
                 let freed = chunk_tracker.release_peer(pid);
@@ -535,6 +607,7 @@ async fn process_verify_result(
     piece_tracker: &mut PieceTracker,
     chunk_tracker: &mut ChunkTracker,
     peers: &mut HashMap<u32, Peer>,
+    storage: &Arc<FilesystemStorage>,
     stats: &Arc<Mutex<TorrentStats>>,
 ) {
     let Ok(vpi) = lengths.validate_piece(vr.piece_index) else {
@@ -548,6 +621,7 @@ async fn process_verify_result(
             broadcast_have(peers, vr.piece_index).await;
             let mut s = stats.lock();
             s.progress_bytes = completed_bytes(piece_tracker, lengths);
+            s.file_progress = compute_file_progress(piece_tracker, lengths, storage.layout());
             s.finished = piece_tracker.is_complete();
         }
         _ => {
@@ -676,6 +750,31 @@ fn completed_bytes(pt: &PieceTracker, lengths: &Lengths) -> u64 {
         }
     }
     total
+}
+
+/// Distribute the bytes of every completed piece across the files it
+/// overlaps. Used to populate `TorrentStats::file_progress` so per-file
+/// completion can be reported in the UI.
+fn compute_file_progress(
+    pt: &PieceTracker,
+    lengths: &Lengths,
+    layout: &crate::storage::FileSet,
+) -> Vec<u64> {
+    let mut per_file = vec![0u64; layout.files().len()];
+    for idx in 0..lengths.total_pieces() {
+        let Ok(vpi) = lengths.validate_piece(idx) else {
+            continue;
+        };
+        if !pt.has_local(vpi) {
+            continue;
+        }
+        let offset = lengths.piece_offset(vpi);
+        let len = lengths.piece_length_of(vpi) as u64;
+        for span in layout.spans_for(offset, len) {
+            per_file[span.file_index] += span.len;
+        }
+    }
+    per_file
 }
 
 fn collect_trackers(meta: &TorrentMeta) -> Vec<String> {

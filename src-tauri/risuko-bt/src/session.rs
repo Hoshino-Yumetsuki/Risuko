@@ -90,6 +90,15 @@ pub struct Session {
     peer_id: Id20,
     listen_port: u16,
     inner: Mutex<SessionInner>,
+    accept_handle: Mutex<Option<tokio::task::JoinHandle<()>>>,
+}
+
+impl Drop for Session {
+    fn drop(&mut self) {
+        if let Some(h) = self.accept_handle.lock().take() {
+            h.abort();
+        }
+    }
 }
 
 struct SessionInner {
@@ -121,7 +130,10 @@ impl Session {
             .map(|l| l.enable_upnp_port_forwarding)
             .unwrap_or(false)
         {
-            let _ = super::upnp::map_port(local_port).await;
+            match super::upnp::map_port(local_port).await {
+                Ok(m) => log::info!("upnp port forwarding established: {:?}", m.external),
+                Err(e) => log::warn!("upnp port forwarding failed: {e}"),
+            }
         }
 
         let session = Arc::new(Self {
@@ -134,14 +146,20 @@ impl Session {
                 by_hash: HashMap::new(),
                 next_id: 1,
             }),
+            accept_handle: Mutex::new(None),
         });
 
-        let s = session.clone();
-        tokio::spawn(async move {
+        // Hold a Weak reference inside the accept loop so the loop does not
+        // keep the session alive. When the last external Arc is dropped the
+        // session's Drop aborts the spawned task via `accept_handle`.
+        let weak = Arc::downgrade(&session);
+        let accept_handle = tokio::spawn(async move {
             loop {
                 match listener.accept().await {
                     Ok((stream, addr)) => {
-                        let s = s.clone();
+                        let Some(s) = weak.upgrade() else {
+                            return;
+                        };
                         tokio::spawn(async move {
                             let allowed: Vec<Id20> =
                                 s.inner.lock().by_hash.keys().copied().collect();
@@ -169,6 +187,7 @@ impl Session {
                 }
             }
         });
+        *session.accept_handle.lock() = Some(accept_handle);
 
         Ok(session)
     }
@@ -284,10 +303,19 @@ impl Session {
         if let Some(extra) = opts.trackers {
             meta.announce_list.push(extra);
         }
+        // Reserve an id and claim the info-hash atomically so a concurrent
+        // add_from_meta cannot race past the duplicate check above. If spawn
+        // fails we roll the reservation back.
         let id = {
             let mut inner = self.inner.lock();
+            if let Some(&existing) = inner.by_hash.get(&meta.info_hash) {
+                if let Some(t) = inner.torrents.get(&existing).cloned() {
+                    return Ok(AddTorrentResponse::AlreadyManaged(existing, t));
+                }
+            }
             let id = inner.next_id;
             inner.next_id += 1;
+            inner.by_hash.insert(meta.info_hash, id);
             id
         };
         let init = TorrentInit {
@@ -298,13 +326,18 @@ impl Session {
             max_outstanding_per_peer: self.opts.max_outstanding_requests_per_peer,
             max_peers: self.opts.max_peers_per_torrent,
         };
-        let handle = spawn_torrent(id, init, self.peer_id, self.listen_port)
-            .await
-            .map_err(|e| format!("spawn torrent: {e}"))?;
+        let handle = match spawn_torrent(id, init, self.peer_id, self.listen_port).await {
+            Ok(h) => h,
+            Err(e) => {
+                // Roll back the reservation so a retry can succeed.
+                let mut inner = self.inner.lock();
+                inner.by_hash.remove(&meta.info_hash);
+                return Err(format!("spawn torrent: {e}"));
+            }
+        };
         {
             let mut inner = self.inner.lock();
             inner.torrents.insert(id, handle.clone());
-            inner.by_hash.insert(meta.info_hash, id);
         }
         Ok(AddTorrentResponse::Added(id, handle))
     }
@@ -356,8 +389,26 @@ impl Session {
         rx.await.map_err(|e| e.to_string())
     }
 
-    pub async fn delete(&self, which: TorrentIdOrHash, _with_files: bool) -> Result<(), String> {
+    pub async fn delete(&self, which: TorrentIdOrHash, with_files: bool) -> Result<(), String> {
         let handle = self.get(which).ok_or_else(|| "not found".to_string())?;
+        // Capture file paths for optional deletion before stopping the torrent
+        // (the torrent loop owns storage and will drop it on Stop).
+        let file_paths: Option<Vec<(PathBuf, bool)>> = if with_files {
+            handle
+                .with_metadata(|meta| {
+                    let root = self.output_dir.clone();
+                    if meta.info.single_file_mode {
+                        // Single-file: files live directly under root
+                        vec![(root.join(&meta.info.name), false)]
+                    } else {
+                        // Multi-file: everything under root/<name>/
+                        vec![(root.join(&meta.info.name), true)]
+                    }
+                })
+                .ok()
+        } else {
+            None
+        };
         let (tx, rx) = tokio::sync::oneshot::channel();
         handle
             .cmd_tx()
@@ -365,9 +416,25 @@ impl Session {
             .await
             .map_err(|e| e.to_string())?;
         let _ = rx.await;
-        let mut inner = self.inner.lock();
-        inner.torrents.remove(&handle.id);
-        inner.by_hash.remove(&handle.info_hash);
+        {
+            let mut inner = self.inner.lock();
+            inner.torrents.remove(&handle.id);
+            inner.by_hash.remove(&handle.info_hash);
+        }
+        if let Some(paths) = file_paths {
+            for (p, is_dir) in paths {
+                let res = if is_dir {
+                    tokio::fs::remove_dir_all(&p).await
+                } else {
+                    tokio::fs::remove_file(&p).await
+                };
+                match res {
+                    Ok(()) => log::info!("deleted torrent data: {}", p.display()),
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(e) => log::warn!("failed to delete {}: {}", p.display(), e),
+                }
+            }
+        }
         Ok(())
     }
 
