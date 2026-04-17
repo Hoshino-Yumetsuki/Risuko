@@ -1,4 +1,5 @@
 use serde_json::{Map, Value};
+use std::net::Ipv4Addr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -24,8 +25,11 @@ impl TorrentEngine {
                 disable_dht: false,
                 disable_dht_persistence: false,
                 dht_config: None,
-                listen_port_range: Some(21301..21400),
-                enable_upnp_port_forwarding: true,
+                listen: Some(librqbit::ListenerOptions {
+                    listen_addr: (Ipv4Addr::UNSPECIFIED, 21301).into(),
+                    enable_upnp_port_forwarding: true,
+                    ..Default::default()
+                }),
                 fastresume: true,
                 persistence: Some(librqbit::SessionPersistenceConfig::Json { folder: None }),
                 ..Default::default()
@@ -190,8 +194,11 @@ impl TorrentEngine {
     }
 
     /// Resolve magnet URI metadata without starting a download.
-    /// Uses librqbit's `list_only` mode to fetch torrent info via DHT/trackers,
-    /// then returns the file list.
+    ///
+    /// Fast path: if the info_hash is already managed in the session (e.g.
+    /// restored from persistence on startup), read metadata directly from the
+    /// handle. Otherwise falls back to DHT/tracker resolution via librqbit's
+    /// `list_only` mode.
     pub async fn resolve_magnet(
         &self,
         magnet_uri: &str,
@@ -199,6 +206,33 @@ impl TorrentEngine {
         timeout_secs: u64,
     ) -> Result<Vec<TorrentFileInfo>, String> {
         let session = self.get_session()?;
+
+        // Fast path: check if this info_hash is already in the session db.
+        // librqbit's add_torrent(list_only=true) does NOT consult the db first;
+        // it always goes through DHT resolution. We check ourselves to get
+        // instant results for already-known torrents.
+        if let Some(handle) = librqbit::Magnet::parse(magnet_uri)
+            .ok()
+            .and_then(|m| m.as_id20())
+            .and_then(|h| session.get(librqbit::api::TorrentIdOrHash::Hash(h)))
+        {
+            match handle.with_metadata(|meta| Self::extract_file_details(&meta.info)) {
+                Ok(files) => {
+                    log::info!(
+                        "Magnet already managed, resolved from session db ({} files)",
+                        files.len()
+                    );
+                    return Ok(files);
+                }
+                Err(e) => {
+                    log::debug!(
+                        "Magnet in session but metadata not yet resolved, falling through: {}",
+                        e
+                    );
+                }
+            }
+        }
+
         let trackers = Self::parse_trackers(options);
 
         let add_opts = librqbit::AddTorrentOptions {
@@ -211,11 +245,15 @@ impl TorrentEngine {
             ..Default::default()
         };
 
-        log::info!("Resolving magnet metadata: {}", magnet_uri);
+        log::info!("Resolving magnet metadata via DHT: {}", magnet_uri);
+        let start = std::time::Instant::now();
 
         let response = tokio::time::timeout(
             Duration::from_secs(timeout_secs),
-            session.add_torrent(librqbit::AddTorrent::Url(magnet_uri.into()), Some(add_opts)),
+            session.add_torrent(
+                librqbit::AddTorrent::Url(magnet_uri.into()),
+                Some(add_opts),
+            ),
         )
         .await
         .map_err(|_| "Timed out resolving magnet metadata".to_string())?
@@ -223,28 +261,46 @@ impl TorrentEngine {
 
         match response {
             librqbit::AddTorrentResponse::ListOnly(list_only) => {
-                let files = list_only
-                    .info
-                    .iter_file_details()
-                    .map_err(|e| format!("Failed to read file details: {}", e))?
-                    .enumerate()
-                    .map(|(idx, d)| {
-                        let filename = d
-                            .filename
-                            .to_string()
-                            .unwrap_or_else(|_| format!("file_{}", idx));
-                        TorrentFileInfo {
-                            index: idx,
-                            path: filename,
-                            length: d.len,
-                        }
-                    })
-                    .collect();
-                log::info!("Magnet metadata resolved successfully");
+                let files = Self::extract_file_details(&list_only.info);
+                log::info!(
+                    "Magnet metadata resolved via DHT in {:?} ({} files)",
+                    start.elapsed(),
+                    files.len()
+                );
                 Ok(files)
             }
-            _ => Err("Unexpected response: expected ListOnly mode".to_string()),
+            librqbit::AddTorrentResponse::AlreadyManaged(_id, handle) => {
+                // Shouldn't normally be reached because our fast path above
+                // handles it, but keep as a defensive fallback.
+                let files = handle
+                    .with_metadata(|meta| Self::extract_file_details(&meta.info))
+                    .map_err(|e| format!("Torrent metadata not yet available: {}", e))?;
+                log::info!(
+                    "Magnet resolved via AlreadyManaged fallback in {:?} ({} files)",
+                    start.elapsed(),
+                    files.len()
+                );
+                Ok(files)
+            }
+            _ => Err("Unexpected response from torrent session".to_string()),
         }
+    }
+
+    /// Extract file details from validated torrent info
+    fn extract_file_details(
+        info: &librqbit::ValidatedTorrentMetaV1Info<librqbit::ByteBufOwned>,
+    ) -> Vec<TorrentFileInfo> {
+        info.iter_file_details()
+            .enumerate()
+            .map(|(idx, d)| {
+                let filename = d.filename.to_string();
+                TorrentFileInfo {
+                    index: idx,
+                    path: filename,
+                    length: d.len,
+                }
+            })
+            .collect()
     }
 
     /// Parse user's bt-tracker config into a list of tracker URLs
@@ -279,13 +335,9 @@ impl TorrentEngine {
 
         // Collect per-file information from metadata
         let file_details = handle.metadata.load().as_ref().and_then(|r| {
-            r.info.iter_file_details().ok().map(|iter| {
-                iter.enumerate()
+            Some(r.info.iter_file_details().enumerate()
                     .map(|(idx, d)| {
-                        let filename = d
-                            .filename
-                            .to_string()
-                            .unwrap_or_else(|_| format!("file_{}", idx));
+                        let filename = d.filename.to_string();
                         TorrentFileInfo {
                             index: idx,
                             path: filename,
@@ -293,7 +345,7 @@ impl TorrentEngine {
                         }
                     })
                     .collect::<Vec<_>>()
-            })
+            )
         });
 
         Some(TorrentStats {

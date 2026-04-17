@@ -1071,6 +1071,7 @@ impl TaskManager {
                             task.download_speed = stats.download_speed;
                             task.upload_speed = stats.upload_speed;
                             task.connections = stats.num_peers;
+                            task.num_seeders = stats.num_peers;
 
                             if task.bt_name.is_none() {
                                 if let Some(ref name) = stats.name {

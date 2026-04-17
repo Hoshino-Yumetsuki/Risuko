@@ -1,8 +1,5 @@
 export const EMPTY_STRING = "";
 export const TEMP_DOWNLOAD_SUFFIX = ".part";
-const PORTABLE_EXECUTABLE_DIR = process.env.PORTABLE_EXECUTABLE_DIR;
-const _IS_PORTABLE =
-	PORTABLE_EXECUTABLE_DIR && PORTABLE_EXECUTABLE_DIR !== EMPTY_STRING;
 
 export const APP_THEME = {
 	AUTO: "auto",
@@ -47,7 +44,6 @@ export const MAX_NUM_OF_SAVED_CREDENTIALS = 50;
 export const ENGINE_RPC_HOST = "127.0.0.1";
 export const ENGINE_RPC_PORT = 16800;
 export const ENGINE_MAX_CONCURRENT_DOWNLOADS = 10;
-const _ENGINE_MAX_CONNECTION_PER_SERVER = 16;
 
 export const UNKNOWN_PEERID =
 	"%00%00%00%00%00%00%00%00%00%00%00%00%00%00%00%00%00%00%00%00";
@@ -56,13 +52,9 @@ export const UNKNOWN_PEERID_NAME = "unknown";
 export const ONE_SECOND = 1000;
 const ONE_MINUTE = ONE_SECOND * 60;
 const ONE_HOUR = ONE_MINUTE * 60;
-const ONE_DAY = ONE_HOUR * 24;
 
 // 12 Hours
 export const AUTO_SYNC_TRACKER_INTERVAL = ONE_HOUR * 12;
-
-// One Week
-const _AUTO_CHECK_UPDATE_INTERVAL = ONE_DAY * 7;
 
 export const MAX_BT_TRACKER_LENGTH = 6144;
 
@@ -204,16 +196,6 @@ export const PROXY_SCOPE_OPTIONS = [
 
 export const NONE_SELECTED_FILES = "none";
 export const SELECTED_ALL_FILES = "all";
-
-const _IP_VERSION = {
-	V4: 4,
-	V6: 6,
-};
-
-const _LOGIN_SETTING_OPTIONS = {
-	// For Windows
-	args: ["--opened-at-login=1"],
-};
 
 export const TRAY_CANVAS_CONFIG = {
 	WIDTH: 66,
