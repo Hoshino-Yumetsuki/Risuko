@@ -26,7 +26,9 @@ impl TorrentEngine {
                 disable_dht_persistence: false,
                 dht_config: None,
                 listen: Some(librqbit::ListenerOptions {
-                    listen_addr: (Ipv4Addr::UNSPECIFIED, 21301).into(),
+                    // Use port 0 so the OS assigns an available port, avoiding
+                    // silent bind failures when a fixed port is already in use.
+                    listen_addr: (Ipv4Addr::UNSPECIFIED, 0).into(),
                     enable_upnp_port_forwarding: true,
                     ..Default::default()
                 }),
@@ -334,19 +336,11 @@ impl TorrentEngine {
         let name = handle.name();
 
         // Collect per-file information from metadata
-        let file_details = handle.metadata.load().as_ref().and_then(|r| {
-            Some(r.info.iter_file_details().enumerate()
-                    .map(|(idx, d)| {
-                        let filename = d.filename.to_string();
-                        TorrentFileInfo {
-                            index: idx,
-                            path: filename,
-                            length: d.len,
-                        }
-                    })
-                    .collect::<Vec<_>>()
-            )
-        });
+        let file_details = handle
+            .metadata
+            .load()
+            .as_ref()
+            .map(|r| Self::extract_file_details(&r.info));
 
         Some(TorrentStats {
             total_bytes: stats.total_bytes,

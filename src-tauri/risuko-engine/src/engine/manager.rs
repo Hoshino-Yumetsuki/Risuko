@@ -1071,7 +1071,9 @@ impl TaskManager {
                             task.download_speed = stats.download_speed;
                             task.upload_speed = stats.upload_speed;
                             task.connections = stats.num_peers;
-                            task.num_seeders = stats.num_peers;
+                            // num_seeders cannot be derived from stats.num_peers alone;
+                            // leave at 0 until seeder detection (e.g. from peer bitfields) is implemented.
+                            task.num_seeders = 0;
 
                             if task.bt_name.is_none() {
                                 if let Some(ref name) = stats.name {

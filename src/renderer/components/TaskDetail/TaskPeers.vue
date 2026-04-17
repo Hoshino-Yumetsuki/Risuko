@@ -4,7 +4,7 @@
       {{ $t('task.no-peers') }}
     </div>
     <div v-else class="peers-list">
-      <div class="peer-card" v-for="row in peers" :key="`${row.ip}:${row.port}`">
+      <div class="peer-card" v-for="row in peers" :key="`${row.peerId}@${row.ip}:${row.port}`">
         <div class="peer-card-header">
           <span class="peer-card-host">{{ row.ip }}:{{ row.port }}</span>
           <span class="peer-card-progress">{{ formatBitfieldPercent(row.bitfield) }}%</span>
