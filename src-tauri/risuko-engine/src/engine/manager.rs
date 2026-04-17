@@ -77,7 +77,9 @@ impl TaskManager {
         Ok(manager)
     }
 
-    /// restarted, match persisted librqbit torrents back to saved tasks by info_hash
+    /// restarted, match persisted librqbit torrents back to saved tasks by info_hash.
+    /// Any persisted librqbit torrent with no matching live task is purged from
+    /// the librqbit session so it does not silently resume downloading on startup.
     async fn restore_torrent_mappings(&self) {
         let te_guard = self.torrent_engine.read().await;
         let Some(ref te) = *te_guard else { return };
@@ -87,37 +89,66 @@ impl TaskManager {
             return;
         }
 
-        let mut tasks = self.tasks.write().await;
-        let mut ids = self.torrent_ids.write().await;
+        let mut orphans: Vec<(usize, String)> = Vec::new();
 
-        for (librqbit_id, info_hash) in &managed {
-            for task in tasks.iter_mut() {
-                if task.kind == TaskKind::Torrent
-                    && task.info_hash.as_deref() == Some(info_hash.as_str())
-                    && task.status != TaskStatus::Removed
-                {
-                    ids.insert(task.gid.clone(), *librqbit_id);
-                    // Session load sets active to paused, but librqbit is still running
-                    // Restore active so update_progress can track it
-                    if task.status == TaskStatus::Paused {
-                        task.status = TaskStatus::Active;
+        {
+            let mut tasks = self.tasks.write().await;
+            let mut ids = self.torrent_ids.write().await;
+
+            for (librqbit_id, info_hash) in &managed {
+                let mut matched = false;
+                for task in tasks.iter_mut() {
+                    if task.kind == TaskKind::Torrent
+                        && task.info_hash.as_deref() == Some(info_hash.as_str())
+                        && task.status != TaskStatus::Removed
+                    {
+                        ids.insert(task.gid.clone(), *librqbit_id);
+                        // Session load sets active to paused, but librqbit is still running
+                        // Restore active so update_progress can track it
+                        if task.status == TaskStatus::Paused {
+                            task.status = TaskStatus::Active;
+                        }
+                        log::info!(
+                            "Restored torrent mapping: gid={} -> librqbit_id={} ({})",
+                            task.gid,
+                            librqbit_id,
+                            info_hash
+                        );
+                        matched = true;
+                        break;
                     }
-                    log::info!(
-                        "Restored torrent mapping: gid={} -> librqbit_id={} ({})",
-                        task.gid,
-                        librqbit_id,
-                        info_hash
-                    );
-                    break;
+                }
+                if !matched {
+                    orphans.push((*librqbit_id, info_hash.clone()));
                 }
             }
+
+            log::info!(
+                "Restored {} torrent mappings out of {} persisted torrents ({} orphan)",
+                ids.len(),
+                managed.len(),
+                orphans.len()
+            );
         }
 
-        log::info!(
-            "Restored {} torrent mappings out of {} persisted torrents",
-            ids.len(),
-            managed.len()
-        );
+        // Purge orphan librqbit torrents (persisted but no live Motrix task).
+        // Without this, librqbit auto-resumes them on startup and writes files
+        // even though the user has deleted or never had the task in Motrix.
+        for (librqbit_id, info_hash) in orphans {
+            match te.remove(librqbit_id).await {
+                Ok(()) => log::info!(
+                    "Purged orphan persisted torrent: librqbit_id={} ({})",
+                    librqbit_id,
+                    info_hash
+                ),
+                Err(e) => log::warn!(
+                    "Failed to purge orphan torrent librqbit_id={} ({}): {}",
+                    librqbit_id,
+                    info_hash,
+                    e
+                ),
+            }
+        }
     }
 
     pub async fn add_http_task(
