@@ -46,6 +46,8 @@ const systemKeys = [
 	"bt-load-saved-metadata",
 	"bt-save-metadata",
 	"bt-tracker",
+	"bt-max-peers-per-torrent",
+	"bt-max-outstanding-per-peer",
 	"continue",
 	"dht-listen-port",
 	"dir",
@@ -86,6 +88,8 @@ const startupOnlyKeys = [
 	"listen-port",
 	"rpc-listen-port",
 	"rpc-secret",
+	"bt-max-peers-per-torrent",
+	"bt-max-outstanding-per-peer",
 ];
 
 export { startupOnlyKeys, systemKeys, userKeys };

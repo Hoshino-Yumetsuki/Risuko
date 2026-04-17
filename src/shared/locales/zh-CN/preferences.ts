@@ -86,6 +86,12 @@ export default {
 	"bt-tracker": "Tracker 服务器",
 	"bt-tracker-input-tips": "Tracker 服务器，一行一个",
 	"bt-tracker-tips": "推荐使用：",
+	"bt-max-peers-per-torrent": "每个种子最大连接数",
+	"bt-max-peers-per-torrent-tips":
+		"每个种子允许的最大对等节点数，值越大 peer 覆盖越广（需重启引擎生效）",
+	"bt-max-outstanding-per-peer": "每个对等节点最大并发请求数",
+	"bt-max-outstanding-per-peer-tips":
+		"每个 peer 的 pipeline 并发请求数，值越大高延迟链路下载越快（需重启引擎生效）",
 	"sync-tracker-tips": "从服务器同步",
 	"auto-sync-tracker": "每天自动更新 Tracker 服务器列表",
 	"ed2k-server": "电驴服务器",

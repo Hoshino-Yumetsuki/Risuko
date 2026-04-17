@@ -18,6 +18,8 @@ pub fn system_defaults() -> Map<String, Value> {
     m.insert("bt-load-saved-metadata".into(), json!(true));
     m.insert("bt-save-metadata".into(), json!(true));
     m.insert("bt-tracker".into(), json!(""));
+    m.insert("bt-max-peers-per-torrent".into(), json!(100));
+    m.insert("bt-max-outstanding-per-peer".into(), json!(128));
     m.insert("continue".into(), json!(true));
     m.insert("dht-listen-port".into(), json!(26701));
     m.insert("dir".into(), json!(downloads_dir));

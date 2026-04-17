@@ -91,6 +91,12 @@ export default {
 	"bt-tracker": "Tracker Servers",
 	"bt-tracker-input-tips": "Tracker servers, one per line",
 	"bt-tracker-tips": "Recommended: ",
+	"bt-max-peers-per-torrent": "Max Peers per Torrent",
+	"bt-max-peers-per-torrent-tips":
+		"Maximum concurrent peer connections per torrent. Higher values improve swarm discovery (requires engine restart)",
+	"bt-max-outstanding-per-peer": "Max Outstanding Requests per Peer",
+	"bt-max-outstanding-per-peer-tips":
+		"Maximum concurrent chunk requests pipelined to each peer. Higher values improve throughput on high-latency links (requires engine restart)",
 	"sync-tracker-tips": "Sync",
 	"auto-sync-tracker": "Update tracker list every day automatically",
 	"ed2k-server": "eDonkey Servers",

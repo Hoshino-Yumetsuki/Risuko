@@ -1,0 +1,837 @@
+//! Per-torrent state machine
+
+pub mod stats;
+
+use std::collections::{HashMap, HashSet};
+use std::net::SocketAddr;
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+use arc_swap::ArcSwapOption;
+use bytes::Bytes;
+use parking_lot::Mutex;
+use sha1::{Digest, Sha1};
+use tokio::sync::{mpsc, oneshot};
+use tokio::time::{interval, MissedTickBehavior};
+
+use super::core::{Id20, Lengths, TorrentMeta, ValidatedTorrentMetaV1Info};
+use super::peer::{connect, PeerCommand, PeerEvent, SpawnPeer};
+use super::piece::{ChunkTracker, PieceTracker};
+use super::storage::{FilesystemStorage, StorageBackend};
+use super::tracker::{announce as tracker_announce, AnnounceEvent, AnnounceRequest};
+use super::wire::Message;
+
+pub use stats::{AggregatedLiveStats, LiveStats, Snapshot, SpeedSample, TorrentStats};
+
+/// Default maximum concurrent 16 KiB chunk requests per peer. BitTorrent
+/// clients typically pipeline 32-128 (libtorrent `reqq`). Too low here caps
+/// per-peer throughput at `MAX_OUTSTANDING * 16 KiB / round-trip`
+const DEFAULT_MAX_OUTSTANDING_PER_PEER: usize = 128;
+/// Default cap on total concurrent peers held by the torrent state machine
+const DEFAULT_MAX_PEERS: usize = 100;
+
+pub struct TorrentInit {
+    pub meta: TorrentMeta,
+    pub lengths: Lengths,
+    pub root_dir: PathBuf,
+    pub only_files: Option<Vec<usize>>,
+    pub max_outstanding_per_peer: Option<usize>,
+    pub max_peers: Option<usize>,
+}
+
+#[derive(Debug)]
+pub enum TorrentCommand {
+    AddPeer(SocketAddr),
+    AddInboundPeer {
+        addr: SocketAddr,
+        cmd_tx: mpsc::Sender<PeerCommand>,
+        event_rx: mpsc::Receiver<PeerEvent>,
+    },
+    Pause(oneshot::Sender<()>),
+    Unpause(oneshot::Sender<()>),
+    Stop(oneshot::Sender<()>),
+}
+
+pub struct ManagedTorrent {
+    pub id: usize,
+    pub info_hash: Id20,
+    pub name: Option<String>,
+    pub metadata: ArcSwapOption<TorrentMeta>,
+    pub(crate) cmd_tx: mpsc::Sender<TorrentCommand>,
+    pub(crate) stats: Arc<Mutex<TorrentStats>>,
+}
+
+impl ManagedTorrent {
+    pub fn info_hash(&self) -> Id20 {
+        self.info_hash
+    }
+    pub fn name(&self) -> Option<String> {
+        self.name.clone()
+    }
+    pub fn stats(&self) -> TorrentStats {
+        let mut s = self.stats.lock().clone();
+        s.refresh_live();
+        s
+    }
+    pub fn with_metadata<T>(&self, f: impl FnOnce(&TorrentMeta) -> T) -> Result<T, &'static str> {
+        match self.metadata.load().as_ref() {
+            Some(m) => Ok(f(m.as_ref())),
+            None => Err("metadata not yet available"),
+        }
+    }
+    pub(crate) fn cmd_tx(&self) -> mpsc::Sender<TorrentCommand> {
+        self.cmd_tx.clone()
+    }
+}
+
+pub async fn spawn(
+    id: usize,
+    init: TorrentInit,
+    our_peer_id: Id20,
+    listen_port: u16,
+) -> std::io::Result<Arc<ManagedTorrent>> {
+    let info_hash = init.meta.info_hash;
+    let name = Some(init.meta.info.name.clone());
+    let (cmd_tx, cmd_rx) = mpsc::channel::<TorrentCommand>(64);
+    let file_lens: Vec<u64> = init.meta.info.iter_file_details().map(|f| f.len).collect();
+    let stats = Arc::new(Mutex::new(TorrentStats::initial(
+        init.lengths.total_length(),
+        file_lens,
+    )));
+    let meta_arc = Arc::new(init.meta.clone());
+    let metadata_swap = ArcSwapOption::new(Some(meta_arc));
+    let handle = Arc::new(ManagedTorrent {
+        id,
+        info_hash,
+        name,
+        metadata: metadata_swap,
+        cmd_tx,
+        stats: stats.clone(),
+    });
+    tokio::spawn(torrent_loop(
+        id,
+        init,
+        our_peer_id,
+        listen_port,
+        cmd_rx,
+        stats,
+    ));
+    Ok(handle)
+}
+
+struct Peer {
+    addr: SocketAddr,
+    cmd_tx: mpsc::Sender<PeerCommand>,
+    bitfield: Vec<u8>,
+    am_choking: bool,
+    am_interested: bool,
+    peer_choking: bool,
+    peer_interested: bool,
+    outstanding: Vec<(u32, u32, u32)>,
+}
+
+/// Result of an off-runtime piece hash verification
+struct VerifyResult {
+    piece_index: u32,
+    hash: [u8; 20],
+}
+
+async fn torrent_loop(
+    torrent_id: usize,
+    init: TorrentInit,
+    our_peer_id: Id20,
+    listen_port: u16,
+    mut cmd_rx: mpsc::Receiver<TorrentCommand>,
+    stats: Arc<Mutex<TorrentStats>>,
+) {
+    let info = Arc::new(init.meta.info.clone());
+    let info_hash = init.meta.info_hash;
+    let lengths = init.lengths;
+    let max_outstanding = init
+        .max_outstanding_per_peer
+        .unwrap_or(DEFAULT_MAX_OUTSTANDING_PER_PEER)
+        .max(1);
+    let max_peers = init.max_peers.unwrap_or(DEFAULT_MAX_PEERS).max(1);
+    let storage = Arc::new(FilesystemStorage::new(&info, &init.root_dir));
+    if let Err(e) = storage.preallocate().await {
+        log::warn!("preallocate failed for {info_hash}: {e}");
+    }
+    let mut piece_tracker = PieceTracker::new(lengths);
+    let mut chunk_tracker = ChunkTracker::new(lengths);
+    scan_existing_pieces(&info, &storage, &lengths, &mut piece_tracker).await;
+    {
+        let mut s = stats.lock();
+        s.progress_bytes = completed_bytes(&piece_tracker, &lengths);
+        s.file_progress = compute_file_progress(&piece_tracker, &lengths, storage.layout());
+        s.finished = piece_tracker.is_complete();
+    }
+
+    let mut peer_addr_rx = spawn_tracker_pollers(
+        collect_trackers(&init.meta),
+        info_hash,
+        our_peer_id,
+        listen_port,
+        lengths.total_length(),
+    );
+
+    // Large enough to not block peers: with MAX_PEERS peers each potentially
+    // delivering MAX_OUTSTANDING_PER_PEER Piece events in rapid succession,
+    // undersizing this channel serializes the entire download
+    let (peer_event_tx, mut peer_event_rx) = mpsc::channel::<(u32, PeerEvent)>(8192);
+    // Piece hash results come back asynchronously so the main loop never
+    // blocks on SHA1 verification. Without this, a single 4 MB piece hash
+    // costs ~10 ms of CPU during which no peer event can be serviced
+    let (verify_tx, mut verify_rx) = mpsc::channel::<VerifyResult>(256);
+    let mut peers: HashMap<u32, Peer> = HashMap::new();
+    let mut next_pid: u32 = 1;
+    let mut known_addrs: HashSet<SocketAddr> = HashSet::new();
+    // Outbound dials that have been spawned but whose peer has not completed
+    // the BT handshake yet. Tracked separately so the max-peer cap accounts
+    // for in-flight connection bursts, not just handshook peers.
+    let mut pending_dials: HashMap<u32, SocketAddr> = HashMap::new();
+    let mut paused = false;
+    let mut tick = interval(Duration::from_millis(500));
+    tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
+    let mut last_tick = Instant::now();
+    let mut bytes_this_tick = (0u64, 0u64);
+
+    loop {
+        tokio::select! {
+            Some(cmd) = cmd_rx.recv() => match cmd {
+                TorrentCommand::AddPeer(addr) => {
+                    if !paused
+                        && known_addrs.insert(addr)
+                        && peers.len() + pending_dials.len() < max_peers
+                    {
+                        let pid = next_pid; next_pid += 1;
+                        pending_dials.insert(pid, addr);
+                        spawn_outbound_peer(torrent_id, pid, addr, info_hash, our_peer_id, peer_event_tx.clone());
+                    }
+                }
+                TorrentCommand::AddInboundPeer { addr, cmd_tx, event_rx } => {
+                    if !paused
+                        && known_addrs.insert(addr)
+                        && peers.len() + pending_dials.len() < max_peers
+                    {
+                        let pid = next_pid; next_pid += 1;
+                        adopt_inbound_peer(pid, addr, cmd_tx, event_rx, peer_event_tx.clone(), &mut peers, &lengths, &mut piece_tracker).await;
+                    }
+                }
+                TorrentCommand::Pause(ack) => {
+                    paused = true;
+                    for (_, p) in peers.drain() {
+                        let _ = p.cmd_tx.send(PeerCommand::Disconnect).await;
+                    }
+                    pending_dials.clear();
+                    known_addrs.clear();
+                    let _ = ack.send(());
+                }
+                TorrentCommand::Unpause(ack) => {
+                    paused = false;
+                    let _ = ack.send(());
+                }
+                TorrentCommand::Stop(ack) => {
+                    for (_, p) in peers.drain() {
+                        let _ = p.cmd_tx.send(PeerCommand::Disconnect).await;
+                    }
+                    pending_dials.clear();
+                    let _ = ack.send(());
+                    break;
+                }
+            },
+            Some(addr) = peer_addr_rx.recv() => {
+                if !paused
+                    && known_addrs.insert(addr)
+                    && peers.len() + pending_dials.len() < max_peers
+                {
+                    let pid = next_pid; next_pid += 1;
+                    pending_dials.insert(pid, addr);
+                    spawn_outbound_peer(torrent_id, pid, addr, info_hash, our_peer_id, peer_event_tx.clone());
+                }
+            }
+            Some((pid, ev)) = peer_event_rx.recv() => {
+                let kick = process_peer_event(
+                    torrent_id, pid, ev, &mut peers, &mut piece_tracker, &mut chunk_tracker,
+                    &lengths, &storage, &stats, &mut bytes_this_tick,
+                    &mut pending_dials, &mut known_addrs,
+                    &verify_tx,
+                ).await;
+                if kick && !paused {
+                    drive_peer(pid, &mut peers, &mut piece_tracker, &mut chunk_tracker, max_outstanding).await;
+                }
+            }
+            Some(vr) = verify_rx.recv() => {
+                process_verify_result(
+                    vr, &info, &lengths, &mut piece_tracker,
+                    &mut chunk_tracker, &mut peers, &storage, &stats,
+                ).await;
+                // New work may be available; re-drive all peers immediately
+                // instead of waiting for the next 500 ms tick
+                if !paused {
+                    drive_requests(&mut peers, &mut piece_tracker, &mut chunk_tracker, max_outstanding).await;
+                }
+            }
+            _ = tick.tick() => {
+                let now = Instant::now();
+                let dt = now.duration_since(last_tick).as_secs_f32().max(0.001);
+                last_tick = now;
+                {
+                    let mut s = stats.lock();
+                    s.live_stats.update(bytes_this_tick.0, bytes_this_tick.1, dt);
+                    s.live_stats.snapshot.peer_stats.live = peers.len() as u32;
+                }
+                bytes_this_tick = (0, 0);
+                if !paused {
+                    drive_requests(&mut peers, &mut piece_tracker, &mut chunk_tracker, max_outstanding).await;
+                }
+            }
+        }
+    }
+}
+
+/// Side-channel registry to pass outbound peer cmd_tx handles from the spawn
+/// task into the main loop on first `Handshook`. Keyed by `(torrent_id, pid)`
+/// because `pid` is only unique within a single torrent loop; a global
+/// `pid` keying would collide across torrents.
+mod peer_registry {
+    use super::*;
+    use once_cell::sync::Lazy;
+    use std::sync::Mutex as StdMutex;
+    static REG: Lazy<StdMutex<HashMap<(usize, u32), mpsc::Sender<PeerCommand>>>> =
+        Lazy::new(|| StdMutex::new(HashMap::new()));
+    pub fn put(torrent_id: usize, pid: u32, tx: mpsc::Sender<PeerCommand>) {
+        REG.lock().unwrap().insert((torrent_id, pid), tx);
+    }
+    pub fn take(torrent_id: usize, pid: u32) -> Option<mpsc::Sender<PeerCommand>> {
+        REG.lock().unwrap().remove(&(torrent_id, pid))
+    }
+}
+
+fn spawn_outbound_peer(
+    torrent_id: usize,
+    pid: u32,
+    addr: SocketAddr,
+    info_hash: Id20,
+    our_peer_id: Id20,
+    event_tx: mpsc::Sender<(u32, PeerEvent)>,
+) {
+    tokio::spawn(async move {
+        let spawn = SpawnPeer {
+            addr,
+            info_hash,
+            our_peer_id,
+            connect_timeout: Duration::from_secs(10),
+            read_timeout: Duration::from_secs(120),
+        };
+        match connect(spawn).await {
+            Ok((handle, mut rx)) => {
+                peer_registry::put(torrent_id, pid, handle.tx.clone());
+                while let Some(ev) = rx.recv().await {
+                    if event_tx.send((pid, ev)).await.is_err() {
+                        break;
+                    }
+                }
+            }
+            Err(e) => {
+                let _ = event_tx
+                    .send((
+                        pid,
+                        PeerEvent::Disconnected {
+                            reason: format!("connect: {e}"),
+                        },
+                    ))
+                    .await;
+            }
+        }
+    });
+}
+
+async fn adopt_inbound_peer(
+    pid: u32,
+    addr: SocketAddr,
+    cmd_tx: mpsc::Sender<PeerCommand>,
+    mut event_rx: mpsc::Receiver<PeerEvent>,
+    fwd_tx: mpsc::Sender<(u32, PeerEvent)>,
+    peers: &mut HashMap<u32, Peer>,
+    lengths: &Lengths,
+    piece_tracker: &mut PieceTracker,
+) {
+    peers.insert(
+        pid,
+        Peer {
+            addr,
+            cmd_tx: cmd_tx.clone(),
+            bitfield: vec![0u8; lengths.piece_bitfield_bytes()],
+            am_choking: true,
+            am_interested: false,
+            peer_choking: true,
+            peer_interested: false,
+            outstanding: Vec::new(),
+        },
+    );
+    // Seed bitfield + unchoke straight away
+    let bf = piece_tracker.bitfield();
+    let _ = cmd_tx
+        .send(PeerCommand::Send(Message::Bitfield(Bytes::from(bf))))
+        .await;
+    let _ = cmd_tx.send(PeerCommand::Send(Message::Unchoke)).await;
+    // Mark am_choking false so Request from peer is served
+    if let Some(p) = peers.get_mut(&pid) {
+        p.am_choking = false;
+    }
+    tokio::spawn(async move {
+        while let Some(ev) = event_rx.recv().await {
+            if fwd_tx.send((pid, ev)).await.is_err() {
+                break;
+            }
+        }
+    });
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn process_peer_event(
+    torrent_id: usize,
+    pid: u32,
+    ev: PeerEvent,
+    peers: &mut HashMap<u32, Peer>,
+    piece_tracker: &mut PieceTracker,
+    chunk_tracker: &mut ChunkTracker,
+    lengths: &Lengths,
+    storage: &Arc<FilesystemStorage>,
+    stats: &Arc<Mutex<TorrentStats>>,
+    bytes_this_tick: &mut (u64, u64),
+    pending_dials: &mut HashMap<u32, SocketAddr>,
+    known_addrs: &mut HashSet<SocketAddr>,
+    verify_tx: &mpsc::Sender<VerifyResult>,
+) -> bool {
+    // Return value: `true` if the caller should immediately kick the peer
+    // request pipeline. Set for events that can free an outstanding slot
+    // (Piece) or unblock requests (Unchoke, Bitfield, Have)
+    let mut kick = false;
+    match ev {
+        PeerEvent::Handshook { .. } => {
+            if !peers.contains_key(&pid) {
+                if let Some(cmd_tx) = peer_registry::take(torrent_id, pid) {
+                    // Move from pending dial to live peer if we tracked it.
+                    let addr = pending_dials.remove(&pid).unwrap_or_else(|| {
+                        // Fallback: unknown addr (shouldn't happen for outbound)
+                        "0.0.0.0:0".parse().unwrap()
+                    });
+                    peers.insert(
+                        pid,
+                        Peer {
+                            addr,
+                            cmd_tx: cmd_tx.clone(),
+                            bitfield: vec![0u8; lengths.piece_bitfield_bytes()],
+                            am_choking: true,
+                            am_interested: false,
+                            peer_choking: true,
+                            peer_interested: false,
+                            outstanding: Vec::new(),
+                        },
+                    );
+                    let bf = piece_tracker.bitfield();
+                    let _ = cmd_tx
+                        .send(PeerCommand::Send(Message::Bitfield(Bytes::from(bf))))
+                        .await;
+                    let _ = cmd_tx.send(PeerCommand::Send(Message::Unchoke)).await;
+                    if let Some(p) = peers.get_mut(&pid) {
+                        p.am_choking = false;
+                    }
+                }
+            }
+        }
+        PeerEvent::Message(msg) => {
+            let Some(peer) = peers.get_mut(&pid) else {
+                return false;
+            };
+            match msg {
+                Message::Choke => peer.peer_choking = true,
+                Message::Unchoke => {
+                    peer.peer_choking = false;
+                    kick = true;
+                }
+                Message::Interested => peer.peer_interested = true,
+                Message::NotInterested => peer.peer_interested = false,
+                Message::Have { piece_index } => {
+                    let byte = (piece_index / 8) as usize;
+                    let bit = 7 - (piece_index % 8) as u8;
+                    if byte < peer.bitfield.len() {
+                        peer.bitfield[byte] |= 1 << bit;
+                    }
+                    if let Ok(vpi) = lengths.validate_piece(piece_index) {
+                        piece_tracker.note_peer_has(vpi);
+                    }
+                    send_interested_if_useful(peer, piece_tracker).await;
+                    kick = true;
+                }
+                Message::Bitfield(bytes) => {
+                    let n = bytes.len().min(peer.bitfield.len());
+                    peer.bitfield[..n].copy_from_slice(&bytes[..n]);
+                    piece_tracker.add_peer_bitfield(&peer.bitfield);
+                    send_interested_if_useful(peer, piece_tracker).await;
+                    kick = true;
+                }
+                Message::Request {
+                    index,
+                    begin,
+                    length,
+                } => {
+                    let Ok(vpi) = lengths.validate_piece(index) else {
+                        return false;
+                    };
+                    if !piece_tracker.has_local(vpi) || peer.am_choking {
+                        return false;
+                    }
+                    if length > 1024 * 1024 {
+                        return false;
+                    }
+                    // Reject requests that straddle the piece boundary so a
+                    // malicious peer cannot trigger an out-of-bounds read.
+                    let piece_len = lengths.piece_length_of(vpi) as u64;
+                    if (begin as u64).saturating_add(length as u64) > piece_len {
+                        return false;
+                    }
+                    let offset = lengths.piece_offset(vpi) + begin as u64;
+                    let mut buf = vec![0u8; length as usize];
+                    if storage.read_at(offset, &mut buf).await.is_ok() {
+                        let _ = peer
+                            .cmd_tx
+                            .send(PeerCommand::Send(Message::Piece {
+                                index,
+                                begin,
+                                data: Bytes::from(buf),
+                            }))
+                            .await;
+                        bytes_this_tick.1 += length as u64;
+                        stats.lock().uploaded_bytes += length as u64;
+                    }
+                }
+                Message::Piece { index, begin, data } => {
+                    let Ok(vpi) = lengths.validate_piece(index) else {
+                        return false;
+                    };
+                    // Only accept pieces that match an outstanding request;
+                    // reject unsolicited or mismatched frames.
+                    let requested = peer.outstanding.iter().position(|&(p, b, l)| {
+                        p == index && b == begin && l as usize == data.len()
+                    });
+                    let Some(req_idx) = requested else {
+                        return false;
+                    };
+                    // Reject if data extends past the piece boundary.
+                    let piece_len = lengths.piece_length_of(vpi) as u64;
+                    if (begin as u64).saturating_add(data.len() as u64) > piece_len {
+                        return false;
+                    }
+                    peer.outstanding.swap_remove(req_idx);
+                    let offset = lengths.piece_offset(vpi) + begin as u64;
+                    if storage.write_at(offset, &data).await.is_err() {
+                        return false;
+                    }
+                    bytes_this_tick.0 += data.len() as u64;
+                    let cinfo = super::core::ChunkInfo {
+                        piece_index: vpi,
+                        chunk_index: begin / super::core::CHUNK_SIZE,
+                        absolute_index: 0,
+                        size: data.len() as u32,
+                        offset: begin,
+                    };
+                    let piece_done = chunk_tracker.mark_received(cinfo);
+                    kick = true;
+                    if piece_done {
+                        // Offload piece hash to the blocking pool. Verification
+                        // of a multi-MB piece costs ~ms of CPU; running it on
+                        // the torrent main loop would stall every peer
+                        let plen = lengths.piece_length_of(vpi) as usize;
+                        let poff = lengths.piece_offset(vpi);
+                        let storage = storage.clone();
+                        let verify_tx = verify_tx.clone();
+                        tokio::spawn(async move {
+                            let mut pbuf = vec![0u8; plen];
+                            if storage.read_at(poff, &mut pbuf).await.is_err() {
+                                return;
+                            }
+                            let hash = tokio::task::spawn_blocking(move || {
+                                let mut h = Sha1::new();
+                                h.update(&pbuf);
+                                let out: [u8; 20] = h.finalize().into();
+                                out
+                            })
+                            .await
+                            .unwrap_or([0u8; 20]);
+                            let _ = verify_tx
+                                .send(VerifyResult {
+                                    piece_index: index,
+                                    hash,
+                                })
+                                .await;
+                        });
+                    }
+                }
+                _ => {}
+            }
+        }
+        PeerEvent::Disconnected { .. } => {
+            // Clear from either in-flight or live, and release the address
+            // for future retries (otherwise a single drop permanently
+            // blacklists the peer).
+            let addr = pending_dials
+                .remove(&pid)
+                .or_else(|| peers.get(&pid).map(|p| p.addr));
+            if let Some(a) = addr {
+                known_addrs.remove(&a);
+            }
+            // Drop the registry slot in case the peer disconnected before
+            // the Handshook event moved it into `peers`.
+            let _ = peer_registry::take(torrent_id, pid);
+            if let Some(dead) = peers.remove(&pid) {
+                piece_tracker.remove_peer_bitfield(&dead.bitfield);
+                let freed = chunk_tracker.release_peer(pid);
+                for piece_idx in freed {
+                    if let Ok(vpi) = lengths.validate_piece(piece_idx) {
+                        piece_tracker.clear_in_flight(vpi);
+                    }
+                }
+            }
+        }
+    }
+    kick
+}
+
+async fn process_verify_result(
+    vr: VerifyResult,
+    info: &ValidatedTorrentMetaV1Info,
+    lengths: &Lengths,
+    piece_tracker: &mut PieceTracker,
+    chunk_tracker: &mut ChunkTracker,
+    peers: &mut HashMap<u32, Peer>,
+    storage: &Arc<FilesystemStorage>,
+    stats: &Arc<Mutex<TorrentStats>>,
+) {
+    let Ok(vpi) = lengths.validate_piece(vr.piece_index) else {
+        return;
+    };
+    // Always clear in-flight regardless of verification outcome
+    piece_tracker.clear_in_flight(vpi);
+    match info.piece_hash(vr.piece_index) {
+        Some(expected) if *expected.as_bytes() == vr.hash => {
+            piece_tracker.set_local(vpi, true);
+            broadcast_have(peers, vr.piece_index).await;
+            let mut s = stats.lock();
+            s.progress_bytes = completed_bytes(piece_tracker, lengths);
+            s.file_progress = compute_file_progress(piece_tracker, lengths, storage.layout());
+            s.finished = piece_tracker.is_complete();
+        }
+        _ => {
+            log::debug!("piece {} hash mismatch", vr.piece_index);
+            chunk_tracker.reset_piece(vpi);
+        }
+    }
+}
+
+async fn send_interested_if_useful(peer: &mut Peer, piece_tracker: &mut PieceTracker) {
+    if !peer.am_interested && piece_tracker.choose_piece(&peer.bitfield).is_some() {
+        peer.am_interested = true;
+        let _ = peer
+            .cmd_tx
+            .send(PeerCommand::Send(Message::Interested))
+            .await;
+    }
+}
+
+async fn broadcast_have(peers: &mut HashMap<u32, Peer>, piece_index: u32) {
+    for p in peers.values_mut() {
+        let _ = p
+            .cmd_tx
+            .send(PeerCommand::Send(Message::Have { piece_index }))
+            .await;
+    }
+}
+
+async fn drive_requests(
+    peers: &mut HashMap<u32, Peer>,
+    piece_tracker: &mut PieceTracker,
+    chunk_tracker: &mut ChunkTracker,
+    max_outstanding: usize,
+) {
+    let pids: Vec<u32> = peers.keys().copied().collect();
+    for pid in pids {
+        drive_peer(pid, peers, piece_tracker, chunk_tracker, max_outstanding).await;
+    }
+}
+
+/// Pipeline requests for a single peer up to `max_outstanding`
+/// Called both on the tick and inline after events that can unblock a peer
+/// (Unchoke, Bitfield, Have, Piece). Without the inline calls, throughput
+/// is capped at `max_outstanding * CHUNK_SIZE / tick_interval`
+async fn drive_peer(
+    pid: u32,
+    peers: &mut HashMap<u32, Peer>,
+    piece_tracker: &mut PieceTracker,
+    chunk_tracker: &mut ChunkTracker,
+    max_outstanding: usize,
+) {
+    let Some(peer) = peers.get_mut(&pid) else {
+        return;
+    };
+    if peer.peer_choking || !peer.am_interested {
+        return;
+    }
+    while peer.outstanding.len() < max_outstanding {
+        // Use the peer id as a hint to distribute piece selection across
+        // peers, avoiding the scenario where every peer picks the same piece
+        let Some(piece) = piece_tracker.choose_requestable_piece(&peer.bitfield, pid) else {
+            break;
+        };
+        match chunk_tracker.next_chunk(piece, pid) {
+            Some(chunk) => {
+                let info = chunk.info;
+                peer.outstanding
+                    .push((info.piece_index.get(), info.offset, info.size));
+                if peer
+                    .cmd_tx
+                    .send(PeerCommand::Send(Message::Request {
+                        index: info.piece_index.get(),
+                        begin: info.offset,
+                        length: info.size,
+                    }))
+                    .await
+                    .is_err()
+                {
+                    break;
+                }
+            }
+            None => {
+                // All chunks of this piece are already requested or received
+                // Mark it in-flight so we try a different piece next iteration
+                piece_tracker.mark_in_flight(piece);
+                continue;
+            }
+        }
+    }
+}
+
+async fn scan_existing_pieces(
+    info: &ValidatedTorrentMetaV1Info,
+    storage: &Arc<FilesystemStorage>,
+    lengths: &Lengths,
+    piece_tracker: &mut PieceTracker,
+) {
+    for idx in 0..lengths.total_pieces() {
+        let Ok(vpi) = lengths.validate_piece(idx) else {
+            continue;
+        };
+        let plen = lengths.piece_length_of(vpi) as usize;
+        let mut buf = vec![0u8; plen];
+        let offset = lengths.piece_offset(vpi);
+        if storage.read_at(offset, &mut buf).await.is_err() {
+            continue;
+        }
+        let mut h = Sha1::new();
+        h.update(&buf);
+        let got: [u8; 20] = h.finalize().into();
+        if let Some(expected) = info.piece_hash(idx) {
+            if *expected.as_bytes() == got {
+                piece_tracker.set_local(vpi, true);
+            }
+        }
+    }
+}
+
+fn completed_bytes(pt: &PieceTracker, lengths: &Lengths) -> u64 {
+    let mut total = 0u64;
+    for idx in 0..lengths.total_pieces() {
+        if let Ok(vpi) = lengths.validate_piece(idx) {
+            if pt.has_local(vpi) {
+                total += lengths.piece_length_of(vpi) as u64;
+            }
+        }
+    }
+    total
+}
+
+/// Distribute the bytes of every completed piece across the files it
+/// overlaps. Used to populate `TorrentStats::file_progress` so per-file
+/// completion can be reported in the UI.
+fn compute_file_progress(
+    pt: &PieceTracker,
+    lengths: &Lengths,
+    layout: &crate::storage::FileSet,
+) -> Vec<u64> {
+    let mut per_file = vec![0u64; layout.files().len()];
+    for idx in 0..lengths.total_pieces() {
+        let Ok(vpi) = lengths.validate_piece(idx) else {
+            continue;
+        };
+        if !pt.has_local(vpi) {
+            continue;
+        }
+        let offset = lengths.piece_offset(vpi);
+        let len = lengths.piece_length_of(vpi) as u64;
+        for span in layout.spans_for(offset, len) {
+            per_file[span.file_index] += span.len;
+        }
+    }
+    per_file
+}
+
+fn collect_trackers(meta: &TorrentMeta) -> Vec<String> {
+    let mut v = Vec::new();
+    if let Some(a) = &meta.announce {
+        v.push(a.clone());
+    }
+    for tier in &meta.announce_list {
+        for url in tier {
+            if !v.contains(url) {
+                v.push(url.clone());
+            }
+        }
+    }
+    v
+}
+
+fn spawn_tracker_pollers(
+    trackers: Vec<String>,
+    info_hash: Id20,
+    peer_id: Id20,
+    port: u16,
+    left: u64,
+) -> mpsc::Receiver<SocketAddr> {
+    let (tx, rx) = mpsc::channel(64);
+    for url in trackers {
+        let tx = tx.clone();
+        tokio::spawn(async move {
+            let mut event = AnnounceEvent::Started;
+            loop {
+                let req = AnnounceRequest {
+                    info_hash,
+                    peer_id,
+                    port,
+                    uploaded: 0,
+                    downloaded: 0,
+                    left,
+                    event,
+                    num_want: 50,
+                };
+                match tracker_announce(&url, &req, Duration::from_secs(30)).await {
+                    Ok(resp) => {
+                        for a in resp.peers {
+                            if tx.send(a).await.is_err() {
+                                return;
+                            }
+                        }
+                        tokio::time::sleep(resp.interval).await;
+                    }
+                    Err(e) => {
+                        log::debug!("tracker {url} failed: {e}");
+                        tokio::time::sleep(Duration::from_secs(120)).await;
+                    }
+                }
+                event = AnnounceEvent::None;
+            }
+        });
+    }
+    rx
+}

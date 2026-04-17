@@ -37,7 +37,6 @@ fn init_logging(
 
     tracing_subscriber::registry()
         .with(filter)
-        .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
         .with(
             tracing_subscriber::fmt::layer()
                 .with_ansi(false)

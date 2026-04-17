@@ -22,7 +22,7 @@ impl EngineOptions {
         }
 
         // Apply user overrides that affect engine behavior
-        for key in ["rpc-host", "m3u8-output-format"] {
+        for key in ["rpc-host", "m3u8-output-format", "keep-seeding"] {
             if let Some(v) = user.get(key) {
                 global.insert(key.into(), v.clone());
             }
@@ -85,6 +85,37 @@ impl EngineOptions {
 
     pub fn seed_time(&self) -> u64 {
         self.get_u64("seed-time").unwrap_or(0)
+    }
+
+    /// Keep seeding until the user stops manually. Overrides seed-time /
+    /// seed-ratio enforcement (those only take effect if this is false).
+    pub fn keep_seeding(&self) -> bool {
+        match self.global.get("keep-seeding") {
+            Some(Value::Bool(b)) => *b,
+            Some(Value::String(s)) => matches!(s.as_str(), "true" | "1" | "yes"),
+            Some(Value::Number(n)) => n.as_u64().map(|v| v != 0).unwrap_or(false),
+            _ => false,
+        }
+    }
+
+    /// Max outstanding chunk requests per peer. 0 or missing = use crate default.
+    pub fn bt_max_outstanding_per_peer(&self) -> Option<usize> {
+        let v = self.get_u64("bt-max-outstanding-per-peer").unwrap_or(0) as usize;
+        if v == 0 {
+            None
+        } else {
+            Some(v)
+        }
+    }
+
+    /// Max concurrent peer connections per torrent. 0 or missing = use crate default.
+    pub fn bt_max_peers_per_torrent(&self) -> Option<usize> {
+        let v = self.get_u64("bt-max-peers-per-torrent").unwrap_or(0) as usize;
+        if v == 0 {
+            None
+        } else {
+            Some(v)
+        }
     }
 
     pub fn ed2k_servers(&self) -> Vec<String> {
