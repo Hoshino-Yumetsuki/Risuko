@@ -144,6 +144,13 @@ mod tests {
         assert_eq!(sys.get("rpc-listen-port").unwrap(), 16800);
         assert_eq!(sys.get("split").unwrap(), 16);
         assert_eq!(sys.get("rpc-secret").unwrap(), "");
+        // BT defaults
+        assert_eq!(sys.get("bt-enable-upnp").unwrap(), true);
+        assert!(sys.contains_key("bt-upnp-lease"), "missing bt-upnp-lease");
+        assert_eq!(sys.get("bt-upnp-lease").unwrap(), 300);
+        assert_eq!(sys.get("bt-enable-lsd").unwrap(), true);
+        assert_eq!(sys.get("bt-encryption-policy").unwrap(), "prefer");
+        assert_eq!(sys.get("bt-listen-v6").unwrap(), false);
     }
 
     #[test]

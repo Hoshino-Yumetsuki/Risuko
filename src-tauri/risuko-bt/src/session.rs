@@ -168,7 +168,6 @@ impl Session {
             let fwd = super::upnp::UpnpPortForwarder::new(
                 vec![
                     (local_port, super::upnp::MapProto::Tcp),
-                    (local_port, super::upnp::MapProto::Udp),
                 ],
                 super::upnp::UpnpOptions {
                     lease,
@@ -231,12 +230,17 @@ impl Session {
             .unwrap_or(false);
         if listen_v6 {
             let v6_addr: SocketAddr = (std::net::Ipv6Addr::UNSPECIFIED, local_port).into();
-            match TcpListener::bind(v6_addr).await {
-                Ok(listener6) => {
-                    log::info!("session v6 listening on port {local_port}");
-                    let weak6 = Arc::downgrade(&session);
-                    let accept6 = tokio::spawn(run_accept_loop(listener6, weak6));
-                    *session.accept6_handle.lock() = Some(accept6);
+            match bind_v6_listener(v6_addr) {
+                Ok(std_listener) => {
+                    match TcpListener::from_std(std_listener) {
+                        Ok(listener6) => {
+                            log::info!("session v6 listening on port {local_port}");
+                            let weak6 = Arc::downgrade(&session);
+                            let accept6 = tokio::spawn(run_accept_loop(listener6, weak6));
+                            *session.accept6_handle.lock() = Some(accept6);
+                        }
+                        Err(e) => log::warn!("session v6 tokio convert failed: {e}"),
+                    }
                 }
                 Err(e) => log::warn!("session v6 bind failed: {e}"),
             }
@@ -311,6 +315,7 @@ impl Session {
                     &url,
                     &extra_trackers,
                     std::time::Duration::from_secs(120),
+                    self.opts.encryption,
                 )
                 .await?;
                 let torrent_bytes =
@@ -515,6 +520,19 @@ impl Session {
             .await
             .map_err(|e| e.to_string())
     }
+}
+
+/// Bind a TCP listener on an IPv6 address with `IPV6_V6ONLY` set to avoid
+/// dual-stack conflicts when an IPv4 listener already bound the same port.
+fn bind_v6_listener(addr: SocketAddr) -> std::io::Result<std::net::TcpListener> {
+    use socket2::{Domain, Protocol, Socket, Type};
+    let sock = Socket::new(Domain::IPV6, Type::STREAM, Some(Protocol::TCP))?;
+    sock.set_only_v6(true)?;
+    sock.set_reuse_address(true)?;
+    sock.set_nonblocking(true)?;
+    sock.bind(&addr.into())?;
+    sock.listen(128)?;
+    Ok(sock.into())
 }
 
 /// Shared inbound accept loop. Parameterised on a `Weak<Session>` so the

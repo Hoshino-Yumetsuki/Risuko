@@ -502,10 +502,7 @@ export const useTaskStore = defineStore("task", {
 					waitingCount = countDisplayRows(waitingArr);
 					completedCount = countDisplayRows(completedArr);
 					stoppedCount = countDisplayRows(stoppedOnlyArr);
-					allCount =
-						countDisplayRows(activeArr) +
-						countDisplayRows(waitingArr) +
-						countDisplayRows(stoppedArr);
+					allCount = activeCount + waitingCount + completedCount + stoppedCount;
 				} catch {
 					// keep previous counts on failure
 				}

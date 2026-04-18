@@ -243,13 +243,15 @@ async function main() {
 	if (!isCached || noCache) {
 		const assetUrl = `https://github.com/${REPO}/releases/download/v${version}/${entry.asset}`;
 		const assetPath = path.join(cacheDir, entry.asset);
+		const tmpPath = `${assetPath}.download`;
 
 		fs.mkdirSync(cacheDir, { recursive: true });
 
 		console.log(`Downloading Risuko v${version} for ${platform}/${arch}…`);
 		console.log(`  From: ${assetUrl}`);
 
-		await download(assetUrl, assetPath);
+		await download(assetUrl, tmpPath);
+		fs.renameSync(tmpPath, assetPath);
 		console.log("  Extracting…");
 		extract(entry, assetPath, cacheDir);
 		console.log(`  Cached to: ${cacheDir}`);

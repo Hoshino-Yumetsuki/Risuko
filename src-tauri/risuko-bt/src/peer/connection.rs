@@ -116,8 +116,10 @@ pub async fn accept_with_policy(
     stream.set_nodelay(true).ok();
     let addr = stream.peer_addr()?;
 
-    // Peek the first byte so we know whether to treat this as plaintext or MSE
-    let mut probe = [0u8; 1];
+    // Peek the first 20 bytes (1 pstrlen + 19-byte "BitTorrent protocol")
+    // so we can reliably distinguish plaintext from MSE. A single-byte check
+    // would misclassify ~1/256 MSE connections whose Ya happens to start with 0x13.
+    let mut probe = [0u8; 20];
     let n = timeout(read_timeout, stream.peek(&mut probe))
         .await
         .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "peek timeout"))??;
@@ -127,7 +129,9 @@ pub async fn accept_with_policy(
             "eof before handshake",
         ));
     }
-    let plaintext_first_byte = probe[0] == 0x13;
+    let plaintext_first_byte = n >= 20
+        && probe[0] == 0x13
+        && &probe[1..20] == b"BitTorrent protocol";
 
     if plaintext_first_byte {
         if matches!(policy, EncryptionPolicy::RequireEncryption) {
@@ -260,7 +264,7 @@ async fn connect_mse(
     timeout(read_timeout, read_h.read_exact(&mut yb))
         .await
         .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "mse yb timeout"))??;
-    let s = keys.shared_secret(&yb);
+    let s = keys.shared_secret(&yb)?;
 
     // Derive RC4 keys now that we have S
     let skey: [u8; 20] = spawn.info_hash.0;
@@ -556,7 +560,7 @@ async fn accept_mse(
     out.extend_from_slice(&pad_b);
     write_h.write_all(&out).await?;
 
-    let s = keys.shared_secret(&ya);
+    let s = keys.shared_secret(&ya)?;
     // Search A's stream for HASH('req1', S) marker — this delimits PadA
     let req1 = mse::req1(&s);
     let mut recv: Vec<u8> = Vec::with_capacity(1200);
@@ -747,23 +751,29 @@ async fn accept_mse(
     enc_out.apply_keystream(&mut reply);
     write_h.write_all(&reply).await?;
 
-    // IA should contain A's BT handshake. Parse and reply
-    if ia_bytes.len() < HANDSHAKE_LEN {
+    // IA may contain A's BT handshake. MSE peers are allowed to send an
+    // empty IA and defer the BT handshake to the encrypted stream.
+    if !ia_bytes.is_empty() && ia_bytes.len() < HANDSHAKE_LEN {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
             "ia shorter than bt handshake",
         ));
     }
-    let mut ia_arr = [0u8; HANDSHAKE_LEN];
-    ia_arr.copy_from_slice(&ia_bytes[..HANDSHAKE_LEN]);
-    let remote_hs = Handshake::parse(&ia_arr)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, format!("{e}")))?;
-    if remote_hs.info_hash != skey {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            "info hash mismatch between req2 and ia",
-        ));
-    }
+    let remote_hs_from_ia = if !ia_bytes.is_empty() {
+        let mut ia_arr = [0u8; HANDSHAKE_LEN];
+        ia_arr.copy_from_slice(&ia_bytes[..HANDSHAKE_LEN]);
+        let hs = Handshake::parse(&ia_arr)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, format!("{e}")))?;
+        if hs.info_hash != skey {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "info hash mismatch between req2 and ia",
+            ));
+        }
+        Some(hs)
+    } else {
+        None
+    };
 
     // Send our BT handshake, encrypted if RC4 selected
     let our_hs = Handshake::new(skey, our_peer_id).to_bytes();
@@ -771,7 +781,7 @@ async fn accept_mse(
         let mut encoded = our_hs.to_vec();
         enc_out.apply_keystream(&mut encoded);
         write_h.write_all(&encoded).await?;
-        let r = Rc4ReadHalf::new(
+        let mut r = Rc4ReadHalf::new(
             read_h, dec_in,
             // Any bytes A sent after IA belong on the encrypted stream;
             // they are already decrypted up to ia_off+ia_len (in enc_buf)
@@ -780,11 +790,39 @@ async fn accept_mse(
             // as it streams
             leftover,
         );
+        let remote_hs = match remote_hs_from_ia {
+            Some(hs) => hs,
+            None => {
+                // Peer deferred BT handshake; read it from the encrypted stream
+                let mut buf = [0u8; HANDSHAKE_LEN];
+                timeout(read_timeout, r.read_exact(&mut buf))
+                    .await
+                    .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "mse deferred hs timeout"))??;
+                let hs = Handshake::parse(&buf)
+                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, format!("{e}")))?;
+                if hs.info_hash != skey {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "info hash mismatch in deferred handshake",
+                    ));
+                }
+                hs
+            }
+        };
         let w = Rc4WriteHalf::new(write_h, enc_out);
         finish_spawn(addr, remote_hs, true, Box::new(r), Box::new(w))
     } else {
         write_h.write_all(&our_hs).await?;
         let r = PrefixedReadHalf::new(read_h, leftover);
+        let remote_hs = match remote_hs_from_ia {
+            Some(hs) => hs,
+            None => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "empty ia with plaintext crypto not supported",
+                ));
+            }
+        };
         finish_spawn(addr, remote_hs, false, Box::new(r), Box::new(write_h))
     }
 }

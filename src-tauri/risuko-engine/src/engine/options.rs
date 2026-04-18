@@ -22,7 +22,16 @@ impl EngineOptions {
         }
 
         // Apply user overrides that affect engine behavior
-        for key in ["rpc-host", "m3u8-output-format", "keep-seeding"] {
+        for key in [
+            "rpc-host",
+            "m3u8-output-format",
+            "keep-seeding",
+            "bt-enable-upnp",
+            "bt-upnp-lease",
+            "bt-encryption-policy",
+            "bt-listen-v6",
+            "bt-enable-lsd",
+        ] {
             if let Some(v) = user.get(key) {
                 global.insert(key.into(), v.clone());
             }

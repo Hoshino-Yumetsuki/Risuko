@@ -62,7 +62,7 @@ impl Drop for Dht {
     }
 }
 
-type PendingMap = std::collections::HashMap<u16, oneshot::Sender<KrpcResponse>>;
+type PendingMap = std::collections::HashMap<u16, (oneshot::Sender<KrpcResponse>, SocketAddr)>;
 
 struct KrpcResponse {
     from: SocketAddr,
@@ -296,7 +296,7 @@ impl Dht {
         Vec<SocketAddr>,
         Vec<(Id20, SocketAddr)>,
     )> {
-        let (txn, rx) = self.register_transaction();
+        let (txn, rx) = self.register_transaction(target);
         let packet = build_get_peers(txn, &self.our_id, &info_hash);
         // Route via the appropriate socket family. If we target an IPv6
         // node but lack a v6 socket, drop the query.
@@ -326,14 +326,14 @@ impl Dht {
             .map(|(rid, peers, nodes)| (resp.from, rid, peers, nodes))
     }
 
-    fn register_transaction(&self) -> (u16, oneshot::Receiver<KrpcResponse>) {
+    fn register_transaction(&self, target: SocketAddr) -> (u16, oneshot::Receiver<KrpcResponse>) {
         let (tx, rx) = oneshot::channel();
         let mut map = self.pending.lock();
         let mut txn: u16 = rand::rng().random();
         while map.contains_key(&txn) {
             txn = txn.wrapping_add(1);
         }
-        map.insert(txn, tx);
+        map.insert(txn, (tx, target));
         (txn, rx)
     }
 }
@@ -476,9 +476,14 @@ async fn reader_loop(sock: Arc<UdpSocket>, pending: Arc<Mutex<PendingMap>>) {
             2 => u16::from_be_bytes([tid[0], tid[1]]),
             _ => continue,
         };
-        let tx = pending.lock().remove(&txn);
-        if let Some(tx) = tx {
-            let _ = tx.send(KrpcResponse { from, body: msg });
+        let mut guard = pending.lock();
+        if let Some(entry) = guard.get(&txn) {
+            if entry.1 == from {
+                if let Some((tx, _)) = guard.remove(&txn) {
+                    let _ = tx.send(KrpcResponse { from, body: msg });
+                }
+            }
+            // Mismatch: ignore the packet, leave entry for the real responder
         }
     }
 }

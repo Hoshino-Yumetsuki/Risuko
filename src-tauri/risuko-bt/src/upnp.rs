@@ -131,8 +131,12 @@ impl Drop for UpnpHandle {
         if let Some(tx) = self.shutdown.take() {
             let _ = tx.try_send(());
         }
+        // Let run_forever finish its cleanup (DeletePortMapping) instead of
+        // aborting immediately. A timeout wrapper ensures we don't hang.
         if let Some(h) = self.join.take() {
-            h.abort();
+            tokio::spawn(async move {
+                let _ = tokio::time::timeout(Duration::from_secs(3), h).await;
+            });
         }
     }
 }
@@ -148,7 +152,7 @@ pub async fn map_port(port: u16) -> std::io::Result<PortMapping> {
         let Ok(root) = fetch_root_desc(&ep.location).await else {
             continue;
         };
-        let Some(control_url) = find_wan_service(&root, &ep.location) else {
+        let Some((control_url, service_type)) = find_wan_service(&root, &ep.location) else {
             continue;
         };
         let Some(local_ip) = pick_local_ipv4(&ifaces, *ep.received_from.ip()) else {
@@ -156,6 +160,7 @@ pub async fn map_port(port: u16) -> std::io::Result<PortMapping> {
         };
         if add_port_mapping(
             &control_url,
+            &service_type,
             &local_ip,
             port,
             MapProto::Tcp,
@@ -165,7 +170,7 @@ pub async fn map_port(port: u16) -> std::io::Result<PortMapping> {
         .await
         .is_ok()
         {
-            let external = get_external_ip(&control_url).await.ok();
+            let external = get_external_ip(&control_url, &service_type).await.ok();
             return Ok(PortMapping {
                 external: external.map(|ip| SocketAddr::new(IpAddr::V4(ip), port)),
             });
@@ -184,6 +189,7 @@ pub async fn map_port(port: u16) -> std::io::Result<PortMapping> {
 #[derive(Debug, Clone)]
 struct ActiveMapping {
     control_url: Url,
+    service_type: String,
     external_ip: Ipv4Addr,
     external_port: u16,
     port: u16,
@@ -221,7 +227,7 @@ async fn run_forever(
     for m in snapshot {
         let _ = tokio::time::timeout(
             Duration::from_millis(500),
-            delete_port_mapping(&m.control_url, m.port, m.proto),
+            delete_port_mapping(&m.control_url, &m.service_type, m.port, m.proto),
         )
         .await;
     }
@@ -242,16 +248,17 @@ async fn discover_and_map(
                 continue;
             }
         };
-        let Some(control_url) = find_wan_service(&root, &ep.location) else {
+        let Some((control_url, service_type)) = find_wan_service(&root, &ep.location) else {
             continue;
         };
         let Some(local_ip) = pick_local_ipv4(&ifaces, *ep.received_from.ip()) else {
             continue;
         };
-        let external_ip = get_external_ip(&control_url).await.ok();
+        let external_ip = get_external_ip(&control_url, &service_type).await.ok();
         for &(port, proto) in ports {
             match add_port_mapping(
                 &control_url,
+                &service_type,
                 &local_ip,
                 port,
                 proto,
@@ -273,6 +280,7 @@ async fn discover_and_map(
                     g.retain(|m| (m.control_url.clone(), m.port, m.proto) != key);
                     g.push(ActiveMapping {
                         control_url: control_url.clone(),
+                        service_type: service_type.clone(),
                         external_ip: external_ip.unwrap_or(Ipv4Addr::UNSPECIFIED),
                         external_port: port,
                         port,
@@ -441,7 +449,7 @@ async fn fetch_root_desc(location: &Url) -> std::io::Result<RootDesc> {
     quick_xml::de::from_str::<RootDesc>(&body).map_err(io_other)
 }
 
-fn find_wan_service(root: &RootDesc, base: &Url) -> Option<Url> {
+fn find_wan_service(root: &RootDesc, base: &Url) -> Option<(Url, String)> {
     fn walk<'a>(d: &'a DeviceXml, out: &mut Vec<&'a ServiceXml>) {
         for s in &d.service_list.services {
             out.push(s);
@@ -457,7 +465,7 @@ fn find_wan_service(root: &RootDesc, base: &Url) -> Option<Url> {
         for s in &all {
             if s.service_type == target {
                 if let Ok(url) = base.join(&s.control_url) {
-                    return Some(url);
+                    return Some((url, s.service_type.clone()));
                 }
             }
         }
@@ -493,6 +501,7 @@ fn pick_local_ipv4(ifaces: &[NetworkInterface], gateway: Ipv4Addr) -> Option<Ipv
 
 async fn add_port_mapping(
     control_url: &Url,
+    service_type: &str,
     internal_ip: &Ipv4Addr,
     port: u16,
     proto: MapProto,
@@ -516,16 +525,16 @@ async fn add_port_mapping(
          </u:AddPortMapping>\
          </s:Body>\
          </s:Envelope>",
-        svc = ST_WAN_IP,
+        svc = service_type,
         proto = proto.as_str(),
         lease = lease.as_secs(),
         desc = xml_escape(description),
     );
-    soap_call(control_url, "AddPortMapping", body).await?;
+    soap_call(control_url, service_type, "AddPortMapping", body).await?;
     Ok(())
 }
 
-async fn delete_port_mapping(control_url: &Url, port: u16, proto: MapProto) -> std::io::Result<()> {
+async fn delete_port_mapping(control_url: &Url, service_type: &str, port: u16, proto: MapProto) -> std::io::Result<()> {
     let body = format!(
         "<?xml version=\"1.0\"?>\
          <s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\" \
@@ -538,14 +547,14 @@ async fn delete_port_mapping(control_url: &Url, port: u16, proto: MapProto) -> s
          </u:DeletePortMapping>\
          </s:Body>\
          </s:Envelope>",
-        svc = ST_WAN_IP,
+        svc = service_type,
         proto = proto.as_str(),
     );
-    soap_call(control_url, "DeletePortMapping", body).await?;
+    soap_call(control_url, service_type, "DeletePortMapping", body).await?;
     Ok(())
 }
 
-async fn get_external_ip(control_url: &Url) -> std::io::Result<Ipv4Addr> {
+async fn get_external_ip(control_url: &Url, service_type: &str) -> std::io::Result<Ipv4Addr> {
     let body = format!(
         "<?xml version=\"1.0\"?>\
          <s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\" \
@@ -554,9 +563,9 @@ async fn get_external_ip(control_url: &Url) -> std::io::Result<Ipv4Addr> {
          <u:GetExternalIPAddress xmlns:u=\"{svc}\"/>\
          </s:Body>\
          </s:Envelope>",
-        svc = ST_WAN_IP,
+        svc = service_type,
     );
-    let text = soap_call(control_url, "GetExternalIPAddress", body).await?;
+    let text = soap_call(control_url, service_type, "GetExternalIPAddress", body).await?;
     let ip = extract_tag(&text, "NewExternalIPAddress").ok_or_else(|| {
         std::io::Error::new(
             std::io::ErrorKind::InvalidData,
@@ -566,7 +575,7 @@ async fn get_external_ip(control_url: &Url) -> std::io::Result<Ipv4Addr> {
     ip.parse::<Ipv4Addr>().map_err(io_other)
 }
 
-async fn soap_call(control_url: &Url, action: &str, body: String) -> std::io::Result<String> {
+async fn soap_call(control_url: &Url, service_type: &str, action: &str, body: String) -> std::io::Result<String> {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(5))
         .build()
@@ -574,7 +583,7 @@ async fn soap_call(control_url: &Url, action: &str, body: String) -> std::io::Re
     let resp = client
         .post(control_url.clone())
         .header("Content-Type", "text/xml; charset=\"utf-8\"")
-        .header("SOAPAction", format!("\"{ST_WAN_IP}#{action}\""))
+        .header("SOAPAction", format!("\"{service_type}#{action}\""))
         .body(body)
         .send()
         .await
@@ -651,7 +660,8 @@ mod tests {
         let root: RootDesc = quick_xml::de::from_str(xml).unwrap();
         let base = Url::parse("http://192.168.1.1:5000/rootDesc.xml").unwrap();
         let ctrl = find_wan_service(&root, &base).unwrap();
-        assert_eq!(ctrl.as_str(), "http://192.168.1.1:5000/ctl/IPConn");
+        assert_eq!(ctrl.0.as_str(), "http://192.168.1.1:5000/ctl/IPConn");
+        assert_eq!(ctrl.1, ST_WAN_IP);
     }
 
     #[test]

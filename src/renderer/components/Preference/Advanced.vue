@@ -1224,7 +1224,11 @@ export default {
 						continue;
 					}
 					const n = Number(raw);
-					if (Number.isFinite(n) && n >= 0) {
+					if (
+						key === "btUpnpLease"
+							? Number.isFinite(n) && n >= 60 && n <= 86400
+							: Number.isFinite(n) && n >= 0
+					) {
 						data[key] = n;
 					} else {
 						delete data[key];

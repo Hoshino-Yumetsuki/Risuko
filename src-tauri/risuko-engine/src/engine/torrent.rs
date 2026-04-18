@@ -197,7 +197,10 @@ impl TorrentEngine {
         // The resulting bytes are reused to add the torrent, so we do not pay
         // the resolve cost twice.
         if save_metadata {
-            match bt::magnet::resolve(magnet_uri, &trackers, Duration::from_secs(120)).await {
+            let enc = encryption_policy_from_str(
+                options.get("bt-encryption-policy").and_then(|v| v.as_str()),
+            );
+            match bt::magnet::resolve(magnet_uri, &trackers, Duration::from_secs(120), enc).await {
                 Ok(resolved) => {
                     let bytes =
                         bt::magnet::synth_torrent_bytes(&resolved.info_bytes, &resolved.trackers);
@@ -275,9 +278,12 @@ impl TorrentEngine {
         log::info!("Resolving magnet metadata: {}", magnet_uri);
         let start = std::time::Instant::now();
 
+        let enc = encryption_policy_from_str(
+            options.get("bt-encryption-policy").and_then(|v| v.as_str()),
+        );
         let resolved = tokio::time::timeout(
             Duration::from_secs(timeout_secs),
-            bt::magnet::resolve(magnet_uri, &trackers, Duration::from_secs(timeout_secs)),
+            bt::magnet::resolve(magnet_uri, &trackers, Duration::from_secs(timeout_secs), enc),
         )
         .await
         .map_err(|_| "Timed out resolving magnet metadata".to_string())?
@@ -324,7 +330,9 @@ impl TorrentEngine {
                         addr: p.addr,
                         bitfield: p.bitfield.clone(),
                         am_choking: p.am_choking,
+                        am_interested: p.am_interested,
                         peer_choking: p.peer_choking,
+                        peer_interested: p.peer_interested,
                         seeder: p.seeder,
                     })
                     .collect();
@@ -479,7 +487,9 @@ pub struct PeerSnapshot {
     /// Raw bitfield bytes; manager hex-encodes for the RPC payload
     pub bitfield: Vec<u8>,
     pub am_choking: bool,
+    pub am_interested: bool,
     pub peer_choking: bool,
+    pub peer_interested: bool,
     pub seeder: bool,
 }
 

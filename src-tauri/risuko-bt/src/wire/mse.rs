@@ -36,7 +36,7 @@ const P_HEX: &str = concat!(
     "FFFFFFFFFFFFFFFFC90FDAA22168C234C4C6628B80DC1CD1",
     "29024E088A67CC74020BBEA63B139B22514A08798E3404DD",
     "EF9519B3CD3A431B302B0A6DF25F14374FE1356D6D51C245",
-    "E485B576625E7EC6F44C42E9A63A36210000000000090563"
+    "E485B576625E7EC6F44C42E9A63A3620FFFFFFFFFFFFFFFF"
 );
 /// BEP-8 generator
 const G: u64 = 2;
@@ -93,13 +93,23 @@ impl DhKeys {
         }
     }
 
-    /// Compute the shared secret S = Y_other^X mod P
-    pub fn shared_secret(&self, peer_public_be: &[u8; DH_LEN]) -> [u8; DH_LEN] {
+    /// Compute the shared secret S = Y_other^X mod P.
+    /// Returns an error if the peer's public key is invalid (0, 1, or >= p-1).
+    pub fn shared_secret(&self, peer_public_be: &[u8; DH_LEN]) -> io::Result<[u8; DH_LEN]> {
         let y = BigUint::from_bytes_be(peer_public_be);
-        let s = y.modpow(&self.private, &modulus());
+        let p = modulus();
+        let one = BigUint::from(1u32);
+        let p_minus_1 = &p - &one;
+        if y <= one || y >= p_minus_1 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "invalid DH public key",
+            ));
+        }
+        let s = y.modpow(&self.private, &p);
         let mut out = [0u8; DH_LEN];
         out.copy_from_slice(&to_fixed_be(&s, DH_LEN));
-        out
+        Ok(out)
     }
 }
 
@@ -244,8 +254,8 @@ mod tests {
     fn dh_roundtrip_shared_secret() {
         let a = DhKeys::generate();
         let b = DhKeys::generate();
-        let s_a = a.shared_secret(&b.public_be);
-        let s_b = b.shared_secret(&a.public_be);
+        let s_a = a.shared_secret(&b.public_be).unwrap();
+        let s_b = b.shared_secret(&a.public_be).unwrap();
         assert_eq!(s_a, s_b);
     }
 
