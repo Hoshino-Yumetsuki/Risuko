@@ -528,6 +528,10 @@ fn bind_v6_listener(addr: SocketAddr) -> std::io::Result<std::net::TcpListener> 
     use socket2::{Domain, Protocol, Socket, Type};
     let sock = Socket::new(Domain::IPV6, Type::STREAM, Some(Protocol::TCP))?;
     sock.set_only_v6(true)?;
+    // On Unix, SO_REUSEADDR allows rebinding a port in TIME_WAIT which is
+    // desirable. On Windows it has different semantics — it permits multiple
+    // processes to bind the same port, enabling hijacking — so skip it there.
+    #[cfg(not(target_os = "windows"))]
     sock.set_reuse_address(true)?;
     sock.set_nonblocking(true)?;
     sock.bind(&addr.into())?;

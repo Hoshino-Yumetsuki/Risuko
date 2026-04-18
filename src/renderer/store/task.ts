@@ -505,6 +505,11 @@ export const useTaskStore = defineStore("task", {
 					allCount = activeCount + waitingCount + completedCount + stoppedCount;
 				} catch {
 					// keep previous counts on failure
+					activeCount = this.taskCountMap.active || 0;
+					waitingCount = this.taskCountMap.waiting || 0;
+					completedCount = this.taskCountMap.completed || 0;
+					stoppedCount = this.taskCountMap.stopped || 0;
+					allCount = this.taskCountMap.all || 0;
 				}
 			} else {
 				completedCount = 0;

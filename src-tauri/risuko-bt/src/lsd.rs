@@ -284,6 +284,10 @@ async fn recv_loop(sock: Arc<UdpSocket>, inner: Arc<LsdInner>) {
                 if rate.len() > 4096 {
                     rate.retain(|_, t| now.duration_since(*t) < RATE_LIMIT_WINDOW * 4);
                 }
+                // Hard cap: reject if still over limit after GC.
+                if rate.len() > 8192 {
+                    continue;
+                }
                 match rate.get(&key) {
                     Some(&t) if now.duration_since(t) < RATE_LIMIT_WINDOW => continue,
                     _ => {

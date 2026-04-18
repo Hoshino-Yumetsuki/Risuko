@@ -119,19 +119,34 @@ pub async fn accept_with_policy(
     // Peek the first 20 bytes (1 pstrlen + 19-byte "BitTorrent protocol")
     // so we can reliably distinguish plaintext from MSE. A single-byte check
     // would misclassify ~1/256 MSE connections whose Ya happens to start with 0x13.
+    //
+    // `TcpStream::peek` can return fewer than 20 bytes if the peer's handshake
+    // arrives slowly, so we loop until we have 20 bytes, see a definitive
+    // non-plaintext first byte, or hit the read timeout.
     let mut probe = [0u8; 20];
-    let n = timeout(read_timeout, stream.peek(&mut probe))
-        .await
-        .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "peek timeout"))??;
-    if n == 0 {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::UnexpectedEof,
-            "eof before handshake",
-        ));
-    }
-    let plaintext_first_byte = n >= 20
-        && probe[0] == 0x13
-        && &probe[1..20] == b"BitTorrent protocol";
+    let plaintext_first_byte = timeout(read_timeout, async {
+        loop {
+            let n = stream.peek(&mut probe).await?;
+            if n == 0 {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::UnexpectedEof,
+                    "eof before handshake",
+                ));
+            }
+            // If the very first byte isn't 0x13, this is definitely not a
+            // plaintext BT handshake — no need to wait for more data.
+            if probe[0] != 0x13 {
+                return Ok(false);
+            }
+            if n >= 20 {
+                return Ok(&probe[1..20] == b"BitTorrent protocol");
+            }
+            // We have a 0x13 lead but not enough bytes yet; yield and retry.
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "peek timeout"))??;
 
     if plaintext_first_byte {
         if matches!(policy, EncryptionPolicy::RequireEncryption) {
@@ -1057,6 +1072,24 @@ impl AsyncWrite for Rc4WriteHalf {
     }
 
     fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        // Drain any ciphertext that poll_write queued in `pending`.
+        while self.pending_off < self.pending.len() {
+            let me = &mut *self;
+            let slice = &me.pending[me.pending_off..];
+            match Pin::new(&mut me.inner).poll_write(cx, slice) {
+                Poll::Ready(Ok(0)) => {
+                    return Poll::Ready(Err(std::io::Error::new(
+                        std::io::ErrorKind::WriteZero,
+                        "rc4 shutdown flush zero",
+                    )));
+                }
+                Poll::Ready(Ok(n)) => me.pending_off += n,
+                Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
+                Poll::Pending => return Poll::Pending,
+            }
+        }
+        self.pending.clear();
+        self.pending_off = 0;
         Pin::new(&mut self.inner).poll_shutdown(cx)
     }
 }
