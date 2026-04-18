@@ -1,16 +1,16 @@
 {
-	"name": "@risuko/js-darwin-arm64",
-	"version": "0.1.7",
-	"description": "Risuko JS native module for macOS ARM64",
-	"license": "MIT",
-	"os": [
-		"darwin"
-	],
-	"cpu": [
-		"arm64"
-	],
-	"main": "risuko.darwin-arm64.node",
-	"files": [
-		"risuko.darwin-arm64.node"
-	]
+  "name": "@risuko/js-darwin-arm64",
+  "version": "0.1.8",
+  "description": "Risuko JS native module for macOS ARM64",
+  "license": "MIT",
+  "os": [
+    "darwin"
+  ],
+  "cpu": [
+    "arm64"
+  ],
+  "main": "risuko.darwin-arm64.node",
+  "files": [
+    "risuko.darwin-arm64.node"
+  ]
 }

@@ -30,7 +30,7 @@ Download from [GitHub Releases](https://github.com/YueMiyuki/Risuko/releases) an
 Risuko provide a npm package together with the engine
 ```
 pnpm install -g @risuko/app
-risuko-app --port 8080
+risuko-app
 ```
 
 Or Install CLI only

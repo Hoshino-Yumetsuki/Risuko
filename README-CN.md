@@ -25,10 +25,10 @@ Risuko 是一款全能的下载工具，支持下载 HTTP、FTP、BT、磁力链
 从 [GitHub Releases](https://github.com/YueMiyuki/Risuko/releases) 下载并安装
 
 ### NPM 包
-Risuko 提供 NPM 包，包含 WebUI 和 Risuko 引擎
+Risuko 提供 NPM 包，包含 UI 和 Risuko 引擎
 ```
 pnpm install -g @risuko/app
-risuko-app --port 8080
+risuko-app
 ```
 
 或只安装CLI
