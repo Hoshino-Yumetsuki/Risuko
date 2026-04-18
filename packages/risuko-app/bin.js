@@ -63,7 +63,7 @@ const { platform, arch } = process;
 
 // Asset naming scheme: Risuko_{version}_{platform}_{arch}.{ext}
 // Matches process.platform and process.arch directly — no translation needed.
-/** @type {Record<string, { ext: string, extract: 'tar'|'chmod'|'nsis', binary: string }>} */
+/** @type {Record<string, { ext: string, extract: 'tar'|'chmod'|'none', binary: string }>} */
 const PLATFORM_INFO = {
 	darwin: {
 		ext: "app.tar.gz",
@@ -77,9 +77,10 @@ const PLATFORM_INFO = {
 		binary: "",
 	},
 	win32: {
-		ext: "setup.exe",
-		extract: "nsis",
-		binary: "Risuko.exe",
+		ext: "portable.exe",
+		extract: "none",
+		// binary is the downloaded asset itself; set in getPlatformEntry()
+		binary: "",
 	},
 };
 
@@ -89,7 +90,8 @@ function getPlatformEntry() {
 		throw new Error(`Unsupported platform: ${platform}`);
 	}
 	const asset = `Risuko_${version}_${platform}_${arch}.${info.ext}`;
-	const binary = platform === "linux" ? asset : info.binary;
+	const binary =
+		platform === "linux" || platform === "win32" ? asset : info.binary;
 	return { asset, extract: info.extract, binary };
 }
 
@@ -212,6 +214,10 @@ function extract(entry, assetPath, cacheDir) {
 		case "chmod":
 			// AppImage is the binary itself
 			fs.chmodSync(assetPath, 0o755);
+			break;
+
+		case "none":
+			// Portable Windows exe — already in place, no extraction needed.
 			break;
 
 		case "nsis":

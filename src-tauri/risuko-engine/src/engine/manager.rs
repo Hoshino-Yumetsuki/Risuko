@@ -13,7 +13,8 @@ use super::options::EngineOptions;
 use super::session::SessionManager;
 use super::speed_limiter::{parse_speed_limit, SpeedLimiter};
 use super::task::{
-    generate_gid, ChunkProgress, DownloadFile, DownloadTask, FileUri, TaskKind, TaskStatus,
+    generate_gid, ChunkProgress, DownloadFile, DownloadTask, FileUri, PeerInfo, TaskKind,
+    TaskStatus,
 };
 use super::torrent::{self, TorrentEngine};
 
@@ -49,16 +50,22 @@ impl TaskManager {
         let saved_tasks = session.load();
 
         let output_dir = options.dir();
-        let max_outstanding = options.bt_max_outstanding_per_peer();
-        let max_peers = options.bt_max_peers_per_torrent();
-        let torrent_engine =
-            TorrentEngine::new_with_tuning(Path::new(&output_dir), max_outstanding, max_peers)
-                .await
-                .map_err(|e| {
-                    log::warn!("Torrent engine init failed (non-fatal): {}", e);
-                    e
-                })
-                .ok();
+        let tuning = super::torrent::BtTuning {
+            max_outstanding_per_peer: options.bt_max_outstanding_per_peer(),
+            max_peers_per_torrent: options.bt_max_peers_per_torrent(),
+            enable_upnp: Some(options.bt_enable_upnp()),
+            upnp_lease: options.bt_upnp_lease(),
+            encryption_policy: Some(options.bt_encryption_policy().to_string()),
+            listen_ipv6: Some(options.bt_listen_v6()),
+            enable_lsd: Some(options.bt_enable_lsd()),
+        };
+        let torrent_engine = TorrentEngine::new_with_tuning(Path::new(&output_dir), tuning)
+            .await
+            .map_err(|e| {
+                log::warn!("Torrent engine init failed (non-fatal): {}", e);
+                e
+            })
+            .ok();
 
         let global_speed_limiter =
             Arc::new(SpeedLimiter::new(options.max_overall_download_limit()));
@@ -1115,9 +1122,46 @@ impl TaskManager {
                             task.download_speed = stats.download_speed;
                             task.upload_speed = stats.upload_speed;
                             task.connections = stats.num_peers;
-                            // num_seeders cannot be derived from stats.num_peers alone;
-                            // leave at 0 until seeder detection (e.g. from peer bitfields) is implemented.
-                            task.num_seeders = 0;
+                            task.num_seeders = stats.num_seeders;
+
+                            // Snapshot connected peers for the detail panel
+                            // Peer-level speed tracking is not yet wired up,
+                            // so dl/ul speeds are reported as zero
+                            task.peers = stats
+                                .peers
+                                .iter()
+                                .map(|p| {
+                                    let bitfield_hex = bytes_to_hex(&p.bitfield);
+                                    PeerInfo {
+                                        peer_id: String::new(),
+                                        ip: p.addr.ip().to_string(),
+                                        port: p.addr.port().to_string(),
+                                        bitfield: bitfield_hex,
+                                        am_choking: bool_str(p.am_choking),
+                                        peer_choking: bool_str(p.peer_choking),
+                                        download_speed: "0".to_string(),
+                                        upload_speed: "0".to_string(),
+                                        seeder: bool_str(p.seeder),
+                                    }
+                                })
+                                .collect();
+
+                            // Surface .torrent metadata once the BT engine
+                            // has parsed it (immediate for torrent files,
+                            // after metadata exchange for magnets)
+                            if let Some(ref meta) = stats.metadata {
+                                task.piece_length = meta.piece_length;
+                                task.num_pieces = meta.num_pieces;
+                                if task.bt_comment.is_none() {
+                                    task.bt_comment = meta.comment.clone();
+                                }
+                                if task.bt_creation_date.is_none() {
+                                    task.bt_creation_date = meta.creation_date;
+                                }
+                                if task.bt_announce_list.is_empty() {
+                                    task.bt_announce_list = meta.announce_list.clone();
+                                }
+                            }
 
                             if task.bt_name.is_none() {
                                 if let Some(ref name) = stats.name {
@@ -1885,6 +1929,22 @@ fn looks_like_url(path: &str) -> bool {
         || path.starts_with("https://")
         || path.starts_with("ftp://")
         || path.starts_with("ed2k://")
+}
+
+/// Lower-case hex encoding for BT bitfields. The frontend's
+/// `bitfieldToPercent` walks each hex nibble, so the format must be hex
+fn bytes_to_hex(bytes: &[u8]) -> String {
+    use std::fmt::Write;
+    let mut s = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        let _ = write!(s, "{b:02x}");
+    }
+    s
+}
+
+/// Aria2-compatible "true"/"false" string for bool flags exposed via RPC
+fn bool_str(b: bool) -> String {
+    if b { "true" } else { "false" }.to_string()
 }
 
 #[cfg(test)]

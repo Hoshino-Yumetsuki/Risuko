@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use risuko_bt::bencode::{encode_to_vec, Value};
 use risuko_bt::session::{
-    AddTorrent, AddTorrentOptions, AddTorrentResponse, Session, SessionOptions,
+    AddTorrent, AddTorrentOptions, AddTorrentResponse, ListenerOptions, Session, SessionOptions,
 };
 
 fn make_torrent_bytes(name: &str) -> Vec<u8> {
@@ -84,4 +84,28 @@ async fn list_only_returns_metadata_without_adding() {
     // list_only must NOT register the torrent.
     let count = session.with_torrents(|iter| iter.count());
     assert_eq!(count, 0);
+}
+
+/// Session must start successfully when an IPv6 listener is requested. On
+/// hosts without v6 support the listener bind is logged-and-skipped, so this
+/// test only asserts that startup itself does not fail. The session object
+/// is dropped immediately to clean up the background tasks
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn session_starts_with_listen_ipv6_enabled() {
+    let tmp = tempfile::tempdir().unwrap();
+    let opts = SessionOptions {
+        listen: Some(ListenerOptions {
+            listen_addr: None,
+            enable_upnp_port_forwarding: false,
+            upnp_lease: None,
+            listen_ipv6: true,
+        }),
+        // Disable LSD to avoid multicast bind warnings polluting test output
+        disable_local_service_discovery: true,
+        ..Default::default()
+    };
+    let session = Session::new_with_opts(PathBuf::from(tmp.path()), opts)
+        .await
+        .expect("session start with listen_ipv6=true");
+    drop(session);
 }

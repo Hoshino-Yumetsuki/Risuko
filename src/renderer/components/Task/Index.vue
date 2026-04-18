@@ -263,7 +263,10 @@ export default {
 		async deleteTaskFiles(task) {
 			try {
 				let targetTask = task;
-				if (targetTask?.gid) {
+				// For per-file rows of a multi-file BT torrent, keep the per-file
+				// shape (files: [theFile], bittorrent.info cleared) so only that
+				// single file gets trashed instead of the whole torrent folder
+				if (targetTask?.gid && !targetTask._isFileEntry) {
 					try {
 						const fullTask = await api.fetchTaskItem({
 							gid: targetTask.gid,

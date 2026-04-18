@@ -35,8 +35,6 @@ static ENGINE_INSTANCE: std::sync::LazyLock<Mutex<Option<EngineInstance>>> =
 struct EngineInstance {
     manager: Arc<TaskManager>,
     rpc_server: RpcServer,
-    #[allow(dead_code)]
-    event_sink: Arc<dyn EventSink>,
     progress_task: Option<tokio::task::JoinHandle<()>>,
     auto_save_task: Option<tokio::task::JoinHandle<()>>,
     event_bridge_task: Option<tokio::task::JoinHandle<()>>,
@@ -185,7 +183,6 @@ pub async fn start_engine(
     let instance = EngineInstance {
         manager,
         rpc_server,
-        event_sink: event_sink.clone(),
         progress_task: Some(progress_task),
         auto_save_task: Some(auto_save_task),
         event_bridge_task: Some(event_bridge_task),

@@ -231,6 +231,7 @@ async fn try_fetch_from_peer(
         our_peer_id,
         connect_timeout: PEER_CONNECT_TIMEOUT,
         read_timeout: PEER_READ_TIMEOUT,
+        encryption: crate::peer::EncryptionPolicy::Prefer,
     })
     .await
     .ok()?;

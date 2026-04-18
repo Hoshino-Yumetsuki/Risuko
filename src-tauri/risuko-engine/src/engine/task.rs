@@ -109,6 +109,21 @@ pub struct DownloadTask {
     pub seeder: bool,
     pub num_seeders: u32,
     pub peers: Vec<PeerInfo>,
+    /// Piece length in bytes (BT only). Populated once metadata is received
+    #[serde(default)]
+    pub piece_length: u32,
+    /// Total number of pieces (BT only)
+    #[serde(default)]
+    pub num_pieces: u32,
+    /// Free-form torrent comment from the .torrent file
+    #[serde(default)]
+    pub bt_comment: Option<String>,
+    /// Unix epoch seconds for torrent creation, when present
+    #[serde(default)]
+    pub bt_creation_date: Option<i64>,
+    /// BEP-12 announce-list, tier first then trackers within tier
+    #[serde(default)]
+    pub bt_announce_list: Vec<Vec<String>>,
     // Internal tracking
     pub created_at: u64,
     /// Timestamp (ms) when seeding started, 0 if not seeding
@@ -183,6 +198,11 @@ impl DownloadTask {
             seeder: false,
             num_seeders: 0,
             peers: Vec::new(),
+            piece_length: 0,
+            num_pieces: 0,
+            bt_comment: None,
+            bt_creation_date: None,
+            bt_announce_list: Vec::new(),
             created_at: now_ms(),
             seeding_since: 0,
             chunk_progress: Vec::new(),
@@ -218,6 +238,11 @@ impl DownloadTask {
             seeder: false,
             num_seeders: 0,
             peers: Vec::new(),
+            piece_length: 0,
+            num_pieces: 0,
+            bt_comment: None,
+            bt_creation_date: None,
+            bt_announce_list: Vec::new(),
             created_at: now_ms(),
             seeding_since: 0,
             chunk_progress: Vec::new(),
@@ -282,6 +307,11 @@ impl DownloadTask {
             seeder: false,
             num_seeders: 0,
             peers: Vec::new(),
+            piece_length: 0,
+            num_pieces: 0,
+            bt_comment: None,
+            bt_creation_date: None,
+            bt_announce_list: Vec::new(),
             created_at: now_ms(),
             seeding_since: 0,
             chunk_progress: Vec::new(),
@@ -345,6 +375,11 @@ impl DownloadTask {
             seeder: false,
             num_seeders: 0,
             peers: Vec::new(),
+            piece_length: 0,
+            num_pieces: 0,
+            bt_comment: None,
+            bt_creation_date: None,
+            bt_announce_list: Vec::new(),
             created_at: now_ms(),
             seeding_since: 0,
             chunk_progress: Vec::new(),
@@ -399,6 +434,11 @@ impl DownloadTask {
             seeder: false,
             num_seeders: 0,
             peers: Vec::new(),
+            piece_length: 0,
+            num_pieces: 0,
+            bt_comment: None,
+            bt_creation_date: None,
+            bt_announce_list: Vec::new(),
             created_at: now_ms(),
             seeding_since: 0,
             chunk_progress: Vec::new(),
@@ -491,6 +531,24 @@ impl DownloadTask {
                 info.insert("name".into(), Value::String(name.clone()));
                 bt.insert("info".into(), Value::Object(info));
             }
+            if let Some(ref c) = self.bt_comment {
+                bt.insert("comment".into(), Value::String(c.clone()));
+            }
+            if let Some(ts) = self.bt_creation_date {
+                // Frontend formats with `localeDateTimeFormat`, which expects
+                // a unix epoch in seconds; pass as JSON number for clarity
+                bt.insert("creationDate".into(), Value::from(ts));
+            }
+            if !self.bt_announce_list.is_empty() {
+                let tiers: Vec<Value> = self
+                    .bt_announce_list
+                    .iter()
+                    .map(|tier| {
+                        Value::Array(tier.iter().map(|u| Value::String(u.clone())).collect())
+                    })
+                    .collect();
+                bt.insert("announceList".into(), Value::Array(tiers));
+            }
             m.insert("bittorrent".into(), Value::Object(bt));
             m.insert(
                 "seeder".into(),
@@ -500,6 +558,18 @@ impl DownloadTask {
                 "numSeeders".into(),
                 Value::String(self.num_seeders.to_string()),
             );
+            if self.piece_length > 0 {
+                m.insert(
+                    "pieceLength".into(),
+                    Value::String(self.piece_length.to_string()),
+                );
+            }
+            if self.num_pieces > 0 {
+                m.insert(
+                    "numPieces".into(),
+                    Value::String(self.num_pieces.to_string()),
+                );
+            }
         }
 
         // ed2k fields

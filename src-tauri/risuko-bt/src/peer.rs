@@ -15,5 +15,8 @@
 pub mod connection;
 pub mod state;
 
-pub use connection::{accept, connect, PeerCommand, PeerEvent, PeerHandle, SpawnPeer};
+pub use connection::{
+    accept, accept_with_policy, connect, EncryptionPolicy, PeerCommand, PeerEvent, PeerHandle,
+    SpawnPeer,
+};
 pub use state::{PeerFlags, PeerState};

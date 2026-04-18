@@ -20,8 +20,9 @@ pub use core::metainfo::{
     parse_torrent, FileDetails, TorrentMeta, TorrentMetaInfo, ValidatedTorrentMetaV1Info,
 };
 pub use core::{generate_peer_id, Id20, Lengths, Magnet};
+pub use peer::EncryptionPolicy;
 pub use session::{
     AddTorrent, AddTorrentOptions, AddTorrentResponse, ListOnlyResponse, ListenerOptions, Session,
     SessionOptions, SessionPersistenceConfig,
 };
-pub use torrent::{ManagedTorrent, TorrentStats};
+pub use torrent::{ManagedTorrent, PeerSnapshot, TorrentStats};

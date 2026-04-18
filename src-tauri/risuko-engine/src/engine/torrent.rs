@@ -5,7 +5,21 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-/// BitTorrent download management via the in-tree `risuko-bt` engine.
+/// BitTorrent session tuning passed from the user/system config. All
+/// fields are optional; missing entries fall back to `risuko-bt` defaults
+#[derive(Debug, Default, Clone)]
+pub struct BtTuning {
+    pub max_outstanding_per_peer: Option<usize>,
+    pub max_peers_per_torrent: Option<usize>,
+    pub enable_upnp: Option<bool>,
+    pub upnp_lease: Option<Duration>,
+    /// Accepts "plaintext", "prefer", or "require". Anything else is ignored
+    pub encryption_policy: Option<String>,
+    pub listen_ipv6: Option<bool>,
+    pub enable_lsd: Option<bool>,
+}
+
+/// BitTorrent download management via the in-tree `risuko-bt` engine
 pub struct TorrentEngine {
     session: Option<Arc<bt::Session>>,
     output_dir: PathBuf,
@@ -13,23 +27,23 @@ pub struct TorrentEngine {
 
 impl TorrentEngine {
     pub async fn new(output_dir: &Path) -> Result<Self, String> {
-        Self::new_with_tuning(output_dir, None, None).await
+        Self::new_with_tuning(output_dir, BtTuning::default()).await
     }
 
-    pub async fn new_with_tuning(
-        output_dir: &Path,
-        max_outstanding_per_peer: Option<usize>,
-        max_peers_per_torrent: Option<usize>,
-    ) -> Result<Self, String> {
+    pub async fn new_with_tuning(output_dir: &Path, tuning: BtTuning) -> Result<Self, String> {
         std::fs::create_dir_all(output_dir)
             .map_err(|e| format!("Failed to create torrent output dir: {}", e))?;
+
+        let encryption = encryption_policy_from_str(tuning.encryption_policy.as_deref());
 
         let session = bt::Session::new_with_opts(
             output_dir.to_path_buf(),
             bt::SessionOptions {
                 listen: Some(bt::ListenerOptions {
                     listen_addr: Some((Ipv4Addr::UNSPECIFIED, 0).into()),
-                    enable_upnp_port_forwarding: true,
+                    enable_upnp_port_forwarding: tuning.enable_upnp.unwrap_or(true),
+                    upnp_lease: tuning.upnp_lease,
+                    listen_ipv6: tuning.listen_ipv6.unwrap_or(false),
                 }),
                 fastresume: true,
                 // Persist session state so managed torrents survive restarts;
@@ -37,8 +51,10 @@ impl TorrentEngine {
                 persistence: Some(bt::SessionPersistenceConfig::Json {
                     folder: Some(output_dir.to_path_buf()),
                 }),
-                max_outstanding_requests_per_peer: max_outstanding_per_peer,
-                max_peers_per_torrent,
+                max_outstanding_requests_per_peer: tuning.max_outstanding_per_peer,
+                max_peers_per_torrent: tuning.max_peers_per_torrent,
+                disable_local_service_discovery: !tuning.enable_lsd.unwrap_or(true),
+                encryption,
                 ..Default::default()
             },
         )
@@ -296,21 +312,42 @@ impl TorrentEngine {
         let handle = session.get(bt::TorrentIdOrHash::Id(torrent_id))?;
         let stats = handle.stats();
 
-        let (download_speed, upload_speed, num_peers) = match &stats.live {
+        let (download_speed, upload_speed, num_peers, peers, num_seeders) = match &stats.live {
             Some(live) => {
-                let peers = live.snapshot.peer_stats.live;
+                let count = live.snapshot.peer_stats.live;
                 let dl = (live.download_speed.mbps * 1_048_576.0) as u64;
                 let ul = (live.upload_speed.mbps * 1_048_576.0) as u64;
-                (dl, ul, peers)
+                let mapped: Vec<PeerSnapshot> = stats
+                    .peers
+                    .iter()
+                    .map(|p| PeerSnapshot {
+                        addr: p.addr,
+                        bitfield: p.bitfield.clone(),
+                        am_choking: p.am_choking,
+                        peer_choking: p.peer_choking,
+                        seeder: p.seeder,
+                    })
+                    .collect();
+                let seeders = mapped.iter().filter(|p| p.seeder).count() as u32;
+                (dl, ul, count, mapped, seeders)
             }
-            None => (0, 0, 0),
+            None => (0, 0, 0, Vec::new(), 0),
         };
 
         let name = handle.name();
 
-        let file_details = handle
-            .metadata
-            .load()
+        let metadata_payload = handle.metadata.load();
+        let metadata = metadata_payload.as_ref().map(|meta| {
+            let total_pieces = (meta.info.pieces.len() / 20) as u32;
+            TorrentMetadataInfo {
+                piece_length: meta.info.piece_length,
+                num_pieces: total_pieces,
+                comment: meta.comment.clone(),
+                creation_date: meta.creation_date,
+                announce_list: build_announce_list(meta),
+            }
+        });
+        let file_details = metadata_payload
             .as_ref()
             .map(|meta| extract_file_details(&meta.info));
 
@@ -321,10 +358,13 @@ impl TorrentEngine {
             download_speed,
             upload_speed,
             num_peers,
+            num_seeders,
             is_finished: stats.finished,
             name,
             file_progress: stats.file_progress,
             file_details,
+            peers,
+            metadata,
         })
     }
 
@@ -389,6 +429,24 @@ fn extract_file_details(info: &bt::ValidatedTorrentMetaV1Info) -> Vec<TorrentFil
         .collect()
 }
 
+/// Aggregate `announce` and `announce_list` into the BEP-12 nested-tier
+/// shape expected by the frontend (`string[][]`). Falls back to a single
+/// tier containing the primary announce URL when no list is present
+fn build_announce_list(meta: &bt::TorrentMeta) -> Vec<Vec<String>> {
+    if !meta.announce_list.is_empty() {
+        return meta
+            .announce_list
+            .iter()
+            .map(|tier| tier.iter().cloned().collect())
+            .filter(|tier: &Vec<String>| !tier.is_empty())
+            .collect();
+    }
+    match &meta.announce {
+        Some(url) if !url.is_empty() => vec![vec![url.clone()]],
+        _ => Vec::new(),
+    }
+}
+
 pub struct TorrentHandle {
     pub id: usize,
     pub info_hash: Option<String>,
@@ -407,10 +465,30 @@ pub struct TorrentStats {
     pub download_speed: u64,
     pub upload_speed: u64,
     pub num_peers: u32,
+    pub num_seeders: u32,
     pub is_finished: bool,
     pub name: Option<String>,
     pub file_progress: Vec<u64>,
     pub file_details: Option<Vec<TorrentFileInfo>>,
+    pub peers: Vec<PeerSnapshot>,
+    pub metadata: Option<TorrentMetadataInfo>,
+}
+
+pub struct PeerSnapshot {
+    pub addr: std::net::SocketAddr,
+    /// Raw bitfield bytes; manager hex-encodes for the RPC payload
+    pub bitfield: Vec<u8>,
+    pub am_choking: bool,
+    pub peer_choking: bool,
+    pub seeder: bool,
+}
+
+pub struct TorrentMetadataInfo {
+    pub piece_length: u32,
+    pub num_pieces: u32,
+    pub comment: Option<String>,
+    pub creation_date: Option<i64>,
+    pub announce_list: Vec<Vec<String>>,
 }
 
 pub fn is_magnet_uri(uri: &str) -> bool {
@@ -419,7 +497,7 @@ pub fn is_magnet_uri(uri: &str) -> bool {
 
 /// Strip filesystem-unsafe characters from a torrent name so it can be used
 /// as a filename stem on all platforms. Returns a non-empty placeholder for
-/// names that reduce to whitespace.
+/// names that reduce to whitespace
 fn sanitize_file_stem(name: &str) -> String {
     let cleaned: String = name
         .chars()
@@ -434,5 +512,63 @@ fn sanitize_file_stem(name: &str) -> String {
         "torrent".to_string()
     } else {
         trimmed
+    }
+}
+
+/// Map an optional config string to a concrete BitTorrent encryption
+/// policy. Unknown / missing values fall back to `Prefer` (MSE first,
+/// plaintext fallback) which matches the system default
+fn encryption_policy_from_str(s: Option<&str>) -> bt::EncryptionPolicy {
+    match s {
+        Some("plaintext") => bt::EncryptionPolicy::PlaintextOnly,
+        Some("require") => bt::EncryptionPolicy::RequireEncryption,
+        _ => bt::EncryptionPolicy::Prefer,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn encryption_policy_known_values() {
+        assert!(matches!(
+            encryption_policy_from_str(Some("plaintext")),
+            bt::EncryptionPolicy::PlaintextOnly
+        ));
+        assert!(matches!(
+            encryption_policy_from_str(Some("prefer")),
+            bt::EncryptionPolicy::Prefer
+        ));
+        assert!(matches!(
+            encryption_policy_from_str(Some("require")),
+            bt::EncryptionPolicy::RequireEncryption
+        ));
+    }
+
+    #[test]
+    fn encryption_policy_unknown_falls_back_to_prefer() {
+        assert!(matches!(
+            encryption_policy_from_str(None),
+            bt::EncryptionPolicy::Prefer
+        ));
+        assert!(matches!(
+            encryption_policy_from_str(Some("garbage")),
+            bt::EncryptionPolicy::Prefer
+        ));
+        // case-sensitive: uppercase is not recognised
+        assert!(matches!(
+            encryption_policy_from_str(Some("REQUIRE")),
+            bt::EncryptionPolicy::Prefer
+        ));
+    }
+
+    #[test]
+    fn sanitize_file_stem_replaces_separators() {
+        assert_eq!(sanitize_file_stem("a/b\\c"), "a_b_c");
+        assert_eq!(sanitize_file_stem("  ..hidden..  "), "hidden");
+        assert_eq!(sanitize_file_stem(""), "torrent");
+        // Control chars become '_'; result is non-empty so we keep it.
+        assert_eq!(sanitize_file_stem("\0\n\t"), "___");
     }
 }

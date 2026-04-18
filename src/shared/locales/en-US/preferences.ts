@@ -97,6 +97,24 @@ export default {
 	"bt-max-outstanding-per-peer": "Max Outstanding Requests per Peer",
 	"bt-max-outstanding-per-peer-tips":
 		"Maximum concurrent chunk requests pipelined to each peer. Higher values improve throughput on high-latency links (requires engine restart)",
+	"bt-enable-upnp": "UPnP Port Forwarding",
+	"bt-enable-upnp-tips":
+		"Automatically open the BitTorrent listen port on the router via UPnP IGD (requires engine restart)",
+	"bt-upnp-lease": "UPnP Lease (seconds)",
+	"bt-upnp-lease-tips":
+		"Lease duration for UPnP port mappings. Shorter leases recover faster from stale mappings (requires engine restart)",
+	"bt-enable-lsd": "Local Service Discovery",
+	"bt-enable-lsd-tips":
+		"Discover peers on the local network via BEP-14 multicast (requires engine restart)",
+	"bt-encryption-policy": "Protocol Encryption",
+	"bt-encryption-policy-tips":
+		"MSE/PE policy for peer connections. 'Prefer' tries encryption first and falls back to plaintext (requires engine restart)",
+	"bt-encryption-plaintext": "Plaintext only",
+	"bt-encryption-prefer": "Prefer encryption",
+	"bt-encryption-require": "Require encryption",
+	"bt-listen-v6": "Listen on IPv6",
+	"bt-listen-v6-tips":
+		"Bind an additional IPv6 TCP listener on the same port (requires engine restart)",
 	"sync-tracker-tips": "Sync",
 	"auto-sync-tracker": "Update tracker list every day automatically",
 	"ed2k-server": "eDonkey Servers",

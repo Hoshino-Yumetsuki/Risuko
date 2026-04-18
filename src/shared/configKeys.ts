@@ -48,6 +48,11 @@ const systemKeys = [
 	"bt-tracker",
 	"bt-max-peers-per-torrent",
 	"bt-max-outstanding-per-peer",
+	"bt-enable-upnp",
+	"bt-upnp-lease",
+	"bt-enable-lsd",
+	"bt-encryption-policy",
+	"bt-listen-v6",
 	"continue",
 	"dht-listen-port",
 	"dir",
@@ -90,6 +95,11 @@ const startupOnlyKeys = [
 	"rpc-secret",
 	"bt-max-peers-per-torrent",
 	"bt-max-outstanding-per-peer",
+	"bt-enable-upnp",
+	"bt-upnp-lease",
+	"bt-enable-lsd",
+	"bt-encryption-policy",
+	"bt-listen-v6",
 ];
 
 export { startupOnlyKeys, systemKeys, userKeys };
