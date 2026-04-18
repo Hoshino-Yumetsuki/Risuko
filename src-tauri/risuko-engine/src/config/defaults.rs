@@ -20,6 +20,11 @@ pub fn system_defaults() -> Map<String, Value> {
     m.insert("bt-tracker".into(), json!(""));
     m.insert("bt-max-peers-per-torrent".into(), json!(100));
     m.insert("bt-max-outstanding-per-peer".into(), json!(128));
+    m.insert("bt-enable-upnp".into(), json!(true));
+    m.insert("bt-upnp-lease".into(), json!(300));
+    m.insert("bt-enable-lsd".into(), json!(true));
+    m.insert("bt-encryption-policy".into(), json!("prefer"));
+    m.insert("bt-listen-v6".into(), json!(false));
     m.insert("continue".into(), json!(true));
     m.insert("dht-listen-port".into(), json!(26701));
     m.insert("dir".into(), json!(downloads_dir));
@@ -139,6 +144,13 @@ mod tests {
         assert_eq!(sys.get("rpc-listen-port").unwrap(), 16800);
         assert_eq!(sys.get("split").unwrap(), 16);
         assert_eq!(sys.get("rpc-secret").unwrap(), "");
+        // BT defaults
+        assert_eq!(sys.get("bt-enable-upnp").unwrap(), true);
+        assert!(sys.contains_key("bt-upnp-lease"), "missing bt-upnp-lease");
+        assert_eq!(sys.get("bt-upnp-lease").unwrap(), 300);
+        assert_eq!(sys.get("bt-enable-lsd").unwrap(), true);
+        assert_eq!(sys.get("bt-encryption-policy").unwrap(), "prefer");
+        assert_eq!(sys.get("bt-listen-v6").unwrap(), false);
     }
 
     #[test]

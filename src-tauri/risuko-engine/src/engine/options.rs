@@ -22,7 +22,16 @@ impl EngineOptions {
         }
 
         // Apply user overrides that affect engine behavior
-        for key in ["rpc-host", "m3u8-output-format", "keep-seeding"] {
+        for key in [
+            "rpc-host",
+            "m3u8-output-format",
+            "keep-seeding",
+            "bt-enable-upnp",
+            "bt-upnp-lease",
+            "bt-encryption-policy",
+            "bt-listen-v6",
+            "bt-enable-lsd",
+        ] {
             if let Some(v) = user.get(key) {
                 global.insert(key.into(), v.clone());
             }
@@ -40,6 +49,21 @@ impl EngineOptions {
             v.as_u64()
                 .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
         })
+    }
+
+    /// Coerce common boolean representations. Accepts native bools,
+    /// "true"/"false" strings, "1"/"0" strings, and numeric 0/1
+    pub fn get_bool(&self, key: &str) -> Option<bool> {
+        match self.global.get(key)? {
+            Value::Bool(b) => Some(*b),
+            Value::String(s) => match s.as_str() {
+                "true" | "1" | "yes" => Some(true),
+                "false" | "0" | "no" => Some(false),
+                _ => None,
+            },
+            Value::Number(n) => n.as_u64().map(|v| v != 0),
+            _ => None,
+        }
     }
 
     pub fn set(&mut self, key: String, value: Value) {
@@ -108,7 +132,7 @@ impl EngineOptions {
         }
     }
 
-    /// Max concurrent peer connections per torrent. 0 or missing = use crate default.
+    /// Max concurrent peer connections per torrent. 0 or missing = use crate default
     pub fn bt_max_peers_per_torrent(&self) -> Option<usize> {
         let v = self.get_u64("bt-max-peers-per-torrent").unwrap_or(0) as usize;
         if v == 0 {
@@ -116,6 +140,41 @@ impl EngineOptions {
         } else {
             Some(v)
         }
+    }
+
+    /// UPnP IGD port forwarding for the BitTorrent listener. Defaults to on
+    pub fn bt_enable_upnp(&self) -> bool {
+        self.get_bool("bt-enable-upnp").unwrap_or(true)
+    }
+
+    /// UPnP mapping lease duration in seconds. 0 or missing = use crate default (300)
+    pub fn bt_upnp_lease(&self) -> Option<std::time::Duration> {
+        let v = self.get_u64("bt-upnp-lease").unwrap_or(0);
+        if v == 0 {
+            None
+        } else {
+            Some(std::time::Duration::from_secs(v))
+        }
+    }
+
+    /// BEP-8 Message Stream Encryption policy: "plaintext", "prefer", "require"
+    /// Defaults to `prefer` (MSE first, plaintext fallback).
+    pub fn bt_encryption_policy(&self) -> &'static str {
+        match self.get_str("bt-encryption-policy").unwrap_or("prefer") {
+            "plaintext" => "plaintext",
+            "require" => "require",
+            _ => "prefer",
+        }
+    }
+
+    /// Also bind an IPv6 TCP listener. Defaults to off
+    pub fn bt_listen_v6(&self) -> bool {
+        self.get_bool("bt-listen-v6").unwrap_or(false)
+    }
+
+    /// BEP-14 Local Service Discovery. Defaults to on
+    pub fn bt_enable_lsd(&self) -> bool {
+        self.get_bool("bt-enable-lsd").unwrap_or(true)
     }
 
     pub fn ed2k_servers(&self) -> Vec<String> {
@@ -248,5 +307,97 @@ mod tests {
         let opts = EngineOptions::from_config(&make_system(), &Map::new());
         let merged = opts.merge_task_options(&Map::new());
         assert_eq!(merged.get("dir").unwrap(), "/downloads");
+    }
+
+    // -- BT accessors --
+
+    #[test]
+    fn get_bool_accepts_native_strings_and_numbers() {
+        let mut sys = Map::new();
+        sys.insert("a".into(), json!(true));
+        sys.insert("b".into(), json!("true"));
+        sys.insert("c".into(), json!("yes"));
+        sys.insert("d".into(), json!("1"));
+        sys.insert("e".into(), json!(1));
+        sys.insert("f".into(), json!(false));
+        sys.insert("g".into(), json!("false"));
+        sys.insert("h".into(), json!("no"));
+        sys.insert("i".into(), json!("0"));
+        sys.insert("j".into(), json!(0));
+        sys.insert("k".into(), json!("garbage"));
+        let opts = EngineOptions::from_config(&sys, &Map::new());
+        for k in ["a", "b", "c", "d", "e"] {
+            assert_eq!(opts.get_bool(k), Some(true), "{k}");
+        }
+        for k in ["f", "g", "h", "i", "j"] {
+            assert_eq!(opts.get_bool(k), Some(false), "{k}");
+        }
+        assert_eq!(opts.get_bool("k"), None);
+        assert_eq!(opts.get_bool("missing"), None);
+    }
+
+    #[test]
+    fn bt_enable_upnp_defaults_true() {
+        let opts = EngineOptions::from_config(&Map::new(), &Map::new());
+        assert!(opts.bt_enable_upnp());
+        let mut sys = Map::new();
+        sys.insert("bt-enable-upnp".into(), json!(false));
+        let opts = EngineOptions::from_config(&sys, &Map::new());
+        assert!(!opts.bt_enable_upnp());
+    }
+
+    #[test]
+    fn bt_upnp_lease_zero_means_default() {
+        let opts = EngineOptions::from_config(&Map::new(), &Map::new());
+        assert_eq!(opts.bt_upnp_lease(), None);
+        let mut sys = Map::new();
+        sys.insert("bt-upnp-lease".into(), json!(0));
+        let opts = EngineOptions::from_config(&sys, &Map::new());
+        assert_eq!(opts.bt_upnp_lease(), None);
+        let mut sys = Map::new();
+        sys.insert("bt-upnp-lease".into(), json!(120));
+        let opts = EngineOptions::from_config(&sys, &Map::new());
+        assert_eq!(
+            opts.bt_upnp_lease(),
+            Some(std::time::Duration::from_secs(120))
+        );
+    }
+
+    #[test]
+    fn bt_encryption_policy_normalises_unknown_to_prefer() {
+        let opts = EngineOptions::from_config(&Map::new(), &Map::new());
+        assert_eq!(opts.bt_encryption_policy(), "prefer");
+        for (set, want) in [
+            ("plaintext", "plaintext"),
+            ("prefer", "prefer"),
+            ("require", "require"),
+            ("nonsense", "prefer"),
+            ("REQUIRE", "prefer"), // case sensitive on purpose
+        ] {
+            let mut sys = Map::new();
+            sys.insert("bt-encryption-policy".into(), json!(set));
+            let opts = EngineOptions::from_config(&sys, &Map::new());
+            assert_eq!(opts.bt_encryption_policy(), want, "set={set}");
+        }
+    }
+
+    #[test]
+    fn bt_listen_v6_defaults_false() {
+        let opts = EngineOptions::from_config(&Map::new(), &Map::new());
+        assert!(!opts.bt_listen_v6());
+        let mut sys = Map::new();
+        sys.insert("bt-listen-v6".into(), json!(true));
+        let opts = EngineOptions::from_config(&sys, &Map::new());
+        assert!(opts.bt_listen_v6());
+    }
+
+    #[test]
+    fn bt_enable_lsd_defaults_true() {
+        let opts = EngineOptions::from_config(&Map::new(), &Map::new());
+        assert!(opts.bt_enable_lsd());
+        let mut sys = Map::new();
+        sys.insert("bt-enable-lsd".into(), json!(false));
+        let opts = EngineOptions::from_config(&sys, &Map::new());
+        assert!(!opts.bt_enable_lsd());
     }
 }

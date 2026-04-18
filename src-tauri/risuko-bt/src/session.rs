@@ -13,7 +13,7 @@ use tokio::sync::mpsc;
 use super::api::TorrentIdOrHash;
 use super::core::metainfo::{parse_torrent, FileDetails};
 use super::core::{generate_peer_id, Id20, Lengths};
-use super::peer::{accept as accept_peer, PeerCommand, PeerEvent};
+use super::peer::{PeerCommand, PeerEvent};
 use super::torrent::{spawn as spawn_torrent, ManagedTorrent, TorrentCommand, TorrentInit};
 
 #[derive(Clone, Debug)]
@@ -25,6 +25,13 @@ pub enum SessionPersistenceConfig {
 pub struct ListenerOptions {
     pub listen_addr: Option<SocketAddr>,
     pub enable_upnp_port_forwarding: bool,
+    /// Optional override for UPnP mapping lease (default 300s when UPnP is
+    /// enabled). Only consulted if `enable_upnp_port_forwarding` is true.
+    pub upnp_lease: Option<std::time::Duration>,
+    /// Also bind an IPv6 TCP listener on the same port. Opt-in because many
+    /// hosts lack global v6 connectivity; a failed v6 bind is logged and
+    /// ignored rather than aborting session startup.
+    pub listen_ipv6: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -42,6 +49,13 @@ pub struct SessionOptions {
     /// Maximum simultaneous peer connections per torrent
     /// `None` uses the crate default (100)
     pub max_peers_per_torrent: Option<usize>,
+    /// Disable BEP-14 Local Service Discovery. Defaults to enabled; some
+    /// hosts (CI runners, strict corporate networks) cannot bind the
+    /// multicast group and will warn-and-continue regardless.
+    pub disable_local_service_discovery: bool,
+    /// BEP-8 Message Stream Encryption (MSE/PE) policy for peer connections.
+    /// Defaults to `Prefer`, which tries MSE first with plaintext fallback.
+    pub encryption: super::peer::EncryptionPolicy,
 }
 
 impl Default for SessionOptions {
@@ -55,6 +69,8 @@ impl Default for SessionOptions {
             persistence: None,
             max_outstanding_requests_per_peer: None,
             max_peers_per_torrent: None,
+            disable_local_service_discovery: false,
+            encryption: super::peer::EncryptionPolicy::default(),
         }
     }
 }
@@ -91,6 +107,10 @@ pub struct Session {
     listen_port: u16,
     inner: Mutex<SessionInner>,
     accept_handle: Mutex<Option<tokio::task::JoinHandle<()>>>,
+    accept6_handle: Mutex<Option<tokio::task::JoinHandle<()>>>,
+    upnp_handle: Mutex<Option<super::upnp::UpnpHandle>>,
+    lsd: Mutex<Option<Arc<super::lsd::LocalServiceDiscovery>>>,
+    lsd_router_handle: Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
 
 impl Drop for Session {
@@ -98,6 +118,15 @@ impl Drop for Session {
         if let Some(h) = self.accept_handle.lock().take() {
             h.abort();
         }
+        if let Some(h) = self.accept6_handle.lock().take() {
+            h.abort();
+        }
+        if let Some(h) = self.lsd_router_handle.lock().take() {
+            h.abort();
+        }
+        // Dropping the UpnpHandle / LSD service triggers their cleanup.
+        let _ = self.upnp_handle.lock().take();
+        let _ = self.lsd.lock().take();
     }
 }
 
@@ -124,16 +153,28 @@ impl Session {
         let local_port = listener.local_addr()?.port();
         log::info!("session listening on port {local_port}");
 
+        let mut upnp_handle: Option<super::upnp::UpnpHandle> = None;
         if opts
             .listen
             .as_ref()
             .map(|l| l.enable_upnp_port_forwarding)
             .unwrap_or(false)
         {
-            match super::upnp::map_port(local_port).await {
-                Ok(m) => log::info!("upnp port forwarding established: {:?}", m.external),
-                Err(e) => log::warn!("upnp port forwarding failed: {e}"),
-            }
+            let lease = opts
+                .listen
+                .as_ref()
+                .and_then(|l| l.upnp_lease)
+                .unwrap_or(std::time::Duration::from_secs(300));
+            let fwd = super::upnp::UpnpPortForwarder::new(
+                vec![
+                    (local_port, super::upnp::MapProto::Tcp),
+                ],
+                super::upnp::UpnpOptions {
+                    lease,
+                    ..Default::default()
+                },
+            );
+            upnp_handle = Some(fwd.spawn());
         }
 
         let session = Arc::new(Self {
@@ -147,47 +188,63 @@ impl Session {
                 next_id: 1,
             }),
             accept_handle: Mutex::new(None),
+            accept6_handle: Mutex::new(None),
+            upnp_handle: Mutex::new(upnp_handle),
+            lsd: Mutex::new(None),
+            lsd_router_handle: Mutex::new(None),
         });
+
+        if !session.opts.disable_local_service_discovery {
+            match super::lsd::LocalServiceDiscovery::spawn(local_port, Vec::new()) {
+                Ok((svc, mut rx)) => {
+                    let weak = Arc::downgrade(&session);
+                    let router = tokio::spawn(async move {
+                        while let Some((ih, addr)) = rx.recv().await {
+                            let Some(s) = weak.upgrade() else {
+                                return;
+                            };
+                            let _ = s.add_peer(ih, addr).await;
+                        }
+                    });
+                    *session.lsd.lock() = Some(svc);
+                    *session.lsd_router_handle.lock() = Some(router);
+                }
+                Err(e) => log::warn!("lsd: not started: {e}"),
+            }
+        }
 
         // Hold a Weak reference inside the accept loop so the loop does not
         // keep the session alive. When the last external Arc is dropped the
         // session's Drop aborts the spawned task via `accept_handle`.
         let weak = Arc::downgrade(&session);
-        let accept_handle = tokio::spawn(async move {
-            loop {
-                match listener.accept().await {
-                    Ok((stream, addr)) => {
-                        let Some(s) = weak.upgrade() else {
-                            return;
-                        };
-                        tokio::spawn(async move {
-                            let allowed: Vec<Id20> =
-                                s.inner.lock().by_hash.keys().copied().collect();
-                            let res = accept_peer(
-                                stream,
-                                s.peer_id,
-                                move |ih| allowed.contains(ih),
-                                std::time::Duration::from_secs(30),
-                            )
-                            .await;
-                            match res {
-                                Ok((handle, rx)) => {
-                                    s.route_inbound_peer(addr, handle.tx, rx).await;
-                                }
-                                Err(e) => {
-                                    log::debug!("inbound peer handshake failed: {e}")
-                                }
-                            }
-                        });
-                    }
-                    Err(e) => {
-                        log::debug!("accept failed: {e}");
-                        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        let accept_handle = tokio::spawn(run_accept_loop(listener, weak));
+        *session.accept_handle.lock() = Some(accept_handle);
+
+        // Optional v6 listener on the same port. Failure to bind is not
+        // fatal: we simply log and continue with v4 only.
+        let listen_v6 = session
+            .opts
+            .listen
+            .as_ref()
+            .map(|l| l.listen_ipv6)
+            .unwrap_or(false);
+        if listen_v6 {
+            let v6_addr: SocketAddr = (std::net::Ipv6Addr::UNSPECIFIED, local_port).into();
+            match bind_v6_listener(v6_addr) {
+                Ok(std_listener) => {
+                    match TcpListener::from_std(std_listener) {
+                        Ok(listener6) => {
+                            log::info!("session v6 listening on port {local_port}");
+                            let weak6 = Arc::downgrade(&session);
+                            let accept6 = tokio::spawn(run_accept_loop(listener6, weak6));
+                            *session.accept6_handle.lock() = Some(accept6);
+                        }
+                        Err(e) => log::warn!("session v6 tokio convert failed: {e}"),
                     }
                 }
+                Err(e) => log::warn!("session v6 bind failed: {e}"),
             }
-        });
-        *session.accept_handle.lock() = Some(accept_handle);
+        }
 
         Ok(session)
     }
@@ -258,6 +315,7 @@ impl Session {
                     &url,
                     &extra_trackers,
                     std::time::Duration::from_secs(120),
+                    self.opts.encryption,
                 )
                 .await?;
                 let torrent_bytes =
@@ -296,6 +354,13 @@ impl Session {
             .output_folder
             .map(PathBuf::from)
             .unwrap_or_else(|| self.output_dir.clone());
+        // For multi-file torrents, files are laid out under <output>/<name>/.
+        // Single-file torrents store the file directly under <output>/.
+        let root_dir = if info.single_file_mode {
+            root_dir
+        } else {
+            root_dir.join(&info.name)
+        };
 
         let lengths = Lengths::new(info.total_length(), info.piece_length)
             .map_err(|e| format!("bad lengths: {e}"))?;
@@ -325,6 +390,7 @@ impl Session {
             only_files: opts.only_files,
             max_outstanding_per_peer: self.opts.max_outstanding_requests_per_peer,
             max_peers: self.opts.max_peers_per_torrent,
+            encryption: self.opts.encryption,
         };
         let handle = match spawn_torrent(id, init, self.peer_id, self.listen_port).await {
             Ok(h) => h,
@@ -338,6 +404,9 @@ impl Session {
         {
             let mut inner = self.inner.lock();
             inner.torrents.insert(id, handle.clone());
+        }
+        if let Some(lsd) = self.lsd.lock().as_ref() {
+            lsd.add_infohash(meta.info_hash);
         }
         Ok(AddTorrentResponse::Added(id, handle))
     }
@@ -421,6 +490,9 @@ impl Session {
             inner.torrents.remove(&handle.id);
             inner.by_hash.remove(&handle.info_hash);
         }
+        if let Some(lsd) = self.lsd.lock().as_ref() {
+            lsd.remove_infohash(handle.info_hash);
+        }
         if let Some(paths) = file_paths {
             for (p, is_dir) in paths {
                 let res = if is_dir {
@@ -447,5 +519,60 @@ impl Session {
             .send(TorrentCommand::AddPeer(addr))
             .await
             .map_err(|e| e.to_string())
+    }
+}
+
+/// Bind a TCP listener on an IPv6 address with `IPV6_V6ONLY` set to avoid
+/// dual-stack conflicts when an IPv4 listener already bound the same port.
+fn bind_v6_listener(addr: SocketAddr) -> std::io::Result<std::net::TcpListener> {
+    use socket2::{Domain, Protocol, Socket, Type};
+    let sock = Socket::new(Domain::IPV6, Type::STREAM, Some(Protocol::TCP))?;
+    sock.set_only_v6(true)?;
+    // On Unix, SO_REUSEADDR allows rebinding a port in TIME_WAIT which is
+    // desirable. On Windows it has different semantics — it permits multiple
+    // processes to bind the same port, enabling hijacking — so skip it there.
+    #[cfg(not(target_os = "windows"))]
+    sock.set_reuse_address(true)?;
+    sock.set_nonblocking(true)?;
+    sock.bind(&addr.into())?;
+    sock.listen(128)?;
+    Ok(sock.into())
+}
+
+/// Shared inbound accept loop. Parameterised on a `Weak<Session>` so the
+/// task does not keep the session alive; the session's Drop aborts it.
+async fn run_accept_loop(listener: TcpListener, weak: std::sync::Weak<Session>) {
+    loop {
+        match listener.accept().await {
+            Ok((stream, addr)) => {
+                let Some(s) = weak.upgrade() else {
+                    return;
+                };
+                tokio::spawn(async move {
+                    let allowed: Vec<Id20> = s.inner.lock().by_hash.keys().copied().collect();
+                    let policy = s.opts.encryption;
+                    let res = super::peer::accept_with_policy(
+                        stream,
+                        s.peer_id,
+                        allowed,
+                        std::time::Duration::from_secs(30),
+                        policy,
+                    )
+                    .await;
+                    match res {
+                        Ok((handle, rx)) => {
+                            s.route_inbound_peer(addr, handle.tx, rx).await;
+                        }
+                        Err(e) => {
+                            log::debug!("inbound peer handshake failed: {e}")
+                        }
+                    }
+                });
+            }
+            Err(e) => {
+                log::debug!("accept failed: {e}");
+                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            }
+        }
     }
 }

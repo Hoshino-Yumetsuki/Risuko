@@ -34,6 +34,25 @@ export function deleteSpeedHistory(gid: string): void {
 	speedHistoryCache.delete(gid);
 }
 
+/** Number of rows shown in the task list for the given backend tasks. A
+ * multi-file BT torrent expands into one row per selected file (matching
+ * `displayTaskList`); everything else counts as one row. */
+function countDisplayRows(tasks: DownloadTask[]): number {
+	let count = 0;
+	for (const task of tasks) {
+		const files = Array.isArray(task.files) ? task.files : [];
+		if (!checkTaskIsBT(task) || files.length <= 1) {
+			count += 1;
+			continue;
+		}
+		const selected = files.filter(
+			(f: DownloadFile) => f.selected !== "false",
+		).length;
+		count += selected > 0 ? selected : 1;
+	}
+	return count;
+}
+
 function sampleSpeedsFromTasks(tasks: DownloadTask[]): boolean {
 	let changed = false;
 	for (const task of tasks) {
@@ -175,21 +194,47 @@ export const useTaskStore = defineStore("task", {
 				const selectedFiles = files.filter(
 					(f: DownloadFile) => f.selected !== "false",
 				);
-				if (isBT && selectedFiles.length > 1) {
-					for (const file of selectedFiles) {
+				// Expand multi-file BT torrents into per-file rows whenever the
+				// torrent itself contains multiple files. Even if the user has
+				// pared down to a single selected file, keep the row in file-entry
+				// form so the title stays as the file name (not the torrent
+				// folder) and per-row delete keeps deselecting instead of
+				// removing the whole torrent.
+				if (isBT && files.length > 1 && selectedFiles.length > 0) {
+					const parentDown = Math.max(0, Number(task.downloadSpeed || 0));
+					const parentUp = Math.max(0, Number(task.uploadSpeed || 0));
+					const remainingPerFile = selectedFiles.map((f: DownloadFile) =>
+						Math.max(0, Number(f.length || 0) - Number(f.completedLength || 0)),
+					);
+					const totalRemaining = remainingPerFile.reduce(
+						(sum: number, v: number) => sum + v,
+						0,
+					);
+					selectedFiles.forEach((file: DownloadFile, idx: number) => {
+						const remaining = remainingPerFile[idx];
+						const downShare =
+							totalRemaining > 0
+								? Math.round((parentDown * remaining) / totalRemaining)
+								: 0;
+						// Upload happens at the piece level (not per-file). Only
+						// surface upload speed once on the first row to avoid
+						// triple-counting in the UI.
+						const upShare = idx === 0 ? parentUp : 0;
 						result.push({
 							...task,
 							_displayKey: `${task.gid}#f${file.index}`,
 							_isFileEntry: true,
 							totalLength: file.length,
 							completedLength: file.completedLength,
+							downloadSpeed: String(downShare),
+							uploadSpeed: String(upShare),
 							files: [file],
 							bittorrent: {
 								...(task.bittorrent || {}),
 								info: {},
 							},
 						});
-					}
+					});
 				} else {
 					result.push({
 						...task,
@@ -380,7 +425,13 @@ export const useTaskStore = defineStore("task", {
 
 				const orderedData = this.applyTaskOrder(type, data);
 				this.taskList = orderedData;
-				this.taskCountMap = { ...this.taskCountMap, [type]: data.length };
+				// Count display rows (per-file rows for multi-file BT torrents)
+				// instead of raw backend tasks so the sidebar matches what the
+				// user actually sees in the list.
+				this.taskCountMap = {
+					...this.taskCountMap,
+					[type]: countDisplayRows(orderedData),
+				};
 				this.ensurePageInRange(type);
 				this.updateTaskOrder(
 					type,
@@ -405,21 +456,60 @@ export const useTaskStore = defineStore("task", {
 			const numWaiting = stat.numWaiting || 0;
 			const numStoppedTotal = stat.numStoppedTotal || 0;
 
+			let activeCount = numActive;
+			let waitingCount = numWaiting;
 			let completedCount = this.taskCountMap.completed || 0;
 			let stoppedCount = this.taskCountMap.stopped || 0;
+			let allCount = numActive + numWaiting + numStoppedTotal;
 
-			if (numStoppedTotal > 0) {
+			// Fetch lightweight projections of all three lists so the sidebar
+			// can show *display rows* (a multi-file BT torrent expands into one
+			// row per selected file) instead of raw backend task counts. Skip
+			// the fetch entirely when there is nothing to count.
+			const needFetch = numActive + numWaiting + numStoppedTotal > 0;
+			if (needFetch) {
 				try {
-					const stoppedTasks = (await api.fetchTaskList({
-						type: "stopped",
-						keys: ["gid", "status"],
-					})) as DownloadTask[];
-					completedCount = stoppedTasks.filter(
+					const [activeData, waitingData, stoppedData] = await Promise.all([
+						numActive > 0
+							? (api.fetchTaskList({
+									type: "active",
+									keys: ["gid", "status", "files", "bittorrent"],
+								}) as Promise<DownloadTask[]>)
+							: Promise.resolve([] as DownloadTask[]),
+						numWaiting > 0
+							? (api.fetchTaskList({
+									type: "waiting",
+									keys: ["gid", "status", "files", "bittorrent"],
+								}) as Promise<DownloadTask[]>)
+							: Promise.resolve([] as DownloadTask[]),
+						numStoppedTotal > 0
+							? (api.fetchTaskList({
+									type: "stopped",
+									keys: ["gid", "status", "files", "bittorrent"],
+								}) as Promise<DownloadTask[]>)
+							: Promise.resolve([] as DownloadTask[]),
+					]);
+					const activeArr = Array.isArray(activeData) ? activeData : [];
+					const waitingArr = Array.isArray(waitingData) ? waitingData : [];
+					const stoppedArr = Array.isArray(stoppedData) ? stoppedData : [];
+					const completedArr = stoppedArr.filter(
 						(t) => t.status === TASK_STATUS.COMPLETE,
-					).length;
-					stoppedCount = stoppedTasks.length - completedCount;
+					);
+					const stoppedOnlyArr = stoppedArr.filter(
+						(t) => t.status !== TASK_STATUS.COMPLETE,
+					);
+					activeCount = countDisplayRows(activeArr);
+					waitingCount = countDisplayRows(waitingArr);
+					completedCount = countDisplayRows(completedArr);
+					stoppedCount = countDisplayRows(stoppedOnlyArr);
+					allCount = activeCount + waitingCount + completedCount + stoppedCount;
 				} catch {
 					// keep previous counts on failure
+					activeCount = this.taskCountMap.active || 0;
+					waitingCount = this.taskCountMap.waiting || 0;
+					completedCount = this.taskCountMap.completed || 0;
+					stoppedCount = this.taskCountMap.stopped || 0;
+					allCount = this.taskCountMap.all || 0;
 				}
 			} else {
 				completedCount = 0;
@@ -427,9 +517,9 @@ export const useTaskStore = defineStore("task", {
 			}
 
 			this.taskCountMap = {
-				all: numActive + numWaiting + numStoppedTotal,
-				active: numActive,
-				waiting: numWaiting,
+				all: allCount,
+				active: activeCount,
+				waiting: waitingCount,
 				completed: completedCount,
 				stopped: stoppedCount,
 			};
@@ -584,6 +674,32 @@ export const useTaskStore = defineStore("task", {
 		},
 		removeTask(task: DownloadTask) {
 			const { gid } = task;
+			const displayTask = task as DisplayTask;
+
+			// For per-file rows of a multi-file BT torrent, "delete" should only
+			// deselect that file rather than killing the whole torrent. Fall back
+			// to full removal when nothing remains selected.
+			if (displayTask._isFileEntry) {
+				const fileEntry = Array.isArray(task.files) ? task.files[0] : null;
+				const parent = this.taskList.find((t: DownloadTask) => t.gid === gid);
+				if (fileEntry && parent) {
+					const fileIndex = Number(fileEntry.index);
+					const remaining = (Array.isArray(parent.files) ? parent.files : [])
+						.filter((f: DownloadFile) => f.selected !== "false")
+						.map((f: DownloadFile) => Number(f.index))
+						.filter((i: number) => Number.isFinite(i) && i !== fileIndex);
+					if (remaining.length > 0) {
+						const selectFile = remaining.sort((a, b) => a - b).join(",");
+						return api
+							.changeOption({ gid, options: { "select-file": selectFile } })
+							.finally(() => {
+								this.fetchList();
+								this.saveSession();
+							});
+					}
+				}
+			}
+
 			if (gid === this.currentTaskGid) {
 				this.hideTaskDetail();
 			}

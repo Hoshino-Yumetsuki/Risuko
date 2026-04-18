@@ -269,6 +269,106 @@
               </div>
             </div>
 
+            <div class="settings-row" style="margin-top: 8px">
+              <div class="settings-row-content">
+                <div class="settings-row-title">
+                  {{ $t('preferences.bt-enable-upnp') }}
+                </div>
+                <div class="settings-row-description">
+                  {{ $t('preferences.bt-enable-upnp-tips') }}
+                </div>
+              </div>
+              <div class="settings-row-action">
+                <ui-checkbox
+                  :model-value="!!form.btEnableUpnp"
+                  @change="(val) => setAdvancedBoolean('btEnableUpnp', val)"
+                />
+              </div>
+            </div>
+
+            <div class="settings-row" style="margin-top: 8px">
+              <div class="settings-row-content">
+                <div class="settings-row-title">
+                  {{ $t('preferences.bt-upnp-lease') }}
+                </div>
+                <div class="settings-row-description">
+                  {{ $t('preferences.bt-upnp-lease-tips') }}
+                </div>
+              </div>
+              <div class="settings-row-action">
+                <Input
+                  type="number"
+                  min="60"
+                  max="86400"
+                  style="width: 100px"
+                  v-model="form.btUpnpLease"
+                />
+              </div>
+            </div>
+
+            <div class="settings-row" style="margin-top: 8px">
+              <div class="settings-row-content">
+                <div class="settings-row-title">
+                  {{ $t('preferences.bt-enable-lsd') }}
+                </div>
+                <div class="settings-row-description">
+                  {{ $t('preferences.bt-enable-lsd-tips') }}
+                </div>
+              </div>
+              <div class="settings-row-action">
+                <ui-checkbox
+                  :model-value="!!form.btEnableLsd"
+                  @change="(val) => setAdvancedBoolean('btEnableLsd', val)"
+                />
+              </div>
+            </div>
+
+            <div class="settings-row" style="margin-top: 8px">
+              <div class="settings-row-content">
+                <div class="settings-row-title">
+                  {{ $t('preferences.bt-encryption-policy') }}
+                </div>
+                <div class="settings-row-description">
+                  {{ $t('preferences.bt-encryption-policy-tips') }}
+                </div>
+              </div>
+              <div class="settings-row-action">
+                <Select v-model="form.btEncryptionPolicy">
+                  <SelectTrigger style="width: 180px">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="plaintext">
+                      {{ $t('preferences.bt-encryption-plaintext') }}
+                    </SelectItem>
+                    <SelectItem value="prefer">
+                      {{ $t('preferences.bt-encryption-prefer') }}
+                    </SelectItem>
+                    <SelectItem value="require">
+                      {{ $t('preferences.bt-encryption-require') }}
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            <div class="settings-row" style="margin-top: 8px">
+              <div class="settings-row-content">
+                <div class="settings-row-title">
+                  {{ $t('preferences.bt-listen-v6') }}
+                </div>
+                <div class="settings-row-description">
+                  {{ $t('preferences.bt-listen-v6-tips') }}
+                </div>
+              </div>
+              <div class="settings-row-action">
+                <ui-checkbox
+                  :model-value="!!form.btListenV6"
+                  @change="(val) => setAdvancedBoolean('btListenV6', val)"
+                />
+              </div>
+            </div>
+
           </div>
         </div>
 
@@ -730,6 +830,11 @@ const initForm = (config) => {
 		btTracker,
 		btMaxPeersPerTorrent,
 		btMaxOutstandingPerPeer,
+		btEnableUpnp,
+		btUpnpLease,
+		btEnableLsd,
+		btEncryptionPolicy,
+		btListenV6,
 		dhtListenPort,
 		ed2KPort: ed2kPort,
 		ed2KServer: ed2kServer,
@@ -754,6 +859,11 @@ const initForm = (config) => {
 		btTracker: convertCommaToLine(btTracker),
 		btMaxPeersPerTorrent: btMaxPeersPerTorrent ?? 100,
 		btMaxOutstandingPerPeer: btMaxOutstandingPerPeer ?? 128,
+		btEnableUpnp: parseBooleanConfig(btEnableUpnp, true),
+		btUpnpLease: btUpnpLease ?? 300,
+		btEnableLsd: parseBooleanConfig(btEnableLsd, true),
+		btEncryptionPolicy: btEncryptionPolicy || "prefer",
+		btListenV6: parseBooleanConfig(btListenV6, false),
 		dhtListenPort,
 		ed2kPort: ed2kPort || 4662,
 		ed2kServer: convertCommaToLine(ed2kServer || DEFAULT_ED2K_SERVERS),
@@ -1100,7 +1210,11 @@ export default {
 				data.btTracker = reduceTrackerString(convertLineToComma(btTracker));
 			}
 
-			for (const key of ["btMaxPeersPerTorrent", "btMaxOutstandingPerPeer"]) {
+			for (const key of [
+				"btMaxPeersPerTorrent",
+				"btMaxOutstandingPerPeer",
+				"btUpnpLease",
+			]) {
 				if (key in data) {
 					const raw = data[key];
 					if (raw === "" || raw === null || raw === undefined) {
@@ -1110,7 +1224,11 @@ export default {
 						continue;
 					}
 					const n = Number(raw);
-					if (Number.isFinite(n) && n >= 0) {
+					if (
+						key === "btUpnpLease"
+							? Number.isFinite(n) && n >= 60 && n <= 86400
+							: Number.isFinite(n) && n >= 0
+					) {
 						data[key] = n;
 					} else {
 						delete data[key];

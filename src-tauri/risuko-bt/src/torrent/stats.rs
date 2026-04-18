@@ -1,6 +1,21 @@
 //! Per-torrent live stats
 
+use std::net::SocketAddr;
 use std::time::Instant;
+
+/// Snapshot of a single connected peer for UI consumption
+#[derive(Debug, Clone)]
+pub struct PeerSnapshot {
+    pub addr: SocketAddr,
+    /// Raw bitfield bytes; consumers can hex-encode for display
+    pub bitfield: Vec<u8>,
+    pub am_choking: bool,
+    pub am_interested: bool,
+    pub peer_choking: bool,
+    pub peer_interested: bool,
+    /// True if the peer has all pieces (full bitfield)
+    pub seeder: bool,
+}
 
 /// Exponential-moving-average speed tracker
 #[derive(Debug, Clone)]
@@ -70,6 +85,7 @@ pub struct TorrentStats {
     pub finished: bool,
     pub file_progress: Vec<u64>,
     pub live: Option<LiveStats>,
+    pub peers: Vec<PeerSnapshot>,
     pub(crate) live_stats: LiveStats,
 }
 
@@ -83,6 +99,7 @@ impl TorrentStats {
             finished: false,
             file_progress,
             live: Some(LiveStats::default()),
+            peers: Vec::new(),
             live_stats: LiveStats::default(),
         }
     }

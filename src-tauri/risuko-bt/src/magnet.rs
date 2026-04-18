@@ -47,6 +47,7 @@ pub async fn resolve(
     magnet_uri: &str,
     extra_trackers: &[String],
     budget: Duration,
+    encryption: crate::peer::EncryptionPolicy,
 ) -> Result<Resolved, String> {
     let magnet = Magnet::parse(magnet_uri).map_err(|e| e.to_string())?;
     let info_hash = magnet.info_hash();
@@ -163,7 +164,7 @@ pub async fn resolve(
                             let _permit = permit;
                             let fetched = tokio::time::timeout(
                                 PEER_TOTAL_TIMEOUT,
-                                try_fetch_from_peer(addr, info_hash, our_peer_id),
+                                try_fetch_from_peer(addr, info_hash, our_peer_id, encryption),
                             )
                             .await
                             .ok()
@@ -224,6 +225,7 @@ async fn try_fetch_from_peer(
     addr: SocketAddr,
     info_hash: Id20,
     our_peer_id: Id20,
+    encryption: crate::peer::EncryptionPolicy,
 ) -> Option<Vec<u8>> {
     let (handle, rx) = connect(SpawnPeer {
         addr,
@@ -231,6 +233,7 @@ async fn try_fetch_from_peer(
         our_peer_id,
         connect_timeout: PEER_CONNECT_TIMEOUT,
         read_timeout: PEER_READ_TIMEOUT,
+        encryption,
     })
     .await
     .ok()?;

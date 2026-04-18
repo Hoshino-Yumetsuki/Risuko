@@ -92,6 +92,22 @@ export default {
 	"bt-max-outstanding-per-peer": "每个对等节点最大并发请求数",
 	"bt-max-outstanding-per-peer-tips":
 		"每个 peer 的 pipeline 并发请求数，值越大高延迟链路下载越快（需重启引擎生效）",
+	"bt-enable-upnp": "UPnP 端口转发",
+	"bt-enable-upnp-tips":
+		"通过 UPnP IGD 自动在路由器开放 BT 监听端口（需重启引擎生效）",
+	"bt-upnp-lease": "UPnP 租期（秒）",
+	"bt-upnp-lease-tips":
+		"UPnP 端口映射的有效期，较短的租期可更快恢复失效映射（需重启引擎生效）",
+	"bt-enable-lsd": "本地服务发现",
+	"bt-enable-lsd-tips": "通过 BEP-14 多播在局域网内发现 peer（需重启引擎生效）",
+	"bt-encryption-policy": "协议加密",
+	"bt-encryption-policy-tips":
+		"对等连接的 MSE/PE 策略。“优先加密”会先尝试加密，失败后回退到明文（需重启引擎生效）",
+	"bt-encryption-plaintext": "仅明文",
+	"bt-encryption-prefer": "优先加密",
+	"bt-encryption-require": "必须加密",
+	"bt-listen-v6": "监听 IPv6",
+	"bt-listen-v6-tips": "在同一端口额外绑定 IPv6 TCP 监听（需重启引擎生效）",
 	"sync-tracker-tips": "从服务器同步",
 	"auto-sync-tracker": "每天自动更新 Tracker 服务器列表",
 	"ed2k-server": "电驴服务器",

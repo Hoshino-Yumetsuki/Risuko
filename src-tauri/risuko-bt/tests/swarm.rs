@@ -1,8 +1,8 @@
-//! End-to-end swarm test for the in-tree BitTorrent implementation.
+//! End-to-end swarm test for the in-tree BitTorrent implementation
 //!
 //! Spins up two `Session`s sharing a 256 KiB random payload. The seeder
 //! pre-populates storage and we verify the leecher receives a byte-exact
-//! copy via direct peer connection (no tracker / DHT).
+//! copy via direct peer connection (no tracker / DHT)
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -19,7 +19,7 @@ const TOTAL: u64 = 256 * 1024;
 
 fn make_payload() -> Vec<u8> {
     // Deterministic non-trivial pattern: LCG output. Not uniform random,
-    // but each piece is distinct which is all we need.
+    // but each piece is distinct which is all we need
     let mut out = Vec::with_capacity(TOTAL as usize);
     let mut x: u32 = 0xDEADBEEF;
     for _ in 0..TOTAL {
@@ -85,7 +85,7 @@ async fn leecher_downloads_from_seeder() {
     let seed_dir = tempfile::tempdir().unwrap();
     let leech_dir = tempfile::tempdir().unwrap();
 
-    // Seed side: file is already on disk so scan_existing_pieces marks them.
+    // Seed side: file is already on disk so scan_existing_pieces marks them
     write_payload(seed_dir.path(), &meta.info.name, &payload);
 
     let seed = Session::new_with_opts(
@@ -96,6 +96,7 @@ async fn leecher_downloads_from_seeder() {
             listen: Some(risuko_bt::session::ListenerOptions {
                 listen_addr: Some("127.0.0.1:0".parse().unwrap()),
                 enable_upnp_port_forwarding: false,
+                ..Default::default()
             }),
             ..Default::default()
         },
@@ -111,6 +112,7 @@ async fn leecher_downloads_from_seeder() {
             listen: Some(risuko_bt::session::ListenerOptions {
                 listen_addr: Some("127.0.0.1:0".parse().unwrap()),
                 enable_upnp_port_forwarding: false,
+                ..Default::default()
             }),
             ..Default::default()
         },

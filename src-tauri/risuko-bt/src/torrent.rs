@@ -22,7 +22,9 @@ use super::storage::{FilesystemStorage, StorageBackend};
 use super::tracker::{announce as tracker_announce, AnnounceEvent, AnnounceRequest};
 use super::wire::Message;
 
-pub use stats::{AggregatedLiveStats, LiveStats, Snapshot, SpeedSample, TorrentStats};
+pub use stats::{
+    AggregatedLiveStats, LiveStats, PeerSnapshot, Snapshot, SpeedSample, TorrentStats,
+};
 
 /// Default maximum concurrent 16 KiB chunk requests per peer. BitTorrent
 /// clients typically pipeline 32-128 (libtorrent `reqq`). Too low here caps
@@ -38,6 +40,7 @@ pub struct TorrentInit {
     pub only_files: Option<Vec<usize>>,
     pub max_outstanding_per_peer: Option<usize>,
     pub max_peers: Option<usize>,
+    pub encryption: super::peer::EncryptionPolicy,
 }
 
 #[derive(Debug)]
@@ -148,6 +151,7 @@ async fn torrent_loop(
     let info = Arc::new(init.meta.info.clone());
     let info_hash = init.meta.info_hash;
     let lengths = init.lengths;
+    let encryption = init.encryption;
     let max_outstanding = init
         .max_outstanding_per_peer
         .unwrap_or(DEFAULT_MAX_OUTSTANDING_PER_PEER)
@@ -206,7 +210,7 @@ async fn torrent_loop(
                     {
                         let pid = next_pid; next_pid += 1;
                         pending_dials.insert(pid, addr);
-                        spawn_outbound_peer(torrent_id, pid, addr, info_hash, our_peer_id, peer_event_tx.clone());
+                        spawn_outbound_peer(torrent_id, pid, addr, info_hash, our_peer_id, peer_event_tx.clone(), encryption);
                     }
                 }
                 TorrentCommand::AddInboundPeer { addr, cmd_tx, event_rx } => {
@@ -247,7 +251,7 @@ async fn torrent_loop(
                 {
                     let pid = next_pid; next_pid += 1;
                     pending_dials.insert(pid, addr);
-                    spawn_outbound_peer(torrent_id, pid, addr, info_hash, our_peer_id, peer_event_tx.clone());
+                    spawn_outbound_peer(torrent_id, pid, addr, info_hash, our_peer_id, peer_event_tx.clone(), encryption);
                 }
             }
             Some((pid, ev)) = peer_event_rx.recv() => {
@@ -276,10 +280,27 @@ async fn torrent_loop(
                 let now = Instant::now();
                 let dt = now.duration_since(last_tick).as_secs_f32().max(0.001);
                 last_tick = now;
+                let total_pieces = lengths.total_pieces() as usize;
+                let peer_snaps: Vec<stats::PeerSnapshot> = peers
+                    .values()
+                    .map(|p| {
+                        let seeder = peer_bitfield_is_full(&p.bitfield, total_pieces);
+                        stats::PeerSnapshot {
+                            addr: p.addr,
+                            bitfield: p.bitfield.clone(),
+                            am_choking: p.am_choking,
+                            am_interested: p.am_interested,
+                            peer_choking: p.peer_choking,
+                            peer_interested: p.peer_interested,
+                            seeder,
+                        }
+                    })
+                    .collect();
                 {
                     let mut s = stats.lock();
                     s.live_stats.update(bytes_this_tick.0, bytes_this_tick.1, dt);
                     s.live_stats.snapshot.peer_stats.live = peers.len() as u32;
+                    s.peers = peer_snaps;
                 }
                 bytes_this_tick = (0, 0);
                 if !paused {
@@ -315,6 +336,7 @@ fn spawn_outbound_peer(
     info_hash: Id20,
     our_peer_id: Id20,
     event_tx: mpsc::Sender<(u32, PeerEvent)>,
+    encryption: crate::peer::EncryptionPolicy,
 ) {
     tokio::spawn(async move {
         let spawn = SpawnPeer {
@@ -323,6 +345,7 @@ fn spawn_outbound_peer(
             our_peer_id,
             connect_timeout: Duration::from_secs(10),
             read_timeout: Duration::from_secs(120),
+            encryption,
         };
         match connect(spawn).await {
             Ok((handle, mut rx)) => {
@@ -775,6 +798,27 @@ fn compute_file_progress(
         }
     }
     per_file
+}
+
+/// True when a peer's bitfield reports every piece, indicating a full seeder.
+fn peer_bitfield_is_full(bitfield: &[u8], total_pieces: usize) -> bool {
+    if total_pieces == 0 {
+        return false;
+    }
+    let needed_bytes = total_pieces.div_ceil(8);
+    if bitfield.len() < needed_bytes {
+        return false;
+    }
+    let full_bytes = total_pieces / 8;
+    if bitfield[..full_bytes].iter().any(|b| *b != 0xff) {
+        return false;
+    }
+    let trailing_bits = total_pieces % 8;
+    if trailing_bits == 0 {
+        return true;
+    }
+    let mask: u8 = 0xffu8 << (8 - trailing_bits);
+    bitfield[full_bytes] & mask == mask
 }
 
 fn collect_trackers(meta: &TorrentMeta) -> Vec<String> {

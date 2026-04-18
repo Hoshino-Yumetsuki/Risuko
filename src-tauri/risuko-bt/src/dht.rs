@@ -1,13 +1,12 @@
 //! Minimal BEP-5 DHT, scoped to what magnet resolution needs:
-//! bootstrap, iterative `get_peers`, and a peer stream
+//! bootstrap, iterative `get_peers`, and a peer stream.
 //!
-//! This is intentionally small compared to a full mainline DHT. It skips
-//! routing-table persistence, `announce_peer`, token handling for
-//! announcement, and IPv6. It is enough to discover peers for a magnet when
-//! trackers are slow, partial, or absent
+//! Supports IPv4 and IPv6 (BEP-32) via two parallel UDP sockets when the
+//! host has global v6 connectivity. The IPv6 path is optional — if the v6
+//! socket fails to bind we continue with v4 only.
 
 use std::collections::{BTreeMap, HashSet};
-use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
+use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -39,14 +38,17 @@ pub struct DhtConfig {
     pub persistence_file: Option<std::path::PathBuf>,
 }
 
-/// A live DHT node. Holds a bound UDP socket and a background reader task
-/// that routes responses to pending queries by transaction id
+/// A live DHT node. Holds bound UDP sockets (v4 always, v6 if available)
+/// and a background reader task per socket that routes responses to pending
+/// queries by transaction id.
 pub struct Dht {
     sock: Arc<UdpSocket>,
+    sock6: Option<Arc<UdpSocket>>,
     our_id: Id20,
     bootstrap: Vec<String>,
     pending: Arc<Mutex<PendingMap>>,
     reader_handle: Mutex<Option<tokio::task::JoinHandle<()>>>,
+    reader6_handle: Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
 
 impl Drop for Dht {
@@ -54,10 +56,13 @@ impl Drop for Dht {
         if let Some(h) = self.reader_handle.lock().take() {
             h.abort();
         }
+        if let Some(h) = self.reader6_handle.lock().take() {
+            h.abort();
+        }
     }
 }
 
-type PendingMap = std::collections::HashMap<u16, oneshot::Sender<KrpcResponse>>;
+type PendingMap = std::collections::HashMap<u16, (oneshot::Sender<KrpcResponse>, SocketAddr)>;
 
 struct KrpcResponse {
     from: SocketAddr,
@@ -68,6 +73,15 @@ impl Dht {
     pub async fn spawn(config: DhtConfig) -> std::io::Result<Arc<Self>> {
         let sock = UdpSocket::bind("0.0.0.0:0").await?;
         let sock = Arc::new(sock);
+        // Try to bind a dual-stack IPv6 socket too. If the host lacks IPv6
+        // the bind will fail; that's fine, we carry on with v4 only.
+        let sock6 = match UdpSocket::bind("[::]:0").await {
+            Ok(s) => Some(Arc::new(s)),
+            Err(e) => {
+                log::debug!("dht: no ipv6 socket: {e}");
+                None
+            }
+        };
         let our_id = random_id();
         let pending: Arc<Mutex<PendingMap>> = Arc::new(Mutex::new(Default::default()));
 
@@ -79,50 +93,34 @@ impl Dht {
 
         let this = Arc::new(Self {
             sock: sock.clone(),
+            sock6: sock6.clone(),
             our_id,
             bootstrap,
             pending: pending.clone(),
             reader_handle: Mutex::new(None),
+            reader6_handle: Mutex::new(None),
         });
 
         let reader_sock = sock.clone();
+        let pending_reader = pending.clone();
         let reader_handle = tokio::spawn(async move {
-            let mut buf = vec![0u8; 2048];
-            loop {
-                let (n, from) = match reader_sock.recv_from(&mut buf).await {
-                    Ok(x) => x,
-                    // Exit on unrecoverable socket error (e.g. socket closed
-                    // on Drop) instead of busy-looping forever.
-                    Err(_) => return,
-                };
-                let Ok(msg) = decode_all(&buf[..n]) else {
-                    continue;
-                };
-                let Some(ty) = msg.get(b"y").and_then(|v| v.as_bytes()) else {
-                    continue;
-                };
-                if ty != b"r" && ty != b"e" {
-                    continue;
-                }
-                let Some(tid) = msg.get(b"t").and_then(|v| v.as_bytes()) else {
-                    continue;
-                };
-                let txn = match tid.len() {
-                    2 => u16::from_be_bytes([tid[0], tid[1]]),
-                    _ => continue,
-                };
-                let tx = pending.lock().remove(&txn);
-                if let Some(tx) = tx {
-                    let _ = tx.send(KrpcResponse { from, body: msg });
-                }
-            }
+            reader_loop(reader_sock, pending_reader).await;
         });
         *this.reader_handle.lock() = Some(reader_handle);
 
+        if let Some(s6) = sock6 {
+            let pending6 = pending.clone();
+            let reader6_handle = tokio::spawn(async move {
+                reader_loop(s6, pending6).await;
+            });
+            *this.reader6_handle.lock() = Some(reader6_handle);
+        }
+
         log::debug!(
-            "DHT started: id={}, bootstrap={} nodes",
+            "DHT started: id={}, bootstrap={} nodes, ipv6={}",
             hex::encode(our_id.as_bytes()),
-            this.bootstrap.len()
+            this.bootstrap.len(),
+            this.sock6.is_some(),
         );
         Ok(this)
     }
@@ -298,9 +296,22 @@ impl Dht {
         Vec<SocketAddr>,
         Vec<(Id20, SocketAddr)>,
     )> {
-        let (txn, rx) = self.register_transaction();
+        let (txn, rx) = self.register_transaction(target);
         let packet = build_get_peers(txn, &self.our_id, &info_hash);
-        if self.sock.send_to(&packet, target).await.is_err() {
+        // Route via the appropriate socket family. If we target an IPv6
+        // node but lack a v6 socket, drop the query.
+        let send_res = match target {
+            SocketAddr::V4(_) => self.sock.send_to(&packet, target).await,
+            SocketAddr::V6(_) => {
+                if let Some(s6) = &self.sock6 {
+                    s6.send_to(&packet, target).await
+                } else {
+                    self.pending.lock().remove(&txn);
+                    return None;
+                }
+            }
+        };
+        if send_res.is_err() {
             self.pending.lock().remove(&txn);
             return None;
         }
@@ -315,14 +326,14 @@ impl Dht {
             .map(|(rid, peers, nodes)| (resp.from, rid, peers, nodes))
     }
 
-    fn register_transaction(&self) -> (u16, oneshot::Receiver<KrpcResponse>) {
+    fn register_transaction(&self, target: SocketAddr) -> (u16, oneshot::Receiver<KrpcResponse>) {
         let (tx, rx) = oneshot::channel();
         let mut map = self.pending.lock();
         let mut txn: u16 = rand::rng().random();
         while map.contains_key(&txn) {
             txn = txn.wrapping_add(1);
         }
-        map.insert(txn, tx);
+        map.insert(txn, (tx, target));
         (txn, rx)
     }
 }
@@ -365,6 +376,15 @@ fn build_get_peers(txn: u16, our_id: &Id20, info_hash: &Id20) -> Vec<u8> {
             b"info_hash".to_vec(),
             Value::Bytes(info_hash.as_bytes().to_vec()),
         ),
+        // BEP-32: request both v4 and v6 contacts. Nodes that don't
+        // understand `want` ignore it, so this is always safe to send.
+        (
+            b"want".to_vec(),
+            Value::List(vec![
+                Value::Bytes(b"n4".to_vec()),
+                Value::Bytes(b"n6".to_vec()),
+            ]),
+        ),
     ]);
     let tid = txn.to_be_bytes().to_vec();
     let msg = Value::Dict(vec![
@@ -389,17 +409,26 @@ fn parse_get_peers_response(
     if let Some(values) = r_val.get(b"values").and_then(|v| v.as_list()) {
         for v in values {
             if let Some(b) = v.as_bytes() {
-                if b.len() == 6 {
-                    let ip = Ipv4Addr::new(b[0], b[1], b[2], b[3]);
-                    let port = u16::from_be_bytes([b[4], b[5]]);
-                    peers.push(SocketAddr::V4(SocketAddrV4::new(ip, port)));
+                match b.len() {
+                    6 => {
+                        let ip = Ipv4Addr::new(b[0], b[1], b[2], b[3]);
+                        let port = u16::from_be_bytes([b[4], b[5]]);
+                        peers.push(SocketAddr::V4(SocketAddrV4::new(ip, port)));
+                    }
+                    18 => {
+                        let mut o = [0u8; 16];
+                        o.copy_from_slice(&b[..16]);
+                        let ip = Ipv6Addr::from(o);
+                        let port = u16::from_be_bytes([b[16], b[17]]);
+                        peers.push(SocketAddr::V6(SocketAddrV6::new(ip, port, 0, 0)));
+                    }
+                    _ => {}
                 }
             }
         }
     }
     let mut nodes: Vec<(Id20, SocketAddr)> = Vec::new();
     if let Some(n) = r_val.get(b"nodes").and_then(|v| v.as_bytes()) {
-        // Each compact node: 20 bytes id + 4 bytes ipv4 + 2 bytes port
         for chunk in n.chunks_exact(26) {
             let id = Id20::from_slice(&chunk[..20]).ok()?;
             let ip = Ipv4Addr::new(chunk[20], chunk[21], chunk[22], chunk[23]);
@@ -407,7 +436,56 @@ fn parse_get_peers_response(
             nodes.push((id, SocketAddr::V4(SocketAddrV4::new(ip, port))));
         }
     }
+    if let Some(n6) = r_val.get(b"nodes6").and_then(|v| v.as_bytes()) {
+        // Each compact v6 node: 20 bytes id + 16 bytes ipv6 + 2 bytes port
+        for chunk in n6.chunks_exact(38) {
+            let id = match Id20::from_slice(&chunk[..20]) {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+            let mut o = [0u8; 16];
+            o.copy_from_slice(&chunk[20..36]);
+            let ip = Ipv6Addr::from(o);
+            let port = u16::from_be_bytes([chunk[36], chunk[37]]);
+            nodes.push((id, SocketAddr::V6(SocketAddrV6::new(ip, port, 0, 0))));
+        }
+    }
     Some((responder_id, peers, nodes))
+}
+
+async fn reader_loop(sock: Arc<UdpSocket>, pending: Arc<Mutex<PendingMap>>) {
+    let mut buf = vec![0u8; 2048];
+    loop {
+        let (n, from) = match sock.recv_from(&mut buf).await {
+            Ok(x) => x,
+            Err(_) => return,
+        };
+        let Ok(msg) = decode_all(&buf[..n]) else {
+            continue;
+        };
+        let Some(ty) = msg.get(b"y").and_then(|v| v.as_bytes()) else {
+            continue;
+        };
+        if ty != b"r" && ty != b"e" {
+            continue;
+        }
+        let Some(tid) = msg.get(b"t").and_then(|v| v.as_bytes()) else {
+            continue;
+        };
+        let txn = match tid.len() {
+            2 => u16::from_be_bytes([tid[0], tid[1]]),
+            _ => continue,
+        };
+        let mut guard = pending.lock();
+        if let Some(entry) = guard.get(&txn) {
+            if entry.1 == from {
+                if let Some((tx, _)) = guard.remove(&txn) {
+                    let _ = tx.send(KrpcResponse { from, body: msg });
+                }
+            }
+            // Mismatch: ignore the packet, leave entry for the real responder
+        }
+    }
 }
 
 #[cfg(test)]
@@ -441,7 +519,7 @@ mod tests {
             Some(&[0xBE, 0xEF][..])
         );
         let a = decoded.get(b"a").unwrap().as_dict().unwrap();
-        assert_eq!(a.len(), 2);
+        assert_eq!(a.len(), 3);
     }
 
     #[test]
@@ -466,7 +544,7 @@ mod tests {
             (b"t".to_vec(), Value::Bytes(b"aa".to_vec())),
             (b"y".to_vec(), Value::Bytes(b"r".to_vec())),
         ]);
-        let (peers, nodes) = parse_get_peers_response(&body).unwrap();
+        let (_id, peers, nodes) = parse_get_peers_response(&body).unwrap();
         assert_eq!(peers.len(), 1);
         assert_eq!(
             peers[0],
@@ -477,5 +555,54 @@ mod tests {
             nodes[0].1,
             SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(9, 8, 7, 6), 11111))
         );
+    }
+
+    #[test]
+    fn parse_response_extracts_v6_peers_and_nodes6() {
+        // 18-byte compact v6 peer: ip=::1 port=6881
+        let mut peer6: Vec<u8> = Vec::with_capacity(18);
+        peer6.extend_from_slice(&Ipv6Addr::LOCALHOST.octets());
+        peer6.extend_from_slice(&6881u16.to_be_bytes());
+        // 38-byte compact v6 node: id=0x33... ip=2001:db8::1 port=12345
+        let mut node6 = vec![0x33u8; 20];
+        let ip6: Ipv6Addr = "2001:db8::1".parse().unwrap();
+        node6.extend_from_slice(&ip6.octets());
+        node6.extend_from_slice(&12345u16.to_be_bytes());
+
+        let r = Value::Dict(vec![
+            (b"id".to_vec(), Value::Bytes(vec![0u8; 20])),
+            (b"nodes6".to_vec(), Value::Bytes(node6)),
+            (b"values".to_vec(), Value::List(vec![Value::Bytes(peer6)])),
+        ]);
+        let body = Value::Dict(vec![
+            (b"r".to_vec(), r),
+            (b"t".to_vec(), Value::Bytes(b"bb".to_vec())),
+            (b"y".to_vec(), Value::Bytes(b"r".to_vec())),
+        ]);
+        let (_id, peers, nodes) = parse_get_peers_response(&body).unwrap();
+        assert_eq!(peers.len(), 1);
+        assert_eq!(
+            peers[0],
+            SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::LOCALHOST, 6881, 0, 0))
+        );
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(
+            nodes[0].1,
+            SocketAddr::V6(SocketAddrV6::new(ip6, 12345, 0, 0))
+        );
+    }
+
+    #[test]
+    fn get_peers_packet_includes_want_n4_n6() {
+        let our_id = Id20::from_slice(&[0u8; 20]).unwrap();
+        let info_hash = Id20::from_slice(&[1u8; 20]).unwrap();
+        let packet = build_get_peers(0xABCD, &our_id, &info_hash);
+        let decoded = decode_all(&packet).unwrap();
+        let a = decoded.get(b"a").unwrap().as_dict().unwrap();
+        let a_val = Value::Dict(a.to_vec());
+        let want = a_val.get(b"want").unwrap().as_list().unwrap();
+        let labels: Vec<&[u8]> = want.iter().filter_map(|v| v.as_bytes()).collect();
+        assert!(labels.contains(&(b"n4" as &[u8])));
+        assert!(labels.contains(&(b"n6" as &[u8])));
     }
 }
