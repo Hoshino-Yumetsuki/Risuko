@@ -534,7 +534,12 @@ async fn add_port_mapping(
     Ok(())
 }
 
-async fn delete_port_mapping(control_url: &Url, service_type: &str, port: u16, proto: MapProto) -> std::io::Result<()> {
+async fn delete_port_mapping(
+    control_url: &Url,
+    service_type: &str,
+    port: u16,
+    proto: MapProto,
+) -> std::io::Result<()> {
     let body = format!(
         "<?xml version=\"1.0\"?>\
          <s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\" \
@@ -575,7 +580,12 @@ async fn get_external_ip(control_url: &Url, service_type: &str) -> std::io::Resu
     ip.parse::<Ipv4Addr>().map_err(io_other)
 }
 
-async fn soap_call(control_url: &Url, service_type: &str, action: &str, body: String) -> std::io::Result<String> {
+async fn soap_call(
+    control_url: &Url,
+    service_type: &str,
+    action: &str,
+    body: String,
+) -> std::io::Result<String> {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(5))
         .build()

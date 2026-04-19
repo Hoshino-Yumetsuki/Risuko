@@ -128,6 +128,36 @@ impl ChunkTracker {
         }
     }
 
+    /// Roll back a single chunk request (e.g. peer's send channel was full).
+    /// Without this, a try_send failure would permanently strand the chunk
+    /// in `Requested` state until the peer disconnects
+    pub fn unrequest_chunk(&mut self, piece: ValidPieceIndex, chunk_index: u32) {
+        if let Some(states) = self.pieces.get_mut(&piece.get()) {
+            if let Some(s) = states.get_mut(chunk_index as usize) {
+                if matches!(s, ChunkState::Requested { .. }) {
+                    *s = ChunkState::Missing;
+                }
+            }
+        }
+    }
+
+    /// Number of chunks that are not yet `Received` across pieces we've
+    /// touched. Used to decide whether to enable endgame mode (where
+    /// outstanding chunks are duplicated to multiple peers to drain the
+    /// last few stragglers). Cheap because we only look at pieces with at
+    /// least one chunk requested
+    pub fn pending_chunks(&self) -> usize {
+        self.pieces
+            .values()
+            .map(|states| {
+                states
+                    .iter()
+                    .filter(|s| !matches!(s, ChunkState::Received))
+                    .count()
+            })
+            .sum()
+    }
+
     fn states_for(&mut self, piece: ValidPieceIndex) -> &mut Vec<ChunkState> {
         let lengths = &self.lengths;
         self.pieces.entry(piece.get()).or_insert_with(|| {

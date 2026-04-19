@@ -5392,7 +5392,7 @@ dependencies = [
 
 [[package]]
 name = "risuko"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "base64 0.22.1",
  "clap",
@@ -5461,7 +5461,7 @@ dependencies = [
 
 [[package]]
 name = "risuko-cli"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "base64 0.22.1",
  "clap",
@@ -5478,7 +5478,7 @@ dependencies = [
 
 [[package]]
 name = "risuko-engine"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "aes 0.9.0",
  "async-trait",
@@ -5523,7 +5523,7 @@ dependencies = [
 
 [[package]]
 name = "risuko-napi"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "base64 0.22.1",
  "dirs 6.0.0",
@@ -8128,9 +8128,9 @@ dependencies = [
 
 [[package]]
 name = "web_atoms"
-version = "0.2.3"
+version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "57a9779e9f04d2ac1ce317aee707aa2f6b773afba7b931222bff6983843b1576"
+checksum = "d7cff6eef815df1834fd250e3a2ff436044d82a9f1bc1980ca1dbdf07effc538"
 dependencies = [
  "phf 0.13.1",
  "phf_codegen 0.13.1",

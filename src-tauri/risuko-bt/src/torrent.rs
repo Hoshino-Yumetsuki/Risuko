@@ -32,6 +32,10 @@ pub use stats::{
 const DEFAULT_MAX_OUTSTANDING_PER_PEER: usize = 128;
 /// Default cap on total concurrent peers held by the torrent state machine
 const DEFAULT_MAX_PEERS: usize = 100;
+/// Cap on outbound dials whose handshake hasn't completed. Without a separate
+/// budget, a swarm where many peers are unreachable will park every slot in
+/// `pending_dials` for the connect timeout and starve real connections.
+const MAX_PENDING_DIALS: usize = 256;
 
 pub struct TorrentInit {
     pub meta: TorrentMeta,
@@ -140,6 +144,19 @@ struct VerifyResult {
     hash: [u8; 20],
 }
 
+/// In-memory accumulator for chunks of an in-flight piece. Keeping the
+/// piece buffer here lets us:
+///  - Skip the disk write per chunk (we write the full piece once on
+///    completion, off the main loop)
+///  - Skip the disk read-back for SHA1 verification (hash from RAM)
+///
+/// Memory bound: at most `max_peers` pieces in flight (~ piece_length each)
+struct PieceAssembly {
+    buf: Vec<u8>,
+    received_bytes: u32,
+    expected_bytes: u32,
+}
+
 async fn torrent_loop(
     torrent_id: usize,
     init: TorrentInit,
@@ -163,6 +180,7 @@ async fn torrent_loop(
     }
     let mut piece_tracker = PieceTracker::new(lengths);
     let mut chunk_tracker = ChunkTracker::new(lengths);
+    let mut piece_assemblies: HashMap<u32, PieceAssembly> = HashMap::new();
     scan_existing_pieces(&info, &storage, &lengths, &mut piece_tracker).await;
     {
         let mut s = stats.lock();
@@ -206,7 +224,8 @@ async fn torrent_loop(
                 TorrentCommand::AddPeer(addr) => {
                     if !paused
                         && known_addrs.insert(addr)
-                        && peers.len() + pending_dials.len() < max_peers
+                        && peers.len() < max_peers
+                        && pending_dials.len() < MAX_PENDING_DIALS
                     {
                         let pid = next_pid; next_pid += 1;
                         pending_dials.insert(pid, addr);
@@ -216,7 +235,7 @@ async fn torrent_loop(
                 TorrentCommand::AddInboundPeer { addr, cmd_tx, event_rx } => {
                     if !paused
                         && known_addrs.insert(addr)
-                        && peers.len() + pending_dials.len() < max_peers
+                        && peers.len() < max_peers
                     {
                         let pid = next_pid; next_pid += 1;
                         adopt_inbound_peer(pid, addr, cmd_tx, event_rx, peer_event_tx.clone(), &mut peers, &lengths, &mut piece_tracker).await;
@@ -247,7 +266,8 @@ async fn torrent_loop(
             Some(addr) = peer_addr_rx.recv() => {
                 if !paused
                     && known_addrs.insert(addr)
-                    && peers.len() + pending_dials.len() < max_peers
+                    && peers.len() < max_peers
+                    && pending_dials.len() < MAX_PENDING_DIALS
                 {
                     let pid = next_pid; next_pid += 1;
                     pending_dials.insert(pid, addr);
@@ -257,6 +277,7 @@ async fn torrent_loop(
             Some((pid, ev)) = peer_event_rx.recv() => {
                 let kick = process_peer_event(
                     torrent_id, pid, ev, &mut peers, &mut piece_tracker, &mut chunk_tracker,
+                    &mut piece_assemblies,
                     &lengths, &storage, &stats, &mut bytes_this_tick,
                     &mut pending_dials, &mut known_addrs,
                     &verify_tx,
@@ -343,7 +364,10 @@ fn spawn_outbound_peer(
             addr,
             info_hash,
             our_peer_id,
-            connect_timeout: Duration::from_secs(10),
+            // 5 s is plenty for any reachable peer; 10 s used to park dial
+            // slots for unreachable peers and starve real connections, since
+            // a single tracker batch can include many dead addresses
+            connect_timeout: Duration::from_secs(5),
             read_timeout: Duration::from_secs(120),
             encryption,
         };
@@ -420,6 +444,7 @@ async fn process_peer_event(
     peers: &mut HashMap<u32, Peer>,
     piece_tracker: &mut PieceTracker,
     chunk_tracker: &mut ChunkTracker,
+    piece_assemblies: &mut HashMap<u32, PieceAssembly>,
     lengths: &Lengths,
     storage: &Arc<FilesystemStorage>,
     stats: &Arc<Mutex<TorrentStats>>,
@@ -517,19 +542,25 @@ async fn process_peer_event(
                         return false;
                     }
                     let offset = lengths.piece_offset(vpi) + begin as u64;
-                    let mut buf = vec![0u8; length as usize];
-                    if storage.read_at(offset, &mut buf).await.is_ok() {
-                        let _ = peer
-                            .cmd_tx
-                            .send(PeerCommand::Send(Message::Piece {
-                                index,
-                                begin,
-                                data: Bytes::from(buf),
-                            }))
-                            .await;
-                        bytes_this_tick.1 += length as u64;
-                        stats.lock().uploaded_bytes += length as u64;
-                    }
+                    // Offload the disk read + send to a task. Awaiting on the
+                    // main loop here would stall every download peer for the
+                    // duration of every upload `read_at`
+                    let storage = storage.clone();
+                    let cmd_tx = peer.cmd_tx.clone();
+                    bytes_this_tick.1 += length as u64;
+                    stats.lock().uploaded_bytes += length as u64;
+                    tokio::spawn(async move {
+                        let mut buf = vec![0u8; length as usize];
+                        if storage.read_at(offset, &mut buf).await.is_ok() {
+                            let _ = cmd_tx
+                                .send(PeerCommand::Send(Message::Piece {
+                                    index,
+                                    begin,
+                                    data: Bytes::from(buf),
+                                }))
+                                .await;
+                        }
+                    });
                 }
                 Message::Piece { index, begin, data } => {
                     let Ok(vpi) = lengths.validate_piece(index) else {
@@ -544,14 +575,29 @@ async fn process_peer_event(
                         return false;
                     };
                     // Reject if data extends past the piece boundary.
-                    let piece_len = lengths.piece_length_of(vpi) as u64;
-                    if (begin as u64).saturating_add(data.len() as u64) > piece_len {
+                    let piece_len = lengths.piece_length_of(vpi) as u32;
+                    if (begin as u64).saturating_add(data.len() as u64) > piece_len as u64 {
                         return false;
                     }
                     peer.outstanding.swap_remove(req_idx);
-                    let offset = lengths.piece_offset(vpi) + begin as u64;
-                    if storage.write_at(offset, &data).await.is_err() {
-                        return false;
+
+                    // Accumulate the chunk in an in-memory piece buffer
+                    // instead of hitting disk per chunk. This is the key
+                    // throughput unlock: the previous `storage.write_at(...).await`
+                    // here serialised every download peer through one disk
+                    // write per 16 KiB chunk
+                    let assembly = piece_assemblies.entry(index).or_insert_with(|| {
+                        PieceAssembly {
+                            buf: vec![0u8; piece_len as usize],
+                            received_bytes: 0,
+                            expected_bytes: piece_len,
+                        }
+                    });
+                    let begin_usz = begin as usize;
+                    let end_usz = begin_usz + data.len();
+                    if end_usz <= assembly.buf.len() {
+                        assembly.buf[begin_usz..end_usz].copy_from_slice(&data);
+                        assembly.received_bytes += data.len() as u32;
                     }
                     bytes_this_tick.0 += data.len() as u64;
                     let cinfo = super::core::ChunkInfo {
@@ -564,26 +610,39 @@ async fn process_peer_event(
                     let piece_done = chunk_tracker.mark_received(cinfo);
                     kick = true;
                     if piece_done {
-                        // Offload piece hash to the blocking pool. Verification
-                        // of a multi-MB piece costs ~ms of CPU; running it on
-                        // the torrent main loop would stall every peer
-                        let plen = lengths.piece_length_of(vpi) as usize;
+                        // Piece complete: pull the buffer out of memory and
+                        // both write it to disk AND verify its hash off the
+                        // main loop. We hash the in-memory buffer directly
+                        // (no disk read-back) so verification cannot race
+                        // with an in-flight write
+                        let Some(assembly) = piece_assemblies.remove(&index) else {
+                            return kick;
+                        };
+                        if assembly.received_bytes != assembly.expected_bytes {
+                            // Missing bytes from a peer that disconnected
+                            // before all chunks arrived: hash will fail anyway,
+                            // so just reset and re-request
+                            chunk_tracker.reset_piece(vpi);
+                            return kick;
+                        }
                         let poff = lengths.piece_offset(vpi);
                         let storage = storage.clone();
                         let verify_tx = verify_tx.clone();
                         tokio::spawn(async move {
-                            let mut pbuf = vec![0u8; plen];
-                            if storage.read_at(poff, &mut pbuf).await.is_err() {
-                                return;
-                            }
-                            let hash = tokio::task::spawn_blocking(move || {
+                            let buf = assembly.buf;
+                            // Wrap into Bytes for zero-copy share with both
+                            // the SHA1 task and the disk write. `Bytes::from(Vec)`
+                            // does not copy
+                            let buf: bytes::Bytes = buf.into();
+                            let hash_buf = buf.clone();
+                            let hash_handle = tokio::task::spawn_blocking(move || {
                                 let mut h = Sha1::new();
-                                h.update(&pbuf);
+                                h.update(&hash_buf);
                                 let out: [u8; 20] = h.finalize().into();
                                 out
-                            })
-                            .await
-                            .unwrap_or([0u8; 20]);
+                            });
+                            let _ = storage.write_at_owned(poff, buf).await;
+                            let hash = hash_handle.await.unwrap_or([0u8; 20]);
                             let _ = verify_tx
                                 .send(VerifyResult {
                                     piece_index: index,
@@ -616,6 +675,10 @@ async fn process_peer_event(
                     if let Ok(vpi) = lengths.validate_piece(piece_idx) {
                         piece_tracker.clear_in_flight(vpi);
                     }
+                    // Drop the in-memory assembly: a different peer will
+                    // restart this piece from scratch. Otherwise stalled
+                    // pieces would pin the buffer indefinitely
+                    piece_assemblies.remove(&piece_idx);
                 }
             }
         }
@@ -665,11 +728,13 @@ async fn send_interested_if_useful(peer: &mut Peer, piece_tracker: &mut PieceTra
 }
 
 async fn broadcast_have(peers: &mut HashMap<u32, Peer>, piece_index: u32) {
+    // Use try_send so a single backed-up peer can't stall the main loop;
+    // if the channel is full the peer will get an updated bitfield via the
+    // 500 ms tick anyway, and Have is best-effort
     for p in peers.values_mut() {
         let _ = p
             .cmd_tx
-            .send(PeerCommand::Send(Message::Have { piece_index }))
-            .await;
+            .try_send(PeerCommand::Send(Message::Have { piece_index }));
     }
 }
 
@@ -706,24 +771,43 @@ async fn drive_peer(
         // Use the peer id as a hint to distribute piece selection across
         // peers, avoiding the scenario where every peer picks the same piece
         let Some(piece) = piece_tracker.choose_requestable_piece(&peer.bitfield, pid) else {
+            // No requestable piece for this peer. If we're near completion
+            // and a few stragglers are stuck on slow peers, flip on endgame
+            // mode so any peer can duplicate the request and finish the
+            // torrent. Without this, the last 1% can take minutes
+            if !chunk_tracker.endgame() && chunk_tracker.pending_chunks() <= 64 {
+                chunk_tracker.set_endgame(true);
+                continue;
+            }
             break;
         };
         match chunk_tracker.next_chunk(piece, pid) {
             Some(chunk) => {
                 let info = chunk.info;
-                peer.outstanding
-                    .push((info.piece_index.get(), info.offset, info.size));
-                if peer
-                    .cmd_tx
-                    .send(PeerCommand::Send(Message::Request {
-                        index: info.piece_index.get(),
-                        begin: info.offset,
-                        length: info.size,
-                    }))
-                    .await
-                    .is_err()
-                {
-                    break;
+                // try_send + rollback so a single peer with a full writer
+                // queue cannot block the entire main loop. send().await on
+                // a full channel here would freeze every other download peer
+                use tokio::sync::mpsc::error::TrySendError;
+                let req = Message::Request {
+                    index: info.piece_index.get(),
+                    begin: info.offset,
+                    length: info.size,
+                };
+                match peer.cmd_tx.try_send(PeerCommand::Send(req)) {
+                    Ok(()) => {
+                        peer.outstanding
+                            .push((info.piece_index.get(), info.offset, info.size));
+                    }
+                    Err(TrySendError::Full(_)) => {
+                        // Roll the chunk back so a different peer (or this
+                        // one on the next tick) can pick it up
+                        chunk_tracker.unrequest_chunk(info.piece_index, info.chunk_index);
+                        break;
+                    }
+                    Err(TrySendError::Closed(_)) => {
+                        chunk_tracker.unrequest_chunk(info.piece_index, info.chunk_index);
+                        break;
+                    }
                 }
             }
             None => {
@@ -742,24 +826,55 @@ async fn scan_existing_pieces(
     lengths: &Lengths,
     piece_tracker: &mut PieceTracker,
 ) {
-    for idx in 0..lengths.total_pieces() {
-        let Ok(vpi) = lengths.validate_piece(idx) else {
-            continue;
-        };
-        let plen = lengths.piece_length_of(vpi) as usize;
-        let mut buf = vec![0u8; plen];
-        let offset = lengths.piece_offset(vpi);
-        if storage.read_at(offset, &mut buf).await.is_err() {
-            continue;
+    // Sequential scanning of every piece blocks the torrent loop before any
+    // peer can connect. For a 50 GB torrent that is many seconds of dead
+    // time. Hash pieces in parallel batches so disk reads + SHA1 overlap
+    use tokio::task::JoinSet;
+    let total = lengths.total_pieces();
+    if total == 0 {
+        return;
+    }
+    // Cap concurrency to keep the spawn_blocking pool from being saturated
+    let concurrency = 16usize;
+    let mut idx: u32 = 0;
+    while idx < total {
+        let mut set: JoinSet<Option<(u32, [u8; 20])>> = JoinSet::new();
+        let chunk_end = (idx + concurrency as u32).min(total);
+        for i in idx..chunk_end {
+            let Ok(vpi) = lengths.validate_piece(i) else {
+                continue;
+            };
+            let plen = lengths.piece_length_of(vpi) as usize;
+            let offset = lengths.piece_offset(vpi);
+            let storage = storage.clone();
+            set.spawn(async move {
+                let mut buf = vec![0u8; plen];
+                if storage.read_at(offset, &mut buf).await.is_err() {
+                    return None;
+                }
+                let hash = tokio::task::spawn_blocking(move || {
+                    let mut h = Sha1::new();
+                    h.update(&buf);
+                    let out: [u8; 20] = h.finalize().into();
+                    out
+                })
+                .await
+                .ok()?;
+                Some((i, hash))
+            });
         }
-        let mut h = Sha1::new();
-        h.update(&buf);
-        let got: [u8; 20] = h.finalize().into();
-        if let Some(expected) = info.piece_hash(idx) {
-            if *expected.as_bytes() == got {
-                piece_tracker.set_local(vpi, true);
+        while let Some(res) = set.join_next().await {
+            if let Ok(Some((i, got))) = res {
+                if let Some(expected) = info.piece_hash(i) {
+                    if *expected.as_bytes() == got {
+                        if let Ok(vpi) = lengths.validate_piece(i) {
+                            piece_tracker.set_local(vpi, true);
+                        }
+                    }
+                }
             }
         }
+        idx = chunk_end;
     }
 }
 
@@ -843,7 +958,7 @@ fn spawn_tracker_pollers(
     port: u16,
     left: u64,
 ) -> mpsc::Receiver<SocketAddr> {
-    let (tx, rx) = mpsc::channel(64);
+    let (tx, rx) = mpsc::channel(256);
     for url in trackers {
         let tx = tx.clone();
         tokio::spawn(async move {
@@ -857,7 +972,10 @@ fn spawn_tracker_pollers(
                     downloaded: 0,
                     left,
                     event,
-                    num_want: 50,
+                    // Match aria2/libtorrent: ask for the maximum the BEP-3
+                    // tracker will return. 50 used to leave us starved with
+                    // single-tracker torrents
+                    num_want: 200,
                 };
                 match tracker_announce(&url, &req, Duration::from_secs(30)).await {
                     Ok(resp) => {

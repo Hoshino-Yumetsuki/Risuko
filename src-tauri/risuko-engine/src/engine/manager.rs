@@ -570,14 +570,19 @@ impl TaskManager {
                         .iter()
                         .enumerate()
                         .map(|(i, cc)| {
-                            let total = if i as u64 == split_count - 1 {
+                            // With work-stealing, cc is total bytes downloaded by worker i
+                            // across all pieces it pulled — not a fixed slice. Use the
+                            // fair-share size as a baseline denominator and clamp so percent
+                            // never exceeds 100%.
+                            let baseline = if i as u64 == split_count - 1 {
                                 task.total_length - chunk_size * (split_count - 1)
                             } else {
                                 chunk_size
                             };
+                            let completed = cc.load(Ordering::Relaxed);
                             ChunkProgress {
-                                completed: cc.load(Ordering::Relaxed),
-                                total,
+                                completed,
+                                total: completed.max(baseline),
                             }
                         })
                         .collect();
@@ -1054,14 +1059,18 @@ impl TaskManager {
                             .iter()
                             .enumerate()
                             .map(|(i, cc)| {
-                                let total = if i as u64 == split - 1 {
+                                // With work-stealing, cc is total bytes worker i has
+                                // downloaded across pieces it pulled. Clamp so percent
+                                // stays in [0, 100].
+                                let baseline = if i as u64 == split - 1 {
                                     task.total_length - chunk_size * (split - 1)
                                 } else {
                                     chunk_size
                                 };
+                                let completed = cc.load(Ordering::Relaxed);
                                 ChunkProgress {
-                                    completed: cc.load(Ordering::Relaxed),
-                                    total,
+                                    completed,
+                                    total: completed.max(baseline),
                                 }
                             })
                             .collect();

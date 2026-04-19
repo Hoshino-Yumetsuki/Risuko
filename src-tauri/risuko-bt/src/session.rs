@@ -166,9 +166,7 @@ impl Session {
                 .and_then(|l| l.upnp_lease)
                 .unwrap_or(std::time::Duration::from_secs(300));
             let fwd = super::upnp::UpnpPortForwarder::new(
-                vec![
-                    (local_port, super::upnp::MapProto::Tcp),
-                ],
+                vec![(local_port, super::upnp::MapProto::Tcp)],
                 super::upnp::UpnpOptions {
                     lease,
                     ..Default::default()
@@ -231,17 +229,15 @@ impl Session {
         if listen_v6 {
             let v6_addr: SocketAddr = (std::net::Ipv6Addr::UNSPECIFIED, local_port).into();
             match bind_v6_listener(v6_addr) {
-                Ok(std_listener) => {
-                    match TcpListener::from_std(std_listener) {
-                        Ok(listener6) => {
-                            log::info!("session v6 listening on port {local_port}");
-                            let weak6 = Arc::downgrade(&session);
-                            let accept6 = tokio::spawn(run_accept_loop(listener6, weak6));
-                            *session.accept6_handle.lock() = Some(accept6);
-                        }
-                        Err(e) => log::warn!("session v6 tokio convert failed: {e}"),
+                Ok(std_listener) => match TcpListener::from_std(std_listener) {
+                    Ok(listener6) => {
+                        log::info!("session v6 listening on port {local_port}");
+                        let weak6 = Arc::downgrade(&session);
+                        let accept6 = tokio::spawn(run_accept_loop(listener6, weak6));
+                        *session.accept6_handle.lock() = Some(accept6);
                     }
-                }
+                    Err(e) => log::warn!("session v6 tokio convert failed: {e}"),
+                },
                 Err(e) => log::warn!("session v6 bind failed: {e}"),
             }
         }
