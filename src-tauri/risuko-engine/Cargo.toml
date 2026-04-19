@@ -1,6 +1,6 @@
 [package]
 name = "risuko-engine"
-version = "0.1.9"
+version.workspace = true
 description = "Risuko download engine — multi-protocol download library"
 authors = ["YueMiyuki"]
 edition = "2021"

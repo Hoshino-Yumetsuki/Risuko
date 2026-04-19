@@ -5,6 +5,7 @@ pub mod stats;
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -142,6 +143,10 @@ struct Peer {
 struct VerifyResult {
     piece_index: u32,
     hash: [u8; 20],
+    /// Set when the disk write for this piece returned an error. The
+    /// torrent loop must not mark the piece local in that case — the data
+    /// on disk is incomplete and the piece must be re-requested
+    write_failed: bool,
 }
 
 /// In-memory accumulator for chunks of an in-flight piece. Keeping the
@@ -153,8 +158,16 @@ struct VerifyResult {
 /// Memory bound: at most `max_peers` pieces in flight (~ piece_length each)
 struct PieceAssembly {
     buf: Vec<u8>,
+    /// Set of chunk indices already written into `buf`. Used to ignore
+    /// duplicate chunks (which arrive in endgame mode when the same chunk
+    /// is requested from multiple peers) without double-counting bytes
+    received_chunks: HashSet<u32>,
     received_bytes: u32,
     expected_bytes: u32,
+    /// Set once the piece has been handed off to the verify/write task.
+    /// Late-arriving duplicates after this point must not recreate or
+    /// mutate the assembly
+    completed: bool,
 }
 
 async fn torrent_loop(
@@ -217,6 +230,14 @@ async fn torrent_loop(
     tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
     let mut last_tick = Instant::now();
     let mut bytes_this_tick = (0u64, 0u64);
+    // Upload bytes accumulate from spawned send tasks; share via atomic so
+    // we only credit them after the disk read and channel send succeed
+    let upload_tick: Arc<AtomicU64> = Arc::new(AtomicU64::new(0));
+    // Track in-flight piece write/hash tasks so Stop can wait for (or
+    // cancel) them. Without this, a Stop racing with a piece-completion
+    // write_at could leave a partially-written piece on disk while the
+    // torrent loop has already returned
+    let mut write_tasks: tokio::task::JoinSet<()> = tokio::task::JoinSet::new();
 
     loop {
         tokio::select! {
@@ -259,6 +280,10 @@ async fn torrent_loop(
                         let _ = p.cmd_tx.send(PeerCommand::Disconnect).await;
                     }
                     pending_dials.clear();
+                    // Wait for any in-flight piece write/verify tasks so we
+                    // don't return Stop while a write_at is still pending.
+                    // shutdown() aborts then joins all handles
+                    write_tasks.shutdown().await;
                     let _ = ack.send(());
                     break;
                 }
@@ -279,8 +304,11 @@ async fn torrent_loop(
                     torrent_id, pid, ev, &mut peers, &mut piece_tracker, &mut chunk_tracker,
                     &mut piece_assemblies,
                     &lengths, &storage, &stats, &mut bytes_this_tick,
+                    &upload_tick,
+                    &mut write_tasks,
                     &mut pending_dials, &mut known_addrs,
                     &verify_tx,
+                    max_peers,
                 ).await;
                 if kick && !paused {
                     drive_peer(pid, &mut peers, &mut piece_tracker, &mut chunk_tracker, max_outstanding).await;
@@ -290,6 +318,7 @@ async fn torrent_loop(
                 process_verify_result(
                     vr, &info, &lengths, &mut piece_tracker,
                     &mut chunk_tracker, &mut peers, &storage, &stats,
+                    &mut piece_assemblies,
                 ).await;
                 // New work may be available; re-drive all peers immediately
                 // instead of waiting for the next 500 ms tick
@@ -319,6 +348,8 @@ async fn torrent_loop(
                     .collect();
                 {
                     let mut s = stats.lock();
+                    let upload_dt = upload_tick.swap(0, Ordering::Relaxed);
+                    bytes_this_tick.1 = upload_dt;
                     s.live_stats.update(bytes_this_tick.0, bytes_this_tick.1, dt);
                     s.live_stats.snapshot.peer_stats.live = peers.len() as u32;
                     s.peers = peer_snaps;
@@ -449,9 +480,12 @@ async fn process_peer_event(
     storage: &Arc<FilesystemStorage>,
     stats: &Arc<Mutex<TorrentStats>>,
     bytes_this_tick: &mut (u64, u64),
+    upload_tick: &Arc<AtomicU64>,
+    write_tasks: &mut tokio::task::JoinSet<()>,
     pending_dials: &mut HashMap<u32, SocketAddr>,
     known_addrs: &mut HashSet<SocketAddr>,
     verify_tx: &mpsc::Sender<VerifyResult>,
+    max_peers: usize,
 ) -> bool {
     // Return value: `true` if the caller should immediately kick the peer
     // request pipeline. Set for events that can free an outstanding slot
@@ -466,6 +500,17 @@ async fn process_peer_event(
                         // Fallback: unknown addr (shouldn't happen for outbound)
                         "0.0.0.0:0".parse().unwrap()
                     });
+                    // Pending dials can outrun the max_peers cap (we allow
+                    // up to MAX_PENDING_DIALS in flight). If we'd overflow,
+                    // reject this freshly-handshook peer rather than
+                    // exceeding the cap. Drop the address from
+                    // known_addrs so it remains a candidate for future
+                    // attempts when a slot frees
+                    if peers.len() >= max_peers {
+                        known_addrs.remove(&addr);
+                        let _ = cmd_tx.send(PeerCommand::Disconnect).await;
+                        return false;
+                    }
                     peers.insert(
                         pid,
                         Peer {
@@ -547,19 +592,31 @@ async fn process_peer_event(
                     // duration of every upload `read_at`
                     let storage = storage.clone();
                     let cmd_tx = peer.cmd_tx.clone();
-                    bytes_this_tick.1 += length as u64;
-                    stats.lock().uploaded_bytes += length as u64;
+                    let stats = stats.clone();
+                    let upload_tick = Arc::clone(upload_tick);
+                    let upload_len = length as u64;
                     tokio::spawn(async move {
                         let mut buf = vec![0u8; length as usize];
-                        if storage.read_at(offset, &mut buf).await.is_ok() {
-                            let _ = cmd_tx
-                                .send(PeerCommand::Send(Message::Piece {
-                                    index,
-                                    begin,
-                                    data: Bytes::from(buf),
-                                }))
-                                .await;
+                        if storage.read_at(offset, &mut buf).await.is_err() {
+                            return;
                         }
+                        if cmd_tx
+                            .send(PeerCommand::Send(Message::Piece {
+                                index,
+                                begin,
+                                data: Bytes::from(buf),
+                            }))
+                            .await
+                            .is_err()
+                        {
+                            return;
+                        }
+                        // Only credit the upload after both the disk read
+                        // and the send to the peer succeeded. Crediting
+                        // before would over-report on read errors or when
+                        // the peer's command channel was closed mid-flight
+                        upload_tick.fetch_add(upload_len, Ordering::Relaxed);
+                        stats.lock().uploaded_bytes += upload_len;
                     });
                 }
                 Message::Piece { index, begin, data } => {
@@ -589,13 +646,25 @@ async fn process_peer_event(
                     let assembly = piece_assemblies.entry(index).or_insert_with(|| {
                         PieceAssembly {
                             buf: vec![0u8; piece_len as usize],
+                            received_chunks: HashSet::new(),
                             received_bytes: 0,
                             expected_bytes: piece_len,
+                            completed: false,
                         }
                     });
+                    let chunk_index = begin / super::core::CHUNK_SIZE;
                     let begin_usz = begin as usize;
                     let end_usz = begin_usz + data.len();
-                    if end_usz <= assembly.buf.len() {
+                    // Drop late duplicates: in endgame mode the same chunk
+                    // may arrive from multiple peers. Counting them again
+                    // would inflate received_bytes past expected_bytes and
+                    // skew progress reporting. Likewise ignore any chunk
+                    // arriving after the assembly was handed off to the
+                    // verify/write task
+                    if !assembly.completed
+                        && end_usz <= assembly.buf.len()
+                        && assembly.received_chunks.insert(chunk_index)
+                    {
                         assembly.buf[begin_usz..end_usz].copy_from_slice(&data);
                         assembly.received_bytes += data.len() as u32;
                     }
@@ -610,26 +679,34 @@ async fn process_peer_event(
                     let piece_done = chunk_tracker.mark_received(cinfo);
                     kick = true;
                     if piece_done {
-                        // Piece complete: pull the buffer out of memory and
-                        // both write it to disk AND verify its hash off the
-                        // main loop. We hash the in-memory buffer directly
-                        // (no disk read-back) so verification cannot race
-                        // with an in-flight write
-                        let Some(assembly) = piece_assemblies.remove(&index) else {
+                        // Piece complete: mark the assembly as completed and
+                        // move its buffer out so duplicate chunks arriving
+                        // after this point cannot mutate it. We keep the
+                        // (now-empty) entry around as a sentinel so a stray
+                        // late chunk does not recreate the assembly via
+                        // entry().or_insert_with(...). The entry is removed
+                        // by process_verify_result once the hash result
+                        // lands
+                        let Some(assembly) = piece_assemblies.get_mut(&index) else {
                             return kick;
                         };
+                        if assembly.completed {
+                            return kick;
+                        }
                         if assembly.received_bytes != assembly.expected_bytes {
                             // Missing bytes from a peer that disconnected
                             // before all chunks arrived: hash will fail anyway,
                             // so just reset and re-request
+                            piece_assemblies.remove(&index);
                             chunk_tracker.reset_piece(vpi);
                             return kick;
                         }
+                        assembly.completed = true;
+                        let buf = std::mem::take(&mut assembly.buf);
                         let poff = lengths.piece_offset(vpi);
                         let storage = storage.clone();
                         let verify_tx = verify_tx.clone();
-                        tokio::spawn(async move {
-                            let buf = assembly.buf;
+                        write_tasks.spawn(async move {
                             // Wrap into Bytes for zero-copy share with both
                             // the SHA1 task and the disk write. `Bytes::from(Vec)`
                             // does not copy
@@ -641,12 +718,18 @@ async fn process_peer_event(
                                 let out: [u8; 20] = h.finalize().into();
                                 out
                             });
-                            let _ = storage.write_at_owned(poff, buf).await;
+                            // If the write fails (ENOSPC, EIO, …) the data
+                            // on disk is incomplete — signal that to the
+                            // torrent loop so it does not mark the piece
+                            // local. Sending a successful hash here would
+                            // corrupt the resume state
+                            let write_failed = storage.write_at_owned(poff, buf).await.is_err();
                             let hash = hash_handle.await.unwrap_or([0u8; 20]);
                             let _ = verify_tx
                                 .send(VerifyResult {
                                     piece_index: index,
                                     hash,
+                                    write_failed,
                                 })
                                 .await;
                         });
@@ -695,12 +778,21 @@ async fn process_verify_result(
     peers: &mut HashMap<u32, Peer>,
     storage: &Arc<FilesystemStorage>,
     stats: &Arc<Mutex<TorrentStats>>,
+    piece_assemblies: &mut HashMap<u32, PieceAssembly>,
 ) {
     let Ok(vpi) = lengths.validate_piece(vr.piece_index) else {
         return;
     };
     // Always clear in-flight regardless of verification outcome
     piece_tracker.clear_in_flight(vpi);
+    // Drop the (now-empty, completed=true) assembly sentinel so a future
+    // failed verification can reallocate a fresh assembly on retry
+    piece_assemblies.remove(&vr.piece_index);
+    if vr.write_failed {
+        log::warn!("piece {} disk write failed; will re-request", vr.piece_index);
+        chunk_tracker.reset_piece(vpi);
+        return;
+    }
     match info.piece_hash(vr.piece_index) {
         Some(expected) if *expected.as_bytes() == vr.hash => {
             piece_tracker.set_local(vpi, true);
@@ -784,6 +876,7 @@ async fn drive_peer(
         match chunk_tracker.next_chunk(piece, pid) {
             Some(chunk) => {
                 let info = chunk.info;
+                let prior = chunk.prior_state;
                 // try_send + rollback so a single peer with a full writer
                 // queue cannot block the entire main loop. send().await on
                 // a full channel here would freeze every other download peer
@@ -801,11 +894,11 @@ async fn drive_peer(
                     Err(TrySendError::Full(_)) => {
                         // Roll the chunk back so a different peer (or this
                         // one on the next tick) can pick it up
-                        chunk_tracker.unrequest_chunk(info.piece_index, info.chunk_index);
+                        chunk_tracker.unrequest_chunk(info.piece_index, info.chunk_index, prior);
                         break;
                     }
                     Err(TrySendError::Closed(_)) => {
-                        chunk_tracker.unrequest_chunk(info.piece_index, info.chunk_index);
+                        chunk_tracker.unrequest_chunk(info.piece_index, info.chunk_index, prior);
                         break;
                     }
                 }
@@ -834,8 +927,19 @@ async fn scan_existing_pieces(
     if total == 0 {
         return;
     }
-    // Cap concurrency to keep the spawn_blocking pool from being saturated
-    let concurrency = 16usize;
+    // Cap memory rather than parallelism: the previous fixed concurrency=16
+    // allocated 16 * piece_length bytes per batch, which on torrents with
+    // multi-MiB pieces could push hundreds of MiB through this scan.
+    // Derive the batch size from a byte budget so each batch allocates at
+    // most ~MAX_SCAN_BYTES, and still cap at 16 to avoid saturating the
+    // spawn_blocking pool on tiny-piece torrents
+    const MAX_SCAN_BYTES: usize = 64 * 1024 * 1024;
+    let plen_hint = lengths
+        .validate_piece(0)
+        .map(|vpi| lengths.piece_length_of(vpi) as usize)
+        .unwrap_or(0)
+        .max(1);
+    let concurrency = (MAX_SCAN_BYTES / plen_hint).clamp(1, 16);
     let mut idx: u32 = 0;
     while idx < total {
         let mut set: JoinSet<Option<(u32, [u8; 20])>> = JoinSet::new();

@@ -161,6 +161,13 @@ fn load_piece_meta(
             return None;
         }
     }
+    // No freshness validator on either side: trusting the partial would let
+    // a server that silently changed the resource produce a corrupt final
+    // file. Reject resume and start over
+    if meta.etag.is_none() && etag.is_none() {
+        let _ = fs::remove_file(&path);
+        return None;
+    }
 
     Some(meta)
 }
@@ -266,6 +273,16 @@ impl PieceQueue {
 
     fn complete(&self, idx: usize) {
         self.pieces[idx].state.store(PIECE_DONE, Ordering::Release);
+    }
+
+    /// True when every piece is in the DONE state. Used to decide whether
+    /// worker errors should be treated as fatal: a stranded retry-exhausted
+    /// worker is recoverable as long as another worker eventually finished
+    /// the piece
+    fn is_finished(&self) -> bool {
+        self.pieces
+            .iter()
+            .all(|p| p.state.load(Ordering::Acquire) == PIECE_DONE)
     }
 }
 
@@ -836,22 +853,31 @@ async fn run_multi_chunk(
         if errors.iter().all(|e| e.contains("cancelled")) {
             return Err("Download cancelled".to_string());
         }
-        let real_errors: Vec<&String> =
-            errors.iter().filter(|e| !e.contains("cancelled")).collect();
-        if !real_errors.is_empty() {
-            return Err(real_errors
-                .iter()
-                .map(|e| e.as_str())
-                .collect::<Vec<_>>()
-                .join("; "));
+        // Worker errors are only fatal if the queue itself did not finish.
+        // A worker that exhausted its retry budget on one piece may have
+        // returned Err while another worker later picked the piece up and
+        // completed it. In that case the download is actually done
+        if !queue.is_finished() {
+            let real_errors: Vec<&String> =
+                errors.iter().filter(|e| !e.contains("cancelled")).collect();
+            if !real_errors.is_empty() {
+                return Err(real_errors
+                    .iter()
+                    .map(|e| e.as_str())
+                    .collect::<Vec<_>>()
+                    .join("; "));
+            }
         }
     }
 
-    delete_chunk_meta(part_path);
-    // Ensure all positioned writes are durable before renaming.
+    // Ensure all positioned writes are durable before deleting the resume
+    // sidecar or renaming. If sync_file fails (ENOSPC, EIO, …) the .part
+    // file may be incomplete on disk — abort without finalizing so the
+    // sidecar survives and the next attempt can resume
     if let Err(e) = sync_file(&file).await {
-        tracing::warn!("fsync before rename failed: {e}");
+        return Err(format!("fsync before rename failed: {e}"));
     }
+    delete_chunk_meta(part_path);
     finalize_download(part_path, filename, dir_path)
 }
 
@@ -927,7 +953,22 @@ async fn piece_worker(
                     // Server closed the stream early — return the piece to the
                     // pool with its progress preserved; another worker (or
                     // this one on a later iteration) will pick up the tail.
+                    // Count the early EOF against the retry budget so a
+                    // server that consistently truncates responses cannot
+                    // pin a worker in an infinite loop
                     queue.release(idx);
+                    retry_count += 1;
+                    if retry_count > CHUNK_MAX_RETRIES {
+                        return Err(format!(
+                            "Worker {worker_id} failed after {CHUNK_MAX_RETRIES} retries on \
+                             piece {idx}: server closed stream early"
+                        ));
+                    }
+                    tracing::warn!(
+                        "Worker {worker_id} piece {idx} attempt \
+                         {retry_count}/{CHUNK_MAX_RETRIES}: early EOF, will retry"
+                    );
+                    tokio::time::sleep(std::time::Duration::from_secs(retry_count as u64)).await;
                 }
             }
             Some(e) if e.contains("cancelled") => {

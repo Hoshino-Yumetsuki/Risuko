@@ -215,20 +215,33 @@ async fn drive_handshake(
             // plaintext-only peer because the failed handshake leaves us
             // unable to reuse the socket; we'd have to redial for the
             // fallback. With plaintext-first we only redial for the rare
-            // ISP-blocked case
-            match connect_plaintext(stream, addr, &spawn).await {
-                Ok(v) => Ok(v),
-                Err(e) => {
-                    log::debug!("plaintext handshake to {addr} failed: {e}; trying mse");
-                    let stream = timeout(spawn.connect_timeout, TcpStream::connect(spawn.addr))
-                        .await
-                        .map_err(|_| {
-                            std::io::Error::new(std::io::ErrorKind::TimedOut, "connect timeout")
-                        })??;
-                    stream.set_nodelay(true).ok();
-                    connect_mse(stream, addr, &spawn).await
-                }
-            }
+            // ISP-blocked case.
+            //
+            // Bound the plaintext attempt by connect_timeout so a peer that
+            // accepts the TCP connect but never sends the handshake cannot
+            // tie us up for the much longer read_timeout before we fall
+            // back to MSE.
+            let plaintext = timeout(
+                spawn.connect_timeout,
+                connect_plaintext(stream, addr, &spawn),
+            )
+            .await;
+            let fallback_err: std::io::Error = match plaintext {
+                Ok(Ok(v)) => return Ok(v),
+                Ok(Err(e)) => e,
+                Err(_) => std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "plaintext handshake timeout",
+                ),
+            };
+            log::debug!("plaintext handshake to {addr} failed: {fallback_err}; trying mse");
+            let stream = timeout(spawn.connect_timeout, TcpStream::connect(spawn.addr))
+                .await
+                .map_err(|_| {
+                    std::io::Error::new(std::io::ErrorKind::TimedOut, "connect timeout")
+                })??;
+            stream.set_nodelay(true).ok();
+            connect_mse(stream, addr, &spawn).await
         }
     }
 }

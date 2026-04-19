@@ -65,17 +65,26 @@ impl SpeedLimiter {
             let base = cur.max(earliest);
             let new_va = base.saturating_add(cost_us);
 
-            if self
-                .next_avail_us
-                .compare_exchange_weak(cur, new_va, Ordering::AcqRel, Ordering::Relaxed)
-                .is_ok()
-            {
-                if new_va <= now_us {
+            // Only commit the advance when the request can be served now.
+            // Committing in the wait branch double-charges: acquire would
+            // sleep for `wait_secs` and then loop, recompute against the
+            // already-advanced `next_avail_us`, and reserve another full
+            // `cost_us` of budget on top of the bytes we already paid for.
+            // For the wait branch, just report how long to sleep and let
+            // the caller retry; on retry `now_us` will have advanced and a
+            // single commit will succeed
+            if new_va <= now_us {
+                if self
+                    .next_avail_us
+                    .compare_exchange_weak(cur, new_va, Ordering::AcqRel, Ordering::Relaxed)
+                    .is_ok()
+                {
                     return Ok(());
                 }
-                return Err((new_va - now_us) as f64 / 1_000_000.0);
+                // Lost the race \u2014 retry.
+                continue;
             }
-            // Lost the race — retry.
+            return Err((new_va - now_us) as f64 / 1_000_000.0);
         }
     }
 
