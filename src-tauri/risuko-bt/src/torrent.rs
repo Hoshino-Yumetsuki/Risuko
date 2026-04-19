@@ -643,15 +643,15 @@ async fn process_peer_event(
                     // throughput unlock: the previous `storage.write_at(...).await`
                     // here serialised every download peer through one disk
                     // write per 16 KiB chunk
-                    let assembly = piece_assemblies.entry(index).or_insert_with(|| {
-                        PieceAssembly {
+                    let assembly = piece_assemblies
+                        .entry(index)
+                        .or_insert_with(|| PieceAssembly {
                             buf: vec![0u8; piece_len as usize],
                             received_chunks: HashSet::new(),
                             received_bytes: 0,
                             expected_bytes: piece_len,
                             completed: false,
-                        }
-                    });
+                        });
                     let chunk_index = begin / super::core::CHUNK_SIZE;
                     let begin_usz = begin as usize;
                     let end_usz = begin_usz + data.len();
@@ -789,7 +789,10 @@ async fn process_verify_result(
     // failed verification can reallocate a fresh assembly on retry
     piece_assemblies.remove(&vr.piece_index);
     if vr.write_failed {
-        log::warn!("piece {} disk write failed; will re-request", vr.piece_index);
+        log::warn!(
+            "piece {} disk write failed; will re-request",
+            vr.piece_index
+        );
         chunk_tracker.reset_piece(vpi);
         return;
     }

@@ -70,11 +70,7 @@ impl FilesystemStorage {
     /// Zero-copy write of an owned buffer. `Bytes::slice` produces shareable
     /// non-copy views per span, so a single 4 MiB piece is shipped to the
     /// blocking pool without an intermediate memcpy. Spans run in parallel
-    pub async fn write_at_owned(
-        &self,
-        offset: u64,
-        buf: bytes::Bytes,
-    ) -> Result<(), StorageError> {
+    pub async fn write_at_owned(&self, offset: u64, buf: bytes::Bytes) -> Result<(), StorageError> {
         let total = self.layout.total_length();
         let end = offset
             .checked_add(buf.len() as u64)

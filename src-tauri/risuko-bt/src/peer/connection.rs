@@ -229,10 +229,9 @@ async fn drive_handshake(
             let fallback_err: std::io::Error = match plaintext {
                 Ok(Ok(v)) => return Ok(v),
                 Ok(Err(e)) => e,
-                Err(_) => std::io::Error::new(
-                    std::io::ErrorKind::TimedOut,
-                    "plaintext handshake timeout",
-                ),
+                Err(_) => {
+                    std::io::Error::new(std::io::ErrorKind::TimedOut, "plaintext handshake timeout")
+                }
             };
             log::debug!("plaintext handshake to {addr} failed: {fallback_err}; trying mse");
             let stream = timeout(spawn.connect_timeout, TcpStream::connect(spawn.addr))
