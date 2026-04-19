@@ -239,12 +239,11 @@
                 </div>
               </div>
               <div class="settings-row-action">
-                <Input
-                  type="number"
-                  min="10"
-                  max="500"
-                  style="width: 100px"
+                <NumberInput
                   v-model="form.btMaxPeersPerTorrent"
+                  :min="10"
+                  :max="500"
+                  :step="1"
                 />
               </div>
             </div>
@@ -259,12 +258,11 @@
                 </div>
               </div>
               <div class="settings-row-action">
-                <Input
-                  type="number"
-                  min="8"
-                  max="512"
-                  style="width: 100px"
+                <NumberInput
                   v-model="form.btMaxOutstandingPerPeer"
+                  :min="8"
+                  :max="512"
+                  :step="1"
                 />
               </div>
             </div>
@@ -296,12 +294,11 @@
                 </div>
               </div>
               <div class="settings-row-action">
-                <Input
-                  type="number"
-                  min="60"
-                  max="86400"
-                  style="width: 100px"
+                <NumberInput
                   v-model="form.btUpnpLease"
+                  :min="60"
+                  :max="86400"
+                  :step="1"
                 />
               </div>
             </div>
@@ -806,6 +803,7 @@ import UiButton from "@/components/ui/compat/UiButton.vue";
 import UiTooltip from "@/components/ui/compat/UiTooltip.vue";
 import { confirm } from "@/components/ui/confirm-dialog";
 import { Input } from "@/components/ui/input";
+import NumberInput from "@/components/ui/NumberInput.vue";
 import {
 	Popover,
 	PopoverContent,
@@ -905,6 +903,7 @@ export default {
 		[ShowInFolder.name]: ShowInFolder,
 		[CredentialManager.name]: CredentialManager,
 		Input,
+		NumberInput,
 		Textarea,
 		Select,
 		SelectContent,
