@@ -2,7 +2,7 @@
 members = ["risuko-engine", "risuko-bt", "risuko-cli", "risuko-napi"]
 
 [workspace.package]
-version = "0.1.8"
+version = "0.1.9"
 authors = ["YueMiyuki"]
 edition = "2021"
 

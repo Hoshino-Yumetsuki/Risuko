@@ -67,6 +67,44 @@ impl FilesystemStorage {
         &self.layout
     }
 
+    /// Zero-copy write of an owned buffer. `Bytes::slice` produces shareable
+    /// non-copy views per span, so a single 4 MiB piece is shipped to the
+    /// blocking pool without an intermediate memcpy. Spans run in parallel
+    pub async fn write_at_owned(
+        &self,
+        offset: u64,
+        buf: bytes::Bytes,
+    ) -> Result<(), StorageError> {
+        let total = self.layout.total_length();
+        let end = offset
+            .checked_add(buf.len() as u64)
+            .ok_or(StorageError::OutOfRange { offset, total })?;
+        if end > total {
+            return Err(StorageError::OutOfRange { offset, total });
+        }
+        let spans: Vec<_> = self.layout.spans_for(offset, buf.len() as u64).collect();
+        if spans.is_empty() {
+            return Ok(());
+        }
+        let mut tasks = Vec::with_capacity(spans.len());
+        let mut cursor = 0usize;
+        for span in spans {
+            let handle = self.handle(span.file_index).await?;
+            let len = span.len as usize;
+            let chunk = buf.slice(cursor..cursor + len);
+            let file_offset = span.file_offset;
+            tasks.push(task::spawn_blocking(move || {
+                pwrite_all(&handle, file_offset, &chunk)
+            }));
+            cursor += len;
+        }
+        for t in tasks {
+            t.await
+                .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))??;
+        }
+        Ok(())
+    }
+
     async fn handle(&self, idx: usize) -> Result<Arc<std::fs::File>, StorageError> {
         if let Some(h) = self.handles.lock().get(idx).and_then(|s| s.clone()) {
             return Ok(h);
@@ -137,26 +175,10 @@ impl StorageBackend for FilesystemStorage {
     }
 
     async fn write_at(&self, offset: u64, buf: &[u8]) -> Result<(), StorageError> {
-        let total = self.layout.total_length();
-        let end = offset
-            .checked_add(buf.len() as u64)
-            .ok_or(StorageError::OutOfRange { offset, total })?;
-        if end > total {
-            return Err(StorageError::OutOfRange { offset, total });
-        }
-
-        let mut cursor = 0usize;
-        for span in self.layout.spans_for(offset, buf.len() as u64) {
-            let handle = self.handle(span.file_index).await?;
-            let len = span.len as usize;
-            let chunk = buf[cursor..cursor + len].to_vec();
-            let file_offset = span.file_offset;
-            task::spawn_blocking(move || pwrite_all(&handle, file_offset, &chunk))
-                .await
-                .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))??;
-            cursor += len;
-        }
-        Ok(())
+        // Generic path: copies into a Bytes once. Hot piece writes use the
+        // zero-copy `write_at_owned` instead
+        self.write_at_owned(offset, bytes::Bytes::copy_from_slice(buf))
+            .await
     }
 
     async fn read_at(&self, offset: u64, buf: &mut [u8]) -> Result<(), StorageError> {

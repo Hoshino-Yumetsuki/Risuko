@@ -1,9 +1,9 @@
 use std::fs;
-use std::io::SeekFrom;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, AtomicUsize, Ordering};
 use std::sync::Arc;
 
+use bytes::Bytes;
 use futures_util::StreamExt;
 use reqwest::header::{
     HeaderMap, HeaderName, HeaderValue, ACCEPT_RANGES, CONTENT_LENGTH, CONTENT_RANGE, ETAG,
@@ -11,19 +11,25 @@ use reqwest::header::{
 };
 use reqwest::Client;
 use serde_json::{Map, Value};
-use tokio::io::{AsyncSeekExt, AsyncWriteExt};
-use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
 use super::speed_limiter::SpeedLimiter;
 
 const PART_SUFFIX: &str = ".part";
-/// Minimum segment size: 1 MiB. Don't split below this
-const MIN_SEGMENT_SIZE: u64 = 1024 * 1024;
-/// Buffer capacity per chunk for in-memory buffering before flush
-const CHUNK_BUF_CAPACITY: usize = 2 * 1024 * 1024;
-/// Max retries per chunk on transient errors
+/// Default minimum segment size when `min-split-size` is not set: 1 MiB.
+/// Don't split below this — small files get a single connection.
+const DEFAULT_MIN_SPLIT_SIZE: u64 = 1024 * 1024;
+/// Max retries per piece on transient errors
 const CHUNK_MAX_RETRIES: u32 = 5;
+/// Resume granularity: every multi-chunk download is divided into 1 MiB pieces.
+/// Workers pull pieces off a shared queue (work-stealing for free) and resume
+/// preserves per-piece byte progress so a SIGKILL never loses more than the
+/// in-flight bytes of one piece per worker.
+const PIECE_SIZE: u64 = 1024 * 1024;
+/// Sidecar format version. Bump when the on-disk schema changes.
+const META_VERSION: u32 = 2;
+/// How often the periodic save task snapshots piece progress to disk.
+const META_SAVE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2);
 /// Error substring returned when a stale .part was removed
 const STALE_PART_REMOVED: &str = "stale partial file removed";
 /// Exponential moving average smoothing factor for speed reporting
@@ -44,29 +50,41 @@ impl ChunkRange {
         Self { start, end }
     }
 
-    fn len(&self) -> u64 {
-        self.end - self.start + 1
-    }
-
     fn to_range_header_value(&self) -> String {
         format!("bytes={}-{}", self.start, self.end)
     }
 }
 
-/// Outcome from a single stream call: always reports bytes flushed to disk.
+/// Outcome from a single stream call. Per-piece progress is tracked via the
+/// shared `piece_completed: Arc<AtomicU32>` that the writer task updates as
+/// bytes hit disk — the caller reads that atomic instead of relying on a
+/// returned byte count.
 struct StreamOutcome {
-    bytes_flushed: u64,
     error: Option<String>,
 }
 
-/// Metadata for resuming multi-chunk downloads, persisted as a JSON sidecar.
+/// Per-piece resume entry. Sparse: only pieces with `c > 0` are persisted.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct PieceProgress {
+    /// piece index
+    i: u32,
+    /// bytes completed in this piece (0 < c <= piece length)
+    c: u32,
+}
+
+/// Resume metadata for a multi-piece download. JSON sidecar next to the
+/// `.part` file. Versioned: incompatible versions are discarded and the
+/// download restarts from scratch (the file is still pre-allocated, so the
+/// kernel page cache may have warm data, but we re-issue every Range).
 #[derive(serde::Serialize, serde::Deserialize)]
 struct ChunkMeta {
+    version: u32,
     content_length: u64,
-    split: usize,
+    piece_size: u32,
     etag: Option<String>,
-    /// Per-chunk bytes confirmed flushed to disk
-    chunk_bytes: Vec<u64>,
+    /// Sparse list of pieces with progress. A piece is fully done when
+    /// `c == piece_length`. Pieces not listed start fresh at 0.
+    pieces: Vec<PieceProgress>,
 }
 
 fn chunk_meta_path(part_path: &Path) -> PathBuf {
@@ -75,21 +93,31 @@ fn chunk_meta_path(part_path: &Path) -> PathBuf {
     PathBuf::from(p)
 }
 
-fn save_chunk_meta(
+fn save_piece_meta(
     part_path: &Path,
+    queue: &PieceQueue,
     content_length: u64,
-    split: usize,
     etag: &Option<String>,
-    chunk_completed: &[Arc<AtomicU64>],
 ) {
+    let pieces: Vec<PieceProgress> = queue
+        .pieces
+        .iter()
+        .enumerate()
+        .filter_map(|(i, p)| {
+            let c = p.completed.load(Ordering::Relaxed);
+            if c == 0 {
+                None
+            } else {
+                Some(PieceProgress { i: i as u32, c })
+            }
+        })
+        .collect();
     let meta = ChunkMeta {
+        version: META_VERSION,
         content_length,
-        split,
+        piece_size: PIECE_SIZE as u32,
         etag: etag.clone(),
-        chunk_bytes: chunk_completed
-            .iter()
-            .map(|c| c.load(Ordering::Relaxed))
-            .collect(),
+        pieces,
     };
     let path = chunk_meta_path(part_path);
     if let Ok(json) = serde_json::to_string(&meta) {
@@ -97,18 +125,17 @@ fn save_chunk_meta(
     }
 }
 
-fn load_chunk_meta(
+fn load_piece_meta(
     part_path: &Path,
     content_length: u64,
-    split: usize,
     etag: &Option<String>,
 ) -> Option<ChunkMeta> {
     let path = chunk_meta_path(part_path);
     let data = fs::read_to_string(&path).ok()?;
     let meta: ChunkMeta = serde_json::from_str(&data).ok()?;
-    if meta.content_length != content_length
-        || meta.split != split
-        || meta.chunk_bytes.len() != split
+    if meta.version != META_VERSION
+        || meta.content_length != content_length
+        || meta.piece_size != PIECE_SIZE as u32
     {
         let _ = fs::remove_file(&path);
         return None;
@@ -128,26 +155,18 @@ fn load_chunk_meta(
         let _ = fs::remove_file(&path);
         return None;
     }
-    // If both have ETags, they must match (server file unchanged)
     if let (Some(saved), Some(current)) = (&meta.etag, etag) {
         if saved != current {
             let _ = fs::remove_file(&path);
             return None;
         }
     }
-
-    // Bounds-check each chunk's saved bytes against its real length
-    let chunk_size = content_length / split as u64;
-    for (i, &bytes) in meta.chunk_bytes.iter().enumerate() {
-        let chunk_len = if i == split - 1 {
-            content_length - chunk_size * (split as u64 - 1)
-        } else {
-            chunk_size
-        };
-        if bytes > chunk_len {
-            let _ = fs::remove_file(&path);
-            return None;
-        }
+    // No freshness validator on either side: trusting the partial would let
+    // a server that silently changed the resource produce a corrupt final
+    // file. Reject resume and start over
+    if meta.etag.is_none() && etag.is_none() {
+        let _ = fs::remove_file(&path);
+        return None;
     }
 
     Some(meta)
@@ -155,6 +174,116 @@ fn load_chunk_meta(
 
 fn delete_chunk_meta(part_path: &Path) {
     let _ = fs::remove_file(chunk_meta_path(part_path));
+}
+
+// === Piece queue: shared work pool for the worker tasks ===
+//
+// Each piece is at most PIECE_SIZE bytes. Workers atomically claim a free
+// piece (CAS state 0 -> 1), download it, then mark it done (state -> 2) or
+// release it back to the pool on transient error (state -> 0, completed
+// bytes preserved so the next claimant resumes mid-piece).
+//
+// This naturally implements work stealing: fast workers pull more pieces;
+// slow or idle workers simply pull fewer. There is no explicit "steal from
+// peer X" call because nothing is owned long-term.
+
+/// Free / in-flight / done state encoded in a single byte for cheap CAS.
+const PIECE_FREE: u8 = 0;
+const PIECE_INFLIGHT: u8 = 1;
+const PIECE_DONE: u8 = 2;
+
+struct Piece {
+    /// Absolute byte offset in the output file.
+    offset: u64,
+    /// Piece length in bytes (last piece may be < PIECE_SIZE).
+    length: u32,
+    /// Bytes confirmed flushed to disk so far. Monotonically increasing
+    /// because positioned writes are issued in order from the writer task.
+    /// Wrapped in Arc so the writer task can hold a clone independently.
+    completed: Arc<AtomicU32>,
+    /// Lifecycle state — see PIECE_* constants.
+    state: AtomicU8,
+}
+
+struct PieceQueue {
+    pieces: Vec<Piece>,
+    /// Hint for the next free piece, to avoid rescanning from 0 every claim.
+    next_hint: AtomicUsize,
+}
+
+impl PieceQueue {
+    fn new(content_length: u64) -> Self {
+        debug_assert!(content_length > 0);
+        let n = ((content_length + PIECE_SIZE - 1) / PIECE_SIZE) as usize;
+        let mut pieces = Vec::with_capacity(n);
+        for i in 0..n {
+            let offset = i as u64 * PIECE_SIZE;
+            let length = std::cmp::min(PIECE_SIZE, content_length - offset) as u32;
+            pieces.push(Piece {
+                offset,
+                length,
+                completed: Arc::new(AtomicU32::new(0)),
+                state: AtomicU8::new(PIECE_FREE),
+            });
+        }
+        Self {
+            pieces,
+            next_hint: AtomicUsize::new(0),
+        }
+    }
+
+    /// Try to claim the next free piece, scanning circularly from the hint.
+    /// Returns the piece index, or None if the queue is exhausted.
+    fn claim_next(&self) -> Option<usize> {
+        let n = self.pieces.len();
+        if n == 0 {
+            return None;
+        }
+        let start = self.next_hint.load(Ordering::Relaxed) % n;
+        for di in 0..n {
+            let i = (start + di) % n;
+            let p = &self.pieces[i];
+            if p.state
+                .compare_exchange(
+                    PIECE_FREE,
+                    PIECE_INFLIGHT,
+                    Ordering::AcqRel,
+                    Ordering::Relaxed,
+                )
+                .is_ok()
+            {
+                // Move hint past this slot. Best-effort — racy stores are fine.
+                self.next_hint.store(i + 1, Ordering::Relaxed);
+                return Some(i);
+            }
+        }
+        None
+    }
+
+    /// Return a piece to the pool with its `completed` count preserved so the
+    /// next claimant resumes mid-piece via a smaller Range request.
+    fn release(&self, idx: usize) {
+        self.pieces[idx].state.store(PIECE_FREE, Ordering::Release);
+        // Bias the hint backwards so this piece gets retried sooner.
+        let cur = self.next_hint.load(Ordering::Relaxed);
+        if idx < cur {
+            self.next_hint.store(idx, Ordering::Relaxed);
+        }
+    }
+
+    fn complete(&self, idx: usize) {
+        self.pieces[idx].state.store(PIECE_DONE, Ordering::Release);
+    }
+
+    /// True when every piece is in the DONE state. Used to decide whether
+    /// worker errors should be treated as fatal: a stranded retry-exhausted
+    /// worker is recoverable as long as another worker eventually finished
+    /// the piece
+    fn is_finished(&self) -> bool {
+        self.pieces
+            .iter()
+            .all(|p| p.state.load(Ordering::Acquire) == PIECE_DONE)
+    }
 }
 
 /// Build a reqwest Client with common settings applied from options
@@ -178,12 +307,20 @@ fn build_client_inner(options: &Map<String, Value>, decompress: bool) -> Result<
         .user_agent(ua)
         .redirect(reqwest::redirect::Policy::limited(10))
         .connect_timeout(std::time::Duration::from_secs(30))
-        .tcp_nodelay(true);
+        .tcp_nodelay(true)
+        // Long-lived chunk connections benefit from generous keepalive, and
+        // a large idle pool keeps every chunk worker on its own TCP stream.
+        .tcp_keepalive(std::time::Duration::from_secs(60))
+        .pool_idle_timeout(std::time::Duration::from_secs(90))
+        .pool_max_idle_per_host(64);
 
     if decompress {
         builder = builder.gzip(true).brotli(true).deflate(true);
     } else {
-        builder = builder.no_gzip().no_brotli().no_deflate();
+        // Range/chunk workers MUST stay on HTTP/1.1. HTTP/2 multiplexes every
+        // "parallel" request onto a single TCP stream, collapsing aggregate
+        // throughput from a single origin. aria2 makes the same choice.
+        builder = builder.no_gzip().no_brotli().no_deflate().http1_only();
     }
 
     if let Some(proxy_url) = options
@@ -286,8 +423,14 @@ pub async fn run_http_download(
             v.as_u64()
                 .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
         })
-        .unwrap_or(1)
+        .unwrap_or(8)
         .max(1) as usize;
+
+    // aria2-compatible `min-split-size` (bytes, with K/M suffixes accepted).
+    // Default 1 MiB — smaller files use a single connection.
+    let min_split_size = parse_size_option(options.get("min-split-size"))
+        .unwrap_or(DEFAULT_MIN_SPLIT_SIZE)
+        .max(1);
 
     let client = build_client(options)?;
     let range_client = if split > 1 {
@@ -314,7 +457,9 @@ pub async fn run_http_download(
     let is_http = uri.starts_with("http://") || uri.starts_with("https://");
     if is_http && split > 1 {
         match probe_range_support(&client, uri, &headers).await {
-            Ok(Some(probe)) if probe.content_length > MIN_SEGMENT_SIZE * split as u64 => {
+            Ok(Some(probe))
+                if probe.content_length > min_split_size.saturating_mul(split as u64) =>
+            {
                 if use_remote_time {
                     last_modified_header = probe.last_modified.clone();
                 }
@@ -398,7 +543,7 @@ pub async fn run_http_download(
 
             if is_http && split > 1 {
                 if let Ok(Some(probe)) = probe_range_support(&client, uri, &headers).await {
-                    if probe.content_length > MIN_SEGMENT_SIZE * split as u64 {
+                    if probe.content_length > min_split_size.saturating_mul(split as u64) {
                         if use_remote_time {
                             last_modified_header = probe.last_modified.clone();
                         }
@@ -551,7 +696,13 @@ async fn probe_range_support(
     Ok(None)
 }
 
-/// Multi-chunk parallel download using reqwest streaming
+/// Multi-chunk parallel download using a piece queue + worker pool.
+///
+/// The file is divided into PIECE_SIZE-byte pieces. `split` workers share
+/// one queue: each pulls the next free piece, downloads it, then pulls the
+/// next. Fast workers naturally pull more pieces (work stealing for free).
+/// Resume preserves per-piece byte progress so a SIGKILL never loses more
+/// than the in-flight bytes of one piece per worker.
 async fn run_multi_chunk(
     client: &Client,
     uri: &str,
@@ -572,57 +723,49 @@ async fn run_multi_chunk(
 ) -> Result<PathBuf, String> {
     total.store(content_length, Ordering::Relaxed);
 
-    tracing::info!("Multi-chunk download: {split} chunks, {content_length} bytes total");
+    let queue = Arc::new(PieceQueue::new(content_length));
+    tracing::info!(
+        "Multi-piece download: {} pieces ({} MiB each), {} workers, {} bytes total",
+        queue.pieces.len(),
+        PIECE_SIZE / (1024 * 1024),
+        split,
+        content_length
+    );
 
-    // Calculate chunk boundaries
-    let chunk_size = content_length / split as u64;
-    let mut chunks: Vec<ChunkRange> = Vec::with_capacity(split);
-    for i in 0..split {
-        let start = i as u64 * chunk_size;
-        let end = if i == split - 1 {
-            content_length - 1
-        } else {
-            (i as u64 + 1) * chunk_size - 1
-        };
-        chunks.push(ChunkRange::new(start, end));
-    }
-
-    // Load resume sidecar BEFORE pre-allocating so the file-size check is meaningful
-    let initial_offsets =
-        if let Some(meta) = load_chunk_meta(part_path, content_length, split, &expected_etag) {
-            let total_resumed: u64 = meta.chunk_bytes.iter().sum();
-            completed.store(total_resumed, Ordering::Relaxed);
-            for (i, &bytes) in meta.chunk_bytes.iter().enumerate() {
-                if let Some(cc) = chunk_completed.get(i) {
-                    cc.store(bytes, Ordering::Relaxed);
+    // Restore piece progress from sidecar BEFORE pre-allocating so the
+    // file-size check inside load_piece_meta is meaningful.
+    if let Some(meta) = load_piece_meta(part_path, content_length, &expected_etag) {
+        let mut total_resumed: u64 = 0;
+        for pp in &meta.pieces {
+            if let Some(p) = queue.pieces.get(pp.i as usize) {
+                let c = std::cmp::min(pp.c, p.length);
+                p.completed.store(c, Ordering::Relaxed);
+                total_resumed += c as u64;
+                if c == p.length {
+                    p.state.store(PIECE_DONE, Ordering::Release);
                 }
             }
-            tracing::info!("Resuming multi-chunk download: {total_resumed}/{content_length} bytes");
-            meta.chunk_bytes
-        } else {
-            vec![0u64; split]
-        };
+        }
+        completed.store(total_resumed, Ordering::Relaxed);
+        tracing::info!("Resuming multi-piece download: {total_resumed}/{content_length} bytes");
+    }
 
-    // Pre-allocate the output file AFTER sidecar validation
-    {
-        let file = fs::OpenOptions::new()
+    // Pre-allocate and open the output file as a single shared std::fs::File.
+    // All writers issue positioned writes (pwrite/seek_write) concurrently —
+    // no global mutex, no shared file cursor.
+    let file = {
+        let f = fs::OpenOptions::new()
             .create(true)
             .write(true)
             .truncate(false)
             .open(part_path)
             .map_err(|e| format!("Failed to create file: {e}"))?;
-        file.set_len(content_length)
+        f.set_len(content_length)
             .map_err(|e| format!("Failed to pre-allocate file: {e}"))?;
-    }
+        Arc::new(f)
+    };
 
-    let file = tokio::fs::OpenOptions::new()
-        .write(true)
-        .open(part_path)
-        .await
-        .map_err(|e| format!("Failed to open file: {e}"))?;
-    let file = Arc::new(Mutex::new(file));
-
-    // Speed tracking
+    // Speed tracker
     let speed_cancel = cancel_token.clone();
     let speed_completed = completed.clone();
     let speed_val = speed.clone();
@@ -631,162 +774,219 @@ async fn run_multi_chunk(
         run_speed_tracker(speed_completed, speed_val, speed_total, speed_cancel).await;
     });
 
-    // Spawn all chunk downloads concurrently
-    let mut futures = futures_util::stream::FuturesUnordered::new();
-    for (i, chunk) in chunks.iter().enumerate() {
-        let initial = initial_offsets[i];
-        // Skip chunks already fully downloaded
-        if initial >= chunk.len() {
-            continue;
+    // Periodic sidecar save: snapshot piece progress every META_SAVE_INTERVAL
+    // so a SIGKILL never loses more than that interval of in-flight bytes.
+    let save_part = part_path.to_path_buf();
+    let save_queue = Arc::clone(&queue);
+    let save_etag = expected_etag.clone();
+    let save_cancel = cancel_token.clone();
+    let save_task = tokio::spawn(async move {
+        let mut tick = tokio::time::interval(META_SAVE_INTERVAL);
+        tick.tick().await; // skip the immediate first tick
+        loop {
+            tokio::select! {
+                _ = save_cancel.cancelled() => break,
+                _ = tick.tick() => {
+                    save_piece_meta(&save_part, &save_queue, content_length, &save_etag);
+                }
+            }
         }
+    });
 
+    // Spawn N=split worker tasks. Each worker pulls pieces off the shared
+    // queue until it is exhausted (or the task is cancelled / fails).
+    let mut workers = futures_util::stream::FuturesUnordered::new();
+    for w in 0..split {
         let client = client.clone();
         let uri = uri.to_string();
         let headers = headers.clone();
-        let file = file.clone();
-        let completed = completed.clone();
+        let file = Arc::clone(&file);
+        let queue = Arc::clone(&queue);
+        let completed = Arc::clone(&completed);
         let cancel_token = cancel_token.clone();
-        let chunk = *chunk;
-        let gl = global_limiter.clone();
-        let tl = task_limiter.clone();
+        let gl = Arc::clone(&global_limiter);
+        let tl = Arc::clone(&task_limiter);
         let etag = expected_etag.clone();
-        let cc = chunk_completed.get(i).cloned();
+        let wc = chunk_completed.get(w).cloned();
 
-        futures.push(tokio::spawn(async move {
-            download_chunk(
+        workers.push(tokio::spawn(async move {
+            piece_worker(
+                w,
                 &client,
                 &uri,
                 &headers,
-                chunk,
-                &file,
-                &completed,
+                file,
+                queue,
+                completed,
                 cancel_token,
-                i,
-                &gl,
-                &tl,
-                etag.as_deref(),
-                cc.as_ref(),
-                initial,
+                gl,
+                tl,
+                etag,
+                wc,
             )
             .await
         }));
     }
 
-    // Collect results
     let mut errors = Vec::new();
-    while let Some(result) = futures.next().await {
+    while let Some(result) = workers.next().await {
         match result {
             Ok(Ok(())) => {}
             Ok(Err(e)) => errors.push(e),
-            Err(e) => errors.push(format!("Chunk task panicked: {e}")),
+            Err(e) => errors.push(format!("Worker task panicked: {e}")),
         }
     }
 
-    // Stop speed tracker
     speed_task.abort();
+    save_task.abort();
+    // Drain the save task: abort cancels at the next await, but a save
+    // iteration mid-flight can still complete its synchronous fs::write.
+    // Awaiting here guarantees no save lands on disk after we proceed to
+    // delete_chunk_meta below.
+    let _ = save_task.await;
     speed.store(0, Ordering::Relaxed);
 
     if !errors.is_empty() {
-        // Persist per-chunk progress for potential resume
-        save_chunk_meta(
-            part_path,
-            content_length,
-            split,
-            &expected_etag,
-            chunk_completed,
-        );
+        // Persist current piece progress so the next attempt resumes correctly.
+        save_piece_meta(part_path, &queue, content_length, &expected_etag);
 
         if errors.iter().all(|e| e.contains("cancelled")) {
             return Err("Download cancelled".to_string());
         }
-        let real_errors: Vec<&String> =
-            errors.iter().filter(|e| !e.contains("cancelled")).collect();
-        if !real_errors.is_empty() {
-            return Err(real_errors
-                .iter()
-                .map(|e| e.as_str())
-                .collect::<Vec<_>>()
-                .join("; "));
+        // Worker errors are only fatal if the queue itself did not finish.
+        // A worker that exhausted its retry budget on one piece may have
+        // returned Err while another worker later picked the piece up and
+        // completed it. In that case the download is actually done
+        if !queue.is_finished() {
+            let real_errors: Vec<&String> =
+                errors.iter().filter(|e| !e.contains("cancelled")).collect();
+            if !real_errors.is_empty() {
+                return Err(real_errors
+                    .iter()
+                    .map(|e| e.as_str())
+                    .collect::<Vec<_>>()
+                    .join("; "));
+            }
         }
     }
 
+    // Ensure all positioned writes are durable before deleting the resume
+    // sidecar or renaming. If sync_file fails (ENOSPC, EIO, …) the .part
+    // file may be incomplete on disk — abort without finalizing so the
+    // sidecar survives and the next attempt can resume
+    if let Err(e) = sync_file(&file).await {
+        return Err(format!("fsync before rename failed: {e}"));
+    }
     delete_chunk_meta(part_path);
     finalize_download(part_path, filename, dir_path)
 }
 
-/// Download a single chunk (byte range) using reqwest streaming with retry
-async fn download_chunk(
+/// Worker loop: claim a piece, download it, mark it done; repeat.
+/// Returns Ok(()) when the queue is exhausted (this worker is finished),
+/// or Err on cancellation or after exceeding retry budget on one piece.
+#[allow(clippy::too_many_arguments)]
+async fn piece_worker(
+    worker_id: usize,
     client: &Client,
     uri: &str,
     headers: &HeaderMap,
-    chunk: ChunkRange,
-    file: &Arc<Mutex<tokio::fs::File>>,
-    completed: &Arc<AtomicU64>,
+    file: Arc<std::fs::File>,
+    queue: Arc<PieceQueue>,
+    completed: Arc<AtomicU64>,
     cancel_token: CancellationToken,
-    chunk_index: usize,
-    global_limiter: &SpeedLimiter,
-    task_limiter: &SpeedLimiter,
-    expected_etag: Option<&str>,
-    chunk_completed: Option<&Arc<AtomicU64>>,
-    initial_bytes_written: u64,
+    global_limiter: Arc<SpeedLimiter>,
+    task_limiter: Arc<SpeedLimiter>,
+    expected_etag: Option<String>,
+    worker_completed: Option<Arc<AtomicU64>>,
 ) -> Result<(), String> {
-    let mut bytes_written: u64 = initial_bytes_written;
     let mut retry_count: u32 = 0;
-
     loop {
         if cancel_token.is_cancelled() {
             return Err("Download cancelled".to_string());
         }
 
-        let current_start = chunk.start + bytes_written;
-        if current_start > chunk.end {
-            return Ok(());
+        let idx = match queue.claim_next() {
+            Some(i) => i,
+            None => return Ok(()), // queue exhausted: this worker is done
+        };
+
+        let piece_offset = queue.pieces[idx].offset;
+        let piece_length = queue.pieces[idx].length;
+        let piece_completed = Arc::clone(&queue.pieces[idx].completed);
+
+        let already = piece_completed.load(Ordering::Relaxed);
+        if already >= piece_length {
+            queue.complete(idx);
+            continue;
         }
 
-        let current_range = ChunkRange::new(current_start, chunk.end);
-        let outcome = download_chunk_stream(
+        let range = ChunkRange::new(
+            piece_offset + already as u64,
+            piece_offset + piece_length as u64 - 1,
+        );
+
+        let outcome = download_piece_stream(
             client,
             uri,
             headers,
-            current_range,
-            file,
-            completed,
+            range,
+            &file,
+            &completed,
             &cancel_token,
-            global_limiter,
-            task_limiter,
-            expected_etag,
-            chunk_completed,
+            &global_limiter,
+            &task_limiter,
+            expected_etag.as_deref(),
+            worker_completed.as_ref(),
+            &piece_completed,
         )
         .await;
 
-        // Always account for bytes confirmed flushed to disk
-        bytes_written += outcome.bytes_flushed;
-        if let Some(cc) = chunk_completed {
-            cc.store(bytes_written, Ordering::Relaxed);
-        }
+        // The writer task already incremented piece_completed per Bytes flushed.
+        let now_completed = piece_completed.load(Ordering::Relaxed);
 
         match outcome.error {
             None => {
-                if bytes_written >= chunk.len() {
-                    return Ok(());
+                if now_completed >= piece_length {
+                    queue.complete(idx);
+                    retry_count = 0;
+                } else {
+                    // Server closed the stream early — return the piece to the
+                    // pool with its progress preserved; another worker (or
+                    // this one on a later iteration) will pick up the tail.
+                    // Count the early EOF against the retry budget so a
+                    // server that consistently truncates responses cannot
+                    // pin a worker in an infinite loop
+                    queue.release(idx);
+                    retry_count += 1;
+                    if retry_count > CHUNK_MAX_RETRIES {
+                        return Err(format!(
+                            "Worker {worker_id} failed after {CHUNK_MAX_RETRIES} retries on \
+                             piece {idx}: server closed stream early"
+                        ));
+                    }
+                    tracing::warn!(
+                        "Worker {worker_id} piece {idx} attempt \
+                         {retry_count}/{CHUNK_MAX_RETRIES}: early EOF, will retry"
+                    );
+                    tokio::time::sleep(std::time::Duration::from_secs(retry_count as u64)).await;
                 }
-                // Partial success, continue to download the rest of the chunk
-                retry_count = 0;
             }
             Some(e) if e.contains("cancelled") => {
+                queue.release(idx);
                 return Err(e);
             }
             Some(e) => {
+                queue.release(idx);
                 retry_count += 1;
                 if retry_count > CHUNK_MAX_RETRIES {
                     return Err(format!(
-                        "Chunk {chunk_index} failed after {CHUNK_MAX_RETRIES} retries: {e}"
+                        "Worker {worker_id} failed after {CHUNK_MAX_RETRIES} retries on \
+                         piece {idx}: {e}"
                     ));
                 }
                 tracing::warn!(
-                    "Chunk {chunk_index} attempt {retry_count}/{CHUNK_MAX_RETRIES} failed: {e}, \
-                     resuming from byte {}",
-                    chunk.start + bytes_written
+                    "Worker {worker_id} piece {idx} attempt \
+                     {retry_count}/{CHUNK_MAX_RETRIES}: {e}, will retry"
                 );
                 tokio::time::sleep(std::time::Duration::from_secs(retry_count as u64)).await;
             }
@@ -794,20 +994,23 @@ async fn download_chunk(
     }
 }
 
-/// Stream a chunk range. Always returns the number of bytes flushed to disk,
-/// even on error, so the caller can accurately track resume progress.
-async fn download_chunk_stream(
+/// Stream a single piece (or its remaining tail). Always returns the number
+/// of bytes flushed to disk, even on error, so the caller can accurately
+/// track resume progress via the per-piece atomic counter.
+#[allow(clippy::too_many_arguments)]
+async fn download_piece_stream(
     client: &Client,
     uri: &str,
     headers: &HeaderMap,
     range: ChunkRange,
-    file: &Arc<Mutex<tokio::fs::File>>,
+    file: &Arc<std::fs::File>,
     completed: &Arc<AtomicU64>,
     cancel_token: &CancellationToken,
     global_limiter: &SpeedLimiter,
     task_limiter: &SpeedLimiter,
     expected_etag: Option<&str>,
-    chunk_completed: Option<&Arc<AtomicU64>>,
+    worker_completed: Option<&Arc<AtomicU64>>,
+    piece_completed: &Arc<AtomicU32>,
 ) -> StreamOutcome {
     let mut req = client
         .get(uri)
@@ -824,7 +1027,6 @@ async fn download_chunk_stream(
         Ok(r) => r,
         Err(e) => {
             return StreamOutcome {
-                bytes_flushed: 0,
                 error: Some(format!("HTTP request failed: {e}")),
             };
         }
@@ -836,7 +1038,6 @@ async fn download_chunk_stream(
         if let Some(actual) = resp.headers().get(ETAG).and_then(|v| v.to_str().ok()) {
             if actual != expected {
                 return StreamOutcome {
-                    bytes_flushed: 0,
                     error: Some(
                         "Server file changed (ETag mismatch), aborting download".to_string(),
                     ),
@@ -847,15 +1048,12 @@ async fn download_chunk_stream(
 
     if status >= 400 {
         return StreamOutcome {
-            bytes_flushed: 0,
             error: Some(format!("HTTP error: {status}")),
         };
     }
 
-    // enforce 206 Partial Content with matching Content-Range
     if status != 206 {
         return StreamOutcome {
-            bytes_flushed: 0,
             error: Some(format!(
                 "Expected 206 Partial Content with matching Content-Range, got {status}"
             )),
@@ -866,13 +1064,11 @@ async fn download_chunk_stream(
         .get(CONTENT_RANGE)
         .and_then(|v| v.to_str().ok())
     {
-        // Content-Range: bytes START-END/TOTAL
         if let Some(space) = cr.find(' ') {
             if let Some(dash) = cr[space + 1..].find('-') {
                 if let Ok(range_start) = cr[space + 1..space + 1 + dash].parse::<u64>() {
                     if range_start != range.start {
                         return StreamOutcome {
-                            bytes_flushed: 0,
                             error: Some(format!(
                                 "Expected 206 Partial Content with matching Content-Range: \
                                  requested start {} but got {range_start}",
@@ -885,7 +1081,6 @@ async fn download_chunk_stream(
         }
     } else {
         return StreamOutcome {
-            bytes_flushed: 0,
             error: Some(
                 "Expected 206 Partial Content with matching Content-Range, \
                  but Content-Range header is missing"
@@ -895,25 +1090,24 @@ async fn download_chunk_stream(
     }
 
     let mut stream = resp.bytes_stream();
-    let mut buf = Vec::with_capacity(CHUNK_BUF_CAPACITY);
-    let mut total_written: u64 = 0;
+    // Cap writes at the requested range length. A misbehaving server that
+    // returns more bytes than asked must NOT pwrite past the piece into the
+    // next piece's region in the pre-allocated file.
+    let max_bytes = range.end - range.start + 1;
+    let writer = ChunkWriter::spawn(
+        Arc::clone(file),
+        range.start,
+        Some(max_bytes),
+        Arc::clone(completed),
+        worker_completed.cloned(),
+        Some(Arc::clone(piece_completed)),
+    );
 
     loop {
         tokio::select! {
             _ = cancel_token.cancelled() => {
-                if !buf.is_empty() {
-                    if let Ok(n) = flush_buf_at(file, range.start + total_written, &buf).await {
-                        total_written += n as u64;
-                    } else {
-                        // Flush failed; revert the received-bytes from `completed`
-                        completed.fetch_sub(buf.len() as u64, Ordering::Relaxed);
-                        if let Some(cc) = chunk_completed {
-                            cc.fetch_sub(buf.len() as u64, Ordering::Relaxed);
-                        }
-                    }
-                }
+                let _ = writer.finish().await;
                 return StreamOutcome {
-                    bytes_flushed: total_written,
                     error: Some("Download cancelled".to_string()),
                 };
             }
@@ -924,75 +1118,32 @@ async fn download_chunk_stream(
                         global_limiter.acquire(len).await;
                         task_limiter.acquire(len).await;
 
-                        buf.extend_from_slice(&bytes);
-                        completed.fetch_add(len as u64, Ordering::Relaxed);
-                        if let Some(cc) = chunk_completed {
-                            cc.fetch_add(len as u64, Ordering::Relaxed);
-                        }
-
-                        if buf.len() >= CHUNK_BUF_CAPACITY {
-                            match flush_buf_at(
-                                file, range.start + total_written, &buf,
-                            ).await {
-                                Ok(written) => {
-                                    total_written += written as u64;
-                                    buf.clear();
-                                }
-                                Err(e) => {
-                                    completed.fetch_sub(buf.len() as u64, Ordering::Relaxed);
-                                    if let Some(cc) = chunk_completed {
-                                        cc.fetch_sub(buf.len() as u64, Ordering::Relaxed);
-                                    }
-                                    return StreamOutcome {
-                                        bytes_flushed: total_written,
-                                        error: Some(e),
-                                    };
-                                }
-                            }
+                        if !writer.send(bytes).await {
+                            let _ = writer.finish().await;
+                            return StreamOutcome {
+                                error: Some(
+                                    "Writer task closed unexpectedly".to_string(),
+                                ),
+                            };
                         }
                     }
                     Some(Err(e)) => {
-                        if !buf.is_empty() {
-                            if let Ok(n) = flush_buf_at(
-                                file, range.start + total_written, &buf,
-                            ).await {
-                                total_written += n as u64;
-                            } else {
-                                completed.fetch_sub(buf.len() as u64, Ordering::Relaxed);
-                                if let Some(cc) = chunk_completed {
-                                    cc.fetch_sub(buf.len() as u64, Ordering::Relaxed);
-                                }
-                            }
-                        }
+                        let _ = writer.finish().await;
                         return StreamOutcome {
-                            bytes_flushed: total_written,
                             error: Some(format!("Stream error: {e}")),
                         };
                     }
                     None => {
-                        if !buf.is_empty() {
-                            match flush_buf_at(
-                                file, range.start + total_written, &buf,
-                            ).await {
-                                Ok(written) => {
-                                    total_written += written as u64;
-                                }
-                                Err(e) => {
-                                    completed.fetch_sub(buf.len() as u64, Ordering::Relaxed);
-                                    if let Some(cc) = chunk_completed {
-                                        cc.fetch_sub(buf.len() as u64, Ordering::Relaxed);
-                                    }
-                                    return StreamOutcome {
-                                        bytes_flushed: total_written,
-                                        error: Some(e),
-                                    };
-                                }
+                        match writer.finish().await {
+                            Ok(_) => {
+                                return StreamOutcome { error: None };
+                            }
+                            Err(e) => {
+                                return StreamOutcome {
+                                    error: Some(e),
+                                };
                             }
                         }
-                        return StreamOutcome {
-                            bytes_flushed: total_written,
-                            error: None,
-                        };
                     }
                 }
             }
@@ -1000,20 +1151,140 @@ async fn download_chunk_stream(
     }
 }
 
-/// Flush buffer to file at offset
-async fn flush_buf_at(
-    file: &Arc<Mutex<tokio::fs::File>>,
-    offset: u64,
-    buf: &[u8],
-) -> Result<usize, String> {
-    let mut f = file.lock().await;
-    f.seek(SeekFrom::Start(offset))
+/// Parse a JSON value as a byte-size: integer bytes, or a string with optional
+/// `K`/`M`/`G` suffix (case-insensitive). Returns `None` for missing/invalid.
+fn parse_size_option(value: Option<&Value>) -> Option<u64> {
+    let v = value?;
+    if let Some(n) = v.as_u64() {
+        return Some(n);
+    }
+    let s = v.as_str()?.trim();
+    if s.is_empty() {
+        return None;
+    }
+    let (num, mult): (&str, u64) = match s.as_bytes().last() {
+        Some(b'K') | Some(b'k') => (&s[..s.len() - 1], 1024),
+        Some(b'M') | Some(b'm') => (&s[..s.len() - 1], 1024 * 1024),
+        Some(b'G') | Some(b'g') => (&s[..s.len() - 1], 1024 * 1024 * 1024),
+        _ => (s, 1),
+    };
+    num.trim().parse::<u64>().ok()?.checked_mul(mult)
+}
+
+/// Cross-platform positioned write: writes the entire buffer at the given
+/// offset without touching the shared file cursor. Safe to call concurrently
+/// from multiple threads on the same `File` handle.
+#[cfg(unix)]
+fn pwrite_all(file: &std::fs::File, offset: u64, buf: &[u8]) -> std::io::Result<()> {
+    use std::os::unix::fs::FileExt;
+    file.write_all_at(buf, offset)
+}
+
+#[cfg(windows)]
+fn pwrite_all(file: &std::fs::File, offset: u64, buf: &[u8]) -> std::io::Result<()> {
+    use std::os::windows::fs::FileExt;
+    let mut written = 0usize;
+    while written < buf.len() {
+        let n = file.seek_write(&buf[written..], offset + written as u64)?;
+        if n == 0 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::WriteZero,
+                "failed to write whole buffer",
+            ));
+        }
+        written += n;
+    }
+    Ok(())
+}
+
+/// fsync via blocking thread.
+async fn sync_file(file: &Arc<std::fs::File>) -> Result<(), String> {
+    let file = Arc::clone(file);
+    tokio::task::spawn_blocking(move || file.sync_all())
         .await
-        .map_err(|e| format!("Seek failed: {e}"))?;
-    f.write_all(buf)
-        .await
-        .map_err(|e| format!("Write failed: {e}"))?;
-    Ok(buf.len())
+        .map_err(|e| format!("sync task join error: {e}"))?
+        .map_err(|e| format!("Sync failed: {e}"))
+}
+
+/// Dedicated chunk writer: a single `spawn_blocking` thread per piece that
+/// pulls `Bytes` from an MPSC channel and `pwrite`s them sequentially to the
+/// pre-allocated file. No userspace memcpy (Bytes flows straight from reqwest
+/// to pwrite), no per-flush spawn_blocking churn.
+struct ChunkWriter {
+    tx: tokio::sync::mpsc::Sender<Bytes>,
+    join: tokio::task::JoinHandle<Result<u64, String>>,
+}
+
+impl ChunkWriter {
+    /// `max_bytes` caps the total bytes this writer will pwrite. Excess input
+    /// is silently dropped so a misbehaving server returning more data than
+    /// the requested Range can never overwrite adjacent pieces in the
+    /// pre-allocated file. `None` means unlimited (single-connection path).
+    fn spawn(
+        file: Arc<std::fs::File>,
+        start_offset: u64,
+        max_bytes: Option<u64>,
+        completed: Arc<AtomicU64>,
+        worker_completed: Option<Arc<AtomicU64>>,
+        piece_completed: Option<Arc<AtomicU32>>,
+    ) -> Self {
+        // Bounded channel = backpressure. Cap ~4 MiB worth of in-flight Bytes
+        // (16 messages * typical 16-256 KiB each) so we never balloon RAM if
+        // the disk is briefly slower than the network.
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<Bytes>(16);
+        let join = tokio::task::spawn_blocking(move || {
+            let mut offset = start_offset;
+            let mut written: u64 = 0;
+            let mut remaining = max_bytes;
+            while let Some(mut bytes) = rx.blocking_recv() {
+                if let Some(rem) = remaining {
+                    if rem == 0 {
+                        // Drain extra data without writing — server overran.
+                        continue;
+                    }
+                    if (bytes.len() as u64) > rem {
+                        bytes.truncate(rem as usize);
+                    }
+                }
+                if bytes.is_empty() {
+                    continue;
+                }
+                if let Err(e) = pwrite_all(&file, offset, &bytes) {
+                    return Err(format!("Write failed: {e}"));
+                }
+                let n = bytes.len() as u64;
+                offset += n;
+                written += n;
+                if let Some(rem) = remaining.as_mut() {
+                    *rem -= n;
+                }
+                completed.fetch_add(n, Ordering::Relaxed);
+                if let Some(ref wc) = worker_completed {
+                    wc.fetch_add(n, Ordering::Relaxed);
+                }
+                if let Some(ref pc) = piece_completed {
+                    pc.fetch_add(n as u32, Ordering::Relaxed);
+                }
+            }
+            Ok(written)
+        });
+        Self { tx, join }
+    }
+
+    /// Send a Bytes to the writer. Returns false if the writer has died.
+    async fn send(&self, bytes: Bytes) -> bool {
+        self.tx.send(bytes).await.is_ok()
+    }
+
+    /// Close the input side and await the writer thread. Returns total bytes
+    /// successfully written or the writer's first error.
+    async fn finish(self) -> Result<u64, String> {
+        drop(self.tx);
+        match self.join.await {
+            Ok(r) => r,
+            Err(e) => Err(format!("write task join error: {e}")),
+        }
+    }
 }
 
 /// Single-connection download
@@ -1079,17 +1350,16 @@ async fn run_single_download(
         }
     }
 
-    // Open file for appending
-    let mut file = if existing_size > 0 {
-        tokio::fs::OpenOptions::new()
-            .append(true)
+    // Open file as a sync handle for positioned writes. We start writing at
+    // `existing_size` to resume in place \u2014 no append mode, no shared cursor.
+    let file = {
+        let f = fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(false)
             .open(part_path)
-            .await
-            .map_err(|e| format!("Failed to open file for resume: {e}"))?
-    } else {
-        tokio::fs::File::create(part_path)
-            .await
-            .map_err(|e| format!("Failed to create file: {e}"))?
+            .map_err(|e| format!("Failed to open file: {e}"))?;
+        Arc::new(f)
     };
 
     // Speed tracking
@@ -1102,58 +1372,52 @@ async fn run_single_download(
     });
 
     let mut stream = resp.bytes_stream();
-    let mut buf = Vec::with_capacity(CHUNK_BUF_CAPACITY);
+    // Single-connection path also uses the dedicated writer thread:
+    // zero-copy Bytes -> pwrite, no userspace memcpy. No max_bytes cap here
+    // — the file isn't pre-allocated, so trailing extra bytes are appended
+    // rather than corrupting other regions.
+    let writer = ChunkWriter::spawn(
+        Arc::clone(&file),
+        existing_size,
+        None,
+        Arc::clone(&completed),
+        None,
+        None,
+    );
 
-    let result = loop {
+    let result: Result<(), String> = loop {
         tokio::select! {
             _ = cancel_token.cancelled() => {
-                if !buf.is_empty() {
-                    let _ = file.write_all(&buf).await;
-                    let _ = file.flush().await;
-                }
                 break Err("Download cancelled".to_string());
             }
             chunk = stream.next() => {
                 match chunk {
                     Some(Ok(bytes)) => {
                         let len = bytes.len();
-
-                        // Apply speed limits before accounting for the bytes
                         global_limiter.acquire(len).await;
                         task_limiter.acquire(len).await;
-
-                        buf.extend_from_slice(&bytes);
-                        completed.fetch_add(len as u64, Ordering::Relaxed);
-
-                        if buf.len() >= CHUNK_BUF_CAPACITY {
-                            file.write_all(&buf).await
-                                .map_err(|e| format!("Write failed: {e}"))?;
-                            file.flush().await
-                                .map_err(|e| format!("Flush failed: {e}"))?;
-                            buf.clear();
+                        if !writer.send(bytes).await {
+                            break Err("Writer task closed unexpectedly".to_string());
                         }
                     }
                     Some(Err(e)) => {
-                        if !buf.is_empty() {
-                            let _ = file.write_all(&buf).await;
-                            let _ = file.flush().await;
-                        }
                         break Err(format!("Download failed: {e}"));
                     }
                     None => {
-                        if !buf.is_empty() {
-                            file.write_all(&buf).await
-                                .map_err(|e| format!("Write failed: {e}"))?;
-                        }
-                        file.flush().await
-                            .map_err(|e| format!("Flush failed: {e}"))?;
-                        file.sync_all().await
-                            .map_err(|e| format!("Sync failed: {e}"))?;
                         break Ok(());
                     }
                 }
             }
         }
+    };
+
+    // Always drain the writer so all queued Bytes hit disk before we sync.
+    let writer_result = writer.finish().await;
+
+    let result = match (result, writer_result) {
+        (Ok(()), Ok(_)) => sync_file(&file).await,
+        (Ok(()), Err(e)) => Err(e),
+        (Err(e), _) => Err(e),
     };
 
     speed_task.abort();
@@ -1166,7 +1430,7 @@ async fn run_single_download(
     Ok((final_path, resp_last_modified))
 }
 
-/// Speed tracker that samples completed bytes every 500ms using EMA
+/// Speed tracker that samples completed bytes every 250ms using EMA
 async fn run_speed_tracker(
     completed: Arc<AtomicU64>,
     speed: Arc<AtomicU64>,
@@ -1176,7 +1440,7 @@ async fn run_speed_tracker(
     let mut last_bytes = completed.load(Ordering::Relaxed);
     let mut last_time = tokio::time::Instant::now();
     let mut ema_speed: f64 = 0.0;
-    let mut interval = tokio::time::interval(std::time::Duration::from_millis(500));
+    let mut interval = tokio::time::interval(std::time::Duration::from_millis(250));
 
     loop {
         interval.tick().await;
@@ -1350,5 +1614,100 @@ fn hex_val(b: u8) -> Option<u8> {
         b'a'..=b'f' => Some(b - b'a' + 10),
         b'A'..=b'F' => Some(b - b'A' + 10),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn piece_queue_partitions_content_into_1mib_pieces() {
+        let total = PIECE_SIZE * 3 + 7;
+        let q = PieceQueue::new(total);
+        assert_eq!(q.pieces.len(), 4);
+        assert_eq!(q.pieces[0].offset, 0);
+        assert_eq!(q.pieces[0].length, PIECE_SIZE as u32);
+        assert_eq!(q.pieces[3].offset, PIECE_SIZE * 3);
+        assert_eq!(q.pieces[3].length, 7);
+        let sum: u64 = q.pieces.iter().map(|p| p.length as u64).sum();
+        assert_eq!(sum, total);
+    }
+
+    #[test]
+    fn claim_marks_inflight_and_skips_busy_pieces() {
+        let q = PieceQueue::new(PIECE_SIZE * 3);
+        let a = q.claim_next().unwrap();
+        let b = q.claim_next().unwrap();
+        let c = q.claim_next().unwrap();
+        assert_ne!(a, b);
+        assert_ne!(b, c);
+        assert!(q.claim_next().is_none(), "queue should be exhausted");
+    }
+
+    #[test]
+    fn release_returns_piece_to_pool_for_work_stealing() {
+        let q = PieceQueue::new(PIECE_SIZE * 2);
+        let a = q.claim_next().unwrap();
+        let b = q.claim_next().unwrap();
+        assert!(q.claim_next().is_none());
+        q.release(a);
+        // Another worker can pick up the released piece (the essence of stealing)
+        let stolen = q.claim_next().unwrap();
+        assert_eq!(stolen, a);
+        // b is still in flight
+        q.complete(b);
+        q.complete(a);
+        assert!(q.claim_next().is_none());
+    }
+
+    #[test]
+    fn complete_prevents_reclaim() {
+        let q = PieceQueue::new(PIECE_SIZE * 2);
+        let a = q.claim_next().unwrap();
+        q.complete(a);
+        let b = q.claim_next().unwrap();
+        assert_ne!(b, a, "completed piece must not be reclaimed");
+        q.complete(b);
+        assert!(q.claim_next().is_none());
+    }
+
+    #[test]
+    fn piece_meta_round_trip_is_sparse() {
+        let dir = std::env::temp_dir().join(format!("risuko_piecemeta_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let part = dir.join("file.bin.part");
+        std::fs::write(&part, vec![0u8; (PIECE_SIZE * 3) as usize]).unwrap();
+
+        let q = Arc::new(PieceQueue::new(PIECE_SIZE * 3));
+        // Mark piece 0 fully done, piece 1 half done, piece 2 untouched.
+        q.pieces[0]
+            .completed
+            .store(PIECE_SIZE as u32, Ordering::Relaxed);
+        q.pieces[0].state.store(PIECE_DONE, Ordering::Release);
+        q.pieces[1]
+            .completed
+            .store(PIECE_SIZE as u32 / 2, Ordering::Relaxed);
+
+        let etag = Some("\"abc\"".to_string());
+        save_piece_meta(&part, &q, PIECE_SIZE * 3, &etag);
+
+        let loaded = load_piece_meta(&part, PIECE_SIZE * 3, &etag).expect("meta");
+        assert_eq!(loaded.version, META_VERSION);
+        assert_eq!(loaded.content_length, PIECE_SIZE * 3);
+        // Sparse: only pieces with c > 0 are recorded.
+        assert_eq!(loaded.pieces.len(), 2);
+        let p0 = loaded.pieces.iter().find(|p| p.i == 0).unwrap();
+        let p1 = loaded.pieces.iter().find(|p| p.i == 1).unwrap();
+        assert_eq!(p0.c, PIECE_SIZE as u32);
+        assert_eq!(p1.c, PIECE_SIZE as u32 / 2);
+
+        // ETag mismatch invalidates resume.
+        let other = Some("\"xyz\"".to_string());
+        assert!(load_piece_meta(&part, PIECE_SIZE * 3, &other).is_none());
+
+        // Cleanup
+        delete_chunk_meta(&part);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

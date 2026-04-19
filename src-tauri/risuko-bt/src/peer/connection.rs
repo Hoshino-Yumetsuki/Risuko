@@ -209,23 +209,39 @@ async fn drive_handshake(
         EncryptionPolicy::PlaintextOnly => connect_plaintext(stream, addr, &spawn).await,
         EncryptionPolicy::RequireEncryption => connect_mse(stream, addr, &spawn).await,
         EncryptionPolicy::Prefer => {
-            // Try MSE first — it's more successful on ISPs that block BT
-            // If the handshake fails for any reason, we do not get a second
-            // shot at the same TCP stream, so we open a fresh one for the
-            // plaintext fallback
-            match connect_mse(stream, addr, &spawn).await {
-                Ok(v) => Ok(v),
-                Err(e) => {
-                    log::debug!("mse handshake to {addr} failed: {e}; trying plaintext");
-                    let stream = timeout(spawn.connect_timeout, TcpStream::connect(spawn.addr))
-                        .await
-                        .map_err(|_| {
-                            std::io::Error::new(std::io::ErrorKind::TimedOut, "connect timeout")
-                        })??;
-                    stream.set_nodelay(true).ok();
-                    connect_plaintext(stream, addr, &spawn).await
-                }
-            }
+            // Try plaintext first: it's a single 68-byte exchange and
+            // succeeds for the overwhelming majority of public-tracker
+            // peers. MSE-first wasted a full connect_timeout on every
+            // plaintext-only peer because the failed handshake leaves us
+            // unable to reuse the socket; we'd have to redial for the
+            // fallback. With plaintext-first we only redial for the rare
+            // ISP-blocked case.
+            //
+            // Bound the plaintext attempt by connect_timeout so a peer that
+            // accepts the TCP connect but never sends the handshake cannot
+            // tie us up for the much longer read_timeout before we fall
+            // back to MSE.
+            let plaintext = timeout(
+                spawn.connect_timeout,
+                connect_plaintext(stream, addr, &spawn),
+            )
+            .await;
+            let fallback_err: std::io::Error = match plaintext {
+                Ok(Ok(v)) => return Ok(v),
+                Ok(Err(e)) => e,
+                Err(_) => std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "plaintext handshake timeout",
+                ),
+            };
+            log::debug!("plaintext handshake to {addr} failed: {fallback_err}; trying mse");
+            let stream = timeout(spawn.connect_timeout, TcpStream::connect(spawn.addr))
+                .await
+                .map_err(|_| {
+                    std::io::Error::new(std::io::ErrorKind::TimedOut, "connect timeout")
+                })??;
+            stream.set_nodelay(true).ok();
+            connect_mse(stream, addr, &spawn).await
         }
     }
 }
@@ -812,9 +828,12 @@ async fn accept_mse(
                 let mut buf = [0u8; HANDSHAKE_LEN];
                 timeout(read_timeout, r.read_exact(&mut buf))
                     .await
-                    .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "mse deferred hs timeout"))??;
-                let hs = Handshake::parse(&buf)
-                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, format!("{e}")))?;
+                    .map_err(|_| {
+                        std::io::Error::new(std::io::ErrorKind::TimedOut, "mse deferred hs timeout")
+                    })??;
+                let hs = Handshake::parse(&buf).map_err(|e| {
+                    std::io::Error::new(std::io::ErrorKind::InvalidData, format!("{e}"))
+                })?;
                 if hs.info_hash != skey {
                     return Err(std::io::Error::new(
                         std::io::ErrorKind::InvalidData,
@@ -1095,8 +1114,11 @@ impl AsyncWrite for Rc4WriteHalf {
 }
 
 async fn reader_task(mut reader: Box<dyn AsyncRead + Unpin + Send>, tx: mpsc::Sender<PeerEvent>) {
-    let mut buf = BytesMut::with_capacity(64 * 1024);
-    let mut tmp = [0u8; 16 * 1024];
+    // Larger temp buffer => fewer read syscalls per Piece message. Each
+    // Piece reply is up to 16 KiB of payload + 13 B header; 64 KiB lets us
+    // ingest several pipelined replies per syscall
+    let mut buf = BytesMut::with_capacity(256 * 1024);
+    let mut tmp = vec![0u8; 64 * 1024];
     loop {
         // Try to decode any complete frame already buffered
         loop {
@@ -1143,18 +1165,41 @@ async fn writer_task(
     mut writer: Box<dyn AsyncWrite + Unpin + Send>,
     mut rx: mpsc::Receiver<PeerCommand>,
 ) {
-    while let Some(cmd) = rx.recv().await {
-        match cmd {
-            PeerCommand::Send(msg) => {
-                let bytes = MessageEncoder::encode(&msg);
-                if writer.write_all(&bytes).await.is_err() {
-                    return;
+    // Coalesce all commands currently queued into a single write_all so a
+    // burst of 128 pipelined Request frames becomes one syscall instead of
+    // 128. Per-message write_all + write_all overhead was a major
+    // bottleneck on high-fan-in torrents
+    let mut batch = BytesMut::with_capacity(64 * 1024);
+    while let Some(first) = rx.recv().await {
+        batch.clear();
+        let mut disconnect = false;
+        match first {
+            PeerCommand::Send(msg) => batch.extend_from_slice(&MessageEncoder::encode(&msg)),
+            PeerCommand::Disconnect => disconnect = true,
+        }
+        // Drain anything else already queued without awaiting
+        while !disconnect {
+            match rx.try_recv() {
+                Ok(PeerCommand::Send(msg)) => {
+                    batch.extend_from_slice(&MessageEncoder::encode(&msg));
+                    // Cap batch size so a flood doesn't grow unbounded
+                    if batch.len() >= 256 * 1024 {
+                        break;
+                    }
                 }
+                Ok(PeerCommand::Disconnect) => {
+                    disconnect = true;
+                    break;
+                }
+                Err(_) => break,
             }
-            PeerCommand::Disconnect => {
-                let _ = writer.shutdown().await;
-                return;
-            }
+        }
+        if !batch.is_empty() && writer.write_all(&batch).await.is_err() {
+            return;
+        }
+        if disconnect {
+            let _ = writer.shutdown().await;
+            return;
         }
     }
     let _ = writer.shutdown().await;

@@ -16,6 +16,10 @@ pub enum ChunkState {
 #[derive(Debug, Clone, Copy)]
 pub struct ChunkRequest {
     pub info: ChunkInfo,
+    /// State that was overwritten when this request was issued. Used by
+    /// `unrequest_chunk` to roll back without losing another peer's
+    /// outstanding `Requested` slot in endgame mode
+    pub prior_state: ChunkState,
 }
 
 #[derive(Debug)]
@@ -78,11 +82,12 @@ impl ChunkTracker {
             .nth(i)
             .expect("chunk index within piece");
         let states = self.pieces.get_mut(&piece.get()).unwrap();
+        let prior_state = states[i];
         states[i] = ChunkState::Requested {
             peer,
             since: Instant::now(),
         };
-        Some(ChunkRequest { info })
+        Some(ChunkRequest { info, prior_state })
     }
 
     /// Mark a received chunk. Returns true if the full piece is now complete
@@ -126,6 +131,44 @@ impl ChunkTracker {
                 *s = ChunkState::Missing;
             }
         }
+    }
+
+    /// Roll back a single chunk request (e.g. peer's send channel was full).
+    /// Restores the state that `next_chunk` overwrote, so an in-flight
+    /// `Requested` slot owned by a different peer (endgame duplication) is
+    /// preserved. Without this, a try_send failure would either strand the
+    /// chunk in `Requested` forever or wipe another peer's outstanding
+    /// request
+    pub fn unrequest_chunk(
+        &mut self,
+        piece: ValidPieceIndex,
+        chunk_index: u32,
+        prior_state: ChunkState,
+    ) {
+        if let Some(states) = self.pieces.get_mut(&piece.get()) {
+            if let Some(s) = states.get_mut(chunk_index as usize) {
+                if matches!(s, ChunkState::Requested { .. }) {
+                    *s = prior_state;
+                }
+            }
+        }
+    }
+
+    /// Number of chunks that are not yet `Received` across pieces we've
+    /// touched. Used to decide whether to enable endgame mode (where
+    /// outstanding chunks are duplicated to multiple peers to drain the
+    /// last few stragglers). Cheap because we only look at pieces with at
+    /// least one chunk requested
+    pub fn pending_chunks(&self) -> usize {
+        self.pieces
+            .values()
+            .map(|states| {
+                states
+                    .iter()
+                    .filter(|s| !matches!(s, ChunkState::Received))
+                    .count()
+            })
+            .sum()
     }
 
     fn states_for(&mut self, piece: ValidPieceIndex) -> &mut Vec<ChunkState> {

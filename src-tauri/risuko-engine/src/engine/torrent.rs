@@ -283,7 +283,12 @@ impl TorrentEngine {
         );
         let resolved = tokio::time::timeout(
             Duration::from_secs(timeout_secs),
-            bt::magnet::resolve(magnet_uri, &trackers, Duration::from_secs(timeout_secs), enc),
+            bt::magnet::resolve(
+                magnet_uri,
+                &trackers,
+                Duration::from_secs(timeout_secs),
+                enc,
+            ),
         )
         .await
         .map_err(|_| "Timed out resolving magnet metadata".to_string())?
