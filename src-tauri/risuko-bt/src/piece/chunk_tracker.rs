@@ -2,9 +2,22 @@
 //! coordinates endgame (duplicate requests to multiple peers)
 
 use std::collections::HashMap;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use super::super::core::lengths::{ChunkInfo, Lengths, ValidPieceIndex};
+
+/// A chunk that was reclaimed from a peer whose request exceeded the
+/// request timeout. Returned by [`ChunkTracker::reclaim_stale`] so the
+/// torrent loop can also clear the piece's in-flight flag (so it becomes
+/// requestable again) and optionally free the peer's outstanding slot
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReclaimedChunk {
+    pub piece: u32,
+    pub chunk_index: u32,
+    /// Byte offset within the piece; matches `Message::Request.begin`
+    pub begin: u32,
+    pub peer: u32,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChunkState {
@@ -171,6 +184,51 @@ impl ChunkTracker {
             .sum()
     }
 
+    /// Scan for chunks that have been in `Requested` state longer than
+    /// `timeout` and revert them to `Missing` so a different peer can
+    /// pick them up. Returns one entry per reclaimed chunk so the
+    /// torrent loop can clear the corresponding piece's in-flight flag
+    /// and free the slow peer's outstanding slot
+    ///
+    /// Without this, a peer that TCP-alive but stops delivering data
+    /// eventually hoards every piece it touches: every chunk sits in
+    /// `Requested { peer: A, .. }`, which makes `next_chunk` return
+    /// `None` for the piece, which makes `drive_peer` mark the piece
+    /// in-flight — and from then on `choose_requestable_piece` skips
+    /// it forever. That is the primary cause of download throughput
+    /// decaying over time even while peer count stays high
+    pub fn reclaim_stale(&mut self, timeout: Duration) -> Vec<ReclaimedChunk> {
+        let now = Instant::now();
+        let chunk_size = super::super::core::CHUNK_SIZE;
+        let mut out = Vec::new();
+        for (&piece_idx, states) in self.pieces.iter_mut() {
+            for (ci, s) in states.iter_mut().enumerate() {
+                if let ChunkState::Requested { peer, since } = *s {
+                    if now.duration_since(since) >= timeout {
+                        *s = ChunkState::Missing;
+                        out.push(ReclaimedChunk {
+                            piece: piece_idx,
+                            chunk_index: ci as u32,
+                            begin: (ci as u32) * chunk_size,
+                            peer,
+                        });
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// Drop all chunk state for a piece. Called once the piece is
+    /// verified and marked locally owned, because the dense state
+    /// vector is only useful while the piece is being fetched.
+    /// Prevents `self.pieces` from growing unbounded with completed
+    /// pieces whose entries would otherwise inflate `release_peer`
+    /// and `pending_chunks` into `O(total_pieces_ever_touched)`
+    pub fn forget_piece(&mut self, piece: ValidPieceIndex) {
+        self.pieces.remove(&piece.get());
+    }
+
     fn states_for(&mut self, piece: ValidPieceIndex) -> &mut Vec<ChunkState> {
         let lengths = &self.lengths;
         self.pieces.entry(piece.get()).or_insert_with(|| {
@@ -240,5 +298,39 @@ mod tests {
         t.release_peer(1);
         let again = t.next_chunk(p, 2).unwrap();
         assert_eq!(again.info.chunk_index, 0);
+    }
+
+    #[test]
+    fn reclaim_stale_reverts_to_missing() {
+        // Torrent with a 32 KiB piece => 2 chunks
+        let l = Lengths::new(32 * 1024, 32 * 1024).unwrap();
+        let mut t = ChunkTracker::new(l);
+        let p = l.validate_piece(0).unwrap();
+
+        let _r0 = t.next_chunk(p, 42).unwrap();
+        let _r1 = t.next_chunk(p, 42).unwrap();
+        // No staleness yet: nothing exceeds a 1 h threshold
+        assert!(t.reclaim_stale(Duration::from_secs(3600)).is_empty());
+
+        // Zero threshold reclaims everything outstanding
+        std::thread::sleep(Duration::from_millis(2));
+        let reclaimed = t.reclaim_stale(Duration::from_millis(1));
+        assert_eq!(reclaimed.len(), 2);
+        assert!(reclaimed.iter().all(|r| r.peer == 42 && r.piece == 0));
+
+        // After reclaim, another peer can grab the first chunk again
+        let fresh = t.next_chunk(p, 99).unwrap();
+        assert_eq!(fresh.info.chunk_index, 0);
+    }
+
+    #[test]
+    fn forget_piece_drops_state() {
+        let l = Lengths::new(64 * 1024, 32 * 1024).unwrap();
+        let mut t = ChunkTracker::new(l);
+        let p = l.validate_piece(0).unwrap();
+        let _ = t.next_chunk(p, 1);
+        assert_eq!(t.pending_chunks(), 2);
+        t.forget_piece(p);
+        assert_eq!(t.pending_chunks(), 0);
     }
 }
