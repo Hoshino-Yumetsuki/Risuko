@@ -351,15 +351,18 @@ async fn torrent_loop(
                         // can pipeline a different chunk. Without this,
                         // the slot stays consumed until the peer either
                         // delivers the (now reclaimed) chunk or trips
-                        // the 120 s read timeout
-                        if let Some(p) = peers.get_mut(&r.peer) {
-                            if let Some(pos) = p
-                                .outstanding
-                                .iter()
-                                .position(|&(pi, be, _)| pi == r.piece && be == r.begin)
-                            {
-                                p.outstanding.swap_remove(pos);
-                            }
+                        // the 120 s read timeout.
+                        //
+                        // Iterate every peer rather than only `r.peer`:
+                        // in endgame mode the same chunk can be
+                        // outstanding on multiple peers, but
+                        // `ReclaimedChunk::peer` only carries the most
+                        // recent `Requested { peer, .. }` writer.
+                        // Skipping the others would permanently pin
+                        // their request slots
+                        for p in peers.values_mut() {
+                            p.outstanding
+                                .retain(|&(pi, be, _)| !(pi == r.piece && be == r.begin));
                         }
                     }
                     // A piece whose chunk got reclaimed may have been
@@ -680,6 +683,17 @@ async fn process_peer_event(
                         return false;
                     }
                     peer.outstanding.swap_remove(req_idx);
+
+                    // Drop late duplicates whose piece was already
+                    // verified by another endgame peer. process_verify_result
+                    // calls forget_piece, so accepting this would re-create
+                    // a stale chunk-state vector via mark_received and
+                    // reallocate a fresh PieceAssembly buffer — both would
+                    // then leak until the torrent is dropped
+                    if piece_tracker.has_local(vpi) {
+                        kick = true;
+                        return kick;
+                    }
 
                     // Accumulate the chunk in an in-memory piece buffer
                     // instead of hitting disk per chunk. This is the key
