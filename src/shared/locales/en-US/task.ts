@@ -206,4 +206,18 @@ export default {
 	"credential-profile-name": "Profile Name",
 	"credential-profile-name-placeholder": "e.g. Work FTP, CDN Token",
 	"no-saved-credentials": "No saved credentials",
+	"batch-add-title": "Add tasks",
+	"batch-queue-empty":
+		"Paste links above or drop .torrent files here to build a queue.",
+	"batch-drop-hint": "Drop .torrent files here, or click to browse",
+	"batch-remove-item": "Remove",
+	"batch-item-magnet-resolving": "Resolving magnet…",
+	"batch-item-resolve-failed": "Failed to resolve",
+	"batch-submit": "Add {{count}}",
+	"batch-partial-success": "Added {{ok}}/{{total}} tasks",
+	"batch-all-failed": "Failed to add tasks",
+	"batch-all-success": "Added {{count}} tasks",
+	"batch-torrent-too-large": "Torrent is too large to preview",
+	"batch-uri-body":
+		"This URL will be downloaded with the shared options below.",
 };

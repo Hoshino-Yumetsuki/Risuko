@@ -4,11 +4,11 @@
       <mo-task-subnav :current="status" />
     </aside>
     <div class="content panel panel-layout panel-layout--v relative">
-      <header class="panel-header">
+      <mo-enter tag="header" preset="fadeInDown" class="panel-header">
         <h4 class="task-title hidden-xs-only">{{ title }}</h4>
         <mo-subnav-switcher :title="title" :subnavs="subnavs" class="hidden-sm-and-up" />
         <mo-task-actions />
-      </header>
+      </mo-enter>
       <div class="task-toolbar">
         <div class="task-toolbar-left">
           <div class="task-filter-input">
@@ -111,7 +111,7 @@ export default {
 	props: {
 		status: {
 			type: String,
-			default: "active",
+			default: "all",
 		},
 	},
 	computed: {

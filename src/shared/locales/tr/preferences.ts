@@ -1,7 +1,6 @@
 export default {
 	basic: "Temel",
 	advanced: "Gelişmiş",
-	lab: "Deneysel",
 	save: "Kaydet & Uygula",
 	"save-success-message": "Tercihleri başarıyla kaydedin",
 	"save-fail-message": "Tercihleri kaydetme başarısız oldu",
@@ -79,8 +78,6 @@ export default {
 	"factory-reset": "Fabrika ayarlarına dön",
 	"factory-reset-confirm":
 		"Fabrika ayarlarına geri dönmek istediğinize emin misiniz?",
-	"lab-warning":
-		"⚠️ Deneysel özellikleri etkinleştirmek uygulamanın çökmesine veya veri kaybına neden olabilir, kendiniz karar verin!",
 	"download-protocol": "Protokol",
 	"protocols-default-client":
 		"Aşağıdaki protokoller için varsayılan istemci olarak ayarla",

@@ -21,7 +21,7 @@
       <ui-tooltip class="item torrent-name" effect="dark" :content="name" placement="top">
         <span>{{ name }}</span>
       </ui-tooltip>
-      <span class="torrent-actions" :class="{ 'is-disabled': isBusy }" @click="handleTrashClick">
+      <span class="torrent-actions" :class="{ 'is-disabled': isBusy }" @click="handleTrashClick" v-if="!hideTrash">
         <Trash :size="14" />
       </span>
     </div>
@@ -220,6 +220,15 @@ export default {
 		Inbox,
 		Trash,
 	},
+	props: {
+		// Optional: when provided, this component is driven by props
+		// (used in batch queue). Otherwise it falls back to the
+		// addTaskTorrents store entry (legacy single-item dialog).
+		torrentPath: { type: String, default: "" },
+		torrentName: { type: String, default: "" },
+		hideEmptyDrop: { type: Boolean, default: false },
+		hideTrash: { type: Boolean, default: false },
+	},
 	data() {
 		return {
 			name: EMPTY_STRING,
@@ -244,9 +253,20 @@ export default {
 	},
 	computed: {
 		torrents() {
+			if (this.torrentPath) {
+				return [
+					{
+						name: this.torrentName || this.torrentPath,
+						path: this.torrentPath,
+					},
+				];
+			}
 			return useAppStore().addTaskTorrents;
 		},
 		isTorrentsEmpty() {
+			if (this.hideEmptyDrop && this.torrentPath) {
+				return false;
+			}
 			return this.torrents.length === 0;
 		},
 		previewTreeRows(): PreviewTreeRow[] {
@@ -1156,6 +1176,10 @@ export default {
 			this.handleChange(fileList);
 		},
 		handleChange(fileList) {
+			if (this.torrentPath) {
+				this.$emit("change-files", fileList);
+				return;
+			}
 			useAppStore().addTaskAddTorrents({ fileList });
 		},
 		handleSelectTorrentClick() {
@@ -1163,6 +1187,14 @@ export default {
 		},
 		handleTrashClick() {
 			if (this.isBusy) {
+				return;
+			}
+			if (this.hideTrash) {
+				return;
+			}
+			if (this.torrentPath) {
+				this.$emit("remove");
+				this.$emit("update:torrentPath", "");
 				return;
 			}
 			useAppStore().addTaskAddTorrents({ fileList: [] });

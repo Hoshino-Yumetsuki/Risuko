@@ -1,49 +1,61 @@
 <template>
   <nav class="subnav-inner">
-    <h3>{{ title }}</h3>
-    <ul>
-      <li
-        @click="() => nav('basic')"
-        :class="[current === 'basic' ? 'active' : '']"
-        style="--stagger-index: 0"
-      >
-        <i class="subnav-icon">
-          <SlidersHorizontal :size="20" />
-        </i>
-        <span>{{ $t('preferences.basic') }}</span>
-      </li>
-      <li
-        @click="() => nav('advanced')"
-        :class="[current === 'advanced' ? 'active' : '']"
-        style="--stagger-index: 1"
-      >
-        <i class="subnav-icon">
-          <Wrench :size="20" />
-        </i>
-        <span>{{ $t('preferences.advanced') }}</span>
-      </li>
-      <li
-        @click="() => nav('lab')"
-        :class="[current === 'lab' ? 'active' : '']"
-        style="--stagger-index: 2"
-      >
-        <i class="subnav-icon">
-          <FlaskConical :size="20" />
-        </i>
-        <span>{{ $t('preferences.lab') }}</span>
-      </li>
-    </ul>
+    <mo-enter tag="h3" preset="fadeInDown">{{ title }}</mo-enter>
+    <LayoutGroup id="preference-subnav">
+      <ul>
+        <mo-enter
+          tag="li"
+          preset="fadeInLeft"
+          :delay="0.09"
+          @click="() => nav('basic')"
+          :class="[current === 'basic' ? 'active' : '']"
+        >
+          <Motion
+            v-if="current === 'basic'"
+            layout-id="preference-subnav-pill"
+            class="subnav-active-bg"
+            :initial="false"
+            :transition="pillTransition"
+          />
+          <i class="subnav-icon">
+            <SlidersHorizontal :size="20" />
+          </i>
+          <span>{{ $t('preferences.basic') }}</span>
+        </mo-enter>
+        <mo-enter
+          tag="li"
+          preset="fadeInLeft"
+          :delay="0.13"
+          @click="() => nav('advanced')"
+          :class="[current === 'advanced' ? 'active' : '']"
+        >
+          <Motion
+            v-if="current === 'advanced'"
+            layout-id="preference-subnav-pill"
+            class="subnav-active-bg"
+            :initial="false"
+            :transition="pillTransition"
+          />
+          <i class="subnav-icon">
+            <Wrench :size="20" />
+          </i>
+          <span>{{ $t('preferences.advanced') }}</span>
+        </mo-enter>
+      </ul>
+    </LayoutGroup>
   </nav>
 </template>
 
 <script lang="ts">
 import logger from "@shared/utils/logger";
-import { FlaskConical, SlidersHorizontal, Wrench } from "lucide-vue-next";
+import { SlidersHorizontal, Wrench } from "lucide-vue-next";
+import { LayoutGroup, Motion } from "motion-v";
 
 export default {
 	name: "mo-preference-subnav",
 	components: {
-		FlaskConical,
+		LayoutGroup,
+		Motion,
 		SlidersHorizontal,
 		Wrench,
 	},
@@ -56,6 +68,9 @@ export default {
 	computed: {
 		title() {
 			return this.$t("subnav.preferences");
+		},
+		pillTransition() {
+			return { type: "spring", stiffness: 380, damping: 32 };
 		},
 	},
 	methods: {

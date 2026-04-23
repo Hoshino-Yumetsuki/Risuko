@@ -1,7 +1,6 @@
 export default {
 	basic: "Podstawowe",
 	advanced: "Zaawansowane",
-	lab: "Laboratorium",
 	save: "Zapisz i zastosuj",
 	"save-success-message": "Pomyślnie zapisano ustawienia",
 	"save-fail-message": "Nie udało się zapisać ustawień",
@@ -81,8 +80,6 @@ export default {
 	"factory-reset": "Przywróć domyślne ustawiania",
 	"factory-reset-confirm":
 		"Jesteś pewnien że chcesz przywrócić domyślne ustawienia",
-	"lab-warning":
-		"⚠️ Włączenie laboratorium może doprowadzić do błędów i utraty danych, włącz na własne ryzyko!",
 	"download-protocol": "Protokoły",
 	"protocols-default-client": "Ustaw jako domyślny klient dla tych protokołów",
 	"protocols-magnet": "Magnet [ magnet:// ]",

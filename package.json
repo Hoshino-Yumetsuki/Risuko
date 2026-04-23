@@ -1,6 +1,6 @@
 {
 	"name": "risuko",
-	"version": "0.1.9",
+	"version": "0.1.10",
 	"description": "A full-featured download manager",
 	"homepage": "https://risuko.vercel.app",
 	"author": {
@@ -38,6 +38,7 @@
 		"clsx": "^2.1.1",
 		"eventemitter3": "^5.0.4",
 		"lucide-vue-next": "^1.0.0",
+		"motion-v": "^2.2.1",
 		"reka-ui": "^2.9.6",
 		"tailwind-merge": "^3.5.0",
 		"tauri-plugin-nosleep-api": "^0.1.1",

@@ -14,16 +14,18 @@
       </template>
     </recycle-scroller>
     <mo-drag-select v-else class="task-list" attribute="attr" @change="handleDragSelectChange">
-      <div
-        v-for="item in paginatedTaskList"
+      <mo-enter
+        v-for="(item, index) in paginatedTaskList"
         :key="item._displayKey"
+        preset="fadeInUp"
+        :duration="0.4"
+        :delay="getStaggerDelay(index)"
         :attr="item.gid"
         :class="getItemClass(item)"
-        :style="{ '--stagger-index': paginatedTaskList.indexOf(item) }"
         @click="handleItemClick(item, $event)"
       >
         <mo-task-item :task="item" />
-      </div>
+      </mo-enter>
     </mo-drag-select>
     <footer class="task-pagination">
       <button
@@ -45,11 +47,11 @@
       </button>
     </footer>
   </div>
-  <div class="no-task" v-else>
+  <mo-enter v-else preset="fadeInUp" class="no-task">
     <div class="no-task-inner">
       {{ $t('task.no-task') }}
     </div>
-  </div>
+  </mo-enter>
 </template>
 
 <script lang="ts">
@@ -101,6 +103,10 @@ export default {
 		window.removeEventListener("keydown", this._onKeyDown);
 	},
 	methods: {
+		getStaggerDelay(index: number): number {
+			const MAX_DELAY = 0.6;
+			return Math.min((index + 1) * 0.03, MAX_DELAY);
+		},
 		onPrevPageClick() {
 			if (this.currentPage <= 1) {
 				return;

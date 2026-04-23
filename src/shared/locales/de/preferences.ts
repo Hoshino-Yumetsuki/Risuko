@@ -1,7 +1,6 @@
 export default {
 	basic: "Standard",
 	advanced: "Erweitert",
-	lab: "Experimentell",
 	save: "Speichern & übernehmen",
 	"save-success-message": "Einstellungen erfolgreich speichern",
 	"save-fail-message": "Speichern der Einstellungen fehlgeschlagen",
@@ -88,8 +87,6 @@ export default {
 	"factory-reset": "Werkseinstellungen",
 	"factory-reset-confirm":
 		"Sollen die Einstellungen auf die Werkseinstellungen unwiderruflich zurückgesetzt werden?",
-	"lab-warning":
-		"⚠️ Die Aktivierung von experimentellen Funktionen kann zu App-Abstürzen oder Datenverlust führen!",
 	"download-protocol": "Protokoll",
 	"protocols-default-client":
 		"Als Standardclient für die folgenden Protokolle festlegen",

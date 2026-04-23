@@ -6,16 +6,19 @@
     <template v-else>
       <div class="rss-item-list">
         <ul class="rss-items">
-          <li
+          <mo-enter
             v-for="(item, index) in items"
             :key="item.id"
+            tag="li"
+            preset="fadeInUp"
+            :duration="0.4"
+            :delay="itemDelay(index)"
             class="rss-item"
             :class="{
               'rss-item--read': item.is_read,
               'rss-item--downloaded': item.is_downloaded,
               'rss-item--selected': isSelected(item.id),
             }"
-            :style="{ '--stagger-index': index }"
           >
             <div class="rss-item-header">
               <Checkbox
@@ -72,7 +75,7 @@
                 </Button>
               </div>
             </div>
-          </li>
+          </mo-enter>
         </ul>
       </div>
       <footer class="task-pagination">
@@ -373,6 +376,10 @@ export default {
 		},
 	},
 	methods: {
+		itemDelay(index: number): number {
+			const MAX_DELAY = 0.6;
+			return Math.min((index + 1) * 0.03, MAX_DELAY);
+		},
 		isSelected(itemId: string): boolean {
 			return this.selectedIdSet.has(itemId);
 		},
@@ -492,8 +499,6 @@ export default {
 
 .rss-item {
   border-bottom: 1px solid var(--mo-task-item-border-color);
-  animation: task-item-enter 0.4s var(--ease-decelerate) backwards;
-  animation-delay: calc((var(--stagger-index, 0) + 1) * 0.03s);
 }
 
 .rss-item--read {

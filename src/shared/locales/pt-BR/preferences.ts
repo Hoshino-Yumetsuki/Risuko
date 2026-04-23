@@ -1,7 +1,6 @@
 export default {
 	basic: "Básico",
 	advanced: "Avançado",
-	lab: "Lab",
 	save: "Salvar & Aplicar",
 	"save-success-message": "Salvar preferências com sucesso",
 	"save-fail-message": "Salvar preferências falhadas",
@@ -83,8 +82,6 @@ export default {
 	"factory-reset": "Configurações de Fábrica",
 	"factory-reset-confirm":
 		"Você tem certeza de que deseja resetar às configurações de fábrica?",
-	"lab-warning":
-		"⚠️ Habilitar os recursos de lab pode causar perda de dados e fechar o app inesperadamete. Use por sua conta e risco!",
 	"download-protocol": "Protocolo",
 	"protocols-default-client":
 		"Definir como cliente padrão para os seguintes protocolos",

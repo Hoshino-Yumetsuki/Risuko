@@ -1,7 +1,6 @@
 export default {
 	basic: "基本設定",
 	advanced: "進階設定",
-	lab: "實驗性功能",
 	save: "儲存並套用",
 	"save-success-message": "偏好設定儲存成功",
 	"save-fail-message": "偏好設定儲存失敗",
@@ -121,7 +120,6 @@ export default {
 	"session-reset-confirm": "您確定要重設下載工作階段嗎？",
 	"factory-reset": "還原出廠預設值",
 	"factory-reset-confirm": "您確定要還原為出廠預設值嗎？",
-	"lab-warning": "⚠️開啟實驗性功能可能會造成程式當機或資料遺失，請自行斟酌！",
 	"download-protocol": "下載協定",
 	"protocols-default-client": "設定為以下通訊協定的預設客戶端",
 	"protocols-magnet": "磁力連結 [ magnet:// ]",

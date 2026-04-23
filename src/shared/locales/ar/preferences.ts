@@ -1,7 +1,6 @@
 export default {
 	basic: "أساسية",
 	advanced: "متقدمة",
-	lab: "المختبر",
 	save: "حفظ وتطبيق",
 	"save-success-message": "تم حفظ التفضيلات بنجاح",
 	"save-fail-message": "فشل في حفظ التفضيلات",
@@ -78,8 +77,6 @@ export default {
 	"session-reset-confirm": "هل أنت متأكد أنك تريد إعادة تحميله؟",
 	"factory-reset": "العودة إلى الإعدادات الافتراضية",
 	"factory-reset-confirm": "هل أنت متأكد من العودة إلى الإعدادات الافتراضية؟",
-	"lab-warning":
-		"⚠️ قد يؤدي تمكين إضافات المختبر إلى تعطل التطبيق أو فقدان البيانات، لذا قرر على مسؤوليتك الخاصة!",
 	"download-protocol": "البروتوكولات",
 	"protocols-default-client": "تعيين كعميل افتراضي للبروتوكولات التالية",
 	"protocols-magnet": "المغناطيس [ magnet:// ]",

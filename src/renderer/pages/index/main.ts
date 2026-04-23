@@ -6,6 +6,7 @@ import { createApp } from "vue";
 import VueVirtualScroller from "vue-virtual-scroller";
 import { commands } from "@/components/CommandManager/instance";
 import { getLocaleManager } from "@/components/Locale";
+import MoEnter from "@/components/Motion/MoEnter.vue";
 import Msg from "@/components/Msg";
 import UiCol from "@/components/ui/Col.vue";
 import UiButton from "@/components/ui/compat/UiButton.vue";
@@ -146,6 +147,7 @@ async function init(config: AppConfig) {
 	app.component("ui-checkbox", UiCheckbox);
 	app.component("ui-switch", UiSwitch);
 	app.component("ui-button", UiButton);
+	app.component("mo-enter", MoEnter);
 	app.config.globalProperties.$http = axios;
 	app.config.globalProperties.$t = (
 		key: string,

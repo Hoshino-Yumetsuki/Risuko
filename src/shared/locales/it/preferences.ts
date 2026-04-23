@@ -1,7 +1,6 @@
 export default {
 	basic: "Base",
 	advanced: "Avanzate",
-	lab: "Sperimentali",
 	save: "Salva e applica",
 	"save-success-message": "Preferenze salvate con successo",
 	"save-fail-message": "Preferenze non salvate",
@@ -86,8 +85,6 @@ export default {
 	"factory-reset": "Reset di fabbrica",
 	"factory-reset-confirm":
 		"Sei sicuro di voler riportare alle impostazioni di fabbrica l'app?",
-	"lab-warning":
-		"⚠️ Ablilitare le funzioni sperimentali potrebbe risultare in un crash o una perdita di dati, decidi a tuo rischio e pericolo!",
 	"download-protocol": "Protocolli",
 	"protocols-default-client": "Imposta di Default i seguenti protocolli",
 	"protocols-magnet": "Magnet [ magnet:// ]",

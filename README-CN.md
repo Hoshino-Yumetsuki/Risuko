@@ -2,7 +2,7 @@
 
 <p>
   <a href="https://risuko.vercel.app">
-    <img src="./static/512x512.png" width="256" alt="Risuko App Icon" />
+    <img src="./static/logo.svg" width="256" alt="Risuko App Icon" />
   </a>
 </p>
 

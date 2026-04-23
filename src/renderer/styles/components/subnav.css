@@ -16,7 +16,6 @@
 		line-height: 24px;
 		margin: 0 0 24px;
 		letter-spacing: -0.01em;
-		animation: fade-in-down 0.4s var(--ease-decelerate);
 	}
 	.subnav-inner ul {
 		list-style: none;
@@ -26,6 +25,7 @@
 	}
 	.subnav-inner ul li {
 		position: relative;
+		isolation: isolate;
 		margin-bottom: 4px;
 		padding: 10px 14px;
 		display: flex;
@@ -37,8 +37,21 @@
 			background-color 0.3s cubic-bezier(0.25, 0.1, 0.25, 1),
 			transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1),
 			box-shadow 0.3s cubic-bezier(0.25, 0.1, 0.25, 1);
-		animation: subnav-item-enter 0.4s var(--ease-decelerate) backwards;
-		animation-delay: calc(0.09s + var(--stagger-index, 0) * 0.04s);
+	}
+	.subnav-active-bg {
+		position: absolute;
+		inset: 0;
+		background-color: var(--mo-subnav-active-bg);
+		box-shadow: var(--mo-subnav-active-shadow);
+		border-radius: calc(var(--radius) - 2px);
+		z-index: 0;
+		pointer-events: none;
+	}
+	.subnav-inner ul li > .subnav-icon,
+	.subnav-inner ul li > span,
+	.subnav-inner ul li > .subnav-badge {
+		position: relative;
+		z-index: 1;
 	}
 	.subnav-inner ul li i,
 	.subnav-inner ul li span {
@@ -66,17 +79,6 @@
 	.subnav-inner ul li.active span,
 	.subnav-inner ul li.active svg {
 		color: var(--mo-subnav-active-text-color);
-	}
-	.subnav-inner ul li.active::before {
-		content: "";
-		position: absolute;
-		left: 0;
-		top: 50%;
-		transform: translateY(-50%);
-		width: 3px;
-		height: 16px;
-		background: var(--color-primary);
-		border-radius: calc(var(--radius) - 2px);
 	}
 	.subnav-inner ul li:active {
 		transform: translateX(2px) scale(0.98);

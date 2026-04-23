@@ -1,7 +1,6 @@
 export default {
 	basic: "Alap",
 	advanced: "Haladó",
-	lab: "Lab",
 	save: "Mentés és alkalmazás",
 	"save-success-message": "Mentés sikeres volt",
 	"save-fail-message": "Mentés sikertelen volt",
@@ -78,8 +77,6 @@ export default {
 	"download-session-path": "Letöltés folyamat helye",
 	"factory-reset": "Gyári viszaálitas",
 	"factory-reset-confirm": "Biztos vézel gyári viszaálitas?",
-	"lab-warning":
-		"⚠️ Ha engedélyezed a feljesztésben lévő funkciokat akkor lehetséges a adat sérülés",
 	"download-protocol": "Protokol",
 	"protocols-default-client": "Alap kliens Protokol",
 	"protocols-magnet": "Magnet [ magnet:// ]",

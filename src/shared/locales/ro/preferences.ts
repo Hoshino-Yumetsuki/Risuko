@@ -1,7 +1,6 @@
 export default {
 	basic: "De bază",
 	advanced: "Avansate",
-	lab: "Laborator",
 	save: "Salvează şi Aplică",
 	"save-success-message": "Setările au fost salvate cu succes",
 	"save-fail-message": "Nu s-au putut salva setările",
@@ -82,8 +81,6 @@ export default {
 	"download-session-path": "Calea sesiunii de download",
 	"factory-reset": "Resetare la setări din fabrică",
 	"factory-reset-confirm": "Sigur doriți să reveniți la setările din fabrică?",
-	"lab-warning":
-		"⚠️ Activarea funcțiilor de laborator poate duce la blocarea aplicației sau pierderea datelor, contiunați pe propriul risc!",
 	"download-protocol": "Protocoale",
 	"protocols-default-client":
 		"Setați client implicit pentru următoarele protocoale",

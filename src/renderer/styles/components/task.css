@@ -12,10 +12,6 @@
 		box-sizing: border-box;
 		overflow-y: auto;
 	}
-	.task-list > div {
-		animation: task-item-enter 0.4s var(--ease-decelerate) backwards;
-		animation-delay: calc((var(--stagger-index, 0) + 1) * 0.03s);
-	}
 	.task-list-virtual {
 		flex: 1;
 		min-height: 0;
@@ -78,7 +74,6 @@
 		font-size: 14px;
 		color: var(--mo-no-task-color);
 		user-select: none;
-		animation: fade-in-up 0.5s var(--ease-decelerate);
 	}
 	.no-task-inner {
 		width: 100%;

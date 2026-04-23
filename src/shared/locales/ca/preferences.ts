@@ -1,7 +1,6 @@
 export default {
 	basic: "Bàsic",
 	advanced: "Avançat",
-	lab: "Lab",
 	save: "Guardar i aplicar",
 	"save-success-message": "Preferències guardades amb èxit",
 	"save-fail-message": "Hi va haver un error al guardar les teves preferències",
@@ -83,8 +82,6 @@ export default {
 	"download-session-path": "Ruta de descàrrega de la sessió",
 	"factory-reset": "Reseteig de fàbrica",
 	"factory-reset-confirm": "Estàs segur que vols resetejar de fàbrica?",
-	"lab-warning":
-		'⚠️ Activar les característiques "Lab" pot resultar en errors i pèrdua de dades!',
 	"download-protocol": "Protocols",
 	"protocols-default-client":
 		"Establir com client per defecte dels següents protocols",

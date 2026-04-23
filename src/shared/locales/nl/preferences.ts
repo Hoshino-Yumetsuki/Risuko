@@ -1,7 +1,6 @@
 export default {
 	basic: "Basis",
 	advanced: "Geavanceerd",
-	lab: "Experimenteel",
 	save: "Opslaan & Toepassen",
 	"save-success-message": "Instellingen succesvol opgeslagen",
 	"save-fail-message": "Instellingen opslaan mislukt",
@@ -83,8 +82,6 @@ export default {
 	"factory-reset": "Fabrieksinstellingen",
 	"factory-reset-confirm":
 		"Weet u zeker dat u terug wilt gaan naar fabrieksinstellingen?",
-	"lab-warning":
-		"⚠️ Het activeren van experimentele functies kan zorgen voor onstabiliteit of dataverlies. Kies op eigen risico!",
 	"download-protocol": "Protocollen",
 	"protocols-default-client":
 		"Als Standardclient voor de volgende protocollen instellen",

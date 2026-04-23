@@ -538,13 +538,7 @@ pub fn get_engine_status(state: tauri::State<'_, crate::state::AppState>) -> Res
     Ok(*running)
 }
 
-#[tauri::command]
-pub async fn add_torrent_by_path(
-    _handle: AppHandle,
-    _state: tauri::State<'_, crate::state::AppState>,
-    path: String,
-    options: Option<Value>,
-) -> Result<String, String> {
+async fn add_torrent_by_path_inner(path: &str, options: Option<Value>) -> Result<String, String> {
     let path = path.trim();
     if path.is_empty() {
         return Err("task.new-task-torrent-required".to_string());
@@ -605,6 +599,68 @@ pub async fn add_torrent_by_path(
     let manager = engine::get_manager().await.ok_or("Engine not running")?;
 
     manager.add_torrent_task(bytes, options).await
+}
+
+#[tauri::command]
+pub async fn add_torrent_by_path(
+    _handle: AppHandle,
+    _state: tauri::State<'_, crate::state::AppState>,
+    path: String,
+    options: Option<Value>,
+) -> Result<String, String> {
+    add_torrent_by_path_inner(&path, options).await
+}
+
+#[derive(Serialize)]
+pub struct BatchAddResult {
+    pub path: String,
+    pub gid: Option<String>,
+    pub error: Option<String>,
+}
+
+#[tauri::command]
+pub async fn add_torrents_by_paths(
+    _handle: AppHandle,
+    _state: tauri::State<'_, crate::state::AppState>,
+    paths: Vec<String>,
+    options: Option<Value>,
+) -> Result<Vec<BatchAddResult>, String> {
+    if paths.is_empty() {
+        return Err("task.new-task-torrent-required".to_string());
+    }
+
+    // When adding multiple torrents, strip the per-task `out` filename so each
+    // torrent doesn't end up writing to the same .part file. Per-torrent
+    // filenames are inferred individually inside add_torrent_by_path_inner
+    let per_call_options: Option<Value> = if paths.len() > 1 {
+        match options.as_ref() {
+            Some(Value::Object(map)) => {
+                let mut stripped = map.clone();
+                stripped.remove("out");
+                Some(Value::Object(stripped))
+            }
+            other => other.cloned(),
+        }
+    } else {
+        options.clone()
+    };
+
+    let mut results = Vec::with_capacity(paths.len());
+    for path in paths.iter() {
+        match add_torrent_by_path_inner(path, per_call_options.clone()).await {
+            Ok(gid) => results.push(BatchAddResult {
+                path: path.clone(),
+                gid: Some(gid),
+                error: None,
+            }),
+            Err(err) => results.push(BatchAddResult {
+                path: path.clone(),
+                gid: None,
+                error: Some(err),
+            }),
+        }
+    }
+    Ok(results)
 }
 
 #[tauri::command]

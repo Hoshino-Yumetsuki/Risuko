@@ -1,7 +1,6 @@
 export default {
 	basic: "Básico",
 	advanced: "Avanzado",
-	lab: "Lab",
 	save: "Guardar y Aplicar",
 	"save-success-message": "Preferencias guardadas exitosamente",
 	"save-fail-message": "Hubo un error al guardar tus preferencias",
@@ -83,8 +82,6 @@ export default {
 	"download-session-path": "Ruta de descarga de la sesión",
 	"factory-reset": "Restauración de fábrica",
 	"factory-reset-confirm": "¿Estás seguro que quieres restaurar de fábrica?",
-	"lab-warning":
-		'¡Habilitar las característticas "Lab" puede resultar en errores y pérdida de datos!',
 	"download-protocol": "Protocolos",
 	"protocols-default-client":
 		"Establecer como cliente por defecto de los siguientes protocolos",

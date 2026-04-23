@@ -5,7 +5,6 @@ import {
 	DOCUMENT_SUFFIXES,
 	ENGINE_RPC_HOST,
 	IMAGE_SUFFIXES,
-	RESOURCE_TAGS,
 	SUB_SUFFIXES,
 	SUPPORT_RTL_LOCALES,
 	TASK_STATUS,
@@ -420,82 +419,6 @@ export const splitTaskLinks = (links = "") => {
 	return compact(splitTextRows(links)).map(decodeThunderLink);
 };
 
-interface Ed2kFileLink {
-	fileName: string;
-	fileSize: number;
-	fileHash: string;
-	sources: Array<{ ip: string; port: number }>;
-	aichHash: string;
-}
-
-export const isEd2kLink = (uri: string): boolean => {
-	return uri.trim().toLowerCase().startsWith("ed2k://");
-};
-
-/**
- * Parse an ed2k file link into structured data.
- * Format: ed2k://|file|<name>|<size>|<hash>|/  (with optional |h=<AICH>| and |sources,...|)
- */
-export const parseEd2kLink = (url: string): Ed2kFileLink | null => {
-	const trimmed = (url || "").trim();
-	if (!isEd2kLink(trimmed)) {
-		return null;
-	}
-
-	// Remove "ed2k://|file|" prefix and trailing "|/"
-	const body = trimmed
-		.replace(/^ed2k:\/\/\|file\|/i, "")
-		.replace(/\|\/\s*$/, "");
-	if (!body) {
-		return null;
-	}
-
-	const parts = body.split("|");
-	if (parts.length < 3) {
-		return null;
-	}
-
-	const fileName = decodeURIComponent(parts[0] || "").replace(/_/g, " ");
-	const fileSize = parseInt(parts[1], 10);
-	const fileHash = (parts[2] || "").toLowerCase();
-
-	if (!fileName || !Number.isFinite(fileSize) || fileSize <= 0) {
-		return null;
-	}
-
-	if (!/^[0-9a-f]{32}$/.test(fileHash)) {
-		return null;
-	}
-
-	const sources: Array<{ ip: string; port: number }> = [];
-	let aichHash = "";
-
-	// Parse optional trailing segments
-	for (let i = 3; i < parts.length; i++) {
-		const seg = parts[i];
-		if (seg.startsWith("h=")) {
-			aichHash = seg.slice(2);
-		} else if (seg.startsWith("sources,")) {
-			const sourceEntries = seg.slice("sources,".length).split(",");
-			for (const entry of sourceEntries) {
-				const [ip, portStr] = entry.split(":");
-				const port = parseInt(portStr, 10);
-				if (ip && Number.isFinite(port) && port > 0 && port <= 65535) {
-					sources.push({ ip, port });
-				}
-			}
-		}
-	}
-
-	return { fileName, fileSize, fileHash, sources, aichHash };
-};
-
-export const isM3u8Link = (uri: string): boolean => {
-	const trimmed = uri.trim().toLowerCase();
-	const path = trimmed.split("?")[0].split("#")[0];
-	return path.endsWith(".m3u8") || path.endsWith(".m3u");
-};
-
 const isFtpLink = (uri: string): boolean => {
 	return uri.trim().toLowerCase().startsWith("ftp://");
 };
@@ -510,12 +433,6 @@ export const isSftpLink = (uri: string): boolean => {
 
 export const isFtpFamily = (uri: string): boolean => {
 	return isFtpLink(uri) || isFtpsLink(uri) || isSftpLink(uri);
-};
-
-export const detectResource = (content) => {
-	return RESOURCE_TAGS.some((type) => {
-		return content.includes(type);
-	});
 };
 
 export const getLangDirection = (locale = "en-US") => {

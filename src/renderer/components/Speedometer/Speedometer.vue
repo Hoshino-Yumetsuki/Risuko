@@ -8,7 +8,7 @@
         <em>{{ engineMode }}</em>
       </div>
       <Transition name="speedometer-value" mode="out-in">
-        <div class="value" key="active">
+        <div :key="`${stat.uploadSpeed}|${stat.downloadSpeed}`" class="value">
           <em>
             <CloudUpload :size="14" />
             {{ formatBytes(stat.uploadSpeed) }}/s

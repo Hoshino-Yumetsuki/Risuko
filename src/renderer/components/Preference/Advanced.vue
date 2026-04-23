@@ -1,9 +1,9 @@
 <template>
   <div class="content panel panel-layout panel-layout--v">
-    <header class="panel-header">
+    <mo-enter tag="header" preset="fadeInDown" class="panel-header">
       <h4 class="hidden-xs-only">{{ title }}</h4>
       <mo-subnav-switcher :title="title" :subnavs="subnavs" class="hidden-sm-and-up" />
-    </header>
+    </mo-enter>
     <main class="panel-content">
       <form class="form-preference" ref="advancedForm" @submit.prevent>
         <!-- Auto Update Section -->
@@ -966,11 +966,6 @@ export default {
 					key: "advanced",
 					title: this.$t("preferences.advanced"),
 					route: "/preference/advanced",
-				},
-				{
-					key: "lab",
-					title: this.$t("preferences.lab"),
-					route: "/preference/lab",
 				},
 			];
 		},
