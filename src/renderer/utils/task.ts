@@ -101,7 +101,7 @@ const buildHeader = (form: TaskForm) => {
 	return result;
 };
 
-const buildOption = (type: string, form: TaskForm) => {
+export const buildOption = (type: string, form: TaskForm) => {
 	const { allProxy, dir, out, referer, selectFile, split, userAgent } = form;
 	const result: Record<string, unknown> = {};
 
@@ -223,7 +223,7 @@ export const buildTorrentPayload = (form: TaskForm) => {
 /**
  * Infer output filename from a URI via the Rust backend.
  */
-export async function inferOutFromUri(uri: string): Promise<string> {
+async function inferOutFromUri(uri: string): Promise<string> {
 	const raw = (uri || "").trim();
 	if (!raw) {
 		return "";
@@ -275,19 +275,6 @@ export function extractProtocolFromUri(uri: string): string | undefined {
 	return "http";
 }
 
-export function extractCredentialFromForm(
-	form: TaskForm,
-): Partial<SavedCredential> {
-	const result: Record<string, string> = {};
-	for (const key of AUTH_FIELDS) {
-		const val = form[key];
-		if (typeof val === "string" && val.trim()) {
-			result[key] = val;
-		}
-	}
-	return result as Partial<SavedCredential>;
-}
-
 export function applyCredentialToForm(
 	form: TaskForm,
 	credential: SavedCredential,
@@ -298,39 +285,4 @@ export function applyCredentialToForm(
 			form[key] = val;
 		}
 	}
-}
-
-export function credentialHasContent(
-	credential: Partial<SavedCredential>,
-): boolean {
-	return AUTH_FIELDS.some((key) => {
-		const val = credential[key];
-		return typeof val === "string" && val.trim().length > 0;
-	});
-}
-
-function isMagnetUri(uri: string): boolean {
-	return uri.trim().toLowerCase().startsWith("magnet:");
-}
-
-/**
- * If the textarea contains exactly one magnet URI (and no other URIs),
- * return it. Otherwise return null.
- */
-export function extractSingleMagnetUri(text: string): string | null {
-	const raw = (text || "").trim();
-	if (!raw) {
-		return null;
-	}
-
-	const lines = raw
-		.split("\n")
-		.map((l) => l.trim())
-		.filter(Boolean);
-	if (lines.length !== 1) {
-		return null;
-	}
-
-	const uri = lines[0];
-	return isMagnetUri(uri) ? uri : null;
 }

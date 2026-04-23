@@ -233,6 +233,7 @@ pub fn run() {
             commands::engine_cmds::get_engine_status,
             commands::engine_cmds::add_uri,
             commands::engine_cmds::add_torrent_by_path,
+            commands::engine_cmds::add_torrents_by_paths,
             commands::engine_cmds::resolve_magnet,
             commands::engine_cmds::probe_m3u8,
             commands::engine_cmds::calculate_active_task_progress,

@@ -1,7 +1,6 @@
 export default {
 	basic: "Cơ bản",
 	advanced: "Nâng cao",
-	lab: "Phòng thí nghiệm",
 	save: "Lưu & Áp dụng",
 	"save-success-message": "Lưu cài đặt thành công",
 	"save-fail-message": "Lưu cài đặt thất bại",
@@ -77,8 +76,6 @@ export default {
 	"session-reset": "Đặt lại phiên tải xuống",
 	"factory-reset": "Khôi phục cài đặt gốc",
 	"factory-reset-confirm": "Bạn có chắc chắn muốn khôi phục cài đặt gốc?",
-	"lab-warning":
-		"⚠️ Kích hoạt các tính năng trong phòng thí nghiệm có thể dẫn đến sự cố ứng dụng hoặc mất dữ liệu, hãy cân nhắc cho quyết định của mình!",
 	"download-protocol": "Các giao thức",
 	"protocols-default-client":
 		"Đặt làm máy khách mặc định cho các giao thức sau",

@@ -3,6 +3,7 @@ import type { EngineInfo } from "@shared/types/task";
 import logger from "@shared/utils/logger";
 import { defineStore } from "pinia";
 import api from "@/api";
+import type { BatchQueueItem } from "@/store/batchQueue";
 import { useTaskStore } from "@/store/task";
 import { getSystemTheme } from "@/utils/native";
 
@@ -69,7 +70,8 @@ export const useAppStore = defineStore("app", {
 		addTaskVisible: false,
 		addTaskType: ADD_TASK_TYPE.URI,
 		addTaskUrl: "",
-		addTaskTorrents: [],
+		addTaskTorrents: [] as { name: string; path: string }[],
+		addTaskQueue: [] as BatchQueueItem[],
 		addTaskOptions: {},
 		progress: 0,
 	}),
@@ -144,6 +146,7 @@ export const useAppStore = defineStore("app", {
 			this.addTaskVisible = false;
 			this.addTaskUrl = "";
 			this.addTaskTorrents = [];
+			this.addTaskQueue = [];
 		},
 		changeAddTaskType(taskType: string) {
 			this.addTaskType = taskType;
@@ -157,6 +160,23 @@ export const useAppStore = defineStore("app", {
 			fileList: { name: string; path: string }[];
 		}) {
 			this.addTaskTorrents = [...fileList];
+		},
+		enqueueBatchItems(items: BatchQueueItem[]) {
+			if (!items || items.length === 0) {
+				return;
+			}
+			this.addTaskQueue = [...this.addTaskQueue, ...items];
+		},
+		removeBatchItem(id: string) {
+			this.addTaskQueue = this.addTaskQueue.filter((item) => item.id !== id);
+		},
+		updateBatchItem(id: string, patch: Partial<BatchQueueItem>) {
+			this.addTaskQueue = this.addTaskQueue.map((item) =>
+				item.id === id ? ({ ...item, ...patch } as BatchQueueItem) : item,
+			);
+		},
+		resetBatchQueue() {
+			this.addTaskQueue = [];
 		},
 		updateAddTaskOptions(options = {}) {
 			this.addTaskOptions = { ...options };

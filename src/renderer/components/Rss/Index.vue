@@ -4,7 +4,7 @@
       <mo-rss-feed-list @add-feed="showAddFeedDialog = true" />
     </aside>
     <div class="content panel panel-layout panel-layout--v relative">
-      <header class="panel-header">
+      <mo-enter tag="header" preset="fadeInDown" class="panel-header">
         <h4 class="task-title hidden-xs-only">
           {{ currentFeed ? currentFeed.title : isDownloadedView ? $t('rss.downloaded') : $t('rss.all-items') }}
         </h4>
@@ -52,7 +52,7 @@
             <Plus :size="14" />
           </i>
         </div>
-      </header>
+      </mo-enter>
       <div v-if="feeds.length > 0" class="task-toolbar">
         <div class="task-toolbar-left">
           <div class="task-filter-input">
@@ -88,7 +88,7 @@
       </div>
       <main class="panel-content">
         <mo-rss-item-list v-if="feeds.length > 0" />
-        <div v-else class="no-task">
+        <mo-enter v-else preset="fadeInUp" class="no-task">
           <div class="rss-empty-inner">
             <Rss :size="48" class="rss-empty-icon" />
             <p>{{ $t('rss.no-feeds') }}</p>
@@ -97,7 +97,7 @@
               {{ $t('rss.add-feed') }}
             </Button>
           </div>
-        </div>
+        </mo-enter>
       </main>
     </div>
     <mo-rss-add-feed-dialog

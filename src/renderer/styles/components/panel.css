@@ -9,7 +9,6 @@
 		margin: 0 16px;
 		border-bottom: 1px solid var(--mo-panel-border-color);
 		user-select: none;
-		animation: header-fade-in 0.5s var(--ease-decelerate);
 	}
 	.panel .panel-header::after {
 		content: "";

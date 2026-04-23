@@ -1,7 +1,6 @@
 export default {
 	basic: "基础设置",
 	advanced: "进阶设置",
-	lab: "实验室",
 	save: "保存并应用",
 	"save-success-message": "偏好设置保存成功",
 	"save-fail-message": "偏好设置保存失败",
@@ -144,7 +143,6 @@ export default {
 	"session-reset-confirm": "你确定要重置下载会话记录吗?",
 	"factory-reset": "恢复初始设置",
 	"factory-reset-confirm": "你确定要恢复为初始设置吗?",
-	"lab-warning": "⚠️启用实验特性可能造成应用崩溃或数据丢失，请自行决定！",
 	"download-protocol": "下载协议",
 	"protocols-default-client": "设置为以下协议的默认客户端",
 	"protocols-magnet": "磁力链接 [ magnet:// ]",

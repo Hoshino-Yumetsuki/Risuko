@@ -5,6 +5,7 @@
 <script lang="ts">
 import { ADD_TASK_TYPE } from "@shared/constants";
 import { useAppStore } from "@/store/app";
+import { createTorrentBatchItem } from "@/store/batchQueue";
 
 export default {
 	name: "mo-dragger",
@@ -23,25 +24,25 @@ export default {
 				return;
 			}
 
-			const fileList = torrentPaths.map((path) => {
+			const items = torrentPaths.map((path) => {
 				const segs = `${path}`.split(/[/\\]/);
 				const name = segs[segs.length - 1] || "task.torrent";
-				return { name, path };
+				return createTorrentBatchItem(path, name);
 			});
 
 			useAppStore().showAddTaskDialog(ADD_TASK_TYPE.TORRENT);
-			useAppStore().addTaskAddTorrents({ fileList });
+			useAppStore().enqueueBatchItems(items);
 		};
 		this.handleFileList = (files) => {
-			const fileList = (files || [])
-				.map((item) => ({ raw: item, name: item.name, path: item.path || "" }))
-				.filter((item) => /\.torrent$/i.test(item.name));
-			if (!fileList.length) {
+			const items = (files || [])
+				.filter((item) => /\.torrent$/i.test(item.name) && item.path)
+				.map((item) => createTorrentBatchItem(item.path, item.name));
+			if (!items.length) {
 				this.$msg.error(this.$t("task.select-torrent"));
 				return;
 			}
 			useAppStore().showAddTaskDialog(ADD_TASK_TYPE.TORRENT);
-			useAppStore().addTaskAddTorrents({ fileList });
+			useAppStore().enqueueBatchItems(items);
 		};
 		let count = 0;
 		this.onDragEnter = (_ev) => {

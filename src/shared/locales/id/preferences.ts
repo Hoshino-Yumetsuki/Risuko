@@ -1,7 +1,6 @@
 export default {
 	basic: "Pengaturan Dasar",
 	advanced: "Pengaturan Lanjut",
-	lab: "Lab",
 	save: "Simpan & Terapkan",
 	"save-success-message": "Berhasil menyimpan pengaturan",
 	"save-fail-message": "Gagal menyimpan pengaturan",
@@ -82,8 +81,6 @@ export default {
 	"download-session-path": "Lokasi Session Unduhan",
 	"factory-reset": "Reset Pabrik",
 	"factory-reset-confirm": "Anda yakin ingin kembali ke pengaturan pabrik?",
-	"lab-warning":
-		"Mengaktifkan fitur lab dapat menyebabkan aplikasi tidak berjalan semestinya atau kehilangan data, risiko ditanggung Anda sendiri!",
 	"download-protocol": "Protocols",
 	"protocols-default-client": "Tetapkan sebagai klien untuk Protocol berikut",
 	"protocols-magnet": "Magnet [ magnet:// ]",

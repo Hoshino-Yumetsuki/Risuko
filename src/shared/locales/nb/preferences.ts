@@ -1,7 +1,6 @@
 export default {
 	basic: "Grunnleggende",
 	advanced: "Avansert",
-	lab: "Lab",
 	save: "Lagre og bruk",
 	"save-success-message": "Lagre innstillinger vellykket",
 	"save-fail-message": "Lagring av innstillinger mislyktes",
@@ -83,8 +82,6 @@ export default {
 	"factory-reset": "Fabrikkinnstillinger",
 	"factory-reset-confirm":
 		"Er du sikker på at du vil gå tilbake til fabrikkinnstillingene?",
-	"lab-warning":
-		"⚠️ Aktivering av laboratoriefunksjoner kan føre til appkrasj eller tap av data, gjør det på egen risiko!",
 	"download-protocol": "Protokoller",
 	"protocols-default-client":
 		"Angi som standardklient for følgende protokoller",

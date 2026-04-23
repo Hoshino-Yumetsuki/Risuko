@@ -1,7 +1,6 @@
 export default {
 	basic: "Basique",
 	advanced: "Avancé",
-	lab: "Labo",
 	save: "Sauver et appliquer",
 	"save-success-message": "Enregistrer les préférences avec succès",
 	"save-fail-message": "La sauvegarde des préférences a échoué",
@@ -85,8 +84,6 @@ export default {
 	"factory-reset": "Réinitialisation",
 	"factory-reset-confirm":
 		"Êtes vous sûr de vouloir réinitialiser les paramètres",
-	"lab-warning":
-		"⚠️ Activer les fonctionalités labo peut causer des crash ou la perte de données !",
 	"download-protocol": "Protocole",
 	"protocols-default-client":
 		"Définir comme client par défaut pour les protocoles suivants",

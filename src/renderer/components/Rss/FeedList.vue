@@ -1,10 +1,12 @@
 <template>
   <nav class="subnav-inner">
-    <h3>{{ $t('subnav.rss') }}</h3>
+    <mo-enter tag="h3" preset="fadeInDown">{{ $t('subnav.rss') }}</mo-enter>
     <ul>
-      <li
+      <mo-enter
+        tag="li"
+        preset="fadeInLeft"
+        :delay="0.09"
         :class="{ active: currentFeedId === null }"
-        style="--stagger-index: 0"
         @click="selectFeed(null)"
       >
         <i class="subnav-icon">
@@ -12,10 +14,12 @@
         </i>
         <span>{{ $t('rss.all-items') }}</span>
         <span v-if="totalUnread > 0" class="rss-feed-badge">{{ totalUnread }}</span>
-      </li>
-      <li
+      </mo-enter>
+      <mo-enter
+        tag="li"
+        preset="fadeInLeft"
+        :delay="0.13"
         :class="{ active: currentFeedId === '__downloaded__' }"
-        style="--stagger-index: 1"
         @click="selectFeed('__downloaded__')"
       >
         <i class="subnav-icon">
@@ -23,16 +27,18 @@
         </i>
         <span>{{ $t('rss.downloaded') }}</span>
         <span v-if="downloadedCount > 0" class="rss-feed-badge">{{ downloadedCount }}</span>
-      </li>
-      <li
+      </mo-enter>
+      <mo-enter
         v-for="(feed, index) in feeds"
         :key="feed.id"
+        tag="li"
+        preset="fadeInLeft"
+        :delay="0.17 + index * 0.04"
         :class="{
           active: currentFeedId === feed.id,
           'rss-feed-entry--error': feed.error_count >= 3,
           'rss-feed-entry--inactive': !feed.is_active,
         }"
-        :style="{ '--stagger-index': index + 2 }"
         @click="selectFeed(feed.id)"
         @contextmenu.prevent="openContextMenu($event, feed)"
       >
@@ -45,7 +51,7 @@
         <span v-if="unreadCount(feed.id) > 0" class="rss-feed-badge">
           {{ unreadCount(feed.id) }}
         </span>
-      </li>
+      </mo-enter>
     </ul>
     <div class="rss-subnav-footer">
       <Button size="sm" variant="ghost" class="rss-add-btn" @click="$emit('add-feed')">

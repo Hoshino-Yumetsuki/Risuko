@@ -15,7 +15,7 @@ export default createRouter({
 					alias: "/",
 					component: TaskIndex,
 					props: {
-						status: "active",
+						status: "all",
 					},
 				},
 				{
@@ -56,17 +56,6 @@ export default createRouter({
 							},
 							props: {
 								subnav: { current: "advanced" },
-							},
-						},
-						{
-							path: "lab",
-							components: {
-								subnav: () =>
-									import("@/components/Subnav/PreferenceSubnav.vue"),
-								form: () => import("@/components/Preference/Lab.vue"),
-							},
-							props: {
-								subnav: { current: "lab" },
 							},
 						},
 					],

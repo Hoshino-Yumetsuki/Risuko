@@ -659,6 +659,17 @@ export const useTaskStore = defineStore("task", {
 				appStore.updateAddTaskOptions({});
 			});
 		},
+		async addTorrents(data: {
+			paths: string[];
+			options: Record<string, unknown>;
+		}) {
+			const { paths, options } = data;
+			const results = await api.addTorrentsByPaths({ paths, options });
+			this.fetchList();
+			const appStore = useAppStore();
+			appStore.updateAddTaskOptions({});
+			return results;
+		},
 		getTaskOption(gid: string) {
 			return api.getOption({ gid }).catch((err: unknown) => {
 				logger.warn("[Risuko] getTaskOption failed:", (err as Error).message);
@@ -704,11 +715,19 @@ export const useTaskStore = defineStore("task", {
 				this.hideTaskDetail();
 			}
 
-			return api.removeTask({ gid }).finally(() => {
-				speedHistoryCache.delete(gid);
-				this.fetchList();
-				this.saveSession();
-			});
+			return api
+				.removeTask({ gid })
+				.then(() =>
+					// Engine's remove() marks the task as Removed but keeps it
+					// in the list. Drop the record so it disappears from every
+					// view including "all".
+					api.removeTaskRecord({ gid }).catch(() => undefined),
+				)
+				.finally(() => {
+					speedHistoryCache.delete(gid);
+					this.fetchList();
+					this.saveSession();
+				});
 		},
 		forcePauseTask(task: Pick<DownloadTask, "gid" | "status">) {
 			const { gid, status } = task;
@@ -839,13 +858,23 @@ export const useTaskStore = defineStore("task", {
 			return api.batchResumeTask({ gids });
 		},
 		batchRemoveTask(gids: string[]) {
-			return api.batchRemoveTask({ gids }).finally(() => {
-				for (const gid of gids) {
-					speedHistoryCache.delete(gid);
-				}
-				this.fetchList();
-				this.saveSession();
-			});
+			return api
+				.batchRemoveTask({ gids })
+				.then(() =>
+					// Drop records so removed rows disappear from every view.
+					Promise.all(
+						gids.map((gid) =>
+							api.removeTaskRecord({ gid }).catch(() => undefined),
+						),
+					),
+				)
+				.finally(() => {
+					for (const gid of gids) {
+						speedHistoryCache.delete(gid);
+					}
+					this.fetchList();
+					this.saveSession();
+				});
 		},
 		async syncSelectedTaskOrder(
 			direction: "up" | "down",

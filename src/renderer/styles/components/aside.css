@@ -100,15 +100,7 @@
 		flex: 1;
 		padding-top: 8px;
 	}
-	.top-menu > li {
-		animation: menu-item-enter 0.4s var(--ease-decelerate) backwards;
-		animation-delay: calc(0.15s + var(--stagger-index, 0) * 0.05s);
-	}
 	.bottom-menu {
 		margin-bottom: 24px;
-	}
-	.bottom-menu > li {
-		animation: menu-item-enter 0.4s var(--ease-decelerate) backwards;
-		animation-delay: calc(0.35s + var(--stagger-index, 0) * 0.05s);
 	}
 }

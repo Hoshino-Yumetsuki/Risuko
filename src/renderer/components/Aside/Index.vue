@@ -8,23 +8,23 @@
         </div>
       </div>
       <ul class="menu top-menu">
-        <li @click="nav('/task')" class="non-draggable" style="animation-delay: 0s">
+        <mo-enter tag="li" preset="fadeInLeft" :delay="0.15" @click="nav('/task')" class="non-draggable">
           <ListTodo :size="20" />
-        </li>
-        <li @click="showAddTask()" class="non-draggable" style="animation-delay: 0.06s">
+        </mo-enter>
+        <mo-enter tag="li" preset="fadeInLeft" :delay="0.2" @click="showAddTask()" class="non-draggable">
           <Plus :size="20" />
-        </li>
-        <li @click="nav('/rss')" class="non-draggable" style="animation-delay: 0.12s">
+        </mo-enter>
+        <mo-enter tag="li" preset="fadeInLeft" :delay="0.25" @click="nav('/rss')" class="non-draggable">
           <Rss :size="20" />
-        </li>
+        </mo-enter>
       </ul>
       <ul class="menu bottom-menu">
-        <li @click="nav('/preference')" class="non-draggable" style="animation-delay: 0s">
+        <mo-enter tag="li" preset="fadeInLeft" :delay="0.35" @click="nav('/preference')" class="non-draggable">
           <Settings2 :size="20" />
-        </li>
-        <li @click="showAboutPanel" class="non-draggable" style="animation-delay: 0.06s">
+        </mo-enter>
+        <mo-enter tag="li" preset="fadeInLeft" :delay="0.4" @click="showAboutPanel" class="non-draggable">
           <Info :size="20" />
-        </li>
+        </mo-enter>
       </ul>
     </div>
   </aside>

@@ -1,7 +1,6 @@
 export default {
 	basic: "基本設定",
 	advanced: "詳細設定",
-	lab: "実験室",
 	save: "保存して適用",
 	"save-success-message": "設定を保存します",
 	"save-fail-message": "設定を保存できませんでした",
@@ -77,8 +76,6 @@ export default {
 	"download-session-path": "セッションパスをダウンロード",
 	"factory-reset": "初期設定に戻す",
 	"factory-reset-confirm": "本当に初期設定に戻しますか?",
-	"lab-warning":
-		"⚠️ベータ機能をオンにするとアプリケーションの強制終了やデータが損失する可能性があります。自己責任でお願いします。",
 	"download-protocol": "プロトコル",
 	"protocols-default-client":
 		"以下のプロトコルのデフォルトクライアントとして設定",

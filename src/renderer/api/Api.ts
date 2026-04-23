@@ -294,6 +294,21 @@ export default class Api {
 		});
 	}
 
+	addTorrentsByPaths(params: {
+		paths: string[];
+		options?: Record<string, unknown>;
+	}) {
+		const { paths, options } = params;
+		const engineOptions = formatOptionsForEngine(options);
+		return invoke<{ path: string; gid: string | null; error: string | null }[]>(
+			"add_torrents_by_paths",
+			{
+				paths,
+				options: engineOptions,
+			},
+		);
+	}
+
 	async fetchDownloadingTaskList(
 		params: { offset?: number; num?: number; keys?: string[] } = {},
 	) {

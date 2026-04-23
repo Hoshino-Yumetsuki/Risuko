@@ -23,24 +23,34 @@
           </TabsTrigger>
         </TabsList>
         <TabsContent value="general">
-          <mo-task-general :task="task" />
+          <mo-enter preset="fadeInUp" :duration="0.2">
+            <mo-task-general :task="task" />
+          </mo-enter>
         </TabsContent>
         <TabsContent value="activity">
-          <mo-task-activity ref="taskGraphic" :task="task" />
+          <mo-enter preset="fadeInUp" :duration="0.2">
+            <mo-task-activity ref="taskGraphic" :task="task" />
+          </mo-enter>
         </TabsContent>
         <TabsContent v-if="isBT" value="trackers">
-          <mo-task-trackers :task="task" />
+          <mo-enter preset="fadeInUp" :duration="0.2">
+            <mo-task-trackers :task="task" />
+          </mo-enter>
         </TabsContent>
         <TabsContent v-if="isBT" value="peers">
-          <mo-task-peers :peers="peers" />
+          <mo-enter preset="fadeInUp" :duration="0.2">
+            <mo-task-peers :peers="peers" />
+          </mo-enter>
         </TabsContent>
         <TabsContent value="files">
-          <mo-task-files
-            ref="detailFileList"
-            mode="DETAIL"
-            :files="fileList"
-            @selection-change="handleSelectionChange"
-          />
+          <mo-enter preset="fadeInUp" :duration="0.2">
+            <mo-task-files
+              ref="detailFileList"
+              mode="DETAIL"
+              :files="fileList"
+              @selection-change="handleSelectionChange"
+            />
+          </mo-enter>
         </TabsContent>
       </Tabs>
       <div class="task-detail-actions">

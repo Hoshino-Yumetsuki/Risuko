@@ -1,7 +1,6 @@
 export default {
 	basic: "기본",
 	advanced: "고급",
-	lab: "실험실",
 	save: "저장 및 적용",
 	"save-success-message": "설정을 성공적으로 저장했습니다",
 	"save-fail-message": "설정을 저장하지 못했습니다",
@@ -78,8 +77,6 @@ export default {
 	"session-reset-confirm": "다운로드 세션을 초기화하시겠습니까?",
 	"factory-reset": "공장 초기화",
 	"factory-reset-confirm": "초기 설정으로 되돌리시겠습니까?",
-	"lab-warning":
-		"⚠️ 실험실 기능을 사용 설정하면 앱 충돌 또는 데이터 손실이 발생할 수 있으므로 신중히 결정하십시오!",
 	"download-protocol": "프로토콜",
 	"protocols-default-client": "다음 프로토콜의 기본 클라이언트로 설정",
 	"protocols-magnet": "마그넷 [ magnet:// ]",
