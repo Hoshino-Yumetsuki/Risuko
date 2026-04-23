@@ -37,6 +37,13 @@ const DEFAULT_MAX_PEERS: usize = 100;
 /// budget, a swarm where many peers are unreachable will park every slot in
 /// `pending_dials` for the connect timeout and starve real connections.
 const MAX_PENDING_DIALS: usize = 256;
+/// Time after which an outstanding chunk request to a peer is considered
+/// stale and reclaimed.
+/// If omitted, TCP-alive-but-stalled peers progressively hoard pieces until
+/// download speed collapses even while peer count stays high (each slow
+/// peer permanently marks its pieces `in_flight`, excluding them from
+/// `choose_requestable_piece`)
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
 
 pub struct TorrentInit {
     pub meta: TorrentMeta,
@@ -330,6 +337,45 @@ async fn torrent_loop(
                 let now = Instant::now();
                 let dt = now.duration_since(last_tick).as_secs_f32().max(0.001);
                 last_tick = now;
+                // Reclaim chunk requests whose peer has been silent past
+                // the request timeout. Without this, slow-but-TCP-alive
+                // peers progressively hoard pieces (see REQUEST_TIMEOUT
+                // docs); the symptom is downloads decaying over time
+                // even while peer count stays constant.
+                let reclaimed = chunk_tracker.reclaim_stale(REQUEST_TIMEOUT);
+                if !reclaimed.is_empty() {
+                    let mut unblocked_pieces: HashSet<u32> = HashSet::new();
+                    for r in &reclaimed {
+                        unblocked_pieces.insert(r.piece);
+                        // Free the peer's outstanding slot so drive_peer
+                        // can pipeline a different chunk. Without this,
+                        // the slot stays consumed until the peer either
+                        // delivers the (now reclaimed) chunk or trips
+                        // the 120 s read timeout.
+                        //
+                        // Iterate every peer rather than only `r.peer`:
+                        // in endgame mode the same chunk can be
+                        // outstanding on multiple peers, but
+                        // `ReclaimedChunk::peer` only carries the most
+                        // recent `Requested { peer, .. }` writer.
+                        // Skipping the others would permanently pin
+                        // their request slots
+                        for p in peers.values_mut() {
+                            p.outstanding
+                                .retain(|&(pi, be, _)| !(pi == r.piece && be == r.begin));
+                        }
+                    }
+                    // A piece whose chunk got reclaimed may have been
+                    // marked in-flight by drive_peer the last time it
+                    // had no Missing chunks. Now that we made chunks
+                    // Missing again, clear the in-flight flag so
+                    // choose_requestable_piece returns it
+                    for pi in unblocked_pieces {
+                        if let Ok(vpi) = lengths.validate_piece(pi) {
+                            piece_tracker.clear_in_flight(vpi);
+                        }
+                    }
+                }
                 let total_pieces = lengths.total_pieces() as usize;
                 let peer_snaps: Vec<stats::PeerSnapshot> = peers
                     .values()
@@ -638,6 +684,17 @@ async fn process_peer_event(
                     }
                     peer.outstanding.swap_remove(req_idx);
 
+                    // Drop late duplicates whose piece was already
+                    // verified by another endgame peer. process_verify_result
+                    // calls forget_piece, so accepting this would re-create
+                    // a stale chunk-state vector via mark_received and
+                    // reallocate a fresh PieceAssembly buffer — both would
+                    // then leak until the torrent is dropped
+                    if piece_tracker.has_local(vpi) {
+                        kick = true;
+                        return kick;
+                    }
+
                     // Accumulate the chunk in an in-memory piece buffer
                     // instead of hitting disk per chunk. This is the key
                     // throughput unlock: the previous `storage.write_at(...).await`
@@ -799,6 +856,12 @@ async fn process_verify_result(
     match info.piece_hash(vr.piece_index) {
         Some(expected) if *expected.as_bytes() == vr.hash => {
             piece_tracker.set_local(vpi, true);
+            // Piece is verified + on disk; its dense chunk state is
+            // no longer needed. Dropping keeps `release_peer` and
+            // `pending_chunks` bounded by the working set of
+            // in-flight pieces rather than the torrent's lifetime
+            // piece count
+            chunk_tracker.forget_piece(vpi);
             broadcast_have(peers, vr.piece_index).await;
             let mut s = stats.lock();
             s.progress_bytes = completed_bytes(piece_tracker, lengths);
