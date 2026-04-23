@@ -393,8 +393,18 @@ export default {
 			this._reducedMotionHandler = handler;
 			if (typeof mq.addEventListener === "function") {
 				mq.addEventListener("change", handler);
-			} else if (typeof (mq as MediaQueryList & { addListener?: (l: (e: MediaQueryListEvent) => void) => void }).addListener === "function") {
-				(mq as MediaQueryList & { addListener: (l: (e: MediaQueryListEvent) => void) => void }).addListener(handler);
+			} else if (
+				typeof (
+					mq as MediaQueryList & {
+						addListener?: (l: (e: MediaQueryListEvent) => void) => void;
+					}
+				).addListener === "function"
+			) {
+				(
+					mq as MediaQueryList & {
+						addListener: (l: (e: MediaQueryListEvent) => void) => void;
+					}
+				).addListener(handler);
 			}
 		}
 		if (this.visible) {
@@ -407,8 +417,18 @@ export default {
 		if (mq && handler) {
 			if (typeof mq.removeEventListener === "function") {
 				mq.removeEventListener("change", handler);
-			} else if (typeof (mq as MediaQueryList & { removeListener?: (l: (e: MediaQueryListEvent) => void) => void }).removeListener === "function") {
-				(mq as MediaQueryList & { removeListener: (l: (e: MediaQueryListEvent) => void) => void }).removeListener(handler);
+			} else if (
+				typeof (
+					mq as MediaQueryList & {
+						removeListener?: (l: (e: MediaQueryListEvent) => void) => void;
+					}
+				).removeListener === "function"
+			) {
+				(
+					mq as MediaQueryList & {
+						removeListener: (l: (e: MediaQueryListEvent) => void) => void;
+					}
+				).removeListener(handler);
 			}
 		}
 		this._reducedMotionMq = null;

@@ -172,7 +172,9 @@ export const useAppStore = defineStore("app", {
 		},
 		updateBatchItem(id: string, patch: Partial<Omit<BatchQueueItem, "id">>) {
 			this.addTaskQueue = this.addTaskQueue.map((item) =>
-				item.id === id ? ({ ...item, ...patch, id: item.id } as BatchQueueItem) : item,
+				item.id === id
+					? ({ ...item, ...patch, id: item.id } as BatchQueueItem)
+					: item,
 			);
 		},
 		resetBatchQueue() {
