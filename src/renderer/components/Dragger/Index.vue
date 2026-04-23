@@ -35,8 +35,10 @@ export default {
 		};
 		this.handleFileList = (files) => {
 			const items = (files || [])
-				.filter((item) => /\.torrent$/i.test(item.name) && item.path)
-				.map((item) => createTorrentBatchItem(item.path, item.name));
+				.filter((item) => /\.torrent$/i.test(item.name))
+				.map((item) =>
+					createTorrentBatchItem(item.path ?? item.name, item.name),
+				);
 			if (!items.length) {
 				this.$msg.error(this.$t("task.select-torrent"));
 				return;

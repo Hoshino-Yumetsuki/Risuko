@@ -33,7 +33,7 @@
         :key="feed.id"
         tag="li"
         preset="fadeInLeft"
-        :delay="0.17 + index * 0.04"
+        :delay="feedDelay(index)"
         :class="{
           active: currentFeedId === feed.id,
           'rss-feed-entry--error': feed.error_count >= 3,
@@ -156,6 +156,10 @@ export default {
 		},
 	},
 	methods: {
+		feedDelay(index: number): number {
+			const MAX_DELAY = 0.6;
+			return Math.min(0.17 + index * 0.04, MAX_DELAY);
+		},
 		selectFeed(feedId: string | null) {
 			useRssStore().selectFeed(feedId);
 		},

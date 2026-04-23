@@ -111,9 +111,7 @@ const showAddBtTaskWithFile = (payload: { path?: string } = {}) => {
 	const item = createTorrentBatchItem(path, name);
 
 	getAppStore().showAddTaskDialog(ADD_TASK_TYPE.TORRENT);
-	setTimeout(() => {
-		getAppStore().enqueueBatchItems([item]);
-	}, 200);
+	getAppStore().enqueueBatchItems([item]);
 };
 
 const navigateTaskList = (payload: { status?: string } = {}) => {

@@ -12,9 +12,6 @@
 		box-sizing: border-box;
 		overflow-y: auto;
 	}
-	.task-list > div {
-		will-change: transform;
-	}
 	.task-list-virtual {
 		flex: 1;
 		min-height: 0;

@@ -48,7 +48,8 @@
 		pointer-events: none;
 	}
 	.subnav-inner ul li > .subnav-icon,
-	.subnav-inner ul li > span {
+	.subnav-inner ul li > span,
+	.subnav-inner ul li > .subnav-badge {
 		position: relative;
 		z-index: 1;
 	}
@@ -69,6 +70,10 @@
 	.subnav-inner ul li:hover span,
 	.subnav-inner ul li:hover svg {
 		color: var(--mo-subnav-active-text-color);
+	}
+	.subnav-inner ul li.active {
+		background-color: var(--mo-subnav-active-bg);
+		box-shadow: var(--mo-subnav-active-shadow);
 	}
 	.subnav-inner ul li.active i,
 	.subnav-inner ul li.active span,

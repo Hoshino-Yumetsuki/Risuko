@@ -629,9 +629,25 @@ pub async fn add_torrents_by_paths(
         return Err("task.new-task-torrent-required".to_string());
     }
 
+    // When adding multiple torrents, strip the per-task `out` filename so each
+    // torrent doesn't end up writing to the same .part file. Per-torrent
+    // filenames are inferred individually inside add_torrent_by_path_inner
+    let per_call_options: Option<Value> = if paths.len() > 1 {
+        match options.as_ref() {
+            Some(Value::Object(map)) => {
+                let mut stripped = map.clone();
+                stripped.remove("out");
+                Some(Value::Object(stripped))
+            }
+            other => other.cloned(),
+        }
+    } else {
+        options.clone()
+    };
+
     let mut results = Vec::with_capacity(paths.len());
     for path in paths.iter() {
-        match add_torrent_by_path_inner(path, options.clone()).await {
+        match add_torrent_by_path_inner(path, per_call_options.clone()).await {
             Ok(gid) => results.push(BatchAddResult {
                 path: path.clone(),
                 gid: Some(gid),

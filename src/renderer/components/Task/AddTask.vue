@@ -386,13 +386,33 @@ export default {
 		if (typeof window !== "undefined" && window.matchMedia) {
 			const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
 			this.reducedMotion = mq.matches;
-			mq.addEventListener?.("change", (e) => {
+			const handler = (e: MediaQueryListEvent) => {
 				this.reducedMotion = e.matches;
-			});
+			};
+			this._reducedMotionMq = mq;
+			this._reducedMotionHandler = handler;
+			if (typeof mq.addEventListener === "function") {
+				mq.addEventListener("change", handler);
+			} else if (typeof (mq as MediaQueryList & { addListener?: (l: (e: MediaQueryListEvent) => void) => void }).addListener === "function") {
+				(mq as MediaQueryList & { addListener: (l: (e: MediaQueryListEvent) => void) => void }).addListener(handler);
+			}
 		}
 		if (this.visible) {
 			this.handleOpen();
 		}
+	},
+	beforeUnmount() {
+		const mq = this._reducedMotionMq;
+		const handler = this._reducedMotionHandler;
+		if (mq && handler) {
+			if (typeof mq.removeEventListener === "function") {
+				mq.removeEventListener("change", handler);
+			} else if (typeof (mq as MediaQueryList & { removeListener?: (l: (e: MediaQueryListEvent) => void) => void }).removeListener === "function") {
+				(mq as MediaQueryList & { removeListener: (l: (e: MediaQueryListEvent) => void) => void }).removeListener(handler);
+			}
+		}
+		this._reducedMotionMq = null;
+		this._reducedMotionHandler = null;
 	},
 	methods: {
 		handleOpen() {
@@ -404,8 +424,12 @@ export default {
 			// pull pre-seeded torrents (drag-drop or commands)
 			const seeded = useAppStore().addTaskTorrents;
 			if (seeded.length > 0) {
-				const items = seeded.map((s) => createTorrentBatchItem(s.path, s.name));
-				useAppStore().enqueueBatchItems(items);
+				const items = seeded
+					.filter((s) => /\.torrent$/i.test(`${s.path || ""}`))
+					.map((s) => createTorrentBatchItem(s.path, s.name));
+				if (items.length > 0) {
+					useAppStore().enqueueBatchItems(items);
+				}
 				useAppStore().addTaskAddTorrents({ fileList: [] });
 			}
 			// pre-seeded uri
@@ -598,7 +622,7 @@ export default {
 			if (key) {
 				return key.startsWith("task.") ? this.$t(key) : key;
 			}
-			return this.$t("task.new-task-fail");
+			return this.$t("task.batch-all-failed");
 		},
 		async submitForm() {
 			if (this.submitting) {
@@ -619,6 +643,9 @@ export default {
 			const torrentItems = items.filter(
 				(it) => it.kind === "torrent" && it.path,
 			);
+			const invalidTorrentItems = items.filter(
+				(it) => it.kind === "torrent" && !it.path,
+			);
 			const uriItems = items.filter(
 				(it) => it.kind === "uri" || it.kind === "magnet",
 			);
@@ -630,6 +657,19 @@ export default {
 			// Mark all as submitting
 			for (const it of items) {
 				appStore.updateBatchItem(it.id, { status: "submitting", error: "" });
+			}
+
+			// Short-circuit torrent items missing a resolvable path so they don't
+			// stay in the "submitting" state and are reflected in fail totals.
+			if (invalidTorrentItems.length > 0) {
+				const invalidMsg = this.$t("task.new-task-torrent-required");
+				for (const it of invalidTorrentItems) {
+					appStore.updateBatchItem(it.id, {
+						status: "failed",
+						error: invalidMsg,
+					});
+					failCount += 1;
+				}
 			}
 
 			// Torrents: batch
@@ -655,7 +695,7 @@ export default {
 							failCount += 1;
 							appStore.updateBatchItem(item.id, {
 								status: "failed",
-								error: res.error || this.$t("task.new-task-fail"),
+								error: res.error || this.$t("task.batch-all-failed"),
 							});
 						}
 					}
@@ -671,43 +711,35 @@ export default {
 				}
 			}
 
-			// URIs / magnets: one shot via add_uri (Vec<String>)
-			if (uriItems.length > 0) {
+			// URIs / magnets: per-item submission so a single failure doesn't
+			// poison the whole batch and so per-item filenames can be inferred.
+			for (const it of uriItems) {
 				try {
-					const uris = uriItems.map((it) => it.uri as string);
+					const uri = it.uri as string;
 					const sharedOpts = this.buildSharedOptions();
-					// Per-item selectFile is not supported across one add_uri call
-					// (single selectFile applies to all). For magnets users picked
-					// individually, fall back to their own selectFile only when
-					// there is exactly one magnet in the batch.
-					if (uriItems.length === 1) {
-						const sel = uriItems[0].selectFile;
-						if (
-							sel &&
-							sel !== SELECTED_ALL_FILES &&
-							sel !== NONE_SELECTED_FILES
-						) {
-							sharedOpts.selectFile = sel;
-						}
+					const sel = it.selectFile;
+					if (
+						sel &&
+						sel !== SELECTED_ALL_FILES &&
+						sel !== NONE_SELECTED_FILES
+					) {
+						sharedOpts.selectFile = sel;
 					}
+					const outs = it.out ? [it.out] : [];
 					await taskStore.addUri({
-						uris,
-						outs: [],
+						uris: [uri],
+						outs,
 						options: sharedOpts as Record<string, string>,
 					});
-					okCount += uriItems.length;
-					for (const it of uriItems) {
-						appStore.updateBatchItem(it.id, { status: "success" });
-					}
+					okCount += 1;
+					appStore.updateBatchItem(it.id, { status: "success" });
 				} catch (err: unknown) {
-					failCount += uriItems.length;
+					failCount += 1;
 					const msg = this.normalizeAddTaskError(err);
-					for (const it of uriItems) {
-						appStore.updateBatchItem(it.id, {
-							status: "failed",
-							error: msg,
-						});
-					}
+					appStore.updateBatchItem(it.id, {
+						status: "failed",
+						error: msg,
+					});
 				}
 			}
 

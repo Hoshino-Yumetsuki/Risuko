@@ -1176,6 +1176,10 @@ export default {
 			this.handleChange(fileList);
 		},
 		handleChange(fileList) {
+			if (this.torrentPath) {
+				this.$emit("change-files", fileList);
+				return;
+			}
 			useAppStore().addTaskAddTorrents({ fileList });
 		},
 		handleSelectTorrentClick() {
@@ -1183,6 +1187,14 @@ export default {
 		},
 		handleTrashClick() {
 			if (this.isBusy) {
+				return;
+			}
+			if (this.hideTrash) {
+				return;
+			}
+			if (this.torrentPath) {
+				this.$emit("remove");
+				this.$emit("update:torrentPath", "");
 				return;
 			}
 			useAppStore().addTaskAddTorrents({ fileList: [] });

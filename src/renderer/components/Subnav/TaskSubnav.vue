@@ -62,16 +62,16 @@ export default {
 		},
 		items() {
 			return [
-				{ key: "all", icon: "LayoutList", label: "task.all", delay: 0.09 },
-				{ key: "active", icon: "Play", label: "task.active", delay: 0.13 },
-				{ key: "waiting", icon: "Pause", label: "task.waiting", delay: 0.17 },
+				{ key: "all", icon: LayoutList, label: "task.all", delay: 0.09 },
+				{ key: "active", icon: Play, label: "task.active", delay: 0.13 },
+				{ key: "waiting", icon: Pause, label: "task.waiting", delay: 0.17 },
 				{
 					key: "completed",
-					icon: "CircleCheck",
+					icon: CircleCheck,
 					label: "task.completed",
 					delay: 0.21,
 				},
-				{ key: "stopped", icon: "Square", label: "task.stopped", delay: 0.25 },
+				{ key: "stopped", icon: Square, label: "task.stopped", delay: 0.25 },
 			];
 		},
 		pillTransition() {
@@ -79,7 +79,7 @@ export default {
 		},
 	},
 	methods: {
-		nav(status = "all") {
+		nav(status: string) {
 			this.$router
 				.push({
 					path: `/task/${status}`,

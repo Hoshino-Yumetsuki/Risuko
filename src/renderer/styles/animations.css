@@ -90,65 +90,81 @@
 }
 @keyframes mo-sheet-in-right {
 	from {
+		opacity: 0;
 		transform: translateX(100%);
 	}
 	to {
+		opacity: 1;
 		transform: translateX(0);
 	}
 }
 @keyframes mo-sheet-out-right {
 	from {
+		opacity: 1;
 		transform: translateX(0);
 	}
 	to {
+		opacity: 0;
 		transform: translateX(100%);
 	}
 }
 @keyframes mo-sheet-in-left {
 	from {
+		opacity: 0;
 		transform: translateX(-100%);
 	}
 	to {
+		opacity: 1;
 		transform: translateX(0);
 	}
 }
 @keyframes mo-sheet-out-left {
 	from {
+		opacity: 1;
 		transform: translateX(0);
 	}
 	to {
+		opacity: 0;
 		transform: translateX(-100%);
 	}
 }
 @keyframes mo-sheet-in-top {
 	from {
+		opacity: 0;
 		transform: translateY(-100%);
 	}
 	to {
+		opacity: 1;
 		transform: translateY(0);
 	}
 }
 @keyframes mo-sheet-out-top {
 	from {
+		opacity: 1;
 		transform: translateY(0);
 	}
 	to {
+		opacity: 0;
 		transform: translateY(-100%);
 	}
 }
 @keyframes mo-sheet-in-bottom {
 	from {
+		opacity: 0;
 		transform: translateY(100%);
 	}
 	to {
+		opacity: 1;
 		transform: translateY(0);
 	}
 }
 @keyframes mo-sheet-out-bottom {
 	from {
+		opacity: 1;
 		transform: translateY(0);
 	}
 	to {
+		opacity: 0;
 		transform: translateY(100%);
 	}
 }
@@ -195,5 +211,19 @@
 	}
 	.mo-sheet-anim[data-state="closed"][data-side="bottom"] {
 		animation: mo-sheet-out-bottom 260ms cubic-bezier(0.4, 0, 0.6, 1) both;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.mo-overlay-anim[data-state="open"],
+	.mo-overlay-anim[data-state="closed"],
+	.mo-dialog-anim[data-state="open"],
+	.mo-dialog-anim[data-state="closed"],
+	.mo-popover-anim[data-state="open"],
+	.mo-popover-anim[data-state="closed"],
+	.mo-sheet-anim[data-state="open"],
+	.mo-sheet-anim[data-state="closed"] {
+		animation-duration: 0.01ms !important;
+		animation-iteration-count: 1 !important;
 	}
 }

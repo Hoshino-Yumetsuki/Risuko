@@ -19,7 +19,7 @@
         :key="item._displayKey"
         preset="fadeInUp"
         :duration="0.4"
-        :delay="(index + 1) * 0.03"
+        :delay="getStaggerDelay(index)"
         :attr="item.gid"
         :class="getItemClass(item)"
         @click="handleItemClick(item, $event)"
@@ -103,6 +103,10 @@ export default {
 		window.removeEventListener("keydown", this._onKeyDown);
 	},
 	methods: {
+		getStaggerDelay(index: number): number {
+			const MAX_DELAY = 0.6;
+			return Math.min((index + 1) * 0.03, MAX_DELAY);
+		},
 		onPrevPageClick() {
 			if (this.currentPage <= 1) {
 				return;

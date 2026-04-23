@@ -47,8 +47,8 @@ const forwarded = useForwardPropsEmits(delegatedProps, emits);
           props.class,
         )
       "
-      :data-side="side"
       v-bind="{ ...$attrs, ...forwarded }"
+      :data-side="side"
     >
       <slot />
 

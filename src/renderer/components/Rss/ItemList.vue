@@ -12,7 +12,7 @@
             tag="li"
             preset="fadeInUp"
             :duration="0.4"
-            :delay="(index + 1) * 0.03"
+            :delay="itemDelay(index)"
             class="rss-item"
             :class="{
               'rss-item--read': item.is_read,
@@ -376,6 +376,10 @@ export default {
 		},
 	},
 	methods: {
+		itemDelay(index: number): number {
+			const MAX_DELAY = 0.6;
+			return Math.min((index + 1) * 0.03, MAX_DELAY);
+		},
 		isSelected(itemId: string): boolean {
 			return this.selectedIdSet.has(itemId);
 		},
