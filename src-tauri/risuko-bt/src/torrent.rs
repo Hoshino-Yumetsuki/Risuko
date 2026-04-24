@@ -42,8 +42,13 @@ const MAX_PENDING_DIALS: usize = 256;
 /// If omitted, TCP-alive-but-stalled peers progressively hoard pieces until
 /// download speed collapses even while peer count stays high (each slow
 /// peer permanently marks its pieces `in_flight`, excluding them from
-/// `choose_requestable_piece`)
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
+/// `choose_requestable_piece`).
+///
+/// 8 s is comfortably above any realistic 16 KiB chunk RTT (a 16 Kbps link
+/// still delivers in ~8 s) while draining slow peers ~2.5× faster than the
+/// previous 20 s value. Combined with endgame duplication + Cancel, this
+/// keeps pipeline utilisation high all the way through the last 1 %
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(8);
 
 pub struct TorrentInit {
     pub meta: TorrentMeta,
@@ -683,6 +688,8 @@ async fn process_peer_event(
                         return false;
                     }
                     peer.outstanding.swap_remove(req_idx);
+                    // Last use of `peer` — NLL releases the &mut peers borrow
+                    // here so the cancel-scan below can re-borrow `peers`
 
                     // Drop late duplicates whose piece was already
                     // verified by another endgame peer. process_verify_result
@@ -712,20 +719,33 @@ async fn process_peer_event(
                     let chunk_index = begin / super::core::CHUNK_SIZE;
                     let begin_usz = begin as usize;
                     let end_usz = begin_usz + data.len();
+                    let chunk_len = data.len();
                     // Drop late duplicates: in endgame mode the same chunk
                     // may arrive from multiple peers. Counting them again
                     // would inflate received_bytes past expected_bytes and
                     // skew progress reporting. Likewise ignore any chunk
                     // arriving after the assembly was handed off to the
                     // verify/write task
-                    if !assembly.completed
+                    let accepted = !assembly.completed
                         && end_usz <= assembly.buf.len()
-                        && assembly.received_chunks.insert(chunk_index)
-                    {
+                        && assembly.received_chunks.insert(chunk_index);
+                    if accepted {
                         assembly.buf[begin_usz..end_usz].copy_from_slice(&data);
-                        assembly.received_bytes += data.len() as u32;
+                        assembly.received_bytes += chunk_len as u32;
+                        // Only credit fresh bytes toward displayed download
+                        // speed. Including duplicates would inflate the metric
+                        // every time endgame's parallel requests collide
+                        bytes_this_tick.0 += chunk_len as u64;
                     }
-                    bytes_this_tick.0 += data.len() as u64;
+                    // Endgame parallel requests: now that we have this chunk
+                    // (either fresh from this peer or already from someone
+                    // else), tell every OTHER peer with the same outstanding
+                    // request to stop sending it. Without this, redundant
+                    // chunks keep saturating downstream and starve the
+                    // remaining real requests near completion.
+                    if chunk_tracker.endgame() {
+                        cancel_outstanding(peers, pid, index, begin, chunk_len as u32);
+                    }
                     let cinfo = super::core::ChunkInfo {
                         piece_index: vpi,
                         chunk_index: begin / super::core::CHUNK_SIZE,
@@ -815,10 +835,25 @@ async fn process_peer_event(
                     if let Ok(vpi) = lengths.validate_piece(piece_idx) {
                         piece_tracker.clear_in_flight(vpi);
                     }
-                    // Drop the in-memory assembly: a different peer will
-                    // restart this piece from scratch. Otherwise stalled
-                    // pieces would pin the buffer indefinitely
-                    piece_assemblies.remove(&piece_idx);
+                    // Performant variant: keep the piece-assembly buffer when
+                    // other peers have already contributed chunks. The freed
+                    // `Requested` slots are now `Missing` (release_peer above)
+                    // so other peers will refill them, and when the piece
+                    // completes `assembly.received_bytes` will equal
+                    // `expected_bytes`. Only drop the buffer if the dead peer
+                    // was the sole contributor — keeping an empty assembly
+                    // would just leak `piece_len` bytes per stalled piece.
+                    //
+                    // Invariant: every chunk index in `assembly.received_chunks`
+                    // corresponds to ChunkState::Received in the chunk tracker,
+                    // and release_peer only mutates Requested slots, so the
+                    // tracker stays consistent with the buffer
+                    let drop = piece_assemblies
+                        .get(&piece_idx)
+                        .is_none_or(|a| a.received_chunks.is_empty());
+                    if drop {
+                        piece_assemblies.remove(&piece_idx);
+                    }
                 }
             }
         }
@@ -850,6 +885,9 @@ async fn process_verify_result(
             "piece {} disk write failed; will re-request",
             vr.piece_index
         );
+        // Stop any other endgame peer still streaming chunks of this piece;
+        // they'd race the fresh re-request and force another reset
+        cancel_piece_outstanding(peers, vr.piece_index);
         chunk_tracker.reset_piece(vpi);
         return;
     }
@@ -862,6 +900,11 @@ async fn process_verify_result(
             // in-flight pieces rather than the torrent's lifetime
             // piece count
             chunk_tracker.forget_piece(vpi);
+            // Tell every peer to stop sending the rest of this piece.
+            // Without this, endgame duplicates of the remaining chunks
+            // keep arriving (silently dropped by the has_local guard)
+            // and saturate downstream during the final pieces
+            cancel_piece_outstanding(peers, vr.piece_index);
             broadcast_have(peers, vr.piece_index).await;
             let mut s = stats.lock();
             s.progress_bytes = completed_bytes(piece_tracker, lengths);
@@ -870,6 +913,9 @@ async fn process_verify_result(
         }
         _ => {
             log::debug!("piece {} hash mismatch", vr.piece_index);
+            // Same reasoning as write_failed: stale chunks from the prior
+            // attempt would interleave with the re-request
+            cancel_piece_outstanding(peers, vr.piece_index);
             chunk_tracker.reset_piece(vpi);
         }
     }
@@ -912,6 +958,69 @@ async fn drive_requests(
 /// Called both on the tick and inline after events that can unblock a peer
 /// (Unchoke, Bitfield, Have, Piece). Without the inline calls, throughput
 /// is capped at `max_outstanding * CHUNK_SIZE / tick_interval`
+/// Send a `Cancel` message to every peer (other than `except_pid`) that has
+/// the chunk `(index, begin, length)` in its outstanding queue, and remove
+/// the entry from each peer's local outstanding Vec. Best-effort: if a
+/// peer's command channel is full or closed we skip it (the chunk will
+/// arrive and be dedup-dropped, no worse than today).
+///
+/// which is the only thing that keeps endgame mode from saturating downstream
+/// with duplicate blocks at the very end of a download
+fn cancel_outstanding(
+    peers: &mut HashMap<u32, Peer>,
+    except_pid: u32,
+    index: u32,
+    begin: u32,
+    length: u32,
+) {
+    for (&other_pid, other) in peers.iter_mut() {
+        if other_pid == except_pid {
+            continue;
+        }
+        let Some(slot) = other
+            .outstanding
+            .iter()
+            .position(|&(p, b, l)| p == index && b == begin && l == length)
+        else {
+            continue;
+        };
+        // Drop our local record first so a duplicate Piece response will be
+        // rejected as unsolicited even if the peer ignores Cancel
+        other.outstanding.swap_remove(slot);
+        let _ = other.cmd_tx.try_send(PeerCommand::Send(Message::Cancel {
+            index,
+            begin,
+            length,
+        }));
+    }
+}
+
+/// Send `Cancel` for every outstanding chunk request matching `piece_index`
+/// across every peer. Called when the piece is no longer needed — either
+/// because it was verified successfully (other peers' endgame duplicates
+/// would now be wasted bytes) or because it failed verification / disk write
+/// and is about to be re-requested from scratch (delivering stale chunks
+/// from the previous attempt would inflate received_bytes past the
+/// expected_bytes guard, forcing a second reset).
+fn cancel_piece_outstanding(peers: &mut HashMap<u32, Peer>, piece_index: u32) {
+    for other in peers.values_mut() {
+        let mut i = 0;
+        while i < other.outstanding.len() {
+            let (p, begin, length) = other.outstanding[i];
+            if p == piece_index {
+                other.outstanding.swap_remove(i);
+                let _ = other.cmd_tx.try_send(PeerCommand::Send(Message::Cancel {
+                    index: piece_index,
+                    begin,
+                    length,
+                }));
+            } else {
+                i += 1;
+            }
+        }
+    }
+}
+
 async fn drive_peer(
     pid: u32,
     peers: &mut HashMap<u32, Peer>,
@@ -925,19 +1034,39 @@ async fn drive_peer(
     if peer.peer_choking || !peer.am_interested {
         return;
     }
+    // Pieces this peer already attempted in this drive_peer call but for which
+    // next_chunk returned None (no chunk available for this peer, even under
+    // endgame). Tracked so the endgame fallback below — which uses
+    // PieceTracker::choose_piece (does NOT skip in_flight) — does not loop
+    // forever picking the same piece every iteration.
+    let mut exhausted: HashSet<u32> = HashSet::new();
     while peer.outstanding.len() < max_outstanding {
         // Use the peer id as a hint to distribute piece selection across
-        // peers, avoiding the scenario where every peer picks the same piece
-        let Some(piece) = piece_tracker.choose_requestable_piece(&peer.bitfield, pid) else {
-            // No requestable piece for this peer. If we're near completion
-            // and a few stragglers are stuck on slow peers, flip on endgame
-            // mode so any peer can duplicate the request and finish the
-            // torrent. Without this, the last 1% can take minutes
-            if !chunk_tracker.endgame() && chunk_tracker.pending_chunks() <= 64 {
-                chunk_tracker.set_endgame(true);
-                continue;
+        // peers, avoiding the scenario where every peer picks the same piece.
+        //
+        // Endgame fallback: when no requestable (i.e. non-in-flight) piece
+        // remains, flip endgame on if we're near completion and then ask the
+        // tracker for ANY piece the peer has (including in-flight ones) that
+        // we haven't already exhausted this call. ChunkTracker::next_chunk's
+        // endgame branch will then duplicate another peer's outstanding chunk
+        // request. Without this fallback, the endgame flag is set but never
+        // observed, fast peers idle until REQUEST_TIMEOUT reclaims, and the
+        // last 1% takes minutes.
+        let piece = match piece_tracker.choose_requestable_piece(&peer.bitfield, pid) {
+            Some(p) if !exhausted.contains(&p.get()) => p,
+            _ => {
+                if !chunk_tracker.endgame() && chunk_tracker.pending_chunks() <= 64 {
+                    chunk_tracker.set_endgame(true);
+                }
+                if chunk_tracker.endgame() {
+                    match piece_tracker.choose_piece_excluding(&peer.bitfield, pid, &exhausted) {
+                        Some(p) => p,
+                        None => break,
+                    }
+                } else {
+                    break;
+                }
             }
-            break;
         };
         match chunk_tracker.next_chunk(piece, pid) {
             Some(chunk) => {
@@ -971,8 +1100,12 @@ async fn drive_peer(
             }
             None => {
                 // All chunks of this piece are already requested or received
-                // Mark it in-flight so we try a different piece next iteration
+                // (under endgame, also already requested by THIS peer). Mark
+                // in_flight so non-endgame `choose_requestable_piece` skips
+                // it, and record it locally so the endgame fallback path does
+                // not pick it again on the next loop iteration
                 piece_tracker.mark_in_flight(piece);
+                exhausted.insert(piece.get());
                 continue;
             }
         }

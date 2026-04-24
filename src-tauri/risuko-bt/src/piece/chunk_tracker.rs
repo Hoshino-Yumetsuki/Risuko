@@ -69,18 +69,40 @@ impl ChunkTracker {
     }
 
     /// Return the next chunk to request from a peer for `piece`, if any. In
-    /// endgame mode, `Requested` chunks are also returned (duplicated)
+    /// endgame mode, `Requested` chunks owned by other peers are also
+    /// returned (duplicated). In endgame, scanning starts at a `peer`-derived
+    /// offset so different peers spread duplication across the piece instead
+    /// of all re-requesting chunk 0 first — mirrors aria2's `std::shuffle`
+    /// in `createRequestMessagesOnEndGame`. In normal mode the scan stays
+    /// sequential so a single peer's chunks land in offset order, which
+    /// helps disk write coalescing
     pub fn next_chunk(&mut self, piece: ValidPieceIndex, peer: u32) -> Option<ChunkRequest> {
         let endgame = self.endgame;
         let states = self.states_for(piece);
+        let len = states.len();
+        if len == 0 {
+            return None;
+        }
+        let start = if endgame {
+            // Stable per-(peer, piece) offset; cheap mixing constant from
+            // Knuth's multiplicative hash. No RNG needed
+            (peer as usize)
+                .wrapping_mul(2_654_435_761)
+                .wrapping_add(piece.get() as usize)
+                % len
+        } else {
+            0
+        };
         let mut candidate: Option<usize> = None;
-        for (i, s) in states.iter().enumerate() {
-            match s {
+        let mut missing: Option<usize> = None;
+        for k in 0..len {
+            let i = (start + k) % len;
+            match states[i] {
                 ChunkState::Missing => {
-                    candidate = Some(i);
+                    missing = Some(i);
                     break;
                 }
-                ChunkState::Requested { peer: p, .. } if endgame && *p != peer => {
+                ChunkState::Requested { peer: p, .. } if endgame && p != peer => {
                     if candidate.is_none() {
                         candidate = Some(i);
                     }
@@ -88,7 +110,7 @@ impl ChunkTracker {
                 _ => {}
             }
         }
-        let i = candidate?;
+        let i = missing.or(candidate)?;
         let info = self
             .lengths
             .chunks_of(piece)
@@ -298,6 +320,28 @@ mod tests {
         t.release_peer(1);
         let again = t.next_chunk(p, 2).unwrap();
         assert_eq!(again.info.chunk_index, 0);
+    }
+
+    #[test]
+    fn release_preserves_received_from_other_peers() {
+        // Bug 3 regression guard: when peer B disconnects, peer A's already
+        // Received chunks must stay Received so the in-memory PieceAssembly
+        // we keep around remains consistent with the chunk-state vec
+        let l = Lengths::new(64 * 1024, 32 * 1024).unwrap();
+        let mut t = ChunkTracker::new(l);
+        let p = l.validate_piece(0).unwrap();
+        let r0 = t.next_chunk(p, 1).unwrap(); // peer 1 takes chunk 0
+        let _r1 = t.next_chunk(p, 2).unwrap(); // peer 2 takes chunk 1
+                                               // Peer 1 delivers chunk 0
+        assert!(!t.mark_received(r0.info));
+        // Peer 2 disconnects; its chunk 1 reverts to Missing but chunk 0
+        // (Received from peer 1) must remain Received
+        let freed = t.release_peer(2);
+        assert_eq!(freed, vec![0]);
+        // A new peer can now grab chunk 1 and complete the piece
+        let r1b = t.next_chunk(p, 3).unwrap();
+        assert_eq!(r1b.info.chunk_index, 1);
+        assert!(t.mark_received(r1b.info));
     }
 
     #[test]
