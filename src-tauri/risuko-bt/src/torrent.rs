@@ -743,7 +743,12 @@ async fn process_peer_event(
                     // request to stop sending it. Without this, redundant
                     // chunks keep saturating downstream and starve the
                     // remaining real requests near completion.
-                    if chunk_tracker.endgame() {
+                    // Guard with `accepted`: a duplicate Piece arrival in
+                    // endgame means we've already accepted this chunk before
+                    // (and already sent Cancel for it). Re-scanning every
+                    // peer's outstanding Vec for late duplicates is pure
+                    // O(n_peers) waste
+                    if accepted && chunk_tracker.endgame() {
                         cancel_outstanding(peers, pid, index, begin, chunk_len as u32);
                     }
                     let cinfo = super::core::ChunkInfo {
@@ -776,6 +781,7 @@ async fn process_peer_event(
                             // so just reset and re-request
                             piece_assemblies.remove(&index);
                             chunk_tracker.reset_piece(vpi);
+                            maybe_clear_endgame(chunk_tracker);
                             return kick;
                         }
                         assembly.completed = true;
@@ -848,10 +854,10 @@ async fn process_peer_event(
                     // corresponds to ChunkState::Received in the chunk tracker,
                     // and release_peer only mutates Requested slots, so the
                     // tracker stays consistent with the buffer
-                    let drop = piece_assemblies
+                    let should_drop = piece_assemblies
                         .get(&piece_idx)
                         .is_none_or(|a| a.received_chunks.is_empty());
-                    if drop {
+                    if should_drop {
                         piece_assemblies.remove(&piece_idx);
                     }
                 }
@@ -889,6 +895,7 @@ async fn process_verify_result(
         // they'd race the fresh re-request and force another reset
         cancel_piece_outstanding(peers, vr.piece_index);
         chunk_tracker.reset_piece(vpi);
+        maybe_clear_endgame(chunk_tracker);
         return;
     }
     match info.piece_hash(vr.piece_index) {
@@ -917,7 +924,20 @@ async fn process_verify_result(
             // attempt would interleave with the re-request
             cancel_piece_outstanding(peers, vr.piece_index);
             chunk_tracker.reset_piece(vpi);
+            maybe_clear_endgame(chunk_tracker);
         }
+    }
+}
+
+/// Clear the endgame flag once the working set has grown back above the
+/// activation threshold. Endgame is otherwise a one-way ratchet (set when
+/// `pending_chunks() <= 64`, never cleared), which prevents pieces re-queued
+/// via `reset_piece` after a hash/write failure from regaining the cheap
+/// sequential-scan path in `next_chunk` and forces every peer through the
+/// `choose_piece_excluding` fallback for the rest of the download
+fn maybe_clear_endgame(chunk_tracker: &mut ChunkTracker) {
+    if chunk_tracker.endgame() && chunk_tracker.pending_chunks() > 64 {
+        chunk_tracker.set_endgame(false);
     }
 }
 
@@ -954,18 +974,13 @@ async fn drive_requests(
     }
 }
 
-/// Pipeline requests for a single peer up to `max_outstanding`
-/// Called both on the tick and inline after events that can unblock a peer
-/// (Unchoke, Bitfield, Have, Piece). Without the inline calls, throughput
-/// is capped at `max_outstanding * CHUNK_SIZE / tick_interval`
 /// Send a `Cancel` message to every peer (other than `except_pid`) that has
 /// the chunk `(index, begin, length)` in its outstanding queue, and remove
 /// the entry from each peer's local outstanding Vec. Best-effort: if a
 /// peer's command channel is full or closed we skip it (the chunk will
-/// arrive and be dedup-dropped, no worse than today).
-///
-/// which is the only thing that keeps endgame mode from saturating downstream
-/// with duplicate blocks at the very end of a download
+/// arrive and be dedup-dropped, no worse than today). This is the only
+/// thing that keeps endgame mode from saturating downstream with duplicate
+/// blocks at the very end of a download.
 fn cancel_outstanding(
     peers: &mut HashMap<u32, Peer>,
     except_pid: u32,
@@ -1021,6 +1036,10 @@ fn cancel_piece_outstanding(peers: &mut HashMap<u32, Peer>, piece_index: u32) {
     }
 }
 
+/// Pipeline requests for a single peer up to `max_outstanding`.
+/// Called both on the tick and inline after events that can unblock a peer
+/// (Unchoke, Bitfield, Have, Piece). Without the inline calls, throughput
+/// is capped at `max_outstanding * CHUNK_SIZE / tick_interval`
 async fn drive_peer(
     pid: u32,
     peers: &mut HashMap<u32, Peer>,
