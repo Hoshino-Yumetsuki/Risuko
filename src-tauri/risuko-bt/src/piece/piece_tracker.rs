@@ -130,7 +130,20 @@ impl PieceTracker {
     ///
     /// `peer_bitfield` is indexed like `bitfield()`: MSB-first within bytes
     pub fn choose_piece(&mut self, peer_bitfield: &[u8]) -> Option<ValidPieceIndex> {
-        self.choose_impl(peer_bitfield, false, 0)
+        self.choose_impl(peer_bitfield, false, 0, None)
+    }
+
+    /// Like [`choose_piece`] but skips pieces whose index is in `exclude`,
+    /// and uses `hint` to break ties among equally-rare pieces (so different
+    /// peers spread across the candidate bucket instead of all picking the
+    /// same stalled piece first in endgame)
+    pub fn choose_piece_excluding(
+        &mut self,
+        peer_bitfield: &[u8],
+        hint: u32,
+        exclude: &std::collections::HashSet<u32>,
+    ) -> Option<ValidPieceIndex> {
+        self.choose_impl(peer_bitfield, false, hint, Some(exclude))
     }
 
     /// Pick the rarest requestable piece the peer has. Skips both locally
@@ -141,7 +154,7 @@ impl PieceTracker {
         peer_bitfield: &[u8],
         hint: u32,
     ) -> Option<ValidPieceIndex> {
-        self.choose_impl(peer_bitfield, true, hint)
+        self.choose_impl(peer_bitfield, true, hint, None)
     }
 
     fn choose_impl(
@@ -149,6 +162,7 @@ impl PieceTracker {
         peer_bitfield: &[u8],
         skip_in_flight: bool,
         hint: u32,
+        exclude: Option<&std::collections::HashSet<u32>>,
     ) -> Option<ValidPieceIndex> {
         self.scratch.clear();
         let mut rarest: Option<u32> = None;
@@ -163,6 +177,9 @@ impl PieceTracker {
                 continue;
             }
             if skip_in_flight && self.in_flight[i] {
+                continue;
+            }
+            if exclude.is_some_and(|e| e.contains(&(i as u32))) {
                 continue;
             }
             let avail = self.availability[i];
