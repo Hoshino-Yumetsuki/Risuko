@@ -37,6 +37,16 @@ pnpm install -g @risuko/cli
 risuko-cli --help
 ```
 
+### Homebrew
+Risuko 也可以通过 Homebrew 安装，使用以下命令：
+```bash
+# CLI
+brew install yuemiyuki/risuko/risuko-cli
+
+# 桌面应用 (Cask)
+brew install --cask yuemiyuki/risuko/risuko-app
+```
+
 ## 🖥 应用界面
 
 ![motrix-screenshot-task-cn.png](./static/readme/UI.png)
