@@ -40,6 +40,17 @@ risuko-cli --help
 ```
 
 
+### Homebrew
+Risuko is also available on Homebrew, you can install it with the following command:
+```bash
+# CLI
+brew install yuemiyuki/risuko/risuko-cli
+
+# Desktop app (Cask)
+brew install --cask yuemiyuki/risuko/risuko-app
+```
+
+
 ## 🖥 User Interface
 
 ![risuko-screenshot-task-en.png](./static/readme/UI.png)

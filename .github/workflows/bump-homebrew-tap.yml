@@ -1,0 +1,202 @@
+name: Bump Homebrew tap
+
+# Runs after Release completes for a tag push. Downloads the published
+# release assets, recomputes their SHA-256 sums, rewrites the version and
+# sha256 fields in the Formula/Cask files in the homebrew-risuko tap repo,
+# and pushes the result.
+on:
+  workflow_run:
+    workflows: [Release]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to bump to (e.g. v0.1.11)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  bump:
+    name: Bump Formula/risuko-cli.rb and Casks/risuko-app.rb
+    runs-on: ubuntu-latest
+    # Only run for successful tag releases (workflow_run) or manual dispatch.
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       startsWith(github.event.workflow_run.head_branch, 'v'))
+    steps:
+      - name: Resolve target tag
+        id: tag
+        env:
+          GH_EVENT_NAME: ${{ github.event_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+          WR_TAG: ${{ github.event.workflow_run.head_branch }}
+        run: |
+          set -euo pipefail
+          if [ "$GH_EVENT_NAME" = "workflow_dispatch" ]; then
+            tag="$INPUT_TAG"
+          else
+            tag="$WR_TAG"
+          fi
+          if [[ ! "$tag" =~ ^v ]]; then
+            echo "::error::Resolved tag '$tag' does not start with 'v'"
+            exit 1
+          fi
+          version="${tag#v}"
+          echo "tag=$tag"         >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Check out homebrew-risuko tap
+        uses: actions/checkout@v4
+        with:
+          repository: yuemiyuki/homebrew-risuko
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: tap
+
+      - name: Download release assets and compute SHA-256
+        id: hashes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.tag.outputs.tag }}
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p assets
+          cd assets
+
+          assets=(
+            "risuko-cli-darwin-arm64.tar.gz"
+            "risuko-cli-darwin-x64.tar.gz"
+            "risuko-cli-linux-arm64.tar.gz"
+            "risuko-cli-linux-x64.tar.gz"
+            "Risuko_${VERSION}_aarch64.dmg"
+            "Risuko_${VERSION}_x64.dmg"
+          )
+
+          for asset in "${assets[@]}"; do
+            echo "Fetching $asset"
+            gh release download "$TAG" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --pattern "$asset" \
+              --clobber
+          done
+
+          sha_cli_darwin_arm64=$(sha256sum "risuko-cli-darwin-arm64.tar.gz" | awk '{print $1}')
+          sha_cli_darwin_x64=$(sha256sum   "risuko-cli-darwin-x64.tar.gz"   | awk '{print $1}')
+          sha_cli_linux_arm64=$(sha256sum  "risuko-cli-linux-arm64.tar.gz"  | awk '{print $1}')
+          sha_cli_linux_x64=$(sha256sum    "risuko-cli-linux-x64.tar.gz"    | awk '{print $1}')
+          sha_app_arm=$(sha256sum  "Risuko_${VERSION}_aarch64.dmg" | awk '{print $1}')
+          sha_app_intel=$(sha256sum "Risuko_${VERSION}_x64.dmg"     | awk '{print $1}')
+
+          {
+            echo "cli_darwin_arm64=$sha_cli_darwin_arm64"
+            echo "cli_darwin_x64=$sha_cli_darwin_x64"
+            echo "cli_linux_arm64=$sha_cli_linux_arm64"
+            echo "cli_linux_x64=$sha_cli_linux_x64"
+            echo "app_arm=$sha_app_arm"
+            echo "app_intel=$sha_app_intel"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Rewrite Formula/risuko-cli.rb and Casks/risuko-app.rb
+        env:
+          VERSION: ${{ steps.tag.outputs.version }}
+          CLI_DARWIN_ARM64: ${{ steps.hashes.outputs.cli_darwin_arm64 }}
+          CLI_DARWIN_X64:   ${{ steps.hashes.outputs.cli_darwin_x64 }}
+          CLI_LINUX_ARM64:  ${{ steps.hashes.outputs.cli_linux_arm64 }}
+          CLI_LINUX_X64:    ${{ steps.hashes.outputs.cli_linux_x64 }}
+          APP_ARM:          ${{ steps.hashes.outputs.app_arm }}
+          APP_INTEL:        ${{ steps.hashes.outputs.app_intel }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os, re, pathlib
+
+          version = os.environ["VERSION"]
+
+          formula = pathlib.Path("tap/Formula/risuko-cli.rb")
+          cask    = pathlib.Path("tap/Casks/risuko-app.rb")
+
+          # --- Formula ---
+          # Match each `url ".../{file}"` followed by `sha256 "..."` and
+          # replace the sha256 line in place. Anchored on the URL filename
+          # so order/whitespace shifts don't matter.
+          cli_targets = {
+              "risuko-cli-darwin-arm64.tar.gz": os.environ["CLI_DARWIN_ARM64"],
+              "risuko-cli-darwin-x64.tar.gz":   os.environ["CLI_DARWIN_X64"],
+              "risuko-cli-linux-arm64.tar.gz":  os.environ["CLI_LINUX_ARM64"],
+              "risuko-cli-linux-x64.tar.gz":    os.environ["CLI_LINUX_X64"],
+          }
+          src = formula.read_text()
+          src = re.sub(
+              r'^(\s*version\s+")[^"]+(")',
+              rf'\g<1>{version}\g<2>',
+              src,
+              count=1,
+              flags=re.MULTILINE,
+          )
+          for fname, sha in cli_targets.items():
+              pattern = re.compile(
+                  r'(url\s+"[^"]*' + re.escape(fname) + r'"\s*\n\s*sha256\s+")[0-9a-f]{64}(")',
+                  flags=re.MULTILINE,
+              )
+              new_src, n = pattern.subn(rf'\g<1>{sha}\g<2>', src, count=1)
+              if n != 1:
+                  raise SystemExit(f"Failed to update sha256 for {fname} in risuko-cli.rb")
+              src = new_src
+          formula.write_text(src)
+
+          # --- Cask ---
+          # The cask uses {version} interpolation in the URL, so we anchor
+          # on the architecture suffix in the URL line and rewrite the
+          # nearest preceding sha256 line within the same on_arm/on_intel
+          # block.
+          src = cask.read_text()
+          src = re.sub(
+              r'^(\s*version\s+")[^"]+(")',
+              rf'\g<1>{version}\g<2>',
+              src,
+              count=1,
+              flags=re.MULTILINE,
+          )
+
+          def replace_block(src, block_keyword, sha):
+              # Match `on_arm do` or `on_intel do` ... `end`, replace its sha256
+              pat = re.compile(
+                  r'(' + block_keyword + r'\s+do\b.*?sha256\s+")[0-9a-f]{64}(".*?\n\s*end)',
+                  flags=re.DOTALL,
+              )
+              new_src, n = pat.subn(rf'\g<1>{sha}\g<2>', src, count=1)
+              if n != 1:
+                  raise SystemExit(f"Failed to update sha256 in {block_keyword} block of risuko-app.rb")
+              return new_src
+
+          src = replace_block(src, "on_arm",   os.environ["APP_ARM"])
+          src = replace_block(src, "on_intel", os.environ["APP_INTEL"])
+          cask.write_text(src)
+
+          print("Rewrote Formula/risuko-cli.rb and Casks/risuko-app.rb")
+          PY
+
+          echo "── Resulting Formula/risuko-cli.rb ──"
+          cat tap/Formula/risuko-cli.rb
+          echo "── Resulting Casks/risuko-app.rb ──"
+          cat tap/Casks/risuko-app.rb
+
+      - name: Commit and push to homebrew-risuko
+        working-directory: tap
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet; then
+            echo "No changes — tap already up to date for $TAG"
+            exit 0
+          fi
+          git add Formula/risuko-cli.rb Casks/risuko-app.rb
+          git commit -m "risuko ${TAG}"
+          git push
