@@ -369,6 +369,102 @@
           </div>
         </div>
 
+        <!-- HTTP Network Reliability Section -->
+        <div class="settings-section">
+          <div class="settings-section-header">
+            <div class="section-icon"><Globe :size="16" /></div>
+            <div class="section-title">
+              <h3>{{ $t('preferences.http-reliability') }}</h3>
+              <p>{{ $t('preferences.http-reliability-tips') }}</p>
+            </div>
+          </div>
+          <div class="settings-section-content">
+            <div class="settings-select-group settings-select-group--stack">
+              <div class="settings-select-item">
+                <label class="settings-select-item-label">
+                  {{ $t('preferences.connect-timeout') }} ({{ $t('preferences.unit-seconds') }})
+                </label>
+                <NumberInput v-model="form.connectTimeout" :min="1" :max="600" :step="1" />
+              </div>
+              <div class="settings-select-item">
+                <label class="settings-select-item-label">
+                  {{ $t('preferences.lowest-speed-limit') }} ({{ $t('preferences.unit-kib-per-sec') }})
+                </label>
+                <NumberInput v-model="form.lowestSpeedLimit" :min="0" :max="1048576" :step="1" />
+              </div>
+              <div class="settings-select-item">
+                <label class="settings-select-item-label">
+                  {{ $t('preferences.lowest-speed-limit-timeout') }} ({{ $t('preferences.unit-seconds') }})
+                </label>
+                <NumberInput v-model="form.lowestSpeedLimitTimeout" :min="1" :max="3600" :step="1" />
+              </div>
+              <div class="settings-select-item">
+                <label class="settings-select-item-label">{{
+                  $t('preferences.uri-selector')
+                }}</label>
+                <Select v-model="form.uriSelector" class="settings-select-control">
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="feedback">
+                      {{ $t('preferences.uri-selector-feedback') }}
+                    </SelectItem>
+                    <SelectItem value="inorder">
+                      {{ $t('preferences.uri-selector-inorder') }}
+                    </SelectItem>
+                    <SelectItem value="adaptive">
+                      {{ $t('preferences.uri-selector-adaptive') }}
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div class="form-info" style="margin-top: 8px">
+              {{ $t('preferences.lowest-speed-limit-help') }}
+            </div>
+          </div>
+        </div>
+
+        <!-- Storage Section -->
+        <div class="settings-section">
+          <div class="settings-section-header">
+            <div class="section-icon"><FileText :size="16" /></div>
+            <div class="section-title">
+              <h3>{{ $t('preferences.storage') }}</h3>
+              <p>{{ $t('preferences.storage-tips') }}</p>
+            </div>
+          </div>
+          <div class="settings-section-content">
+            <div class="settings-select-group">
+              <div class="settings-select-item">
+                <label class="settings-select-item-label">{{
+                  $t('preferences.file-allocation')
+                }}</label>
+                <Select v-model="form.fileAllocation" class="settings-select-control">
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="falloc">
+                      {{ $t('preferences.file-allocation-falloc') }}
+                    </SelectItem>
+                    <SelectItem value="trunc">
+                      {{ $t('preferences.file-allocation-trunc') }}
+                    </SelectItem>
+                    <SelectItem value="none">
+                      {{ $t('preferences.file-allocation-none') }}
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div class="form-info" style="margin-top: 8px">
+              {{ $t('preferences.file-allocation-tips') }}
+            </div>
+          </div>
+        </div>
+
         <!-- eDonkey Server Section -->
         <div class="settings-section">
           <div class="settings-section-header">
@@ -655,6 +751,58 @@
           </div>
         </div>
 
+        <!-- Cookies Section -->
+        <div class="settings-section">
+          <div class="settings-section-header">
+            <div class="section-icon"><Cookie :size="16" /></div>
+            <div class="section-title">
+              <h3>{{ $t('preferences.cookies') }}</h3>
+              <p>{{ $t('preferences.cookies-tips') }}</p>
+            </div>
+          </div>
+          <div class="settings-section-content">
+            <Input
+              v-model="form.loadCookies"
+              :placeholder="$t('preferences.load-cookies-placeholder')"
+              autocomplete="off"
+            />
+          </div>
+        </div>
+
+        <!-- Netrc auth Section -->
+        <div class="settings-section">
+          <div class="settings-section-header">
+            <div class="section-icon"><KeyRound :size="16" /></div>
+            <div class="section-title">
+              <h3>{{ $t('preferences.netrc') }}</h3>
+              <p>{{ $t('preferences.netrc-tips') }}</p>
+            </div>
+          </div>
+          <div class="settings-section-content">
+            <Input
+              v-model="form.netrcPath"
+              :placeholder="$t('preferences.netrc-path-placeholder')"
+              autocomplete="off"
+            />
+            <div class="settings-row" style="margin-top: 8px">
+              <div class="settings-row-content">
+                <div class="settings-row-title">
+                  {{ $t('preferences.no-netrc') }}
+                </div>
+                <div class="settings-row-description">
+                  {{ $t('preferences.no-netrc-tips') }}
+                </div>
+              </div>
+              <div class="settings-row-action">
+                <ui-checkbox
+                  :model-value="!!form.noNetrc"
+                  @change="(val) => setAdvancedBoolean('noNetrc', val)"
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+
         <!-- Developer Section -->
         <div class="settings-section">
           <div class="settings-section-header">
@@ -778,6 +926,7 @@ import {
 	Check,
 	ChevronDown,
 	Code,
+	Cookie,
 	Dices,
 	ExternalLink,
 	FileKey,
@@ -833,6 +982,14 @@ const initForm = (config) => {
 		btEnableLsd,
 		btEncryptionPolicy,
 		btListenV6,
+		connectTimeout,
+		lowestSpeedLimit,
+		lowestSpeedLimitTimeout,
+		fileAllocation,
+		uriSelector,
+		loadCookies,
+		netrcPath,
+		noNetrc,
 		dhtListenPort,
 		ed2KPort: ed2kPort,
 		ed2KServer: ed2kServer,
@@ -862,6 +1019,15 @@ const initForm = (config) => {
 		btEnableLsd: parseBooleanConfig(btEnableLsd, true),
 		btEncryptionPolicy: btEncryptionPolicy || "prefer",
 		btListenV6: parseBooleanConfig(btListenV6, false),
+		connectTimeout: connectTimeout ?? 60,
+		// Stored in bytes/s; UI exposes KiB/s for readability
+		lowestSpeedLimit: Math.round((Number(lowestSpeedLimit) || 0) / 1024),
+		lowestSpeedLimitTimeout: lowestSpeedLimitTimeout ?? 30,
+		fileAllocation: fileAllocation || "falloc",
+		uriSelector: uriSelector || "feedback",
+		loadCookies: loadCookies || "",
+		netrcPath: netrcPath || "",
+		noNetrc: parseBooleanConfig(noNetrc, false),
 		dhtListenPort,
 		ed2kPort: ed2kPort || 4662,
 		ed2kServer: convertCommaToLine(ed2kServer || DEFAULT_ED2K_SERVERS),
@@ -921,6 +1087,7 @@ export default {
 		Link,
 		UserCircle,
 		Code,
+		Cookie,
 		FileKey,
 		FileText,
 		KeyRound,
@@ -1208,12 +1375,15 @@ export default {
 				"btMaxPeersPerTorrent",
 				"btMaxOutstandingPerPeer",
 				"btUpnpLease",
+				"connectTimeout",
+				"lowestSpeedLimit",
+				"lowestSpeedLimitTimeout",
 			]) {
 				if (key in data) {
 					const raw = data[key];
 					if (raw === "" || raw === null || raw === undefined) {
 						// Blank input means "use engine default"; drop the key
-						// instead of coercing to 0 so the stored value matches.
+						// instead of coercing to 0 so the stored value matches
 						delete data[key];
 						continue;
 					}
@@ -1228,6 +1398,16 @@ export default {
 						delete data[key];
 					}
 				}
+			}
+
+			// `lowest-speed-limit` is shown to users in KiB/s but the engine
+			// expects bytes/s. Convert here so the stored config matches the
+			// UI unit while the engine sees the correct magnitude
+			if (
+				"lowestSpeedLimit" in data &&
+				typeof data.lowestSpeedLimit === "number"
+			) {
+				data.lowestSpeedLimit = data.lowestSpeedLimit * 1024;
 			}
 
 			if (ed2kServer !== undefined) {

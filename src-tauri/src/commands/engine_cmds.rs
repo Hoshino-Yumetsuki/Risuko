@@ -488,7 +488,7 @@ pub async fn probe_m3u8(url: String) -> Result<Value, String> {
         return Err("URL is required".to_string());
     }
 
-    let client = reqwest::Client::builder()
+    let client = risuko_http::Client::builder()
         .user_agent("Mozilla/5.0")
         .build()
         .map_err(|e| format!("Failed to build client: {e}"))?;

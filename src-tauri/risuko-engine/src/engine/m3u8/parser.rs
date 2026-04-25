@@ -83,7 +83,7 @@ pub fn resolve_segment_url(base_url: &str, segment_uri: &str) -> Result<String, 
 /// Fetch and parse an M3U8 playlist from a URL
 pub async fn fetch_and_parse_playlist(
     url: &str,
-    client: &reqwest::Client,
+    client: &risuko_http::Client,
 ) -> Result<ParsedPlaylist, String> {
     let resp = client
         .get(url)

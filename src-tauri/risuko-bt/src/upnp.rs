@@ -434,7 +434,7 @@ struct ServiceXml {
 }
 
 async fn fetch_root_desc(location: &Url) -> std::io::Result<RootDesc> {
-    let client = reqwest::Client::builder()
+    let client = risuko_http::Client::builder()
         .timeout(Duration::from_secs(5))
         .build()
         .map_err(io_other)?;
@@ -586,7 +586,7 @@ async fn soap_call(
     action: &str,
     body: String,
 ) -> std::io::Result<String> {
-    let client = reqwest::Client::builder()
+    let client = risuko_http::Client::builder()
         .timeout(Duration::from_secs(5))
         .build()
         .map_err(io_other)?;

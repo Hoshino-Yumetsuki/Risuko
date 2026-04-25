@@ -514,7 +514,7 @@ impl RssManager {
 // Helpers
 
 async fn fetch_feed_bytes(url: &str) -> Result<Vec<u8>, String> {
-    let client = reqwest::Client::builder()
+    let client = risuko_http::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
         .build()
         .map_err(|e| format!("HTTP client error: {e}"))?;

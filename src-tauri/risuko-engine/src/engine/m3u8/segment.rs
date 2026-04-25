@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 
-use reqwest::Client;
+use risuko_http::Client;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::Semaphore;
 use tokio_util::sync::CancellationToken;

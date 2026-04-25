@@ -5,7 +5,7 @@ type Aes128CbcDec = cbc::Decryptor<aes::Aes128>;
 /// Fetch the AES-128 decryption key from a remote URI
 pub async fn fetch_decryption_key(
     key_uri: &str,
-    client: &reqwest::Client,
+    client: &risuko_http::Client,
 ) -> Result<[u8; 16], String> {
     let resp = client
         .get(key_uri)

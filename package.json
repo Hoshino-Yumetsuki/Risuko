@@ -1,6 +1,6 @@
 {
 	"name": "risuko",
-	"version": "0.1.10",
+	"version": "0.2.0",
 	"description": "A full-featured download manager",
 	"homepage": "https://risuko.vercel.app",
 	"author": {
@@ -57,7 +57,7 @@
 		"axios": "^1.15.2",
 		"cfonts": "^3.3.1",
 		"chalk": "^5.6.2",
-		"i18next": "^26.0.6",
+		"i18next": "^26.0.8",
 		"lodash": "^4.18.1",
 		"normalize.css": "^8.0.1",
 		"pinia": "^3.0.4",

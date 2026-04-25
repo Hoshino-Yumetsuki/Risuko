@@ -1,14 +1,15 @@
 [workspace]
-members = ["risuko-engine", "risuko-bt", "risuko-cli", "risuko-napi"]
+members = ["risuko-engine", "risuko-bt", "risuko-cli", "risuko-napi", "risuko-http"]
 
 [workspace.package]
-version = "0.1.10"
+version = "0.2.0"
 authors = ["YueMiyuki"]
 edition = "2021"
 
 [workspace.dependencies]
 risuko-engine = { path = "risuko-engine" }
 risuko-bt = { path = "risuko-bt" }
+risuko-http = { path = "risuko-http" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["process", "sync", "time", "rt", "net", "macros", "signal"] }
@@ -64,7 +65,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-appender = "0.2"
 regex = "1.12.3"
-reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
+risuko-http = { workspace = true }
 base64 = "0.22"
 sha1 = "0.11"
 sha2 = "0.11"

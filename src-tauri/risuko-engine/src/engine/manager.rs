@@ -473,7 +473,9 @@ impl TaskManager {
 
     fn spawn_http_download(&self, task: &DownloadTask, merged_options: Map<String, Value>) {
         let gid = task.gid.clone();
-        let uri = task.uris.first().cloned().unwrap_or_default();
+        // Pass the full URI list so the engine can fail over between mirrors
+        // when one returns a hard error (DNS, TLS, 5xx, connect refused)
+        let uris: Vec<String> = task.uris.clone();
         let dir = task.dir.clone();
         let out = task.out.clone();
         let events = self.events.clone();
@@ -537,8 +539,8 @@ impl TaskManager {
             };
             active_for_insert.write().await.insert(gid_for_insert, ad);
 
-            let download_result = http::run_http_download(
-                &uri,
+            let download_result = http::run_http_download_multi(
+                &uris,
                 &dir,
                 &out,
                 &merged_options,

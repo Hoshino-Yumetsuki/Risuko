@@ -30,3 +30,5 @@ src-tauri/target
 src-tauri/gen
 
 *.node
+
+example

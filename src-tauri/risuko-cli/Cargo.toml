@@ -18,7 +18,7 @@ serde_json = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 log = { workspace = true }
 dirs = { workspace = true }
-reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
+risuko-http = { workspace = true }
 base64 = "0.22"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

@@ -16,15 +16,15 @@ const QUERY_SAFE: &percent_encoding::AsciiSet = &NON_ALPHANUMERIC
     .remove(b'_')
     .remove(b'~');
 
-fn client() -> &'static reqwest::Client {
-    static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+fn client() -> &'static risuko_http::Client {
+    static CLIENT: OnceLock<risuko_http::Client> = OnceLock::new();
     CLIENT.get_or_init(|| {
-        reqwest::Client::builder()
+        risuko_http::Client::builder()
             .timeout(Duration::from_secs(15))
             .connect_timeout(Duration::from_secs(5))
             .pool_max_idle_per_host(4)
             .build()
-            .expect("build reqwest client")
+            .expect("build risuko-http client")
     })
 }
 

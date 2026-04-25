@@ -153,6 +153,18 @@
 	.settings-select-item [data-slot="select-trigger"] {
 		width: 100% !important;
 	}
+	.settings-select-item .mo-number-input-wrap {
+		width: 100%;
+	}
+	.settings-select-group--stack {
+		flex-direction: column;
+		align-items: stretch;
+		gap: 12px;
+	}
+	.settings-select-group--stack .settings-select-item {
+		flex: 0 0 auto;
+		width: 100%;
+	}
 	.settings-inline-input [data-slot="select-trigger"] {
 		width: auto !important;
 		flex-shrink: 0;
