@@ -63,7 +63,6 @@ pub fn allocate(file: &File, len: u64, mode: Mode) -> io::Result<()> {
 #[cfg(target_os = "linux")]
 fn platform_fallocate(file: &File, len: u64) -> io::Result<()> {
     use nix::fcntl::{fallocate, FallocateFlags};
-    use std::os::unix::io::AsRawFd;
     // 0 flags == reserve blocks AND extend logical length, matching aria2
     // `fallocate(2)` takes a signed length; reject sizes that don't fit so we
     // never pass a negative value (which the kernel rejects with EINVAL but
@@ -74,7 +73,9 @@ fn platform_fallocate(file: &File, len: u64) -> io::Result<()> {
             "fallocate length exceeds i64::MAX",
         )
     })?;
-    fallocate(file.as_raw_fd(), FallocateFlags::empty(), 0, signed_len)
+    // nix 0.30 expects an `AsFd` implementor — `&File` qualifies and avoids
+    // the unsafe-ish round-trip through `RawFd`
+    fallocate(file, FallocateFlags::empty(), 0, signed_len)
         .map_err(|e| io::Error::from_raw_os_error(e as i32))
 }
 
@@ -122,12 +123,19 @@ fn platform_fallocate(file: &File, len: u64) -> io::Result<()> {
         let rc2 = unsafe { libc::fcntl(fd, F_PREALLOCATE, &mut store as *mut Fstore) };
         if rc2 == -1 {
             let second_err = io::Error::last_os_error();
-            return Err(io::Error::new(
-                second_err.kind(),
-                format!(
-                    "F_PREALLOCATE failed (contiguous: {first_err}; non-contiguous: {second_err})"
-                ),
-            ));
+            // Log the contextual message (Fstore / F_PREALLOCATE / fst_flags=
+            // F_ALLOCATEALL, fd, both attempts) and return `second_err`
+            // directly so `raw_os_error()` is preserved. Wrapping with
+            // `io::Error::new` would erase the OS code and silently disable
+            // the `is_unsupported` fallback for filesystems that don't
+            // implement F_PREALLOCATE
+            tracing::debug!(
+                fd = fd,
+                first_err = %first_err,
+                second_err = %second_err,
+                "F_PREALLOCATE failed (Fstore fst_flags=F_ALLOCATEALL): contiguous and non-contiguous attempts both failed"
+            );
+            return Err(second_err);
         }
     }
     // F_PREALLOCATE only reserves blocks; the file's logical length is still
@@ -149,18 +157,24 @@ fn platform_fallocate(file: &File, len: u64) -> io::Result<()> {
 
 #[cfg(unix)]
 fn is_unsupported(e: &io::Error) -> bool {
-    // Older kernels and some filesystems report "this operation isn't
-    // implemented here" via ENOSYS or even EINVAL instead of the documented
-    // ENOTSUP/EOPNOTSUPP, so treat them all as fallback-worthy and let the
-    // caller fall back to `set_len`
-    matches!(
-        e.raw_os_error(),
-        Some(code)
-            if code == libc::ENOTSUP
-                || code == libc::EOPNOTSUPP
-                || code == libc::ENOSYS
-                || code == libc::EINVAL
-    )
+    // Documented "unsupported" errnos: ENOTSUP/EOPNOTSUPP/ENOSYS. Older Linux
+    // kernels and certain filesystems (e.g. some FUSE drivers) report this as
+    // EINVAL instead, so on Linux we additionally treat EINVAL as a fallback
+    // signal. Other Unixes (notably macOS' F_PREALLOCATE) use EINVAL for
+    // genuine invalid-argument errors, so we must not mask those there
+    let Some(code) = e.raw_os_error() else {
+        return false;
+    };
+    if code == libc::ENOTSUP || code == libc::EOPNOTSUPP || code == libc::ENOSYS {
+        return true;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        if code == libc::EINVAL {
+            return true;
+        }
+    }
+    false
 }
 
 #[cfg(not(unix))]

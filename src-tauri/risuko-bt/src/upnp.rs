@@ -435,19 +435,25 @@ struct ServiceXml {
 
 /// Shared HTTP client for UPnP description fetches and SOAP calls. Reusing a
 /// single client lets connection pools, TLS context and timeouts be shared
-/// across `discover_and_map` invocations instead of rebuilt per call
-fn upnp_http_client() -> &'static risuko_http::Client {
+/// across `discover_and_map` invocations instead of rebuilt per call. Returns
+/// an `io::Error` rather than panicking when client init fails so callers
+/// can surface it through their normal `io::Result` plumbing
+fn upnp_http_client() -> std::io::Result<&'static risuko_http::Client> {
     static CLIENT: std::sync::OnceLock<risuko_http::Client> = std::sync::OnceLock::new();
-    CLIENT.get_or_init(|| {
-        risuko_http::Client::builder()
-            .timeout(Duration::from_secs(5))
-            .build()
-            .expect("build upnp http client")
-    })
+    if let Some(c) = CLIENT.get() {
+        return Ok(c);
+    }
+    let client = risuko_http::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()
+        .map_err(io_other)?;
+    // If another thread won the race, our `client` is dropped
+    let _ = CLIENT.set(client);
+    Ok(CLIENT.get().expect("client just initialized"))
 }
 
 async fn fetch_root_desc(location: &Url) -> std::io::Result<RootDesc> {
-    let body = upnp_http_client()
+    let body = upnp_http_client()?
         .get(location.clone())
         .send()
         .await
@@ -595,7 +601,7 @@ async fn soap_call(
     action: &str,
     body: String,
 ) -> std::io::Result<String> {
-    let resp = upnp_http_client()
+    let resp = upnp_http_client()?
         .post(control_url.clone())
         .header("Content-Type", "text/xml; charset=\"utf-8\"")
         .header("SOAPAction", format!("\"{service_type}#{action}\""))

@@ -290,14 +290,24 @@ impl PieceQueue {
 }
 
 /// Build a HTTP Client with common settings applied from options
-fn build_client(options: &Map<String, Value>) -> Result<Client, String> {
-    build_client_inner(options, true)
+///
+/// `cookie_jar` is shared with the range-request client so both clients see
+/// the same cookie store; passing `None` disables the cookie provider for
+/// this client
+fn build_client(
+    options: &Map<String, Value>,
+    cookie_jar: Option<std::sync::Arc<risuko_http::Jar>>,
+) -> Result<Client, String> {
+    build_client_inner(options, true, cookie_jar)
 }
 
 /// Build a client without automatic decompression — needed for range requests
 /// where we must receive raw bytes at exact file offsets.
-fn build_client_no_decompress(options: &Map<String, Value>) -> Result<Client, String> {
-    build_client_inner(options, false)
+fn build_client_no_decompress(
+    options: &Map<String, Value>,
+    cookie_jar: Option<std::sync::Arc<risuko_http::Jar>>,
+) -> Result<Client, String> {
+    build_client_inner(options, false, cookie_jar)
 }
 
 /// aria2 default: 60s connect timeout when not configured
@@ -457,7 +467,11 @@ async fn verify_piece_checksums(
     .map_err(|e| format!("verify task panicked: {e}"))?
 }
 
-fn build_client_inner(options: &Map<String, Value>, decompress: bool) -> Result<Client, String> {
+fn build_client_inner(
+    options: &Map<String, Value>,
+    decompress: bool,
+    cookie_jar: Option<std::sync::Arc<risuko_http::Jar>>,
+) -> Result<Client, String> {
     let ua = options
         .get("user-agent")
         .and_then(|v| v.as_str())
@@ -500,33 +514,47 @@ fn build_client_inner(options: &Map<String, Value>, decompress: bool) -> Result<
         }
     }
 
-    if let Some(cookies_path) = options
-        .get("load-cookies")
-        .and_then(|v| v.as_str())
-        .filter(|s| !s.is_empty())
-    {
-        match std::fs::File::open(cookies_path) {
-            Ok(f) => {
-                let jar = std::sync::Arc::new(risuko_http::Jar::new());
-                match jar.load_netscape(f) {
-                    Ok(n) => {
-                        tracing::info!("Loaded {n} cookies from {cookies_path}");
-                        builder = builder.cookie_provider(jar);
-                    }
-                    Err(e) => {
-                        tracing::warn!("Failed to parse cookie file {cookies_path}: {e}");
-                    }
-                }
-            }
-            Err(e) => {
-                tracing::warn!("Failed to open cookie file {cookies_path}: {e}");
-            }
-        }
+    // Cookie file parsing happens once in the caller (see `load_cookie_jar`)
+    // so the decompressing and range clients share a single jar — otherwise
+    // each call here would re-parse the file into a disjoint store and
+    // requests issued via the range client wouldn't see cookies set on
+    // responses received by the main client (and vice versa)
+    if let Some(jar) = cookie_jar {
+        builder = builder.cookie_provider(jar);
     }
 
     builder
         .build()
         .map_err(|e| format!("Failed to build HTTP client: {e}"))
+}
+
+/// Parse the `load-cookies` file (Netscape format) once and return a shared
+/// `Jar`. Returns `None` when the option is unset/blank, the file is missing,
+/// or parsing fails — all of those conditions are non-fatal and logged here
+/// so the call sites stay simple
+fn load_cookie_jar(options: &Map<String, Value>) -> Option<std::sync::Arc<risuko_http::Jar>> {
+    let cookies_path = options
+        .get("load-cookies")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())?;
+    let f = match std::fs::File::open(cookies_path) {
+        Ok(f) => f,
+        Err(e) => {
+            tracing::warn!("Failed to open cookie file {cookies_path}: {e}");
+            return None;
+        }
+    };
+    let jar = std::sync::Arc::new(risuko_http::Jar::new());
+    match jar.load_netscape(f) {
+        Ok(n) => {
+            tracing::info!("Loaded {n} cookies from {cookies_path}");
+            Some(jar)
+        }
+        Err(e) => {
+            tracing::warn!("Failed to parse cookie file {cookies_path}: {e}");
+            None
+        }
+    }
 }
 
 /// Build custom headers from options
@@ -813,9 +841,13 @@ async fn run_single_uri_download(
         .unwrap_or(DEFAULT_MIN_SPLIT_SIZE)
         .max(1);
 
-    let client = build_client(options)?;
+    // Build a single shared cookie jar so both the decompressing client and
+    // the range-request client see the same cookies (load-cookies file is
+    // parsed exactly once here)
+    let cookie_jar = load_cookie_jar(options);
+    let client = build_client(options, cookie_jar.clone())?;
     let range_client = if split > 1 {
-        build_client_no_decompress(options)?
+        build_client_no_decompress(options, cookie_jar)?
     } else {
         client.clone()
     };

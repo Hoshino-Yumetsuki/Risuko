@@ -147,7 +147,14 @@ fn strip_macdefs(input: &str) -> String {
             // else: drop the body line entirely.
             continue;
         }
-        if trimmed.starts_with("macdef") {
+        // Match the literal token `macdef` only — `starts_with` alone would
+        // also match e.g. `macdefoo` and incorrectly start macro-skip mode
+        // The first whitespace-delimited token must equal `macdef`
+        if trimmed
+            .split_whitespace()
+            .next()
+            .is_some_and(|tok| tok == "macdef")
+        {
             // Drop the `macdef <name>` line itself; body follows.
             in_macro = true;
             continue;

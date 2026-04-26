@@ -123,8 +123,11 @@ impl WholeChecksum {
     }
 
     pub fn matches(&self, computed_hex: &str) -> bool {
-        // Case-insensitive constant-time-ish compare. Lengths are validated
-        // upstream so a simple eq_ignore_ascii_case suffices
+        // Case-insensitive equality check. Hex lengths are validated upstream
+        // (see `Self::parse`) so comparing different-length strings can't
+        // happen here. Note: `eq_ignore_ascii_case` is *not* constant-time —
+        // checksum verification is not a credential check, so timing leaks
+        // aren't a concern
         self.hex.eq_ignore_ascii_case(computed_hex)
     }
 }

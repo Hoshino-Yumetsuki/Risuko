@@ -58,7 +58,11 @@ impl Policy {
     }
 
     pub(crate) fn follows(&self) -> bool {
-        self.unlimited || self.max > 0
+        // A `limited(0)` policy still cares about redirects: it should run
+        // through the redirect loop so the budget check fires immediately
+        // and the configured `OnExceeded::Error` is surfaced. Only `none()`
+        // (max=0, !unlimited, on_exceeded=Stop) opts out entirely
+        self.unlimited || self.max > 0 || self.on_exceeded == OnExceeded::Error
     }
 }
 

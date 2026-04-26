@@ -56,9 +56,9 @@ export default {
 	"lowest-speed-limit-help":
 		"若下载速度持续低于阈值且超过停滞超时，则终止当前任务（若已开启自动重试，会自动重启）。设为 0 表示禁用。",
 	"uri-selector": "镜像选择策略",
-	"uri-selector-feedback": "反馈式 (跳过失败的镜像)",
-	"uri-selector-inorder": "顺序 (按列表顺序尝试)",
-	"uri-selector-adaptive": "自适应 (优先最快)",
+	"uri-selector-feedback": "反馈式（跳过失败的镜像）",
+	"uri-selector-inorder": "顺序（按列表顺序尝试）",
+	"uri-selector-adaptive": "自适应（优先最快）",
 	"unit-seconds": "秒",
 	"unit-kib-per-sec": "KiB/s",
 	storage: "存储",

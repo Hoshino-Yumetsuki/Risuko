@@ -1020,7 +1020,12 @@ const initForm = (config) => {
 		btEncryptionPolicy: btEncryptionPolicy || "prefer",
 		btListenV6: parseBooleanConfig(btListenV6, false),
 		connectTimeout: connectTimeout ?? 60,
-		// Stored in bytes/s; UI exposes KiB/s for readability
+		// `lowestSpeedLimit` is stored as bytes/s by the engine but the UI
+		// buckets it into KiB/s for readability; the save handler multiplies
+		// back by 1024. As a side effect, backend values that are not exact
+		// multiples of 1024 get rounded to the nearest KiB whenever the user
+		// edits this field. That precision loss is intentional — it keeps the
+		// displayed number consistent with the UI unit
 		lowestSpeedLimit: Math.round((Number(lowestSpeedLimit) || 0) / 1024),
 		lowestSpeedLimitTimeout: lowestSpeedLimitTimeout ?? 30,
 		fileAllocation: fileAllocation || "falloc",
@@ -1388,17 +1393,21 @@ export default {
 						continue;
 					}
 					const n = Number(raw);
-					// Per-key bounds mirror the corresponding `:min` constraints in
-					// the form. `connectTimeout` and `lowestSpeedLimitTimeout` use
-					// `:min="1"` in the UI, so 0 must be rejected here as well
+					// Per-key bounds mirror the `:min`/`:max` constraints set on the
+					// matching `<NumberInput>` in the form. Enforcing both bounds
+					// here protects against programmatic input (e.g. config import,
+					// IPC) that bypasses the spinner clamping
 					let ok: boolean;
 					if (key === "btUpnpLease") {
 						ok = Number.isFinite(n) && n >= 60 && n <= 86400;
-					} else if (
-						key === "connectTimeout" ||
-						key === "lowestSpeedLimitTimeout"
-					) {
-						ok = Number.isFinite(n) && n >= 1;
+					} else if (key === "connectTimeout") {
+						ok = Number.isFinite(n) && n >= 1 && n <= 600;
+					} else if (key === "lowestSpeedLimitTimeout") {
+						ok = Number.isFinite(n) && n >= 1 && n <= 3600;
+					} else if (key === "lowestSpeedLimit") {
+						// UI value is KiB/s (max 1 GiB/s); save handler converts to
+						// bytes/s afterwards
+						ok = Number.isFinite(n) && n >= 0 && n <= 1048576;
 					} else {
 						ok = Number.isFinite(n) && n >= 0;
 					}

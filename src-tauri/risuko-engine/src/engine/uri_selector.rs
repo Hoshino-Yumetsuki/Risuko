@@ -115,11 +115,22 @@ pub fn pick<'a>(
             .and_then(|u| u.host_str().map(str::to_string))
     };
 
+    // `Inorder` semantically means "try strictly in the user-specified order"
+    // and must not silently drop hosts that other strategies would skip,
+    // otherwise it collapses into `Feedback`. Blacklist filtering only runs
+    // for non-`Inorder` strategies; the `failed_in_this_attempt` filter still
+    // applies everywhere because it represents URIs the *current* attempt has
+    // already exhausted (any strategy must move past those)
     let candidates: Vec<usize> = (0..uris.len())
         .filter(|i| !failed_in_this_attempt.contains(i))
-        .filter(|i| match host_of(&uris[*i]) {
-            Some(h) => !stats.is_blacklisted(&h),
-            None => true,
+        .filter(|i| {
+            if strategy == Strategy::Inorder {
+                return true;
+            }
+            match host_of(&uris[*i]) {
+                Some(h) => !stats.is_blacklisted(&h),
+                None => true,
+            }
         })
         .collect();
 
@@ -130,25 +141,32 @@ pub fn pick<'a>(
     match strategy {
         Strategy::Inorder | Strategy::Feedback => Some(candidates[0]),
         Strategy::Adaptive => {
-            // Weighted by EMA. Anything with no recorded speed yet gets a
-            // baseline weight equal to the average of known mirrors so cold
-            // mirrors aren't starved during the first round (a 0.0 baseline
-            // would silently skip them whenever any other mirror has stats)
+            // Weighted by EMA. Mirrors with no recorded speed yet get a
+            // baseline strictly below the slowest known mirror so cold
+            // mirrors are still considered (non-zero weight) but never tie
+            // with — and therefore can't outrank by iteration order — a
+            // mirror that already has measured throughput. A 0.0 baseline
+            // would silently skip them whenever any other mirror has stats
             let known: Vec<f64> = candidates
                 .iter()
                 .filter_map(|&i| host_of(&uris[i]).and_then(|h| stats.get(&h).map(|s| s.ema_bps)))
                 .collect();
-            let average_ema = if known.is_empty() {
+            let baseline = if known.is_empty() {
                 f64::EPSILON
             } else {
-                known.iter().sum::<f64>() / known.len() as f64
+                let min_known = known
+                    .iter()
+                    .copied()
+                    .fold(f64::INFINITY, f64::min)
+                    .max(f64::EPSILON);
+                min_known * 0.5
             };
             let weights: Vec<f64> = candidates
                 .iter()
                 .map(|&i| {
                     host_of(&uris[i])
                         .and_then(|h| stats.get(&h).map(|s| s.ema_bps))
-                        .unwrap_or(average_ema)
+                        .unwrap_or(baseline)
                 })
                 .collect();
             let total: f64 = weights.iter().sum();
@@ -208,6 +226,24 @@ mod tests {
         }
         let pick = pick(Strategy::Feedback, &uris, &stats, &[]);
         assert_eq!(pick, Some(1));
+    }
+
+    #[test]
+    fn inorder_ignores_blacklist_but_honors_failed_in_attempt() {
+        // `Inorder` must hand back the first URI even when its host is
+        // blacklisted (otherwise it would behave identically to `Feedback`)
+        // `failed_in_this_attempt` is still respected so retries advance
+        let uris = vec!["http://a.test/x".into(), "http://b.test/x".into()];
+        let mut stats = ServerStats::default();
+        for _ in 0..MAX_CONSECUTIVE_FAILS {
+            stats.record_failure("a.test");
+        }
+        // Sanity: `Feedback` skips the blacklisted host
+        assert_eq!(pick(Strategy::Feedback, &uris, &stats, &[]), Some(1));
+        // `Inorder` returns index 0 even though `a.test` is blacklisted
+        assert_eq!(pick(Strategy::Inorder, &uris, &stats, &[]), Some(0));
+        // But it still respects `failed_in_this_attempt`
+        assert_eq!(pick(Strategy::Inorder, &uris, &stats, &[0]), Some(1));
     }
 
     #[test]

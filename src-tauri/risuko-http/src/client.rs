@@ -79,9 +79,14 @@ impl Client {
         let url = rb.url?;
         let timeout = rb.timeout.or(self.inner.timeout);
 
-        // Merge defaults underneath request-specific headers. Use `append`
-        // throughout so multi-valued headers (e.g. Set-Cookie / Accept) are
-        // preserved instead of having later values clobber earlier ones
+        // Start with default headers, then let request-specific headers
+        // override them. Per-name override semantics: if the request sets any
+        // value for a header name, all default values for that name are
+        // dropped before the request's values are appended. This way a
+        // request `User-Agent` replaces the default UA instead of being sent
+        // alongside it (HTTP forbids duplicate singleton headers), while
+        // multi-valued request headers like `Accept` still preserve all
+        // values the caller appended
         let mut headers = HeaderMap::new();
         for (k, v) in self.inner.default_headers.iter() {
             headers.append(k.clone(), v.clone());
@@ -94,15 +99,26 @@ impl Client {
         // `HeaderMap::drain` yields `(Option<HeaderName>, HeaderValue)`:
         // `Some(name)` introduces a new header, subsequent `None` entries
         // belong to the same name. Track the last name so multi-valued
-        // request headers survive the merge
+        // request headers survive the merge, and remove any default entries
+        // for names the request sets so we don't end up with duplicates
         let mut last_name: Option<http::HeaderName> = None;
+        let mut overridden: std::collections::HashSet<http::HeaderName> =
+            std::collections::HashSet::new();
         for (k, v) in rb.headers.drain() {
-            if let Some(name) = k {
-                last_name = Some(name.clone());
-                headers.append(name, v);
-            } else if let Some(name) = last_name.clone() {
-                headers.append(name, v);
+            let name = match k {
+                Some(n) => {
+                    last_name = Some(n.clone());
+                    n
+                }
+                None => match last_name.clone() {
+                    Some(n) => n,
+                    None => continue,
+                },
+            };
+            if overridden.insert(name.clone()) {
+                headers.remove(&name);
             }
+            headers.append(name, v);
         }
 
         let body = std::mem::replace(&mut rb.body, ReqBody::Empty);
@@ -166,6 +182,11 @@ impl Client {
                 body = ReqBody::Empty;
                 headers.remove(CONTENT_LENGTH);
                 headers.remove(http::header::CONTENT_TYPE);
+                // Strip caller-supplied body-framing headers too. Forwarding
+                // `Transfer-Encoding: chunked` together with `ReqBody::Empty`
+                // would produce a malformed request the upstream may reject
+                // or interpret ambiguously
+                headers.remove(http::header::TRANSFER_ENCODING);
             }
 
             // Drop sensitive headers on cross-origin redirect
@@ -199,13 +220,12 @@ impl Client {
         let req_headers = builder
             .headers_mut()
             .ok_or_else(|| Error::Builder("no headers".into()))?;
-        // Same multi-valued header preservation as in `execute`
-        let mut last_name: Option<http::HeaderName> = None;
+        // `HeaderMap::iter` yields the header name on every entry (unlike
+        // `drain`, which only yields it on the first entry of a group), so
+        // appending each (k, v) is enough to preserve multi-valued headers
         for (k, v) in headers.iter() {
             req_headers.append(k.clone(), v.clone());
-            last_name = Some(k.clone());
         }
-        let _ = last_name;
         // Hyper requires a Host header; fill from URL if absent
         if !req_headers.contains_key(HOST) {
             if let Some(host) = url.host_str() {

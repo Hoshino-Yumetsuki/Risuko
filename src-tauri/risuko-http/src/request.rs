@@ -49,8 +49,11 @@ impl RequestBuilder {
     }
 
     pub fn headers(mut self, headers: HeaderMap) -> Self {
+        // `insert` would collapse multi-valued headers (e.g. `Accept`,
+        // `Set-Cookie`) by replacing previous values. Append each entry so
+        // every value from the incoming map is preserved
         for (k, v) in headers.iter() {
-            self.headers.insert(k.clone(), v.clone());
+            self.headers.append(k.clone(), v.clone());
         }
         self
     }

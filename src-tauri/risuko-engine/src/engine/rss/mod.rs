@@ -515,20 +515,27 @@ impl RssManager {
 
 /// Shared HTTP client for RSS feed fetches. Building a fresh `Client` on every
 /// call would rebuild TLS state and drop keep-alive between polls, so cache
-/// one for the lifetime of the process
-fn http_client() -> &'static risuko_http::Client {
+/// one for the lifetime of the process. Returns an error rather than panicking
+/// if the underlying TLS/connector setup fails so a transient init failure
+/// becomes a recoverable RSS fetch error
+fn http_client() -> Result<&'static risuko_http::Client, String> {
     static CLIENT: std::sync::OnceLock<risuko_http::Client> = std::sync::OnceLock::new();
-    CLIENT.get_or_init(|| {
-        risuko_http::Client::builder()
-            .timeout(std::time::Duration::from_secs(30))
-            .user_agent("Risuko/1.0")
-            .build()
-            .expect("build rss http client")
-    })
+    if let Some(c) = CLIENT.get() {
+        return Ok(c);
+    }
+    let client = risuko_http::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .user_agent("Risuko/1.0")
+        .build()
+        .map_err(|e| format!("Failed to build rss http client: {e}"))?;
+    // If another thread won the race, our `client` is dropped and we return
+    // the one already stored
+    let _ = CLIENT.set(client);
+    Ok(CLIENT.get().expect("client just initialized"))
 }
 
 async fn fetch_feed_bytes(url: &str) -> Result<Vec<u8>, String> {
-    let resp = http_client()
+    let resp = http_client()?
         .get(url)
         .send()
         .await

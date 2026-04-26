@@ -93,6 +93,8 @@ impl Jar {
             }
             // `0` means "session cookie, no expiry" in the Netscape format
             // Anything else is a unix epoch — drop already-expired entries
+            // (anything at or before "now", including negative timestamps,
+            // which are treated as long-expired)
             let expires_epoch: Option<i64> = if expires_raw.is_empty() || expires_raw == "0" {
                 None
             } else {
@@ -102,8 +104,8 @@ impl Jar {
                             .duration_since(std::time::UNIX_EPOCH)
                             .map(|d| d.as_secs() as i64)
                             .unwrap_or(0);
-                        if v > 0 && v <= now {
-                            // Already expired; skip this line.
+                        if v <= now {
+                            // Already expired (or invalid negative); skip
                             continue;
                         }
                         Some(v)
