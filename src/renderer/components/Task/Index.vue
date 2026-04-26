@@ -298,13 +298,19 @@ export default {
 		},
 		async removeTask(task, taskName, isRemoveWithFiles = false) {
 			const loadingText = this.$t("task.loading-delete-task");
+			// File deletion must finish inside the same loading window as the
+			// task removal. Otherwise the user can re-add the same magnet
+			// before the files are trashed; the new torrent then scans the
+			// still-present files, marks every piece local and reports
+			// "seeding" without ever actually downloading
 			return this.withTaskActionLoading(loadingText, async () => {
 				await this.removeTaskItem(task, taskName);
-			}).then(() => {
 				if (isRemoveWithFiles) {
-					this.deleteTaskFiles(task).catch((err) => {
-						logger.warn("[Risuko] background file delete failed:", err);
-					});
+					try {
+						await this.deleteTaskFiles(task);
+					} catch (err) {
+						logger.warn("[Risuko] file delete failed:", err);
+					}
 				}
 			});
 		},
@@ -312,11 +318,12 @@ export default {
 			const loadingText = this.$t("task.loading-remove-record");
 			return this.withTaskActionLoading(loadingText, async () => {
 				await this.removeTaskRecordItem(task, taskName);
-			}).then(() => {
 				if (isRemoveWithFiles) {
-					this.deleteTaskFiles(task).catch((err) => {
-						logger.warn("[Risuko] background file delete failed:", err);
-					});
+					try {
+						await this.deleteTaskFiles(task);
+					} catch (err) {
+						logger.warn("[Risuko] file delete failed:", err);
+					}
 				}
 			});
 		},
@@ -358,14 +365,17 @@ export default {
 		},
 		async removeTasks(taskList, isRemoveWithFiles = false) {
 			const loadingText = this.$t("task.loading-batch-delete-task");
+			// Await file deletion so re-adding any of the same magnet links
+			// can't race the trash operation (see removeTask comment above).
 			return this.withTaskActionLoading(loadingText, async () => {
 				const gids = taskList.map((task) => task.gid);
 				await this.removeTaskItems(gids);
-			}).then(() => {
 				if (isRemoveWithFiles) {
-					this.batchDeleteTaskFiles(taskList).catch((err) => {
-						logger.warn("[Risuko] background batch file delete failed:", err);
-					});
+					try {
+						await this.batchDeleteTaskFiles(taskList);
+					} catch (err) {
+						logger.warn("[Risuko] batch file delete failed:", err);
+					}
 				}
 			});
 		},
