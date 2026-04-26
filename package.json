@@ -12,7 +12,7 @@
 	"type": "module",
 	"repository": {
 		"type": "git",
-		"url": "git@github.com:YueMiyuki/Risuko.git"
+		"url": "git+ssh://git@github.com/YueMiyuki/Risuko.git"
 	},
 	"scripts": {
 		"dev": "node scripts/dev.mjs",
