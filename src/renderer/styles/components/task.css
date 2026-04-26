@@ -227,7 +227,7 @@
 	.task-filter-field {
 		height: 24px;
 		width: 150px;
-		padding: 0 22px 0 22px;
+		padding: 0 22px;
 		border: 1px solid transparent;
 		border-radius: calc(var(--radius) - 2px);
 		background: rgba(0, 0, 0, 0.03);

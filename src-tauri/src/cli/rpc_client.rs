@@ -3,20 +3,21 @@ use serde_json::{json, Value};
 pub struct RpcClient {
     url: String,
     secret: Option<String>,
-    client: reqwest::Client,
+    client: risuko_http::Client,
     id_counter: std::sync::atomic::AtomicU64,
 }
 
 impl RpcClient {
     pub fn new(port: u16, secret: Option<String>) -> Self {
-        let client = reqwest::Client::builder()
+        // Fail closed: a default client would silently drop the timeout and
+        // connect_timeout configured above, leaving JSON-RPC calls free to hang
+        // indefinitely. Building the client cannot legitimately fail with this
+        // configuration, so an explicit panic surfaces real misconfiguration
+        let client = risuko_http::Client::builder()
             .timeout(std::time::Duration::from_secs(30))
             .connect_timeout(std::time::Duration::from_secs(5))
             .build()
-            .unwrap_or_else(|e| {
-                log::warn!("Failed to build HTTP client with custom config: {e}, using defaults");
-                reqwest::Client::default()
-            });
+            .expect("Failed to build HTTP client with custom config");
         Self {
             url: format!("http://127.0.0.1:{}/jsonrpc", port),
             secret,

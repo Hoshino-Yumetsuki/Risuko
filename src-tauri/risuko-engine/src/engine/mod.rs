@@ -1,10 +1,13 @@
 pub mod ed2k;
 pub mod error_code;
 pub mod events;
+pub mod falloc;
 pub mod ftp;
+pub mod hasher;
 pub mod http;
 pub mod m3u8;
 pub mod manager;
+pub mod netrc;
 pub mod options;
 pub mod rpc;
 pub mod rss;
@@ -12,6 +15,7 @@ pub mod session;
 pub mod speed_limiter;
 pub mod task;
 pub mod torrent;
+pub mod uri_selector;
 
 pub use session::SESSION_FILENAME;
 

@@ -49,6 +49,28 @@ export default {
 		"If a running task stays below the speed threshold, pause and restart it automatically.",
 	"low-speed-threshold": "Low speed threshold",
 	"low-speed-threshold-unit": "KB/s",
+	"http-reliability": "HTTP / Network reliability",
+	"http-reliability-tips":
+		"Tune connect timeout and stalled-transfer detection for HTTP/HTTPS/FTP downloads.",
+	"connect-timeout": "Connect timeout",
+	"lowest-speed-limit": "Lowest speed limit",
+	"lowest-speed-limit-timeout": "Stall timeout",
+	"lowest-speed-limit-help":
+		"If a download stays below the lowest speed limit for the stall timeout, the worker is aborted and (if auto-retry is enabled) restarted. Set the limit to 0 to disable.",
+	"uri-selector": "Mirror selection",
+	"uri-selector-feedback": "Feedback (drop slow/failing mirrors)",
+	"uri-selector-inorder": "In order (try mirrors left-to-right)",
+	"uri-selector-adaptive": "Adaptive (prefer fastest)",
+	"unit-seconds": "seconds",
+	"unit-kib-per-sec": "KiB/s",
+	storage: "Storage",
+	"storage-tips": "How the engine reserves disk space before downloading.",
+	"file-allocation": "File allocation",
+	"file-allocation-falloc": "Pre-allocate (falloc)",
+	"file-allocation-trunc": "Truncate (set length only)",
+	"file-allocation-none": "None (grow as needed)",
+	"file-allocation-tips":
+		"Pre-allocate reserves real disk blocks up-front to avoid mid-download ENOSPC and reduce fragmentation. Falls back to truncate on filesystems that don't support it.",
 	"new-task-show-downloading":
 		"Automatically show downloading after adding task",
 	"no-confirm-before-delete-task":
@@ -145,6 +167,17 @@ export default {
 	developer: "Developer",
 	"user-agent": "User-Agent",
 	"mock-user-agent": "Mock User-Agent",
+	cookies: "Cookies",
+	"cookies-tips":
+		"Load cookies from a Netscape/Mozilla format cookies.txt file (also accepts curl/wget output).",
+	"load-cookies-placeholder": "/path/to/cookies.txt",
+	netrc: ".netrc credentials",
+	"netrc-tips":
+		"Inject HTTP Basic auth from a .netrc file when the URL has no embedded credentials. Default: ~/.netrc (or %USERPROFILE%/_netrc on Windows).",
+	"netrc-path-placeholder": "Override .netrc path (optional)",
+	"no-netrc": "Disable .netrc lookup",
+	"no-netrc-tips":
+		"Skip .netrc entirely. Useful when the file holds non-download credentials.",
 	"app-log-path": "App log path",
 	"download-session-path": "Download session path",
 	"session-reset": "Reset download session",

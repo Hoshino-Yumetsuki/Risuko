@@ -234,8 +234,8 @@ fn select_variant<'a>(variants: &'a [Variant], options: &Map<String, Value>) -> 
         .unwrap_or(&variants[0])
 }
 
-fn build_client(options: &Map<String, Value>) -> Result<reqwest::Client, String> {
-    let mut builder = reqwest::Client::builder();
+fn build_client(options: &Map<String, Value>) -> Result<risuko_http::Client, String> {
+    let mut builder = risuko_http::Client::builder();
 
     if let Some(ua) = options.get("user-agent").and_then(|v| v.as_str()) {
         builder = builder.user_agent(ua);
@@ -246,7 +246,7 @@ fn build_client(options: &Map<String, Value>) -> Result<reqwest::Client, String>
     if let Some(proxy_url) = options.get("all-proxy").and_then(|v| v.as_str()) {
         if !proxy_url.is_empty() {
             let proxy =
-                reqwest::Proxy::all(proxy_url).map_err(|e| format!("Invalid proxy: {e}"))?;
+                risuko_http::Proxy::all(proxy_url).map_err(|e| format!("Invalid proxy: {e}"))?;
             builder = builder.proxy(proxy);
         }
     }
