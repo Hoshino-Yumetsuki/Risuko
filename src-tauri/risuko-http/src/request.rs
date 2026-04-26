@@ -74,7 +74,9 @@ impl RequestBuilder {
                     HeaderValue::from_static("application/json"),
                 );
             }
-            Err(e) => self.url = Err(Error::Decode(e.to_string())),
+            // Serialization failures are encode-side bugs in the caller's
+            // payload, not response decoding problems
+            Err(e) => self.url = Err(Error::Encode(e.to_string())),
         }
         self
     }
@@ -88,7 +90,7 @@ impl RequestBuilder {
                     HeaderValue::from_static("application/x-www-form-urlencoded"),
                 );
             }
-            Err(e) => self.url = Err(Error::Decode(e.to_string())),
+            Err(e) => self.url = Err(Error::Encode(e.to_string())),
         }
         self
     }
@@ -96,7 +98,8 @@ impl RequestBuilder {
     pub fn query<T: Serialize + ?Sized>(mut self, q: &T) -> Self {
         if let Ok(ref mut url) = self.url {
             match serde_urlencoded::to_string(q) {
-                Ok(s) if !s.is_empty() => {
+                Ok(s) if s.is_empty() => {}
+                Ok(s) => {
                     let existing = url.query().unwrap_or("");
                     let merged = if existing.is_empty() {
                         s
@@ -105,7 +108,11 @@ impl RequestBuilder {
                     };
                     url.set_query(Some(&merged));
                 }
-                _ => {}
+                Err(e) => {
+                    // Surface encoding failures so the caller doesn't end up
+                    // sending the request without the parameters they asked for
+                    self.url = Err(Error::Encode(e.to_string()));
+                }
             }
         }
         self

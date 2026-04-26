@@ -25,17 +25,20 @@ pub struct Netrc {
 
 impl Netrc {
     pub fn lookup(&self, host: &str) -> Option<&NetrcEntry> {
+        // Keys are stored lowercased on insert, so a single lookup with the
+        // lowercased host is enough; no need for an extra exact-case probe
         self.machines
-            .get(host)
-            .or_else(|| self.machines.get(&host.to_ascii_lowercase()))
+            .get(&host.to_ascii_lowercase())
             .or(self.default.as_ref())
     }
 
     pub fn parse(input: &str) -> Self {
         let mut out = Netrc::default();
-        // Tokenise across all whitespace including newlines — netrc entries
-        // legally span multiple lines and multiple entries can share one
-        let tokens: Vec<&str> = input.split_whitespace().collect();
+        // `macdef <name>` introduces a macro body that runs until the next
+        // blank line. We can't see blank lines after `split_whitespace`, so
+        // strip macro bodies from the input first, then tokenise the rest.
+        let cleaned = strip_macdefs(input);
+        let tokens: Vec<&str> = cleaned.split_whitespace().collect();
         let mut i = 0;
         let mut current_host: Option<String> = None;
         let mut current_entry = NetrcEntry::default();
@@ -97,7 +100,13 @@ impl Netrc {
                     }
                 }
                 // Recognised-but-ignored directives: skip token + arg
-                "account" | "macdef" => {
+                "account" => {
+                    i += if i + 1 < tokens.len() { 2 } else { 1 };
+                }
+                // `macdef` bodies were already removed by `strip_macdefs`,
+                // so any remaining `macdef <name>` is a stray header line
+                // Skip the directive plus its name token
+                "macdef" => {
                     i += if i + 1 < tokens.len() { 2 } else { 1 };
                 }
                 _ => {
@@ -118,6 +127,34 @@ impl Netrc {
         let s = fs::read_to_string(path)?;
         Ok(Self::parse(&s))
     }
+}
+
+/// Per `man 5 netrc`, a `macdef <name>` line is followed by macro body
+/// lines until the first empty line (which terminates the macro). The body
+/// must not be re-tokenised as netrc directives, otherwise tokens like
+/// `login` or `password` inside the macro would be misread as credentials
+fn strip_macdefs(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let mut in_macro = false;
+    for line in input.split_inclusive('\n') {
+        let trimmed = line.trim_start();
+        if in_macro {
+            // Macro ends at the first line that is empty (only whitespace).
+            if line.trim().is_empty() {
+                in_macro = false;
+                out.push_str(line);
+            }
+            // else: drop the body line entirely.
+            continue;
+        }
+        if trimmed.starts_with("macdef") {
+            // Drop the `macdef <name>` line itself; body follows.
+            in_macro = true;
+            continue;
+        }
+        out.push_str(line);
+    }
+    out
 }
 
 /// Resolve the default netrc location: `$HOME/.netrc` on Unix,

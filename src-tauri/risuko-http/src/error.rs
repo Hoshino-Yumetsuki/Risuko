@@ -18,6 +18,8 @@ pub enum Error {
     Body(String),
     #[error("decode error: {0}")]
     Decode(String),
+    #[error("encode error: {0}")]
+    Encode(String),
     #[error("timeout")]
     Timeout,
     #[error("HTTP status {0}")]

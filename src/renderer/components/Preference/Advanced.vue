@@ -1388,11 +1388,21 @@ export default {
 						continue;
 					}
 					const n = Number(raw);
-					if (
-						key === "btUpnpLease"
-							? Number.isFinite(n) && n >= 60 && n <= 86400
-							: Number.isFinite(n) && n >= 0
+					// Per-key bounds mirror the corresponding `:min` constraints in
+					// the form. `connectTimeout` and `lowestSpeedLimitTimeout` use
+					// `:min="1"` in the UI, so 0 must be rejected here as well
+					let ok: boolean;
+					if (key === "btUpnpLease") {
+						ok = Number.isFinite(n) && n >= 60 && n <= 86400;
+					} else if (
+						key === "connectTimeout" ||
+						key === "lowestSpeedLimitTimeout"
 					) {
+						ok = Number.isFinite(n) && n >= 1;
+					} else {
+						ok = Number.isFinite(n) && n >= 0;
+					}
+					if (ok) {
 						data[key] = n;
 					} else {
 						delete data[key];

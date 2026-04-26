@@ -2,7 +2,7 @@
 
 use std::io;
 
-use async_compression::tokio::bufread::{BrotliDecoder, DeflateDecoder, GzipDecoder};
+use async_compression::tokio::bufread::{BrotliDecoder, DeflateDecoder, GzipDecoder, ZlibDecoder};
 use bytes::Bytes;
 use futures_util::{StreamExt, TryStreamExt};
 use http_body_util::BodyExt;
@@ -17,16 +17,21 @@ pub(crate) fn maybe_decompress(body: RespBody, encoding: Option<&str>) -> RespBo
     let enc = encoding.map(|s| s.trim().to_ascii_lowercase());
     let stream = BodyStream::new(body);
     let mapped = stream.map_err(err_to_io as fn(Error) -> io::Error);
-    let reader = StreamReader::new(mapped);
+    // Only build the StreamReader/decoder pipeline when we actually need to
+    // decode, so the no-op path doesn't pay for a Stream -> Reader -> Stream
+    // round-trip and an extra allocation per chunk
     match enc.as_deref() {
-        Some("gzip" | "x-gzip") => wrap(GzipDecoder::new(reader)),
-        Some("br") => wrap(BrotliDecoder::new(reader)),
-        Some("deflate") => wrap(DeflateDecoder::new(reader)),
-        _ => {
-            // Caller already chose not to decompress. Re-wrap untouched
-            let s = ReaderStream::new(reader).map(|r| r.map(Bytes::from));
-            StreamBody::new(s).boxed()
-        }
+        Some("gzip" | "x-gzip") => wrap(GzipDecoder::new(StreamReader::new(mapped))),
+        Some("br") => wrap(BrotliDecoder::new(StreamReader::new(mapped))),
+        // RFC 7230 §4.2.2 defines `deflate` as zlib-framed (RFC 1950)
+        // wrapping raw DEFLATE (RFC 1951). Many servers historically sent
+        // raw deflate too, so callers seeing decode failures from
+        // non-compliant servers can disable auto-deflate. Treat the
+        // commonly-seen `x-deflate` alias the same
+        Some("deflate" | "x-deflate") => wrap(ZlibDecoder::new(StreamReader::new(mapped))),
+        // Kept for callers that explicitly opt into raw DEFLATE handling.
+        Some("raw-deflate") => wrap(DeflateDecoder::new(StreamReader::new(mapped))),
+        _ => StreamBody::new(mapped).boxed(),
     }
 }
 

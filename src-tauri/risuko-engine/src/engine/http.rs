@@ -602,6 +602,7 @@ fn apply_netrc_auth(headers: &mut HeaderMap, uri: &str, options: &Map<String, Va
     let path = options
         .get("netrc-path")
         .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
         .map(std::path::PathBuf::from)
         .or_else(super::netrc::default_netrc_path);
     let Some(path) = path else { return };
@@ -1945,16 +1946,21 @@ async fn run_speed_tracker(
     cancel_token: CancellationToken,
     stall: StallWatchdog,
 ) {
+    let started_at = tokio::time::Instant::now();
     let mut last_bytes = completed.load(Ordering::Relaxed);
-    let mut last_time = tokio::time::Instant::now();
+    let mut last_time = started_at;
     let mut ema_speed: f64 = 0.0;
     let mut interval = tokio::time::interval(std::time::Duration::from_millis(250));
 
     // Watchdog state. `below_since` records when the EMA first dropped below
-    // the threshold; we only fire after `total > 0` so that pre-flight time
-    // (setup, probe, first byte) doesn't count against the budget
+    // the threshold. Once `total` is known we arm immediately so the user-
+    // configured budget kicks in. For chunked / unknown-length responses
+    // (`total == 0`) we wait `unknown_len_grace` after start before arming so
+    // that pre-flight time (setup, probe, first byte) doesn't count against
+    // the budget but truly stalled streams still get killed
     let mut below_since: Option<tokio::time::Instant> = None;
     let watchdog_active = stall.lowest_speed > 0;
+    let unknown_len_grace = stall.timeout;
 
     loop {
         interval.tick().await;
@@ -1981,7 +1987,9 @@ async fn run_speed_tracker(
         }
 
         let t = total.load(Ordering::Relaxed);
-        if watchdog_active && t > 0 {
+        let armed =
+            watchdog_active && (t > 0 || now.duration_since(started_at) >= unknown_len_grace);
+        if armed {
             if (ema_speed as u64) < stall.lowest_speed {
                 let started = below_since.get_or_insert(now);
                 if now.duration_since(*started) >= stall.timeout {

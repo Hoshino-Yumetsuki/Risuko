@@ -65,7 +65,16 @@ fn platform_fallocate(file: &File, len: u64) -> io::Result<()> {
     use nix::fcntl::{fallocate, FallocateFlags};
     use std::os::unix::io::AsRawFd;
     // 0 flags == reserve blocks AND extend logical length, matching aria2
-    fallocate(file.as_raw_fd(), FallocateFlags::empty(), 0, len as i64)
+    // `fallocate(2)` takes a signed length; reject sizes that don't fit so we
+    // never pass a negative value (which the kernel rejects with EINVAL but
+    // would otherwise look like a corrupt request)
+    let signed_len = i64::try_from(len).map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "fallocate length exceeds i64::MAX",
+        )
+    })?;
+    fallocate(file.as_raw_fd(), FallocateFlags::empty(), 0, signed_len)
         .map_err(|e| io::Error::from_raw_os_error(e as i32))
 }
 
@@ -89,22 +98,44 @@ fn platform_fallocate(file: &File, len: u64) -> io::Result<()> {
     const F_PEOFPOSMODE: libc::c_int = 3;
 
     let fd = file.as_raw_fd();
+    let signed_len = libc::off_t::try_from(len).map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "fallocate length exceeds off_t range",
+        )
+    })?;
     let mut store = Fstore {
         fst_flags: F_ALLOCATECONTIG | F_ALLOCATEALL,
         fst_posmode: F_PEOFPOSMODE,
         fst_offset: 0,
-        fst_length: len as libc::off_t,
+        fst_length: signed_len,
         fst_bytesalloc: 0,
     };
     let rc = unsafe { libc::fcntl(fd, F_PREALLOCATE, &mut store as *mut Fstore) };
     if rc == -1 {
+        // Capture the contiguous-attempt error before retrying so it can be
+        // surfaced if the second call also fails. Otherwise we would only
+        // report the (often less informative) non-contiguous failure
+        let first_err = io::Error::last_os_error();
         // Retry without contiguous hint.
         store.fst_flags = F_ALLOCATEALL;
         let rc2 = unsafe { libc::fcntl(fd, F_PREALLOCATE, &mut store as *mut Fstore) };
         if rc2 == -1 {
-            return Err(io::Error::last_os_error());
+            let second_err = io::Error::last_os_error();
+            return Err(io::Error::new(
+                second_err.kind(),
+                format!(
+                    "F_PREALLOCATE failed (contiguous: {first_err}; non-contiguous: {second_err})"
+                ),
+            ));
         }
     }
+    // F_PREALLOCATE only reserves blocks; the file's logical length is still
+    // whatever it was before. `set_len` commits the new size so subsequent
+    // writes within `len` see allocated space. If `set_len` fails, the
+    // reserved blocks remain attached to the file until it is closed or
+    // unlinked, which is acceptable because the caller will treat the
+    // allocation as having failed and clean up the file
     file.set_len(len)
 }
 
@@ -118,9 +149,17 @@ fn platform_fallocate(file: &File, len: u64) -> io::Result<()> {
 
 #[cfg(unix)]
 fn is_unsupported(e: &io::Error) -> bool {
+    // Older kernels and some filesystems report "this operation isn't
+    // implemented here" via ENOSYS or even EINVAL instead of the documented
+    // ENOTSUP/EOPNOTSUPP, so treat them all as fallback-worthy and let the
+    // caller fall back to `set_len`
     matches!(
         e.raw_os_error(),
-        Some(libc_enotsup) if libc_enotsup == libc::ENOTSUP || libc_enotsup == libc::EOPNOTSUPP
+        Some(code)
+            if code == libc::ENOTSUP
+                || code == libc::EOPNOTSUPP
+                || code == libc::ENOSYS
+                || code == libc::EINVAL
     )
 }
 

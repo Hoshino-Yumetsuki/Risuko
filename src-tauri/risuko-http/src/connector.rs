@@ -8,6 +8,8 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::Duration;
 
+use base64::engine::general_purpose::STANDARD as B64_STANDARD;
+use base64::Engine as _;
 use http::Uri;
 use hyper::rt::ReadBufCursor;
 use hyper_util::client::legacy::connect::{Connected, Connection};
@@ -291,49 +293,48 @@ impl Connector {
                     .ok_or_else(|| Error::Url("proxy missing host".into()))?
                     .to_string();
                 let pport = proxy.url().port().unwrap_or(1080);
-                let user = proxy.url().username();
-                let pass = proxy.url().password().unwrap_or("");
+                // Proxy credentials in URLs are percent-encoded
+                // (RFC 3986). Decode before handing to either the SOCKS5
+                // username/password auth method or HTTP `Basic` so creds
+                // containing `@`, `:`, spaces, etc. authenticate correctly
+                let user_raw = proxy.url().username();
+                let pass_raw = proxy.url().password().unwrap_or("");
+                let user = percent_decode_str(user_raw);
+                let pass = percent_decode_str(pass_raw);
                 let target_addr_str = format!("{host}:{port}");
                 let proxy_addr = format!("{phost}:{pport}");
-                let auth = (!user.is_empty()).then(|| (user, pass));
+                let auth = (!user.is_empty()).then(|| (user.as_str(), pass.as_str()));
 
-                let stream = if *resolve_locally {
-                    let target = tokio::net::lookup_host(target_addr_str.as_str())
-                        .await
-                        .map_err(Error::Io)?
-                        .next()
-                        .ok_or_else(|| Error::Connect(format!("no addrs for {host}")))?;
-                    if let Some((u, p)) = auth {
-                        tokio_socks::tcp::Socks5Stream::connect_with_password(
-                            proxy_addr.as_str(),
-                            target,
-                            u,
-                            p,
-                        )
-                        .await
-                        .map_err(|e| Error::Connect(e.to_string()))?
-                        .into_inner()
-                    } else {
-                        tokio_socks::tcp::Socks5Stream::connect(proxy_addr.as_str(), target)
-                            .await
-                            .map_err(|e| Error::Connect(e.to_string()))?
-                            .into_inner()
-                    }
-                } else if let Some((u, p)) = auth {
-                    tokio_socks::tcp::Socks5Stream::connect_with_password(
-                        proxy_addr.as_str(),
-                        (host, port),
-                        u,
-                        p,
+                // Apply the same connect-timeout budget to SOCKS5 as to
+                // direct/HTTP-CONNECT paths so a misbehaving proxy can't
+                // hang the worker indefinitely
+                let stream = match self.connect_timeout {
+                    Some(d) => tokio::time::timeout(
+                        d,
+                        socks5_connect(
+                            &proxy_addr,
+                            &target_addr_str,
+                            host,
+                            port,
+                            *resolve_locally,
+                            auth,
+                            &self.resolver,
+                        ),
                     )
                     .await
-                    .map_err(|e| Error::Connect(e.to_string()))?
-                    .into_inner()
-                } else {
-                    tokio_socks::tcp::Socks5Stream::connect(proxy_addr.as_str(), (host, port))
-                        .await
-                        .map_err(|e| Error::Connect(e.to_string()))?
-                        .into_inner()
+                    .map_err(|_| Error::Connect("SOCKS5 connect timeout".into()))??,
+                    None => {
+                        socks5_connect(
+                            &proxy_addr,
+                            &target_addr_str,
+                            host,
+                            port,
+                            *resolve_locally,
+                            auth,
+                            &self.resolver,
+                        )
+                        .await?
+                    }
                 };
                 self.tune(&stream)?;
                 Ok(stream)
@@ -366,12 +367,13 @@ async fn http_connect_inner(
 ) -> Result<(), Error> {
     let mut req = format!("CONNECT {host}:{port} HTTP/1.1\r\nHost: {host}:{port}\r\n");
     if !proxy.url().username().is_empty() {
-        let creds = format!(
-            "{}:{}",
-            proxy.url().username(),
-            proxy.url().password().unwrap_or("")
-        );
-        let encoded = base64_std(creds.as_bytes());
+        // Percent-decode credentials per RFC 3986 before encoding to Basic;
+        // otherwise creds containing reserved characters (e.g. `@`, `:`,
+        // space) authenticate against the wrong literal value
+        let user = percent_decode_str(proxy.url().username());
+        let pass = percent_decode_str(proxy.url().password().unwrap_or(""));
+        let creds = format!("{user}:{pass}");
+        let encoded = B64_STANDARD.encode(creds.as_bytes());
         req.push_str(&format!("Proxy-Authorization: Basic {encoded}\r\n"));
     }
     req.push_str("\r\n");
@@ -409,32 +411,83 @@ async fn http_connect_inner(
     Ok(())
 }
 
-// Inline base64 to avoid pulling in the `base64` crate just for this
-fn base64_std(input: &[u8]) -> String {
-    const ALPHA: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = String::with_capacity((input.len() + 2) / 3 * 4);
+/// Percent-decode a URL component (lossy: invalid UTF-8 is replaced).
+/// `url::Url::username()` / `password()` return the raw encoded form, but
+/// proxy auth needs the decoded bytes
+fn percent_decode_str(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;
-    while i + 3 <= input.len() {
-        let n = ((input[i] as u32) << 16) | ((input[i + 1] as u32) << 8) | (input[i + 2] as u32);
-        out.push(ALPHA[((n >> 18) & 63) as usize] as char);
-        out.push(ALPHA[((n >> 12) & 63) as usize] as char);
-        out.push(ALPHA[((n >> 6) & 63) as usize] as char);
-        out.push(ALPHA[(n & 63) as usize] as char);
-        i += 3;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            let hi = (bytes[i + 1] as char).to_digit(16);
+            let lo = (bytes[i + 2] as char).to_digit(16);
+            if let (Some(hi), Some(lo)) = (hi, lo) {
+                out.push(((hi << 4) | lo) as u8);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
     }
-    let rem = input.len() - i;
-    if rem == 1 {
-        let n = (input[i] as u32) << 16;
-        out.push(ALPHA[((n >> 18) & 63) as usize] as char);
-        out.push(ALPHA[((n >> 12) & 63) as usize] as char);
-        out.push('=');
-        out.push('=');
-    } else if rem == 2 {
-        let n = ((input[i] as u32) << 16) | ((input[i + 1] as u32) << 8);
-        out.push(ALPHA[((n >> 18) & 63) as usize] as char);
-        out.push(ALPHA[((n >> 12) & 63) as usize] as char);
-        out.push(ALPHA[((n >> 6) & 63) as usize] as char);
-        out.push('=');
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// SOCKS5 connect with optional local DNS and optional username/password
+/// auth. Pulled out so the connect-timeout wrapper can apply the same
+/// budget to every code path
+async fn socks5_connect(
+    proxy_addr: &str,
+    target_addr_str: &str,
+    host: &str,
+    port: u16,
+    resolve_locally: bool,
+    auth: Option<(&str, &str)>,
+    resolver: &SharedResolver,
+) -> Result<TcpStream, Error> {
+    if resolve_locally {
+        // Honour the configured custom resolver instead of bypassing it via
+        // `tokio::net::lookup_host`. Otherwise a custom DNS resolver set on
+        // the client (e.g. for split-horizon or DoH) would silently be
+        // skipped on the SOCKS5 path
+        let target_ip = resolver
+            .resolve(host)
+            .await?
+            .next()
+            .ok_or_else(|| Error::Connect(format!("no addrs for {host}")))?
+            .ip();
+        let target = SocketAddr::new(target_ip, port);
+        let _ = target_addr_str;
+        match auth {
+            Some((u, p)) => Ok(tokio_socks::tcp::Socks5Stream::connect_with_password(
+                proxy_addr, target, u, p,
+            )
+            .await
+            .map_err(|e| Error::Connect(e.to_string()))?
+            .into_inner()),
+            None => Ok(tokio_socks::tcp::Socks5Stream::connect(proxy_addr, target)
+                .await
+                .map_err(|e| Error::Connect(e.to_string()))?
+                .into_inner()),
+        }
+    } else {
+        match auth {
+            Some((u, p)) => Ok(tokio_socks::tcp::Socks5Stream::connect_with_password(
+                proxy_addr,
+                (host, port),
+                u,
+                p,
+            )
+            .await
+            .map_err(|e| Error::Connect(e.to_string()))?
+            .into_inner()),
+            None => Ok(
+                tokio_socks::tcp::Socks5Stream::connect(proxy_addr, (host, port))
+                    .await
+                    .map_err(|e| Error::Connect(e.to_string()))?
+                    .into_inner(),
+            ),
+        }
     }
-    out
 }

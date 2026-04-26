@@ -35,7 +35,9 @@ impl Jar {
 
     /// Insert a single raw `Set-Cookie` value as if returned by `url`
     pub fn add_cookie_str(&self, cookie_str: &str, url: &Url) {
-        if let Ok(parsed) = cookie::Cookie::parse(cookie_str.to_string()) {
+        // `cookie::Cookie::parse` accepts `impl Into<Cow<'_, str>>`, so a
+        // borrowed slice avoids the per-call `String` allocation
+        if let Ok(parsed) = cookie::Cookie::parse(cookie_str) {
             if let Ok(mut store) = self.inner.lock() {
                 let _ = store.insert_raw(&parsed, url);
             }
@@ -79,22 +81,60 @@ impl Jar {
                 }
                 continue;
             }
-            let domain = cols[0].trim_start_matches('.');
+            let domain_field = cols[0];
+            let include_subdomains = cols[1].eq_ignore_ascii_case("TRUE");
             let path = cols[2];
             let secure = cols[3].eq_ignore_ascii_case("TRUE");
+            let expires_raw = cols[4].trim();
             let name = cols[5];
             let value = cols[6];
             if name.is_empty() {
                 continue;
             }
+            // `0` means "session cookie, no expiry" in the Netscape format
+            // Anything else is a unix epoch — drop already-expired entries
+            let expires_epoch: Option<i64> = if expires_raw.is_empty() || expires_raw == "0" {
+                None
+            } else {
+                match expires_raw.parse::<i64>() {
+                    Ok(v) => {
+                        let now = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_secs() as i64)
+                            .unwrap_or(0);
+                        if v > 0 && v <= now {
+                            // Already expired; skip this line.
+                            continue;
+                        }
+                        Some(v)
+                    }
+                    Err(_) => None,
+                }
+            };
+            // Host-only cookies (include_subdomains == FALSE) must NOT carry
+            // a Domain attribute — without it, the cookie store treats them
+            // as host-only and refuses to send them to subdomains. Domain
+            // cookies keep the (dot-less) Domain attribute so the underlying
+            // store will match subdomains
+            let bare_domain = domain_field.trim_start_matches('.');
             let scheme = if secure { "https" } else { "http" };
-            let url_str = format!("{scheme}://{domain}{path}");
+            let url_str = format!("{scheme}://{bare_domain}{path}");
             let Ok(url) = Url::parse(&url_str) else {
                 continue;
             };
-            let mut cookie_str = format!("{name}={value}; Path={path}; Domain={}", cols[0]);
+            let mut cookie_str = format!("{name}={value}; Path={path}");
+            if include_subdomains {
+                cookie_str.push_str(&format!("; Domain={bare_domain}"));
+            }
             if secure {
                 cookie_str.push_str("; Secure");
+            }
+            if let Some(epoch) = expires_epoch {
+                // RFC 1123 / IMF-fixdate is the cookie spec format. Build it
+                // manually to avoid pulling chrono in for one timestamp
+                if let Some(s) = format_http_date(epoch) {
+                    cookie_str.push_str(&format!("; Expires={s}"));
+                }
             }
             self.add_cookie_str(&cookie_str, &url);
             count += 1;
@@ -110,7 +150,7 @@ impl CookieStore for Jar {
         };
         for hv in cookies {
             let Ok(s) = hv.to_str() else { continue };
-            let Ok(parsed) = cookie::Cookie::parse(s.to_string()) else {
+            let Ok(parsed) = cookie::Cookie::parse(s) else {
                 continue;
             };
             let _ = store.insert_raw(&parsed, url);
@@ -133,6 +173,48 @@ impl CookieStore for Jar {
 }
 
 pub(crate) type SharedJar = Arc<dyn CookieStore>;
+
+/// Render a unix epoch as an RFC 1123 / IMF-fixdate string suitable for the
+/// `Expires=` cookie attribute. Returns `None` for values outside the
+/// representable range (we just drop the attribute in that case so the
+/// cookie becomes a session cookie instead of being rejected)
+fn format_http_date(epoch: i64) -> Option<String> {
+    if epoch < 0 {
+        return None;
+    }
+    // Days from civil date — Howard Hinnant's algorithm. Avoids pulling in
+    // chrono just to format one header
+    let secs = epoch as u64;
+    let days = (secs / 86_400) as i64;
+    let tod = secs % 86_400;
+    let hour = tod / 3600;
+    let minute = (tod % 3600) / 60;
+    let second = tod % 60;
+
+    // 1970-01-01 is day 0; convert to civil date
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = (z - era * 146_097) as u64;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
+    let m = (if mp < 10 { mp + 3 } else { mp - 9 }) as u32;
+    let y = y + if m <= 2 { 1 } else { 0 };
+
+    // Day-of-week via Zeller-like calc using days since 1970-01-01 (a Thu)
+    let dow_idx = ((days % 7 + 7 + 4) % 7) as usize;
+    const DAY_NAMES: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    const MONTH_NAMES: [&str; 12] = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
+    let month_name = MONTH_NAMES.get((m as usize).checked_sub(1)?)?;
+    Some(format!(
+        "{}, {:02} {} {:04} {:02}:{:02}:{:02} GMT",
+        DAY_NAMES[dow_idx], d, month_name, y, hour, minute, second
+    ))
+}
 
 #[cfg(test)]
 mod tests {

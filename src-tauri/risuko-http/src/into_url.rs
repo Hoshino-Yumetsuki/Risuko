@@ -6,6 +6,12 @@ pub trait IntoUrl: Sized {
     fn as_str(&self) -> &str;
 }
 
+/// Centralised parse helper so the `&str`/`&String`/`String` impls below
+/// don't each spell out the same `Url::parse(...).map_err(...)` chain
+fn parse_url(s: &str) -> Result<Url> {
+    Url::parse(s).map_err(|e| Error::Url(e.to_string()))
+}
+
 impl IntoUrl for Url {
     fn into_url(self) -> Result<Url> {
         Ok(self)
@@ -26,7 +32,7 @@ impl IntoUrl for &Url {
 
 impl IntoUrl for &str {
     fn into_url(self) -> Result<Url> {
-        Url::parse(self).map_err(|e| Error::Url(e.to_string()))
+        parse_url(self)
     }
     fn as_str(&self) -> &str {
         self
@@ -35,7 +41,7 @@ impl IntoUrl for &str {
 
 impl IntoUrl for &String {
     fn into_url(self) -> Result<Url> {
-        Url::parse(self).map_err(|e| Error::Url(e.to_string()))
+        parse_url(self)
     }
     fn as_str(&self) -> &str {
         String::as_str(self)
@@ -44,7 +50,7 @@ impl IntoUrl for &String {
 
 impl IntoUrl for String {
     fn into_url(self) -> Result<Url> {
-        Url::parse(&self).map_err(|e| Error::Url(e.to_string()))
+        parse_url(&self)
     }
     fn as_str(&self) -> &str {
         String::as_str(self)

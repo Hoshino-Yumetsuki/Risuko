@@ -279,8 +279,5 @@ async fn cookie_jar_loaded_from_netscape_file() {
         "load-cookies",
         json!(cookies_path.to_string_lossy()),
     )]);
-    assert_eq!(
-        opts.get("load-cookies").and_then(|v| v.as_str()).is_some(),
-        true
-    );
+    assert!(opts.get("load-cookies").and_then(|v| v.as_str()).is_some());
 }

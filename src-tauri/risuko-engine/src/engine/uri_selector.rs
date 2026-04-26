@@ -77,9 +77,19 @@ impl ServerStats {
     }
 
     pub fn is_blacklisted(&self, host: &str) -> bool {
-        self.by_host
-            .get(host)
-            .is_some_and(|s| s.fail_count >= MAX_CONSECUTIVE_FAILS)
+        // A host is only blacklisted while its failure count is above the
+        // threshold *and* the most recent failure is still within the
+        // observation window. Otherwise a single bad streak would block a
+        // mirror forever even after it recovers
+        self.by_host.get(host).is_some_and(|s| {
+            if s.fail_count < MAX_CONSECUTIVE_FAILS {
+                return false;
+            }
+            match s.last_fail {
+                Some(t) => Instant::now().duration_since(t).as_secs() <= FAIL_WINDOW_SECS,
+                None => false,
+            }
+        })
     }
 
     pub fn get(&self, host: &str) -> Option<&ServerStat> {
@@ -121,14 +131,24 @@ pub fn pick<'a>(
         Strategy::Inorder | Strategy::Feedback => Some(candidates[0]),
         Strategy::Adaptive => {
             // Weighted by EMA. Anything with no recorded speed yet gets a
-            // baseline weight equal to the average so cold mirrors aren't
-            // starved during the first round
+            // baseline weight equal to the average of known mirrors so cold
+            // mirrors aren't starved during the first round (a 0.0 baseline
+            // would silently skip them whenever any other mirror has stats)
+            let known: Vec<f64> = candidates
+                .iter()
+                .filter_map(|&i| host_of(&uris[i]).and_then(|h| stats.get(&h).map(|s| s.ema_bps)))
+                .collect();
+            let average_ema = if known.is_empty() {
+                f64::EPSILON
+            } else {
+                known.iter().sum::<f64>() / known.len() as f64
+            };
             let weights: Vec<f64> = candidates
                 .iter()
                 .map(|&i| {
                     host_of(&uris[i])
                         .and_then(|h| stats.get(&h).map(|s| s.ema_bps))
-                        .unwrap_or(0.0)
+                        .unwrap_or(average_ema)
                 })
                 .collect();
             let total: f64 = weights.iter().sum();

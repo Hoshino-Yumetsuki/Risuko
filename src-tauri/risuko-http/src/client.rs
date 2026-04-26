@@ -79,19 +79,29 @@ impl Client {
         let url = rb.url?;
         let timeout = rb.timeout.or(self.inner.timeout);
 
-        // Merge defaults underneath request-specific headers
+        // Merge defaults underneath request-specific headers. Use `append`
+        // throughout so multi-valued headers (e.g. Set-Cookie / Accept) are
+        // preserved instead of having later values clobber earlier ones
         let mut headers = HeaderMap::new();
         for (k, v) in self.inner.default_headers.iter() {
-            headers.insert(k.clone(), v.clone());
+            headers.append(k.clone(), v.clone());
         }
         if let Some(ua) = &self.inner.user_agent {
             if !rb.headers.contains_key(USER_AGENT) {
                 headers.insert(USER_AGENT, ua.clone());
             }
         }
+        // `HeaderMap::drain` yields `(Option<HeaderName>, HeaderValue)`:
+        // `Some(name)` introduces a new header, subsequent `None` entries
+        // belong to the same name. Track the last name so multi-valued
+        // request headers survive the merge
+        let mut last_name: Option<http::HeaderName> = None;
         for (k, v) in rb.headers.drain() {
             if let Some(name) = k {
-                headers.insert(name, v);
+                last_name = Some(name.clone());
+                headers.append(name, v);
+            } else if let Some(name) = last_name.clone() {
+                headers.append(name, v);
             }
         }
 
@@ -120,15 +130,18 @@ impl Client {
                 .send_once(&method, &url, &headers, body.clone())
                 .await?;
             let status = resp.status();
-            if !is_redirect_status(status) || self.inner.redirect.max == 0 {
+            if !is_redirect_status(status) || !self.inner.redirect.follows() {
                 return Ok(resp);
             }
             redirects += 1;
-            if redirects > self.inner.redirect.max {
-                return Err(Error::Redirect(format!(
-                    "exceeded {} redirects",
-                    self.inner.redirect.max
-                )));
+            if !self.inner.redirect.unlimited && redirects > self.inner.redirect.max {
+                return match self.inner.redirect.on_exceeded {
+                    crate::redirect::OnExceeded::Stop => Ok(resp),
+                    crate::redirect::OnExceeded::Error => Err(Error::Redirect(format!(
+                        "exceeded {} redirects",
+                        self.inner.redirect.max
+                    ))),
+                };
             }
 
             let location = resp
@@ -159,6 +172,11 @@ impl Client {
             if !same_origin(&url, &next) {
                 headers.remove(http::header::AUTHORIZATION);
                 headers.remove(http::header::COOKIE);
+                // Always strip an explicit Host so `send_once` can
+                // regenerate it from the new origin. Otherwise an explicit
+                // Host (set by the caller or via `default_headers`) would
+                // leak the old origin to the redirect target
+                headers.remove(HOST);
             }
 
             url = next;
@@ -181,9 +199,13 @@ impl Client {
         let req_headers = builder
             .headers_mut()
             .ok_or_else(|| Error::Builder("no headers".into()))?;
+        // Same multi-valued header preservation as in `execute`
+        let mut last_name: Option<http::HeaderName> = None;
         for (k, v) in headers.iter() {
-            req_headers.insert(k.clone(), v.clone());
+            req_headers.append(k.clone(), v.clone());
+            last_name = Some(k.clone());
         }
+        let _ = last_name;
         // Hyper requires a Host header; fill from URL if absent
         if !req_headers.contains_key(HOST) {
             if let Some(host) = url.host_str() {
@@ -205,10 +227,14 @@ impl Client {
         {
             req_headers.insert(http::header::ACCEPT_ENCODING, self.inner.accepts.clone());
         }
-        // Cookie jar injection.
+        // Cookie jar injection. Preserve any caller-provided Cookie header
+        // (matching reqwest's behaviour) so manual overrides win over the jar
+        // and we never silently clobber the user's value
         if let Some(jar) = &self.inner.cookie_jar {
-            if let Some(cookie) = jar.cookies(url) {
-                req_headers.insert(http::header::COOKIE, cookie);
+            if !req_headers.contains_key(http::header::COOKIE) {
+                if let Some(cookie) = jar.cookies(url) {
+                    req_headers.insert(http::header::COOKIE, cookie);
+                }
             }
         }
 
@@ -447,8 +473,11 @@ impl ClientBuilder {
             tcp_keepalive: self.tcp_keepalive,
         };
 
-        // The connector below never advertises h2 ALPN, so this client is
-        // already HTTP/1.1-only at the wire level.
+        // The connector below never advertises h2 ALPN and the plain-HTTP
+        // path never initiates an h2c upgrade, so this client is HTTP/1.1
+        // only at the wire level. `hyper-util 0.1`'s `legacy::Client::Builder`
+        // has no dedicated `http1_only` knob, so honouring `self.http1_only`
+        // is purely defensive — there is no second protocol path to disable
         let _ = self.http1_only;
         let mut hyper_builder = HyperClient::builder(TokioExecutor::new());
         if let Some(d) = self.pool_idle_timeout {
@@ -498,6 +527,15 @@ impl Default for ClientBuilder {
 }
 
 fn build_tls(danger_accept_invalid: bool, extra: &[Vec<u8>]) -> Result<ClientConfig> {
+    // `ClientConfig::builder()` panics if no process-level CryptoProvider is
+    // installed. Risuko only ever links against `rustls/ring`, so install
+    // ring as the default the first time we build a client. The call is a
+    // no-op once a provider is installed, so it is safe to repeat
+    static INSTALL_PROVIDER: std::sync::Once = std::sync::Once::new();
+    INSTALL_PROVIDER.call_once(|| {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    });
+
     let mut roots = RootCertStore::empty();
     roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
     for der in extra {

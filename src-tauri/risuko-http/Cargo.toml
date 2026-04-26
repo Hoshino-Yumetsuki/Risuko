@@ -30,12 +30,13 @@ pin-project-lite = "0.2"
 tower-service = "0.3"
 thiserror = "2"
 tokio-socks = "0.5"
-async-compression = { version = "0.4", features = ["tokio", "gzip", "brotli", "deflate"] }
+async-compression = { version = "0.4", features = ["tokio", "gzip", "brotli", "deflate", "zlib"] }
 tokio-util = { version = "0.7", features = ["io"] }
 tracing = "0.1"
 socket2 = "0.6"
 cookie_store = "0.22"
 cookie = "0.18"
+base64 = "0.22"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }

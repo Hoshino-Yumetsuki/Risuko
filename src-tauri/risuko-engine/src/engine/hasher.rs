@@ -93,9 +93,17 @@ pub struct WholeChecksum {
 
 impl WholeChecksum {
     pub fn parse(s: &str) -> Result<Self, String> {
-        let (algo_part, hex_part) = s
+        // Accept a leading `checksum=` prefix (aria2 style) so callers can
+        // pass the raw option value through. Strip it before splitting on
+        // `:`, otherwise `checksum=sha-256:hex` parses as algo
+        // "checksum=sha-256" and is rejected
+        let body = s
+            .trim()
+            .strip_prefix("checksum=")
+            .unwrap_or_else(|| s.trim());
+        let (algo_part, hex_part) = body
             .split_once(':')
-            .or_else(|| s.split_once('='))
+            .or_else(|| body.split_once('='))
             .ok_or_else(|| "checksum must be `<algo>:<hex>`".to_string())?;
         let algo = Algo::parse(algo_part)
             .ok_or_else(|| format!("unknown checksum algorithm: {algo_part}"))?;
@@ -130,9 +138,16 @@ pub struct PieceChecksums {
 
 impl PieceChecksums {
     pub fn parse(s: &str) -> Result<Self, String> {
-        let (algo_part, list_part) = s
+        // Strip optional `piece-checksums=` prefix before splitting on `:`,
+        // otherwise the whole `piece-checksums=<algo>` chunk is treated as
+        // the algorithm name and rejected
+        let body = s
+            .trim()
+            .strip_prefix("piece-checksums=")
+            .unwrap_or_else(|| s.trim());
+        let (algo_part, list_part) = body
             .split_once(':')
-            .or_else(|| s.split_once('='))
+            .or_else(|| body.split_once('='))
             .ok_or_else(|| "piece-checksums must be `<algo>:<hex>,...`".to_string())?;
         let algo = Algo::parse(algo_part)
             .ok_or_else(|| format!("unknown checksum algorithm: {algo_part}"))?;

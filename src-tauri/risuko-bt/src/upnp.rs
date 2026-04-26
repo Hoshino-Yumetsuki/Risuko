@@ -433,12 +433,21 @@ struct ServiceXml {
     control_url: String,
 }
 
+/// Shared HTTP client for UPnP description fetches and SOAP calls. Reusing a
+/// single client lets connection pools, TLS context and timeouts be shared
+/// across `discover_and_map` invocations instead of rebuilt per call
+fn upnp_http_client() -> &'static risuko_http::Client {
+    static CLIENT: std::sync::OnceLock<risuko_http::Client> = std::sync::OnceLock::new();
+    CLIENT.get_or_init(|| {
+        risuko_http::Client::builder()
+            .timeout(Duration::from_secs(5))
+            .build()
+            .expect("build upnp http client")
+    })
+}
+
 async fn fetch_root_desc(location: &Url) -> std::io::Result<RootDesc> {
-    let client = risuko_http::Client::builder()
-        .timeout(Duration::from_secs(5))
-        .build()
-        .map_err(io_other)?;
-    let body = client
+    let body = upnp_http_client()
         .get(location.clone())
         .send()
         .await
@@ -586,11 +595,7 @@ async fn soap_call(
     action: &str,
     body: String,
 ) -> std::io::Result<String> {
-    let client = risuko_http::Client::builder()
-        .timeout(Duration::from_secs(5))
-        .build()
-        .map_err(io_other)?;
-    let resp = client
+    let resp = upnp_http_client()
         .post(control_url.clone())
         .header("Content-Type", "text/xml; charset=\"utf-8\"")
         .header("SOAPAction", format!("\"{service_type}#{action}\""))

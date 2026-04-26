@@ -13,7 +13,20 @@ pub type Resolving = Pin<Box<dyn Future<Output = Result<Addrs>> + Send>>;
 
 /// Pluggable DNS resolver. The default implementation uses
 /// `tokio::net::lookup_host`
+///
+/// # Port-0 contract
+///
+/// Implementations resolve a *bare hostname* (no `:port`). The built-in
+/// [`GaiResolver`] feeds `tokio::net::lookup_host` a `(host, 0)` tuple, so
+/// every [`Addrs`] entry it produces has port `0`. Callers (the connector)
+/// are responsible for substituting the real destination port via
+/// `SocketAddr::new(addr.ip(), port)` before connecting. Third-party
+/// implementers must not parse a `"host:port"` string out of `host` and
+/// must not embed a meaningful port in the returned [`SocketAddr`]s
 pub trait Resolve: Send + Sync {
+    /// Resolve `host` to one or more [`SocketAddr`]s. Per the trait-level
+    /// contract, the port field of each returned address is unspecified and
+    /// must be overwritten by the caller before connecting
     fn resolve(&self, host: &str) -> Resolving;
 }
 
