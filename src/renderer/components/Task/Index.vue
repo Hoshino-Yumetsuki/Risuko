@@ -261,50 +261,53 @@ export default {
 			appStore.showAddTaskDialog(ADD_TASK_TYPE.URI);
 		},
 		async deleteTaskFiles(task) {
-			try {
-				let targetTask = task;
-				// For per-file rows of a multi-file BT torrent, keep the per-file
-				// shape (files: [theFile], bittorrent.info cleared) so only that
-				// single file gets trashed instead of the whole torrent folder
-				if (targetTask?.gid && !targetTask._isFileEntry) {
-					try {
-						const fullTask = await api.fetchTaskItem({
-							gid: targetTask.gid,
-						});
-						if (fullTask) {
-							targetTask = {
-								...targetTask,
-								...fullTask,
-							};
-						}
-					} catch (err) {
-						logger.warn(
-							"[Risuko] fetch full task before delete files failed:",
-							err,
-						);
+			let targetTask = task;
+			// For per-file rows of a multi-file BT torrent, keep the per-file
+			// shape (files: [theFile], bittorrent.info cleared) so only that
+			// single file gets trashed instead of the whole torrent folder
+			if (targetTask?.gid && !targetTask._isFileEntry) {
+				try {
+					const fullTask = await api.fetchTaskItem({
+						gid: targetTask.gid,
+					});
+					if (fullTask) {
+						targetTask = {
+							...targetTask,
+							...fullTask,
+						};
 					}
+				} catch (err) {
+					logger.warn(
+						"[Risuko] fetch full task before delete files failed:",
+						err,
+					);
 				}
-
-				const result = await moveTaskFilesToTrash(targetTask);
-
-				if (!result) {
-					throw new Error("task.remove-task-file-fail");
-				}
-				return true;
-			} catch (err) {
-				this.$msg.error(this.$t(err.message));
-				return false;
 			}
+
+			const result = await moveTaskFilesToTrash(targetTask);
+			if (!result) {
+				throw new Error("task.remove-task-file-fail");
+			}
+			return true;
 		},
 		async removeTask(task, taskName, isRemoveWithFiles = false) {
 			const loadingText = this.$t("task.loading-delete-task");
+			// File deletion must finish inside the same loading window as the
+			// task removal. Otherwise the user can re-add the same magnet
+			// before the files are trashed; the new torrent then scans the
+			// still-present files, marks every piece local and reports
+			// "seeding" without ever actually downloading
 			return this.withTaskActionLoading(loadingText, async () => {
 				await this.removeTaskItem(task, taskName);
-			}).then(() => {
 				if (isRemoveWithFiles) {
-					this.deleteTaskFiles(task).catch((err) => {
-						logger.warn("[Risuko] background file delete failed:", err);
-					});
+					try {
+						await this.deleteTaskFiles(task);
+					} catch (err) {
+						logger.warn("[Risuko] file delete failed:", err);
+						this.$msg.error(
+							this.$t(err?.message || "task.remove-task-file-fail"),
+						);
+					}
 				}
 			});
 		},
@@ -312,11 +315,15 @@ export default {
 			const loadingText = this.$t("task.loading-remove-record");
 			return this.withTaskActionLoading(loadingText, async () => {
 				await this.removeTaskRecordItem(task, taskName);
-			}).then(() => {
 				if (isRemoveWithFiles) {
-					this.deleteTaskFiles(task).catch((err) => {
-						logger.warn("[Risuko] background file delete failed:", err);
-					});
+					try {
+						await this.deleteTaskFiles(task);
+					} catch (err) {
+						logger.warn("[Risuko] file delete failed:", err);
+						this.$msg.error(
+							this.$t(err?.message || "task.remove-task-file-fail"),
+						);
+					}
 				}
 			});
 		},
@@ -358,14 +365,20 @@ export default {
 		},
 		async removeTasks(taskList, isRemoveWithFiles = false) {
 			const loadingText = this.$t("task.loading-batch-delete-task");
+			// Await file deletion so re-adding any of the same magnet links
+			// can't race the trash operation (see removeTask comment above).
 			return this.withTaskActionLoading(loadingText, async () => {
 				const gids = taskList.map((task) => task.gid);
 				await this.removeTaskItems(gids);
-			}).then(() => {
 				if (isRemoveWithFiles) {
-					this.batchDeleteTaskFiles(taskList).catch((err) => {
-						logger.warn("[Risuko] background batch file delete failed:", err);
-					});
+					try {
+						await this.batchDeleteTaskFiles(taskList);
+					} catch (err) {
+						logger.warn("[Risuko] batch file delete failed:", err);
+						this.$msg.error(
+							this.$t(err?.message || "task.remove-task-file-fail"),
+						);
+					}
 				}
 			});
 		},
@@ -373,11 +386,21 @@ export default {
 			const results = await Promise.allSettled(
 				taskList.map((task) => this.deleteTaskFiles(task)),
 			);
-			logger.log("[Risuko] batch delete task files: ", results);
-			const failed = results.some((r) => r.status === "rejected" || !r.value);
+			let failed = false;
+			results.forEach((r, i) => {
+				if (r.status === "rejected") {
+					failed = true;
+					const task = taskList[i];
+					logger.warn(
+						`[Risuko] delete task files failed (gid=${task?.gid}, name=${
+							task?.bt_name || task?.bittorrent?.info?.name || ""
+						}):`,
+						r.reason,
+					);
+				}
+			});
 			if (failed) {
-				this.$msg.error(this.$t("task.remove-task-file-fail"));
-				return false;
+				throw new Error("task.remove-task-file-fail");
 			}
 			return true;
 		},
