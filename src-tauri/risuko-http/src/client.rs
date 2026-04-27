@@ -258,6 +258,33 @@ impl Client {
             }
         }
 
+        // For streaming bodies with a known length, advertise Content-Length
+        // when the caller didn't already set framing headers. Without either
+        // Content-Length or Transfer-Encoding hyper would buffer the entire
+        // body to compute one — defeating streaming. Bytes/Empty bodies are
+        // sized automatically by hyper from the body's `size_hint`
+        if matches!(body, ReqBody::Stream { .. }) {
+            let has_length = req_headers.contains_key(CONTENT_LENGTH);
+            let has_chunked = req_headers
+                .get(http::header::TRANSFER_ENCODING)
+                .and_then(|v| v.to_str().ok())
+                .map(|s| s.eq_ignore_ascii_case("chunked"))
+                .unwrap_or(false);
+            if !has_length && !has_chunked {
+                if let Some(len) = body.content_length() {
+                    if let Ok(v) = HeaderValue::from_str(&len.to_string()) {
+                        req_headers.insert(CONTENT_LENGTH, v);
+                    }
+                } else {
+                    // Unknown length — let hyper send chunked
+                    req_headers.insert(
+                        http::header::TRANSFER_ENCODING,
+                        HeaderValue::from_static("chunked"),
+                    );
+                }
+            }
+        }
+
         let req = builder
             .body(body.into_hyper_body())
             .map_err(|e| Error::Builder(e.to_string()))?;

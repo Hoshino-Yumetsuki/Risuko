@@ -17,6 +17,7 @@ use super::task::{
     TaskStatus,
 };
 use super::torrent::{self, TorrentEngine};
+use super::upload::UploadFileSnapshot;
 
 struct ActiveDownload {
     cancel: Arc<AtomicBool>,
@@ -1741,6 +1742,70 @@ impl TaskManager {
             .map(|f| serde_json::to_value(f).unwrap_or(Value::Null))
             .collect();
         Ok(Value::Array(files))
+    }
+
+    /// Snapshot of a task's downloaded files in a form suited for the upload
+    /// pipeline. Returns `(local_path, relative_remote_path, size, task_kind,
+    /// override_sink_id)` per file. `relative_remote_path` is `out` joined
+    /// with the file's basename so directory structure on the remote mirrors
+    /// the local layout for multi-file BT tasks. Returns `None` if the gid
+    /// is unknown
+    pub async fn files_for_upload(
+        &self,
+        gid: &str,
+    ) -> Option<(Vec<UploadFileSnapshot>, String, Option<String>)> {
+        let tasks = self.tasks.read().await;
+        let task = tasks.iter().find(|t| t.gid == gid)?;
+        let kind = match task.kind {
+            super::task::TaskKind::Http => "http",
+            super::task::TaskKind::Torrent => "torrent",
+            super::task::TaskKind::Ed2k => "ed2k",
+            super::task::TaskKind::M3u8 => "m3u8",
+            super::task::TaskKind::Ftp => "ftp",
+        }
+        .to_string();
+        let override_sink_id = task
+            .options
+            .get("upload-sink-id")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+
+        let dir = std::path::Path::new(&task.dir);
+        let snapshots = task
+            .files
+            .iter()
+            .filter(|f| f.selected != "false")
+            .filter_map(|f| {
+                let local = std::path::PathBuf::from(&f.path);
+                let size: u64 = f.length.parse().unwrap_or(0);
+                // Relative to the task's download dir so multi-file torrents
+                // preserve their internal layout when pushed to the sink.
+                // Remote paths are always `/`-separated regardless of host OS
+                let rel = local
+                    .strip_prefix(dir)
+                    .map(|p| p.to_string_lossy().to_string())
+                    .unwrap_or_else(|_| {
+                        local
+                            .file_name()
+                            .map(|n| n.to_string_lossy().to_string())
+                            .unwrap_or_default()
+                    });
+                let rel = if std::path::MAIN_SEPARATOR != '/' {
+                    rel.replace(std::path::MAIN_SEPARATOR, "/")
+                } else {
+                    rel
+                };
+                if rel.is_empty() {
+                    return None;
+                }
+                Some(UploadFileSnapshot {
+                    local_path: local,
+                    remote_relative: rel,
+                    size,
+                })
+            })
+            .collect();
+        Some((snapshots, kind, override_sink_id))
     }
 
     pub async fn get_servers(&self, gid: &str) -> Result<Value, String> {

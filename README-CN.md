@@ -34,7 +34,7 @@ risuko-app
 或只安装CLI
 ```
 pnpm install -g @risuko/cli
-risuko-cli --help
+risuko --help
 ```
 
 ### Homebrew

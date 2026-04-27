@@ -68,6 +68,15 @@ impl RequestBuilder {
         self
     }
 
+    /// Attach a streaming body (already constructed via `file_stream_body`,
+    /// `ReqBody::from_stream`, etc.). The factory closure inside `body` is
+    /// re-invoked on every redirect/retry, so callers must ensure the
+    /// underlying source can be re-opened
+    pub fn stream_body(mut self, body: ReqBody) -> Self {
+        self.body = body;
+        self
+    }
+
     pub fn json<T: Serialize>(mut self, value: &T) -> Self {
         match serde_json::to_vec(value) {
             Ok(bytes) => {

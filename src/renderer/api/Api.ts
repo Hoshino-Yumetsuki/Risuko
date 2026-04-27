@@ -9,6 +9,11 @@ import type {
 	PeerInfo,
 	SyncOrderResult,
 } from "@shared/types/task";
+import type {
+	UploadJob,
+	UploadRule,
+	UploadSinkRecord,
+} from "@shared/types/upload";
 import {
 	changeKeysToCamelCase,
 	changeKeysToKebabCase,
@@ -568,5 +573,79 @@ export default class Api {
 
 	resolveFileCategory(filename: string) {
 		return invoke<string>("resolve_file_category", { filename });
+	}
+
+	// -- Cloud upload sinks --
+
+	listUploadSinks() {
+		return invoke<UploadSinkRecord[]>("list_upload_sinks");
+	}
+
+	addUploadSink(
+		record: Omit<UploadSinkRecord, "id" | "createdAt"> & {
+			id?: string;
+			createdAt?: number;
+		},
+	) {
+		// Backend fills id/createdAt; pass placeholder values to keep shape
+		const payload: UploadSinkRecord = {
+			...record,
+			id: record.id ?? "",
+			createdAt: record.createdAt ?? 0,
+		};
+		return invoke<UploadSinkRecord>("add_upload_sink", { record: payload });
+	}
+
+	updateUploadSink(record: UploadSinkRecord) {
+		return invoke("update_upload_sink", { record });
+	}
+
+	removeUploadSink(id: string) {
+		return invoke("remove_upload_sink", { id });
+	}
+
+	testUploadSink(id: string) {
+		return invoke("test_upload_sink", { id });
+	}
+
+	getDefaultUploadSink() {
+		return invoke<string | null>("get_default_upload_sink");
+	}
+
+	setDefaultUploadSink(id: string | null) {
+		return invoke("set_default_upload_sink", { id });
+	}
+
+	setUploadMaxConcurrency(n: number) {
+		return invoke("set_upload_max_concurrency", { n });
+	}
+
+	listUploadRules() {
+		return invoke<UploadRule[]>("list_upload_rules");
+	}
+
+	addUploadRule(rule: Omit<UploadRule, "id"> & { id?: string }) {
+		const payload: UploadRule = { ...rule, id: rule.id ?? "" };
+		return invoke<UploadRule>("add_upload_rule", { rule: payload });
+	}
+
+	updateUploadRule(rule: UploadRule) {
+		return invoke("update_upload_rule", { rule });
+	}
+
+	removeUploadRule(id: string) {
+		return invoke("remove_upload_rule", { id });
+	}
+
+	listUploadJobs() {
+		return invoke<UploadJob[]>("list_upload_jobs");
+	}
+
+	cancelUploadJob(id: string) {
+		return invoke("cancel_upload_job", { id });
+	}
+
+	clearUploadHistory() {
+		return invoke("clear_upload_history");
 	}
 }

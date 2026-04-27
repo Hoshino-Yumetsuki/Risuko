@@ -36,7 +36,7 @@ risuko-app
 Or Install CLI only
 ```
 pnpm install -g @risuko/cli
-risuko-cli --help
+risuko --help
 ```
 
 

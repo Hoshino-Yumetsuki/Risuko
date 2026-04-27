@@ -137,6 +137,18 @@ pub fn run() {
 
                 let event_sink_clone = event_sink.clone();
                 let storage_clone = storage.clone();
+                let upload_mgr = app
+                    .state::<state::AppState>()
+                    .upload_sinks
+                    .lock()
+                    .ok()
+                    .and_then(|g| g.clone());
+                // Push the live Tauri event sink into the upload manager so
+                // upload events reach the frontend (we constructed it with a
+                // NoopEventSink before AppHandle was available)
+                if let Some(ref m) = upload_mgr {
+                    m.set_event_sink(event_sink_clone.clone());
+                }
                 tauri::async_runtime::spawn(async move {
                     let config = match risuko_engine::config::ConfigManager::with_dir(config_dir) {
                         Ok(c) => c,
@@ -149,6 +161,7 @@ pub fn run() {
                         &config,
                         event_sink_clone,
                         storage_clone,
+                        upload_mgr,
                     )
                     .await
                     {
@@ -286,6 +299,21 @@ pub fn run() {
             commands::rss_cmds::clear_rss_download,
             commands::rss_cmds::read_rss_download,
             commands::rss_cmds::download_rss_item_tracked,
+            commands::upload_cmds::list_upload_sinks,
+            commands::upload_cmds::add_upload_sink,
+            commands::upload_cmds::update_upload_sink,
+            commands::upload_cmds::remove_upload_sink,
+            commands::upload_cmds::test_upload_sink,
+            commands::upload_cmds::get_default_upload_sink,
+            commands::upload_cmds::set_default_upload_sink,
+            commands::upload_cmds::set_upload_max_concurrency,
+            commands::upload_cmds::list_upload_rules,
+            commands::upload_cmds::add_upload_rule,
+            commands::upload_cmds::update_upload_rule,
+            commands::upload_cmds::remove_upload_rule,
+            commands::upload_cmds::list_upload_jobs,
+            commands::upload_cmds::cancel_upload_job,
+            commands::upload_cmds::clear_upload_history,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Risuko");
