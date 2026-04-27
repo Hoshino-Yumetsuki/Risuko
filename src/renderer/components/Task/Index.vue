@@ -386,8 +386,19 @@ export default {
 			const results = await Promise.allSettled(
 				taskList.map((task) => this.deleteTaskFiles(task)),
 			);
-			logger.log("[Risuko] batch delete task files: ", results);
-			const failed = results.some((r) => r.status === "rejected" || !r.value);
+			let failed = false;
+			results.forEach((r, i) => {
+				if (r.status === "rejected") {
+					failed = true;
+					const task = taskList[i];
+					logger.warn(
+						`[Risuko] delete task files failed (gid=${task?.gid}, name=${
+							task?.bt_name || task?.bittorrent?.info?.name || ""
+						}):`,
+						r.reason,
+					);
+				}
+			});
 			if (failed) {
 				throw new Error("task.remove-task-file-fail");
 			}
