@@ -29,6 +29,7 @@ export default {
 	reset: "捨棄",
 	cancel: "取消",
 	submit: "送出",
+	browse: "瀏覽",
 	gt1d: "超過一天",
 	hour: "時",
 	minute: "分",

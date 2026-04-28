@@ -6,8 +6,8 @@ export type UploadProtocol = "webdav" | "s3" | "sftp" | "ftp";
 export interface WebdavConfig {
 	endpoint: string;
 	basePath: string;
-	username?: string | null;
-	password?: string | null;
+	username?: string;
+	password?: string;
 	insecure?: boolean;
 }
 
@@ -25,18 +25,19 @@ export interface SftpConfig {
 	host: string;
 	port: number;
 	username: string;
-	password?: string | null;
-	privateKey?: string | null;
+	password?: string;
+	privateKey?: string;
 	basePath?: string;
 }
 
 export interface FtpConfig {
 	host: string;
 	port: number;
-	username?: string | null;
-	password?: string | null;
+	username?: string;
+	password?: string;
 	basePath?: string;
 	secure?: boolean;
+	insecure?: boolean;
 }
 
 export type SinkConfig =

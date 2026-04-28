@@ -78,6 +78,18 @@ impl WebdavSink {
                 remote_relative.trim_start_matches('/')
             )
         };
+        // Reject `.`/`..` segments before letting `Url::join` resolve them \u2014
+        // otherwise a remote_relative like `../etc/passwd` would escape the
+        // configured base path and write to an unintended location
+        if remote_relative
+            .trim_start_matches('/')
+            .split('/')
+            .any(|seg| seg == "." || seg == "..")
+        {
+            return Err(format!(
+                "Path traversal not allowed in remote path: '{remote_relative}'"
+            ));
+        }
         let encoded = utf8_percent_encode(&combined, PATH_SAFE).to_string();
         self.base_url
             .join(&encoded)

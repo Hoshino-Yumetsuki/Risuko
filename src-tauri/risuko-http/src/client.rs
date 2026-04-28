@@ -265,11 +265,15 @@ impl Client {
         // sized automatically by hyper from the body's `size_hint`
         if matches!(body, ReqBody::Stream { .. }) {
             let has_length = req_headers.contains_key(CONTENT_LENGTH);
+            // RFC 9112: Transfer-Encoding is a comma-separated list of codings
+            // (e.g. "gzip, chunked"), and the header may appear multiple
+            // times. Treat any token equal to "chunked" as chunked framing
             let has_chunked = req_headers
-                .get(http::header::TRANSFER_ENCODING)
-                .and_then(|v| v.to_str().ok())
-                .map(|s| s.eq_ignore_ascii_case("chunked"))
-                .unwrap_or(false);
+                .get_all(http::header::TRANSFER_ENCODING)
+                .iter()
+                .filter_map(|v| v.to_str().ok())
+                .flat_map(|s| s.split(','))
+                .any(|tok| tok.trim().eq_ignore_ascii_case("chunked"));
             if !has_length && !has_chunked {
                 if let Some(len) = body.content_length() {
                     if let Ok(v) = HeaderValue::from_str(&len.to_string()) {

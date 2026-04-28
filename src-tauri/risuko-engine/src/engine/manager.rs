@@ -1777,25 +1777,49 @@ impl TaskManager {
             .filter(|f| f.selected != "false")
             .filter_map(|f| {
                 let local = std::path::PathBuf::from(&f.path);
-                let size: u64 = f.length.parse().unwrap_or(0);
+                let size: u64 = match f.length.parse::<u64>() {
+                    Ok(n) => n,
+                    Err(e) => {
+                        log::warn!(
+                            "Skipping upload entry with unparseable size: path={} length={:?} err={}",
+                            f.path,
+                            f.length,
+                            e
+                        );
+                        return None;
+                    }
+                };
                 // Relative to the task's download dir so multi-file torrents
                 // preserve their internal layout when pushed to the sink.
                 // Remote paths are always `/`-separated regardless of host OS
-                let rel = local
+                let rel_path = local
                     .strip_prefix(dir)
-                    .map(|p| p.to_string_lossy().to_string())
+                    .map(std::path::PathBuf::from)
                     .unwrap_or_else(|_| {
                         local
                             .file_name()
-                            .map(|n| n.to_string_lossy().to_string())
+                            .map(std::path::PathBuf::from)
                             .unwrap_or_default()
                     });
+                // Reject any parent-directory segments to prevent escaping
+                // the configured remote base path on the sink side
+                if rel_path
+                    .components()
+                    .any(|c| matches!(c, std::path::Component::ParentDir))
+                {
+                    log::warn!(
+                        "Skipping upload entry with parent-directory segment: path={}",
+                        f.path
+                    );
+                    return None;
+                }
+                let rel = rel_path.to_string_lossy().to_string();
                 let rel = if std::path::MAIN_SEPARATOR != '/' {
                     rel.replace(std::path::MAIN_SEPARATOR, "/")
                 } else {
                     rel
                 };
-                if rel.is_empty() {
+                if rel.is_empty() || rel.split('/').any(|seg| seg == "..") {
                     return None;
                 }
                 Some(UploadFileSnapshot {

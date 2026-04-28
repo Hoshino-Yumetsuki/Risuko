@@ -1,27 +1,110 @@
 //! SFTP upload sink. Reuses the russh + russh-sftp stack already used by the SFTP downloader
 
+use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
 use async_trait::async_trait;
+use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine as _};
+use parking_lot::Mutex;
 use russh::client;
 use russh::keys::PrivateKeyWithHashAlg;
 use russh_sftp::client::SftpSession;
 use russh_sftp::protocol::OpenFlags;
+use sha2::{Digest, Sha256};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use super::sink::{SftpConfig, UploadControl, UploadFile, UploadSink};
 
 const COPY_BUF: usize = 64 * 1024;
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
 
-struct SshHandler;
+/// Process-wide TOFU known-hosts store for SFTP upload sinks. Records each
+/// `host:port` -> SHA256 fingerprint pair on first connect and rejects any
+/// subsequent mismatch. Backed by a JSON file under the user config dir so
+/// pinning survives restarts
+struct KnownHosts {
+    path: PathBuf,
+    map: HashMap<String, String>,
+}
+
+impl KnownHosts {
+    fn load() -> Self {
+        let path = dirs::config_dir()
+            .unwrap_or_else(std::env::temp_dir)
+            .join("risuko")
+            .join("sftp_known_hosts.json");
+        let map = std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|s| serde_json::from_str::<HashMap<String, String>>(&s).ok())
+            .unwrap_or_default();
+        Self { path, map }
+    }
+
+    fn persist(&self) {
+        if let Some(parent) = self.path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        if let Ok(s) = serde_json::to_string_pretty(&self.map) {
+            let _ = std::fs::write(&self.path, s);
+        }
+    }
+}
+
+static KNOWN_HOSTS: LazyLock<Mutex<KnownHosts>> = LazyLock::new(|| Mutex::new(KnownHosts::load()));
+
+fn fingerprint(key: &russh::keys::PublicKey) -> String {
+    let mut h = Sha256::new();
+    h.update(key.to_bytes().unwrap_or_default());
+    format!("SHA256:{}", STANDARD_NO_PAD.encode(h.finalize()))
+}
+
+struct SshHandler {
+    host_key: String,
+    /// Optional explicit pinned fingerprint. When set, only that exact value
+    /// is accepted and nothing is persisted to the TOFU store
+    pinned: Option<String>,
+}
 
 impl client::Handler for SshHandler {
     type Error = russh::Error;
-    async fn check_server_key(&mut self, _: &russh::keys::PublicKey) -> Result<bool, Self::Error> {
-        // TODO: TOFU-style host-key verification (mirrors download path)
-        Ok(true)
+    async fn check_server_key(
+        &mut self,
+        key: &russh::keys::PublicKey,
+    ) -> Result<bool, Self::Error> {
+        let fp = fingerprint(key);
+        if let Some(ref pin) = self.pinned {
+            if pin == &fp {
+                return Ok(true);
+            }
+            log::warn!(
+                "SFTP host key mismatch for {}: expected {} got {}",
+                self.host_key,
+                pin,
+                fp
+            );
+            return Ok(false);
+        }
+        let mut store = KNOWN_HOSTS.lock();
+        match store.map.get(&self.host_key) {
+            Some(existing) if existing == &fp => Ok(true),
+            Some(existing) => {
+                log::warn!(
+                    "SFTP host key mismatch for {}: stored {} got {}",
+                    self.host_key,
+                    existing,
+                    fp
+                );
+                Ok(false)
+            }
+            None => {
+                log::info!("SFTP TOFU: pinning {} -> {}", self.host_key, fp);
+                store.map.insert(self.host_key.clone(), fp);
+                store.persist();
+                Ok(true)
+            }
+        }
     }
 }
 
@@ -46,7 +129,11 @@ impl SftpSink {
     async fn connect(&self) -> Result<SftpSession, String> {
         let config = Arc::new(client::Config::default());
         let addr = format!("{}:{}", self.cfg.host, self.cfg.port);
-        let mut session = client::connect(config, &addr, SshHandler)
+        let handler = SshHandler {
+            host_key: addr.clone(),
+            pinned: None,
+        };
+        let mut session = client::connect(config, &addr, handler)
             .await
             .map_err(|e| format!("SSH connect failed: {e}"))?;
 
@@ -107,12 +194,13 @@ impl SftpSink {
             _ => return Ok(()),
         };
 
+        let absolute = parent.starts_with('/');
         let mut accum = String::new();
-        if parent.starts_with('/') {
+        if absolute {
             accum.push('/');
         }
         for seg in parent.split('/').filter(|s| !s.is_empty()) {
-            if !accum.ends_with('/') {
+            if !accum.is_empty() && !accum.ends_with('/') {
                 accum.push('/');
             }
             accum.push_str(seg);
@@ -152,7 +240,9 @@ impl UploadSink for SftpSink {
             return Err("cancelled".into());
         }
 
-        let sftp = self.connect().await?;
+        let sftp = tokio::time::timeout(CONNECT_TIMEOUT, self.connect())
+            .await
+            .map_err(|_| "SFTP connect timed out".to_string())??;
         let remote = self.full_remote_path(&file.remote_relative);
         self.ensure_parent_dirs(&sftp, &remote).await?;
 
@@ -199,9 +289,13 @@ impl UploadSink for SftpSink {
             .map_err(|e| format!("SFTP close: {e}"))?;
 
         ctl.report(file.size, file.size);
+        // Always insert exactly one '/' between port and the remote path so
+        // the resulting URL is well-formed regardless of whether `remote`
+        // is absolute or relative
+        let remote_for_url = remote.trim_start_matches('/');
         Ok(format!(
-            "sftp://{}@{}:{}{}",
-            self.cfg.username, self.cfg.host, self.cfg.port, remote
+            "sftp://{}@{}:{}/{}",
+            self.cfg.username, self.cfg.host, self.cfg.port, remote_for_url
         ))
     }
 

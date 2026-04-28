@@ -42,6 +42,9 @@ impl S3Sink {
         if cfg.access_key_id.trim().is_empty() {
             return Err("S3 access key is empty".into());
         }
+        if cfg.secret_access_key.trim().is_empty() {
+            return Err("S3 secret access key is empty".into());
+        }
 
         let base_url = Url::parse(endpoint).map_err(|e| format!("Invalid S3 endpoint URL: {e}"))?;
         let host_header = match base_url.port() {

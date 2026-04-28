@@ -98,10 +98,19 @@ impl FtpSink {
     }
 
     fn tls_connector(&self) -> AsyncRustlsConnector {
-        let rustls_cfg = rustls::ClientConfig::builder()
-            .dangerous()
-            .with_custom_certificate_verifier(Arc::new(AcceptAnyCert))
-            .with_no_client_auth();
+        let builder = rustls::ClientConfig::builder();
+        let rustls_cfg = if self.cfg.insecure {
+            // Explicit user opt-in to skip verification (self-signed homelab)
+            builder
+                .dangerous()
+                .with_custom_certificate_verifier(Arc::new(AcceptAnyCert))
+                .with_no_client_auth()
+        } else {
+            // Default: verify against the bundled Mozilla root store
+            let mut roots = rustls::RootCertStore::empty();
+            roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+            builder.with_root_certificates(roots).with_no_client_auth()
+        };
         AsyncRustlsConnector::from(suppaftp::tokio_rustls::TlsConnector::from(Arc::new(
             rustls_cfg,
         )))
@@ -116,12 +125,13 @@ macro_rules! ensure_dirs {
             _ => String::new(),
         };
         if !parent.is_empty() {
+            let absolute = parent.starts_with('/');
             let mut accum = String::new();
-            if parent.starts_with('/') {
+            if absolute {
                 accum.push('/');
             }
             for seg in parent.split('/').filter(|s| !s.is_empty()) {
-                if !accum.ends_with('/') {
+                if !accum.is_empty() && !accum.ends_with('/') {
                     accum.push('/');
                 }
                 accum.push_str(seg);
@@ -170,10 +180,12 @@ macro_rules! copy_to {
         }
         .await;
 
+        // Propagate copy/flush errors before finalizing — otherwise the
+        // server commits a truncated file on cancellation or write failure
+        copy_res?;
         $ftp.finalize_put_stream(writer)
             .await
             .map_err(|e| format!("FTP finalize: {e}"))?;
-        copy_res?;
     }};
 }
 
@@ -277,6 +289,7 @@ mod tests {
             password: pass.into(),
             base_path: base.into(),
             secure,
+            insecure: false,
         }
     }
 

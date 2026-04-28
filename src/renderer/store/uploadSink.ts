@@ -15,6 +15,7 @@ interface UploadState {
 	loading: boolean;
 	_eventUnlisteners: (() => void)[];
 	_pollTimer: ReturnType<typeof setInterval> | null;
+	_isRefreshing: boolean;
 }
 
 const POLL_MS = 1000;
@@ -28,6 +29,7 @@ export const useUploadSinkStore = defineStore("uploadSink", {
 		loading: false,
 		_eventUnlisteners: [],
 		_pollTimer: null,
+		_isRefreshing: false,
 	}),
 
 	getters: {
@@ -112,10 +114,18 @@ export const useUploadSinkStore = defineStore("uploadSink", {
 		},
 
 		async refreshJobs() {
+			// Guard against overlapping refreshes — if a previous request
+			// hasn't returned yet, skip this tick rather than queuing another
+			if (this._isRefreshing) {
+				return;
+			}
+			this._isRefreshing = true;
 			try {
 				this.jobs = await api.listUploadJobs();
 			} catch (err) {
 				logger.warn("[Risuko] upload jobs refresh failed:", err);
+			} finally {
+				this._isRefreshing = false;
 			}
 		},
 

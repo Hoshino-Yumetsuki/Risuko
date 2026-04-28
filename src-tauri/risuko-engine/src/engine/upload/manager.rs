@@ -77,7 +77,6 @@ pub struct UploadJob {
 }
 
 struct ActiveJob {
-    cancel: CancellationToken,
     progress: watch::Receiver<UploadProgress>,
 }
 
@@ -87,7 +86,11 @@ pub struct UploadSinkManager {
     event_sink: StdMutex<Arc<dyn EventSink>>,
     jobs: Arc<Mutex<HashMap<String, UploadJob>>>,
     active: Arc<Mutex<HashMap<String, ActiveJob>>>,
-    semaphore: Arc<Semaphore>,
+    /// Cancellation tokens for every spawned job — populated at enqueue
+    /// time so even queued jobs (still waiting on the semaphore) can be
+    /// cancelled by the user. Cleared once the job reaches a terminal state
+    cancels: Arc<Mutex<HashMap<String, CancellationToken>>>,
+    semaphore: Arc<RwLock<Arc<Semaphore>>>,
 }
 
 impl UploadSinkManager {
@@ -101,7 +104,8 @@ impl UploadSinkManager {
             event_sink: StdMutex::new(event_sink),
             jobs: Arc::new(Mutex::new(HashMap::new())),
             active: Arc::new(Mutex::new(HashMap::new())),
-            semaphore: Arc::new(Semaphore::new(default_concurrency())),
+            cancels: Arc::new(Mutex::new(HashMap::new())),
+            semaphore: Arc::new(RwLock::new(Arc::new(Semaphore::new(default_concurrency())))),
         }
     }
 
@@ -121,8 +125,15 @@ impl UploadSinkManager {
             if let Some(data_val) = val.get("data").cloned() {
                 let data: UploadStore = serde_json::from_value(data_val)
                     .map_err(|e| format!("Failed to parse upload sinks: {e}"))?;
+                let new_concurrency = data.max_concurrency.clamp(1, 16);
                 let mut s = self.store.blocking_write();
                 *s = data;
+                s.max_concurrency = new_concurrency;
+                drop(s);
+                // Rebuild the semaphore with the persisted concurrency value
+                // so configured limits actually apply at startup
+                let mut sem = self.semaphore.blocking_write();
+                *sem = Arc::new(Semaphore::new(new_concurrency));
             }
         }
         Ok(())
@@ -234,13 +245,16 @@ impl UploadSinkManager {
 
     pub async fn set_max_concurrency(&self, n: usize) -> Result<(), String> {
         let n = n.clamp(1, 16);
-        // Live concurrency change isn't supported in iter 1 — `tokio::Semaphore`
-        // can't shrink active permits, and atomically swapping the field
-        // requires a different storage shape (`ArcSwap` / `RwLock<Arc<_>>`)
-        // We persist the new value so it takes effect at next engine start
+        // Persist first; live resize follows. `tokio::Semaphore` cannot
+        // shrink permits already handed out, but we can swap in a fresh
+        // semaphore for future jobs — in-flight jobs keep their old permit
         let mut s = self.store.write().await;
         s.max_concurrency = n;
         drop(s);
+        {
+            let mut sem = self.semaphore.write().await;
+            *sem = Arc::new(Semaphore::new(n));
+        }
         self.save().await
     }
 
@@ -302,11 +316,16 @@ impl UploadSinkManager {
     // job control
 
     pub async fn cancel_job(&self, id: &str) -> Result<(), String> {
-        let active = self.active.lock().await;
-        let entry = active
+        // The cancel token is stored as soon as the job is enqueued so this
+        // works for queued jobs (still waiting on the semaphore) too. The
+        // spawned task checks the token after acquiring its permit and bails
+        let cancels = self.cancels.lock().await;
+        let token = cancels
             .get(id)
-            .ok_or_else(|| format!("job {id} not active"))?;
-        entry.cancel.cancel();
+            .ok_or_else(|| format!("job {id} not found"))?
+            .clone();
+        drop(cancels);
+        token.cancel();
         Ok(())
     }
 
@@ -373,12 +392,26 @@ impl UploadSinkManager {
         };
 
         self.jobs.lock().await.insert(job_id.clone(), job.clone());
+        // Pre-create the cancel token so users can cancel queued jobs that
+        // haven't acquired a semaphore permit yet
+        let cancel = CancellationToken::new();
+        self.cancels
+            .lock()
+            .await
+            .insert(job_id.clone(), cancel.clone());
         self.emit_event("engine:upload-queued", &job);
 
         let this = self.clone();
         tokio::spawn(async move {
-            this.run_job(job_id, sink_record, local_path, remote_relative, size)
-                .await;
+            this.run_job(
+                job_id,
+                sink_record,
+                local_path,
+                remote_relative,
+                size,
+                cancel,
+            )
+            .await;
         });
     }
 
@@ -420,28 +453,44 @@ impl UploadSinkManager {
         local_path: PathBuf,
         remote_relative: String,
         size: u64,
+        cancel: CancellationToken,
     ) {
-        // Wait for a slot
-        let permit = match self.semaphore.clone().acquire_owned().await {
-            Ok(p) => p,
-            Err(_) => {
-                self.fail_job(&job_id, "engine shutdown").await;
+        // Wait for a slot. Snapshot the current `Arc<Semaphore>` so a runtime
+        // resize via `set_max_concurrency` doesn't deadlock us
+        let sem = self.semaphore.read().await.clone();
+        let permit = tokio::select! {
+            res = sem.acquire_owned() => match res {
+                Ok(p) => p,
+                Err(_) => {
+                    self.cancels.lock().await.remove(&job_id);
+                    self.fail_job(&job_id, "engine shutdown").await;
+                    return;
+                }
+            },
+            _ = cancel.cancelled() => {
+                // Cancelled while still queued — never acquired a permit
+                self.cancels.lock().await.remove(&job_id);
+                self.cancel_job_state(&job_id).await;
                 return;
             }
         };
 
-        let cancel = CancellationToken::new();
+        // Cancellation may also have raced acquisition; bail before doing work
+        if cancel.is_cancelled() {
+            drop(permit);
+            self.cancels.lock().await.remove(&job_id);
+            self.cancel_job_state(&job_id).await;
+            return;
+        }
+
         let (tx, rx) = watch::channel(UploadProgress {
             uploaded: 0,
             total: size,
         });
-        self.active.lock().await.insert(
-            job_id.clone(),
-            ActiveJob {
-                cancel: cancel.clone(),
-                progress: rx,
-            },
-        );
+        self.active
+            .lock()
+            .await
+            .insert(job_id.clone(), ActiveJob { progress: rx });
 
         // Mark active
         if let Some(j) = self.jobs.lock().await.get_mut(&job_id) {
@@ -502,6 +551,7 @@ impl UploadSinkManager {
 
     async fn cleanup_active(&self, job_id: &str) {
         self.active.lock().await.remove(job_id);
+        self.cancels.lock().await.remove(job_id);
     }
 
     async fn complete_job(&self, job_id: &str) {
@@ -718,6 +768,7 @@ mod tests {
             password: String::new(),
             base_path: String::new(),
             secure: false,
+            insecure: false,
         });
         assert!(build_sink_runtime(&cfg).is_ok());
     }
@@ -731,6 +782,7 @@ mod tests {
             password: String::new(),
             base_path: String::new(),
             secure: false,
+            insecure: false,
         });
         assert!(build_sink_runtime(&cfg).is_err());
     }

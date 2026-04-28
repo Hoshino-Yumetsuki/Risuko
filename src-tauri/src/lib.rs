@@ -130,25 +130,29 @@ pub fn run() {
                 risuko_engine::engine::should_start_embedded_engine(&config)
             };
 
+            // Push the live Tauri event sink into the upload manager so
+            // upload events reach the frontend (we constructed it with a
+            // NoopEventSink before AppHandle was available). This must run
+            // regardless of whether the embedded engine auto-starts so that
+            // sink configuration UI receives upload events when the user
+            // starts the engine later.
+            let event_sink_clone = event_sink.clone();
+            let upload_mgr = app
+                .state::<state::AppState>()
+                .upload_sinks
+                .lock()
+                .ok()
+                .and_then(|g| g.clone());
+            if let Some(ref m) = upload_mgr {
+                m.set_event_sink(event_sink_clone.clone());
+            }
+
             if should_start {
                 let config_ref = config_guard.config.lock().unwrap();
                 let config_dir = config_ref.config_dir().to_path_buf();
                 drop(config_ref);
 
-                let event_sink_clone = event_sink.clone();
                 let storage_clone = storage.clone();
-                let upload_mgr = app
-                    .state::<state::AppState>()
-                    .upload_sinks
-                    .lock()
-                    .ok()
-                    .and_then(|g| g.clone());
-                // Push the live Tauri event sink into the upload manager so
-                // upload events reach the frontend (we constructed it with a
-                // NoopEventSink before AppHandle was available)
-                if let Some(ref m) = upload_mgr {
-                    m.set_event_sink(event_sink_clone.clone());
-                }
                 tauri::async_runtime::spawn(async move {
                     let config = match risuko_engine::config::ConfigManager::with_dir(config_dir) {
                         Ok(c) => c,

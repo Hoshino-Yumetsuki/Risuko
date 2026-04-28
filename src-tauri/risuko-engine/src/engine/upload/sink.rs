@@ -69,8 +69,9 @@ pub struct WebdavConfig {
     /// Optional basic-auth username
     #[serde(default)]
     pub username: String,
-    /// Optional basic-auth password
-    #[serde(default)]
+    /// Optional basic-auth password. Not persisted to disk — the frontend
+    /// must re-supply on engine restart
+    #[serde(default, skip_serializing)]
     pub password: String,
     /// Skip TLS verification (self-signed homelab servers)
     #[serde(default)]
@@ -92,7 +93,9 @@ pub struct S3Config {
     pub bucket: String,
     /// Access key ID
     pub access_key_id: String,
-    /// Secret access key (plaintext for now)
+    /// Secret access key. Not persisted to disk — the frontend must
+    /// re-supply on engine restart
+    #[serde(default, skip_serializing)]
     pub secret_access_key: String,
     /// Optional key prefix prepended to every object key
     #[serde(default)]
@@ -110,11 +113,12 @@ pub struct SftpConfig {
     #[serde(default = "default_sftp_port")]
     pub port: u16,
     pub username: String,
-    /// Password auth. Used if non-empty; otherwise tries the private key
-    #[serde(default)]
+    /// Password auth. Used if non-empty; otherwise tries the private key.
+    /// Not persisted to disk — the frontend must re-supply on engine restart
+    #[serde(default, skip_serializing)]
     pub password: String,
-    /// PEM-encoded OpenSSH or PKCS#1 private key
-    #[serde(default)]
+    /// PEM-encoded OpenSSH or PKCS#1 private key. Not persisted to disk
+    #[serde(default, skip_serializing)]
     pub private_key: String,
     /// Remote base directory (defaults to login home if empty)
     #[serde(default)]
@@ -133,7 +137,8 @@ pub struct FtpConfig {
     pub port: u16,
     #[serde(default)]
     pub username: String,
-    #[serde(default)]
+    /// Not persisted to disk — the frontend must re-supply on engine restart
+    #[serde(default, skip_serializing)]
     pub password: String,
     /// Remote base directory (created on demand)
     #[serde(default)]
@@ -141,6 +146,9 @@ pub struct FtpConfig {
     /// Use explicit FTPS (AUTH TLS) on the control channel
     #[serde(default)]
     pub secure: bool,
+    /// Skip TLS verification (self-signed homelab servers)
+    #[serde(default)]
+    pub insecure: bool,
 }
 
 fn default_ftp_port() -> u16 {
@@ -209,7 +217,8 @@ mod tests {
             endpoint: "https://dav.example.com".into(),
             base_path: "uploads".into(),
             username: "u".into(),
-            password: "p".into(),
+            // password is skip_serializing; use empty so round-trip equality holds
+            password: String::new(),
             insecure: true,
         });
         let json = serde_json::to_string(&cfg).unwrap();
@@ -227,7 +236,8 @@ mod tests {
             region: "us-west-2".into(),
             bucket: "mybucket".into(),
             access_key_id: "AKIA".into(),
-            secret_access_key: "secret".into(),
+            // secret_access_key is skip_serializing; use empty for round-trip equality
+            secret_access_key: String::new(),
             prefix: "folder".into(),
             force_path_style: true,
         });

@@ -86,6 +86,88 @@
           </div>
         </div>
 
+        <!-- Rules Section -->
+        <div class="settings-section">
+          <div class="settings-section-header">
+            <div class="section-icon"><Filter :size="16" /></div>
+            <div class="section-title">
+              <h3>{{ $t('cloudSinks.rules') }}</h3>
+              <p class="section-desc">{{ $t('cloudSinks.rulesHint') }}</p>
+            </div>
+            <Button
+              size="sm"
+              :disabled="store.sinks.length === 0"
+              @click="openRuleCreate"
+            >
+              <Plus :size="14" class="mr-1" />
+              {{ $t('cloudSinks.addRule') }}
+            </Button>
+          </div>
+          <div class="settings-section-content">
+            <div
+              v-if="store.sinks.length === 0"
+              class="empty-state empty-state--small"
+            >
+              <Filter :size="22" class="empty-state-icon" />
+              <p class="empty-state-hint">
+                {{ $t('cloudSinks.rulesNeedSink') }}
+              </p>
+            </div>
+            <div
+              v-else-if="store.rules.length === 0"
+              class="empty-state empty-state--small"
+            >
+              <Filter :size="22" class="empty-state-icon" />
+              <p class="empty-state-hint">{{ $t('cloudSinks.rulesEmpty') }}</p>
+            </div>
+            <div v-else class="sink-list">
+              <div
+                v-for="rule in store.rules"
+                :key="rule.id"
+                class="sink-card"
+                :class="{ 'sink-card--disabled': !rule.enabled }"
+              >
+                <div class="sink-card-icon">
+                  <Filter :size="16" />
+                </div>
+                <div class="sink-card-main">
+                  <div class="sink-card-line">
+                    <span class="sink-card-label">{{ rule.label || $t('cloudSinks.unnamedRule') }}</span>
+                    <span class="sink-card-kind">→ {{ ruleSinkLabel(rule.sinkId) }}</span>
+                    <span v-if="!rule.enabled" class="sink-card-badge">
+                      {{ $t('cloudSinks.disabled') }}
+                    </span>
+                  </div>
+                  <div class="sink-card-meta" :title="ruleMeta(rule)">
+                    {{ ruleMeta(rule) }}
+                  </div>
+                </div>
+                <div class="sink-card-actions">
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    @click="toggleRuleEnabled(rule)"
+                  >
+                    {{ rule.enabled ? $t('cloudSinks.disable') : $t('cloudSinks.enable') }}
+                  </Button>
+                  <Button size="sm" variant="ghost" @click="openRuleEdit(rule)">
+                    <Pencil :size="13" />
+                    <span class="ml-1">{{ $t('cloudSinks.edit') }}</span>
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    class="action-danger"
+                    @click="askRemoveRule(rule)"
+                  >
+                    <Trash2 :size="13" />
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <!-- Recent Uploads -->
         <div class="settings-section">
           <div class="settings-section-header">
@@ -442,6 +524,254 @@
         </DialogFooter>
       </DialogContent>
     </Dialog>
+
+    <!-- Rule Add / Edit Dialog -->
+    <Dialog :open="ruleDialogOpen" @update:open="onRuleDialogOpenChange">
+      <DialogContent class="cloud-sink-dialog" :show-close-button="true">
+        <DialogHeader>
+          <DialogTitle>{{ ruleDialogTitle }}</DialogTitle>
+          <p class="dialog-subtitle">{{ $t('cloudSinks.rulesHint') }}</p>
+        </DialogHeader>
+
+        <div class="dialog-form">
+          <!-- Identity row -->
+          <div class="grid-2">
+            <div class="dialog-field">
+              <Label for="rule-label">{{ $t('cloudSinks.label') }}</Label>
+              <Input
+                id="rule-label"
+                v-model="ruleForm.label"
+                :placeholder="$t('cloudSinks.ruleLabelPlaceholder')"
+                autocomplete="off"
+              />
+            </div>
+            <div class="dialog-field">
+              <Label for="rule-target">{{ $t('cloudSinks.ruleTarget') }}</Label>
+              <Select v-model="ruleForm.sinkId">
+                <SelectTrigger id="rule-target">
+                  <SelectValue
+                    :placeholder="$t('cloudSinks.ruleTargetPlaceholder')"
+                  />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem
+                    v-for="s in store.sinks"
+                    :key="s.id"
+                    :value="s.id"
+                  >
+                    {{ s.label || s.id }}
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <p
+            v-if="store.sinks.length === 0"
+            class="dialog-hint dialog-hint--warn"
+          >
+            {{ $t('cloudSinks.rulesNeedSink') }}
+          </p>
+
+          <hr class="dialog-sep" />
+
+          <!-- Categories -->
+          <div class="dialog-field">
+            <Label>{{ $t('cloudSinks.ruleCategories') }}</Label>
+            <DropdownMenu>
+              <DropdownMenuTrigger as-child>
+                <button type="button" class="multi-select">
+                  <div class="multi-select__body">
+                    <template v-if="ruleForm.categories.length">
+                      <span
+                        v-for="c in ruleForm.categories"
+                        :key="c"
+                        class="multi-select__tag"
+                      >
+                        {{ $t(`cloudSinks.cat_${c}`) }}
+                        <X
+                          :size="11"
+                          class="multi-select__tag-x"
+                          @click.stop="toggleSelection(ruleForm.categories, c)"
+                        />
+                      </span>
+                    </template>
+                    <span v-else class="multi-select__placeholder">
+                      {{ $t('cloudSinks.selectCategories') }}
+                    </span>
+                  </div>
+                  <ChevronDown :size="14" class="multi-select__chevron" />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" class="multi-select__menu">
+                <DropdownMenuCheckboxItem
+                  v-for="c in CATEGORY_OPTIONS"
+                  :key="c"
+                  :model-value="ruleForm.categories.includes(c)"
+                  @select="(e: Event) => e.preventDefault()"
+                  @update:model-value="toggleSelection(ruleForm.categories, c)"
+                >
+                  {{ $t(`cloudSinks.cat_${c}`) }}
+                </DropdownMenuCheckboxItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+
+          <!-- Task kinds -->
+          <div class="dialog-field">
+            <Label>{{ $t('cloudSinks.ruleTaskKinds') }}</Label>
+            <DropdownMenu>
+              <DropdownMenuTrigger as-child>
+                <button type="button" class="multi-select">
+                  <div class="multi-select__body">
+                    <template v-if="ruleForm.taskKinds.length">
+                      <span
+                        v-for="k in ruleForm.taskKinds"
+                        :key="k"
+                        class="multi-select__tag"
+                      >
+                        {{ k.toUpperCase() }}
+                        <X
+                          :size="11"
+                          class="multi-select__tag-x"
+                          @click.stop="toggleSelection(ruleForm.taskKinds, k)"
+                        />
+                      </span>
+                    </template>
+                    <span v-else class="multi-select__placeholder">
+                      {{ $t('cloudSinks.selectTaskKinds') }}
+                    </span>
+                  </div>
+                  <ChevronDown :size="14" class="multi-select__chevron" />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" class="multi-select__menu">
+                <DropdownMenuCheckboxItem
+                  v-for="k in TASK_KIND_OPTIONS"
+                  :key="k"
+                  :model-value="ruleForm.taskKinds.includes(k)"
+                  @select="(e: Event) => e.preventDefault()"
+                  @update:model-value="toggleSelection(ruleForm.taskKinds, k)"
+                >
+                  {{ k.toUpperCase() }}
+                </DropdownMenuCheckboxItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+
+          <!-- Extensions + Size: horizontal grid like sink dialog -->
+          <div class="grid-2">
+            <div class="dialog-field">
+              <Label for="rule-ext">{{ $t('cloudSinks.ruleExtensions') }}</Label>
+              <Input
+                id="rule-ext"
+                v-model="ruleForm.extensionsText"
+                placeholder="mp4, mkv, iso"
+                autocomplete="off"
+                spellcheck="false"
+              />
+              <div v-if="parsedExtensions.length" class="ext-tags">
+                <span
+                  v-for="e in parsedExtensions"
+                  :key="e"
+                  class="ext-tag"
+                >.{{ e }}</span>
+              </div>
+            </div>
+            <div class="dialog-field">
+              <div class="field-row">
+                <Label>{{ $t('cloudSinks.ruleSize') }}</Label>
+                <span class="field-row__count">{{ sizeRangeSummary }}</span>
+              </div>
+              <div class="size-range">
+                <div class="input-suffix">
+                  <Input
+                    id="rule-min"
+                    v-model="ruleForm.minSizeMb"
+                    type="number"
+                    min="0"
+                    :placeholder="$t('cloudSinks.ruleAnySize')"
+                    autocomplete="off"
+                  />
+                  <span class="input-suffix__unit">MB</span>
+                </div>
+                <span class="size-range__sep">→</span>
+                <div class="input-suffix">
+                  <Input
+                    id="rule-max"
+                    v-model="ruleForm.maxSizeMb"
+                    type="number"
+                    min="0"
+                    :placeholder="$t('cloudSinks.ruleAnySize')"
+                    autocomplete="off"
+                  />
+                  <span class="input-suffix__unit">MB</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <p class="dialog-hint">{{ $t('cloudSinks.ruleConditionsHint') }}</p>
+
+          <hr class="dialog-sep" />
+
+          <div class="dialog-field-toggle">
+            <ui-checkbox v-model="ruleForm.enabled" />
+            <div>
+              <span class="toggle-title">{{ $t('cloudSinks.ruleEnabled') }}</span>
+              <span class="toggle-hint">{{ $t('cloudSinks.ruleEnabledHint') }}</span>
+            </div>
+          </div>
+
+          <div v-if="ruleDialogError" class="dialog-error">
+            <AlertCircle :size="14" class="shrink-0" />
+            <span>{{ ruleDialogError }}</span>
+          </div>
+        </div>
+
+        <DialogFooter>
+          <Button
+            variant="outline"
+            :disabled="ruleSaving"
+            @click="ruleDialogOpen = false"
+          >
+            {{ $t('cloudSinks.cancel') }}
+          </Button>
+          <Button
+            :disabled="ruleSaving || store.sinks.length === 0"
+            @click="onSaveRule"
+          >
+            <Loader2 v-if="ruleSaving" :size="13" class="animate-spin mr-1" />
+            {{ ruleSaving ? $t('cloudSinks.saving') : $t('cloudSinks.save') }}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+
+    <!-- Confirm remove rule -->
+    <Dialog
+      :open="!!removingRule"
+      @update:open="(v: boolean) => { if (!v) removingRule = null }"
+    >
+      <DialogContent class="cloud-sink-confirm" :show-close-button="false">
+        <DialogHeader>
+          <DialogTitle>{{ $t('cloudSinks.confirmRemoveRuleTitle') }}</DialogTitle>
+          <p class="dialog-subtitle">
+            {{ $t('cloudSinks.confirmRemoveRule') }}
+          </p>
+        </DialogHeader>
+        <div v-if="removingRule" class="confirm-target">
+          <strong>{{ removingRule.label || removingRule.id }}</strong>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" @click="removingRule = null">
+            {{ $t('cloudSinks.cancel') }}
+          </Button>
+          <Button variant="destructive" @click="onRemoveRuleConfirmed">
+            {{ $t('cloudSinks.delete') }}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   </div>
 </template>
 
@@ -451,15 +781,20 @@ import type {
 	UploadJob,
 	UploadJobStatus,
 	UploadProtocol,
+	UploadRule,
 	UploadSinkRecord,
 } from "@shared/types/upload";
 import { bytesToSize } from "@shared/utils";
+import logger from "@shared/utils/logger";
 import {
 	Activity,
 	AlertCircle,
+	Check,
+	ChevronDown,
 	Cloud,
 	CloudOff,
 	Database,
+	Filter,
 	HardDrive,
 	Inbox,
 	Loader2,
@@ -482,6 +817,12 @@ import {
 	DialogHeader,
 	DialogTitle,
 } from "@/components/ui/dialog";
+import {
+	DropdownMenu,
+	DropdownMenuCheckboxItem,
+	DropdownMenuContent,
+	DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
@@ -534,6 +875,43 @@ interface FormState {
 	moveTarget: string;
 }
 
+interface RuleFormState {
+	id: string;
+	label: string;
+	sinkId: string;
+	enabled: boolean;
+	categories: string[];
+	taskKinds: string[];
+	extensionsText: string;
+	minSizeMb: string;
+	maxSizeMb: string;
+}
+
+const CATEGORY_OPTIONS = [
+	"music",
+	"video",
+	"image",
+	"document",
+	"compressed",
+	"program",
+] as const;
+
+const TASK_KIND_OPTIONS = ["http", "torrent", "m3u8", "ftp", "ed2k"] as const;
+
+function emptyRuleForm(): RuleFormState {
+	return {
+		id: "",
+		label: "",
+		sinkId: "",
+		enabled: true,
+		categories: [],
+		taskKinds: [],
+		extensionsText: "",
+		minSizeMb: "",
+		maxSizeMb: "",
+	};
+}
+
 function emptyForm(): FormState {
 	return {
 		id: "",
@@ -582,6 +960,8 @@ export default defineComponent({
 		Activity,
 		AlertCircle,
 		Button,
+		Check,
+		ChevronDown,
 		Cloud,
 		CloudOff,
 		Dialog,
@@ -589,6 +969,11 @@ export default defineComponent({
 		DialogFooter,
 		DialogHeader,
 		DialogTitle,
+		DropdownMenu,
+		DropdownMenuCheckboxItem,
+		DropdownMenuContent,
+		DropdownMenuTrigger,
+		Filter,
 		Inbox,
 		Input,
 		Label,
@@ -615,6 +1000,14 @@ export default defineComponent({
 			dialogError: "" as string,
 			testingId: null as string | null,
 			removingSink: null as UploadSinkRecord | null,
+			ruleDialogOpen: false,
+			ruleEditingId: null as string | null,
+			ruleForm: emptyRuleForm(),
+			ruleSaving: false,
+			ruleDialogError: "" as string,
+			removingRule: null as UploadRule | null,
+			CATEGORY_OPTIONS,
+			TASK_KIND_OPTIONS,
 		};
 	},
 	computed: {
@@ -632,10 +1025,44 @@ export default defineComponent({
 				? (this.$t("cloudSinks.editSink") as string)
 				: (this.$t("cloudSinks.addSink") as string);
 		},
+		ruleDialogTitle(): string {
+			return this.ruleEditingId
+				? (this.$t("cloudSinks.editRule") as string)
+				: (this.$t("cloudSinks.addRule") as string);
+		},
+		parsedExtensions(): string[] {
+			return this.ruleForm.extensionsText
+				.split(/[,\s]+/)
+				.map((e) => e.trim().toLowerCase().replace(/^\./, ""))
+				.filter(Boolean);
+		},
+		sizeRangeSummary(): string {
+			const minMb = Number(this.ruleForm.minSizeMb);
+			const maxMb = Number(this.ruleForm.maxSizeMb);
+			const hasMin = Number.isFinite(minMb) && minMb > 0;
+			const hasMax = Number.isFinite(maxMb) && maxMb > 0;
+			if (hasMin && hasMax) {
+				return `${minMb}–${maxMb} MB`;
+			}
+			if (hasMin) {
+				return `≥ ${minMb} MB`;
+			}
+			if (hasMax) {
+				return `≤ ${maxMb} MB`;
+			}
+			return this.$t("cloudSinks.any") as string;
+		},
 	},
 	async mounted() {
-		await this.store.fetchAll();
-		await this.store.initEventListeners();
+		try {
+			await this.store.fetchAll();
+		} catch (err) {
+			logger.warn("CloudSinks: fetchAll failed", err);
+		} finally {
+			// Always wire up live event listeners so in-flight uploads
+			// surface in the UI even if the initial fetch failed
+			await this.store.initEventListeners();
+		}
 	},
 	beforeUnmount() {
 		this.store.cleanupEventListeners();
@@ -743,8 +1170,8 @@ export default defineComponent({
 						kind: "webdav",
 						endpoint: this.form.webdav.endpoint.trim(),
 						basePath: this.form.webdav.basePath.trim(),
-						username: this.form.webdav.username || null,
-						password: this.form.webdav.password || null,
+						username: this.form.webdav.username || "",
+						password: this.form.webdav.password || "",
 						insecure: this.form.webdav.insecure,
 					};
 				case "s3":
@@ -764,8 +1191,8 @@ export default defineComponent({
 						host: this.form.sftp.host.trim(),
 						port: Number(this.form.sftp.port) || 22,
 						username: this.form.sftp.username.trim(),
-						password: this.form.sftp.password || null,
-						privateKey: this.form.sftp.privateKey || null,
+						password: this.form.sftp.password || "",
+						privateKey: this.form.sftp.privateKey || "",
 						basePath: this.form.sftp.basePath.trim(),
 					};
 				case "ftp":
@@ -773,8 +1200,8 @@ export default defineComponent({
 						kind: "ftp",
 						host: this.form.ftp.host.trim(),
 						port: Number(this.form.ftp.port) || 21,
-						username: this.form.ftp.username || null,
-						password: this.form.ftp.password || null,
+						username: this.form.ftp.username || "",
+						password: this.form.ftp.password || "",
 						basePath: this.form.ftp.basePath.trim(),
 						secure: this.form.ftp.secure,
 					};
@@ -789,37 +1216,40 @@ export default defineComponent({
 					if (!this.form.webdav.endpoint.trim()) {
 						return this.$t("cloudSinks.errEndpointRequired") as string;
 					}
-					return null;
+					break;
 				case "s3":
 					if (!this.form.s3.endpoint.trim()) {
-						return "S3 endpoint is required.";
+						return this.$t("cloudSinks.errS3EndpointRequired") as string;
 					}
 					if (!this.form.s3.bucket.trim()) {
-						return "S3 bucket is required.";
+						return this.$t("cloudSinks.errS3BucketRequired") as string;
 					}
 					if (!this.form.s3.accessKeyId.trim()) {
-						return "S3 access key is required.";
+						return this.$t("cloudSinks.errS3AccessKeyRequired") as string;
 					}
 					if (!this.form.s3.secretAccessKey.trim()) {
-						return "S3 secret key is required.";
+						return this.$t("cloudSinks.errS3SecretKeyRequired") as string;
 					}
-					return null;
+					break;
 				case "sftp":
 					if (!this.form.sftp.host.trim()) {
-						return "SFTP host is required.";
+						return this.$t("cloudSinks.errSftpHostRequired") as string;
 					}
 					if (!this.form.sftp.username.trim()) {
-						return "SFTP username is required.";
+						return this.$t("cloudSinks.errSftpUsernameRequired") as string;
 					}
 					if (!this.form.sftp.password && !this.form.sftp.privateKey) {
-						return "SFTP password or private key is required.";
+						return this.$t("cloudSinks.errSftpAuthRequired") as string;
 					}
-					return null;
+					break;
 				case "ftp":
 					if (!this.form.ftp.host.trim()) {
-						return "FTP host is required.";
+						return this.$t("cloudSinks.errFtpHostRequired") as string;
 					}
-					return null;
+					break;
+			}
+			if (this.form.postAction === "move" && !this.form.moveTarget.trim()) {
+				return this.$t("cloudSinks.errMoveTargetRequired") as string;
 			}
 			return null;
 		},
@@ -930,6 +1360,164 @@ export default defineComponent({
 				return bytesToSize(job.size) as string;
 			}
 			return `${bytesToSize(job.uploaded)} / ${bytesToSize(job.size)}`;
+		},
+		// ----- Rules -----
+		toggleSelection(arr: string[], value: string) {
+			const idx = arr.indexOf(value);
+			if (idx >= 0) {
+				arr.splice(idx, 1);
+			} else {
+				arr.push(value);
+			}
+		},
+		ruleSinkLabel(sinkId: string): string {
+			const s = this.store.sinks.find((x) => x.id === sinkId);
+			return s?.label || s?.id || sinkId;
+		},
+		ruleMeta(rule: UploadRule): string {
+			const m = rule.match;
+			const parts: string[] = [];
+			if (m.taskKinds.length) {
+				parts.push(m.taskKinds.map((k) => k.toUpperCase()).join("/"));
+			}
+			if (m.categories.length) {
+				parts.push(m.categories.join(", "));
+			}
+			if (m.extensions.length) {
+				parts.push(m.extensions.map((e) => `.${e}`).join(" "));
+			}
+			if (m.minSize != null && m.minSize > 0) {
+				parts.push(`≥ ${bytesToSize(m.minSize)}`);
+			}
+			if (m.maxSize != null && m.maxSize > 0) {
+				parts.push(`≤ ${bytesToSize(m.maxSize)}`);
+			}
+			return parts.length
+				? parts.join(" · ")
+				: (this.$t("cloudSinks.ruleMatchAny") as string);
+		},
+		openRuleCreate() {
+			this.ruleForm = emptyRuleForm();
+			this.ruleForm.sinkId =
+				this.store.defaultSinkId ?? this.store.sinks[0]?.id ?? "";
+			this.ruleEditingId = null;
+			this.ruleDialogError = "";
+			this.ruleDialogOpen = true;
+		},
+		openRuleEdit(rule: UploadRule) {
+			const f = emptyRuleForm();
+			f.id = rule.id;
+			f.label = rule.label;
+			f.sinkId = rule.sinkId;
+			f.enabled = rule.enabled;
+			f.categories = [...rule.match.categories];
+			f.taskKinds = [...rule.match.taskKinds];
+			f.extensionsText = rule.match.extensions.join(", ");
+			f.minSizeMb =
+				rule.match.minSize != null && rule.match.minSize > 0
+					? String(Math.round(rule.match.minSize / (1024 * 1024)))
+					: "";
+			f.maxSizeMb =
+				rule.match.maxSize != null && rule.match.maxSize > 0
+					? String(Math.round(rule.match.maxSize / (1024 * 1024)))
+					: "";
+			this.ruleForm = f;
+			this.ruleEditingId = rule.id;
+			this.ruleDialogError = "";
+			this.ruleDialogOpen = true;
+		},
+		onRuleDialogOpenChange(open: boolean) {
+			if (!open) {
+				this.ruleDialogOpen = false;
+			}
+		},
+		buildRule(): UploadRule {
+			const exts = this.ruleForm.extensionsText
+				.split(/[,\s]+/)
+				.map((e) => e.trim().toLowerCase().replace(/^\./, ""))
+				.filter(Boolean);
+			const minMb = Number(this.ruleForm.minSizeMb);
+			const maxMb = Number(this.ruleForm.maxSizeMb);
+			return {
+				id: this.ruleForm.id,
+				label: this.ruleForm.label.trim(),
+				sinkId: this.ruleForm.sinkId,
+				enabled: this.ruleForm.enabled,
+				match: {
+					categories: [...this.ruleForm.categories],
+					extensions: exts,
+					taskKinds: [...this.ruleForm.taskKinds],
+					minSize:
+						Number.isFinite(minMb) && minMb > 0
+							? Math.round(minMb * 1024 * 1024)
+							: null,
+					maxSize:
+						Number.isFinite(maxMb) && maxMb > 0
+							? Math.round(maxMb * 1024 * 1024)
+							: null,
+				},
+			};
+		},
+		validateRule(): string | null {
+			if (!this.ruleForm.label.trim()) {
+				return this.$t("cloudSinks.errLabelRequired") as string;
+			}
+			if (!this.ruleForm.sinkId) {
+				return this.$t("cloudSinks.errRuleSinkRequired") as string;
+			}
+			return null;
+		},
+		async onSaveRule() {
+			this.ruleDialogError = "";
+			const err = this.validateRule();
+			if (err) {
+				this.ruleDialogError = err;
+				return;
+			}
+			this.ruleSaving = true;
+			try {
+				const rule = this.buildRule();
+				if (this.ruleEditingId) {
+					await this.store.updateRule(rule);
+				} else {
+					await this.store.addRule({
+						label: rule.label,
+						sinkId: rule.sinkId,
+						enabled: rule.enabled,
+						match: rule.match,
+					});
+				}
+				this.ruleDialogOpen = false;
+			} catch (e) {
+				this.ruleDialogError = String((e as Error)?.message || e);
+			} finally {
+				this.ruleSaving = false;
+			}
+		},
+		async toggleRuleEnabled(rule: UploadRule) {
+			try {
+				await this.store.updateRule({
+					...rule,
+					enabled: !rule.enabled,
+				});
+			} catch (e) {
+				toast.error(String((e as Error)?.message || e));
+			}
+		},
+		askRemoveRule(rule: UploadRule) {
+			this.removingRule = rule;
+		},
+		async onRemoveRuleConfirmed() {
+			if (!this.removingRule) {
+				return;
+			}
+			const id = this.removingRule.id;
+			this.removingRule = null;
+			try {
+				await this.store.removeRule(id);
+			} catch (e) {
+				toast.error(String((e as Error)?.message || e));
+			}
 		},
 	},
 });
@@ -1191,6 +1779,14 @@ export default defineComponent({
 	max-height: 65vh;
 	overflow-y: auto;
 	padding-right: 4px;
+	/* Keep scroll behaviour but hide the visible scrollbar — the dialog
+	   reads cleaner without a permanent track on the right edge */
+	scrollbar-width: none;
+	-ms-overflow-style: none;
+}
+
+.dialog-form::-webkit-scrollbar {
+	display: none;
 }
 
 .dialog-field {
@@ -1281,6 +1877,250 @@ export default defineComponent({
 	border: 1px solid hsl(var(--destructive) / 0.3);
 	border-radius: 6px;
 	padding: 8px 10px;
+}
+
+/* ---------- Chips (rule selectors) ---------- */
+.chip-row {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+}
+
+.chip {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	padding: 4px 10px;
+	font-size: 12px;
+	border-radius: 999px;
+	border: 1px solid hsl(var(--border));
+	background: hsl(var(--card));
+	color: hsl(var(--muted-foreground));
+	cursor: pointer;
+	user-select: none;
+	transition:
+		background-color 0.15s ease,
+		color 0.15s ease,
+		border-color 0.15s ease;
+}
+
+.chip input {
+	display: none;
+}
+
+.chip:hover {
+	border-color: hsl(var(--ring) / 0.5);
+	color: hsl(var(--foreground));
+}
+
+.chip--on {
+	background: hsl(var(--primary) / 0.12);
+	color: hsl(var(--primary));
+	border-color: hsl(var(--primary) / 0.4);
+}
+
+.chip--on:hover {
+	color: hsl(var(--primary));
+}
+
+/* ---------- Rule dialog ---------- */
+.field-row {
+	display: flex;
+	align-items: baseline;
+	justify-content: space-between;
+	gap: 8px;
+	margin-bottom: 4px;
+}
+
+.field-row__count {
+	font-size: 11px;
+	font-weight: 500;
+	color: hsl(var(--muted-foreground));
+	font-variant-numeric: tabular-nums;
+}
+
+/* ---------- Multi-select dropdown ---------- */
+.multi-select {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	width: 100%;
+	min-height: 34px;
+	padding: 4px 8px 4px 10px;
+	background: transparent;
+	border: 1px solid hsl(var(--input));
+	border-radius: 8px;
+	color: hsl(var(--foreground));
+	font-size: 13px;
+	cursor: pointer;
+	transition:
+		border-color 0.15s ease,
+		box-shadow 0.15s ease;
+}
+
+.multi-select:hover {
+	border-color: hsl(var(--ring) / 0.5);
+}
+
+.multi-select[data-state="open"],
+.multi-select:focus-visible {
+	outline: none;
+	border-color: hsl(var(--ring));
+	box-shadow: 0 0 0 3px hsl(var(--ring) / 0.18);
+}
+
+.multi-select__body {
+	flex: 1;
+	display: flex;
+	flex-wrap: wrap;
+	gap: 4px;
+	min-width: 0;
+	text-align: left;
+}
+
+.multi-select__placeholder {
+	color: hsl(var(--muted-foreground));
+	padding: 2px 0;
+}
+
+.multi-select__tag {
+	display: inline-flex;
+	align-items: center;
+	gap: 3px;
+	padding: 2px 4px 2px 7px;
+	font-size: 11px;
+	font-weight: 500;
+	border-radius: 4px;
+	background: hsl(var(--primary) / 0.12);
+	color: hsl(var(--primary));
+	line-height: 1.4;
+}
+
+.multi-select__tag-x {
+	cursor: pointer;
+	border-radius: 3px;
+	padding: 1px;
+	opacity: 0.7;
+	transition: opacity 0.12s ease, background-color 0.12s ease;
+}
+
+.multi-select__tag-x:hover {
+	opacity: 1;
+	background: hsl(var(--primary) / 0.2);
+}
+
+.multi-select__chevron {
+	color: hsl(var(--muted-foreground));
+	flex-shrink: 0;
+}
+
+:global(.multi-select__menu) {
+	min-width: var(--reka-dropdown-menu-trigger-width, 200px);
+}
+
+.chip-grid {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+}
+
+.chip-tile {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	padding: 5px 10px;
+	font-size: 12px;
+	font-weight: 500;
+	border-radius: 6px;
+	border: 1px solid hsl(var(--border));
+	background: hsl(var(--card));
+	color: hsl(var(--muted-foreground));
+	cursor: pointer;
+	user-select: none;
+	transition:
+		background-color 0.12s ease,
+		color 0.12s ease,
+		border-color 0.12s ease,
+		box-shadow 0.12s ease;
+}
+
+.chip-tile:hover {
+	color: hsl(var(--foreground));
+	border-color: hsl(var(--ring) / 0.5);
+}
+
+.chip-tile--on,
+.chip-tile--on:hover {
+	background: hsl(var(--primary));
+	color: hsl(var(--primary-foreground));
+	border-color: hsl(var(--primary));
+	box-shadow: 0 1px 2px hsl(var(--primary) / 0.25);
+}
+
+.chip-tile__check {
+	flex-shrink: 0;
+}
+
+.size-range {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+}
+
+.size-range .input-suffix {
+	flex: 1;
+	min-width: 0;
+}
+
+.size-range__sep {
+	color: hsl(var(--muted-foreground));
+	font-size: 13px;
+	flex-shrink: 0;
+}
+
+.input-suffix {
+	position: relative;
+	display: flex;
+	align-items: center;
+}
+
+.input-suffix :deep(input) {
+	padding-right: 38px;
+}
+
+.input-suffix__unit {
+	position: absolute;
+	right: 10px;
+	font-size: 11px;
+	font-weight: 500;
+	color: hsl(var(--muted-foreground));
+	pointer-events: none;
+}
+
+.ext-tags {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 4px;
+	margin-top: 6px;
+}
+
+.ext-tag {
+	display: inline-flex;
+	padding: 2px 7px;
+	font-size: 11px;
+	font-weight: 500;
+	font-family: var(--font-mono, ui-monospace, monospace);
+	border-radius: 4px;
+	background: hsl(var(--muted));
+	color: hsl(var(--foreground));
+}
+
+.dialog-hint--warn {
+	color: hsl(var(--destructive));
+}
+
+.sink-card--disabled {
+	opacity: 0.55;
 }
 
 /* ---------- Confirm ---------- */
