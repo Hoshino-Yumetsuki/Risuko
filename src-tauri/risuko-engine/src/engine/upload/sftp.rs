@@ -1,132 +1,21 @@
 //! SFTP upload sink. Reuses the russh + russh-sftp stack already used by the SFTP downloader
 
-use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::{Arc, LazyLock};
+use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine as _};
-use parking_lot::Mutex;
 use russh::client;
 use russh::keys::PrivateKeyWithHashAlg;
 use russh_sftp::client::SftpSession;
 use russh_sftp::protocol::OpenFlags;
-use sha2::{Digest, Sha256};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use super::sink::{SftpConfig, UploadControl, UploadFile, UploadSink};
+use crate::engine::ssh_known_hosts::TofuHandler;
 
 const COPY_BUF: usize = 64 * 1024;
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
-
-/// Process-wide TOFU known-hosts store for SFTP upload sinks. Records each
-/// `host:port` -> SHA256 fingerprint pair on first connect and rejects any
-/// subsequent mismatch. Backed by a JSON file under the user config dir so
-/// pinning survives restarts
-struct KnownHosts {
-    path: PathBuf,
-    map: HashMap<String, String>,
-}
-
-impl KnownHosts {
-    fn load() -> Self {
-        let path = dirs::config_dir()
-            .unwrap_or_else(std::env::temp_dir)
-            .join("risuko")
-            .join("sftp_known_hosts.json");
-        let map = std::fs::read_to_string(&path)
-            .ok()
-            .and_then(|s| serde_json::from_str::<HashMap<String, String>>(&s).ok())
-            .unwrap_or_default();
-        Self { path, map }
-    }
-
-    fn write_to_disk(
-        path: &std::path::Path,
-        map: &HashMap<String, String>,
-    ) -> Result<(), String> {
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| format!("create {}: {e}", parent.display()))?;
-        }
-        let s = serde_json::to_string_pretty(map)
-            .map_err(|e| format!("serialize known_hosts: {e}"))?;
-        std::fs::write(path, s).map_err(|e| format!("write {}: {e}", path.display()))
-    }
-}
-
-static KNOWN_HOSTS: LazyLock<Mutex<KnownHosts>> = LazyLock::new(|| Mutex::new(KnownHosts::load()));
-
-fn fingerprint(key: &russh::keys::PublicKey) -> String {
-    let mut h = Sha256::new();
-    h.update(key.to_bytes().unwrap_or_default());
-    format!("SHA256:{}", STANDARD_NO_PAD.encode(h.finalize()))
-}
-
-struct SshHandler {
-    host_key: String,
-    /// Optional explicit pinned fingerprint. When set, only that exact value
-    /// is accepted and nothing is persisted to the TOFU store
-    pinned: Option<String>,
-}
-
-impl client::Handler for SshHandler {
-    type Error = russh::Error;
-    async fn check_server_key(
-        &mut self,
-        key: &russh::keys::PublicKey,
-    ) -> Result<bool, Self::Error> {
-        let fp = fingerprint(key);
-        if let Some(ref pin) = self.pinned {
-            if pin == &fp {
-                return Ok(true);
-            }
-            log::warn!(
-                "SFTP host key mismatch for {}: expected {} got {}",
-                self.host_key,
-                pin,
-                fp
-            );
-            return Ok(false);
-        }
-        let mut store = KNOWN_HOSTS.lock();
-        match store.map.get(&self.host_key) {
-            Some(existing) if existing == &fp => Ok(true),
-            Some(existing) => {
-                log::warn!(
-                    "SFTP host key mismatch for {}: stored {} got {}",
-                    self.host_key,
-                    existing,
-                    fp
-                );
-                Ok(false)
-            }
-            None => {
-                // TOFU pinning must be durable: if we can't persist the new
-                // fingerprint, refuse the connection rather than trust a
-                // host we won't recognise next time — a future mismatch
-                // would be invisible. Write synchronously here so the
-                // outcome is known before we return; the file is tiny and
-                // this path runs once per host
-                let path = store.path.clone();
-                let mut next = store.map.clone();
-                next.insert(self.host_key.clone(), fp.clone());
-                if let Err(e) = KnownHosts::write_to_disk(&path, &next) {
-                    log::error!(
-                        "SFTP TOFU: refusing to trust {} because known_hosts persist failed: {}",
-                        self.host_key,
-                        e
-                    );
-                    return Ok(false);
-                }
-                log::info!("SFTP TOFU: pinning {} -> {}", self.host_key, fp);
-                store.map.insert(self.host_key.clone(), fp);
-                Ok(true)
-            }
-        }
-    }
-}
 
 pub struct SftpSink {
     cfg: SftpConfig,
@@ -149,10 +38,7 @@ impl SftpSink {
     async fn connect(&self) -> Result<SftpSession, String> {
         let config = Arc::new(client::Config::default());
         let addr = format!("{}:{}", self.cfg.host, self.cfg.port);
-        let handler = SshHandler {
-            host_key: addr.clone(),
-            pinned: None,
-        };
+        let handler = TofuHandler::new(addr.clone());
         let mut session = client::connect(config, &addr, handler)
             .await
             .map_err(|e| format!("SSH connect failed: {e}"))?;

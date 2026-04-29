@@ -69,6 +69,38 @@ fn file_stream_body_inner(
     on_progress: Option<std::sync::Arc<dyn Fn(u64) + Send + Sync + 'static>>,
     cancel: Option<tokio_util::sync::CancellationToken>,
 ) -> ReqBody {
+    file_stream_body_range_inner(path, 0, content_length, on_progress, cancel)
+}
+
+/// Same as [`file_stream_body_with_progress`] but reads only `len` bytes
+/// starting at byte `offset`. Used for S3 multipart UploadPart so each part
+/// streams its own slice of the source file without buffering it in memory
+pub fn file_stream_body_range_with_progress<F>(
+    path: std::path::PathBuf,
+    offset: u64,
+    len: u64,
+    on_progress: F,
+    cancel: Option<tokio_util::sync::CancellationToken>,
+) -> ReqBody
+where
+    F: Fn(u64) + Send + Sync + 'static,
+{
+    file_stream_body_range_inner(
+        path,
+        offset,
+        Some(len),
+        Some(std::sync::Arc::new(on_progress)),
+        cancel,
+    )
+}
+
+fn file_stream_body_range_inner(
+    path: std::path::PathBuf,
+    offset: u64,
+    content_length: Option<u64>,
+    on_progress: Option<std::sync::Arc<dyn Fn(u64) + Send + Sync + 'static>>,
+    cancel: Option<tokio_util::sync::CancellationToken>,
+) -> ReqBody {
     use futures_util::stream::TryStreamExt;
     use http_body::Frame;
     use http_body_util::{combinators::BoxBody, StreamBody};
@@ -81,12 +113,22 @@ fn file_stream_body_inner(
             let on_progress = on_progress.clone();
             let cancel = cancel.clone();
             let counter = Arc::new(AtomicU64::new(0));
+            let take = content_length;
             // Lazily open the file the first time the body is polled. Any IO
             // error becomes a body error — hyper will surface it to the caller
             let stream = async_stream::try_stream! {
-                let file = tokio::fs::File::open(&path).await
+                use tokio::io::{AsyncReadExt, AsyncSeekExt};
+                let mut file = tokio::fs::File::open(&path).await
                     .map_err(|e| Error::Body(format!("open {}: {e}", path.display())))?;
-                let reader = tokio_util::io::ReaderStream::new(file);
+                if offset > 0 {
+                    file.seek(std::io::SeekFrom::Start(offset)).await
+                        .map_err(|e| Error::Body(format!("seek {} to {offset}: {e}", path.display())))?;
+                }
+                let reader: Box<dyn tokio::io::AsyncRead + Send + Sync + Unpin> = match take {
+                    Some(n) => Box::new(file.take(n)),
+                    None => Box::new(file),
+                };
+                let reader = tokio_util::io::ReaderStream::new(reader);
                 let mut reader = std::pin::pin!(reader);
                 use futures_util::StreamExt;
                 while let Some(chunk) = reader.next().await {

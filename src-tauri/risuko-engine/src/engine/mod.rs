@@ -13,6 +13,7 @@ pub mod rpc;
 pub mod rss;
 pub mod session;
 pub mod speed_limiter;
+pub mod ssh_known_hosts;
 pub mod task;
 pub mod torrent;
 pub mod upload;
@@ -27,7 +28,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use crate::config::ConfigManager;
-use crate::traits::{EventSink, NoopEventSink, StorageBackend};
+use crate::traits::{EventSink, StorageBackend};
 
 use self::events::EventBroadcaster;
 use self::manager::TaskManager;
@@ -240,28 +241,6 @@ pub async fn start_engine(
 
     log::info!("Risuko engine started on port {}", rpc_port);
     Ok(())
-}
-
-/// Start the engine from a config directory with default (no-op) event sink.
-/// Convenience for headless / CLI usage.
-pub async fn start_engine_headless(
-    config_dir: &std::path::Path,
-    rpc_port_override: Option<u16>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let config = ConfigManager::with_dir(config_dir.to_path_buf())?;
-    let event_sink: Arc<dyn EventSink> = Arc::new(NoopEventSink);
-    let storage: Arc<dyn StorageBackend> =
-        Arc::new(crate::traits::FileStorage::new(config_dir.to_path_buf()));
-
-    if let Some(port) = rpc_port_override {
-        // We need to modify config temporarily — but ConfigManager is immutable from outside.
-        // Instead, start engine and override via EngineOptions directly.
-        // For now, start with default config then override is handled in start_engine.
-        // TODO: Clean up port override path
-        let _ = port;
-    }
-
-    start_engine(&config, event_sink, storage, None).await
 }
 
 pub async fn stop_engine() -> Result<(), Box<dyn std::error::Error>> {
