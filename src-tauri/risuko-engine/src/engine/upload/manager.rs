@@ -260,10 +260,15 @@ impl UploadSinkManager {
         let mut s = self.store.write().await;
         s.max_concurrency = n;
         drop(s);
-        {
+        let old = {
             let mut sem = self.semaphore.write().await;
-            *sem = Arc::new(Semaphore::new(n));
-        }
+            std::mem::replace(&mut *sem, Arc::new(Semaphore::new(n)))
+        };
+        // Close the retired semaphore so any queued workers waiting on it
+        // wake up with `AcquireError`, observe the swap, and re-acquire on
+        // the new one. Without this, a resize wouldn't reach jobs already
+        // queued behind the previous limit
+        old.close();
         self.save().await
     }
 
@@ -434,11 +439,16 @@ impl UploadSinkManager {
     ) -> Option<String> {
         let s = self.store.read().await;
 
-        // Per-task override wins, but must reference a real sink
+        // Per-task override wins, but must reference a real sink. If the
+        // referenced sink no longer exists fail closed: rerouting through the
+        // rule/default chain would silently send the file to a different
+        // destination than the caller asked for
         if let Some(id) = override_sink_id {
-            if s.sinks.iter().any(|x| x.id == id) {
-                return Some(id);
-            }
+            return if s.sinks.iter().any(|x| x.id == id) {
+                Some(id)
+            } else {
+                None
+            };
         }
 
         // Rules in array order
@@ -464,23 +474,34 @@ impl UploadSinkManager {
         size: u64,
         cancel: CancellationToken,
     ) {
-        // Wait for a slot. Snapshot the current `Arc<Semaphore>` so a runtime
-        // resize via `set_max_concurrency` doesn't deadlock us
-        let sem = self.semaphore.read().await.clone();
-        let permit = tokio::select! {
-            res = sem.acquire_owned() => match res {
-                Ok(p) => p,
-                Err(_) => {
+        // Wait for a slot. Re-read the current `Arc<Semaphore>` on every
+        // attempt so a runtime resize via `set_max_concurrency` doesn't leave
+        // queued workers blocked on a semaphore that's already been swapped
+        // out (the new permits would never reach them otherwise)
+        let permit = loop {
+            let sem = self.semaphore.read().await.clone();
+            tokio::select! {
+                res = sem.clone().acquire_owned() => match res {
+                    Ok(p) => break p,
+                    // The semaphore was closed — either engine shutdown or the
+                    // exact one we just snapshotted was retired by a resize.
+                    // Retry against the live one rather than failing the job
+                    // for what is, from the user's perspective, a no-op
+                    Err(_) => {
+                        if Arc::ptr_eq(&sem, &*self.semaphore.read().await) {
+                            self.cancels.lock().await.remove(&job_id);
+                            self.fail_job(&job_id, "engine shutdown").await;
+                            return;
+                        }
+                        continue;
+                    }
+                },
+                _ = cancel.cancelled() => {
+                    // Cancelled while still queued — never acquired a permit
                     self.cancels.lock().await.remove(&job_id);
-                    self.fail_job(&job_id, "engine shutdown").await;
+                    self.cancel_job_state(&job_id).await;
                     return;
                 }
-            },
-            _ = cancel.cancelled() => {
-                // Cancelled while still queued — never acquired a permit
-                self.cancels.lock().await.remove(&job_id);
-                self.cancel_job_state(&job_id).await;
-                return;
             }
         };
 

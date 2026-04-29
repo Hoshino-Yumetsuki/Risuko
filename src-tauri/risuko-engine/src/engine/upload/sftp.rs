@@ -42,13 +42,17 @@ impl KnownHosts {
         Self { path, map }
     }
 
-    fn write_to_disk(path: &std::path::Path, map: &HashMap<String, String>) {
+    fn write_to_disk(
+        path: &std::path::Path,
+        map: &HashMap<String, String>,
+    ) -> Result<(), String> {
         if let Some(parent) = path.parent() {
-            let _ = std::fs::create_dir_all(parent);
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("create {}: {e}", parent.display()))?;
         }
-        if let Ok(s) = serde_json::to_string_pretty(map) {
-            let _ = std::fs::write(path, s);
-        }
+        let s = serde_json::to_string_pretty(map)
+            .map_err(|e| format!("serialize known_hosts: {e}"))?;
+        std::fs::write(path, s).map_err(|e| format!("write {}: {e}", path.display()))
     }
 }
 
@@ -99,17 +103,25 @@ impl client::Handler for SshHandler {
                 Ok(false)
             }
             None => {
+                // TOFU pinning must be durable: if we can't persist the new
+                // fingerprint, refuse the connection rather than trust a
+                // host we won't recognise next time — a future mismatch
+                // would be invisible. Write synchronously here so the
+                // outcome is known before we return; the file is tiny and
+                // this path runs once per host
+                let path = store.path.clone();
+                let mut next = store.map.clone();
+                next.insert(self.host_key.clone(), fp.clone());
+                if let Err(e) = KnownHosts::write_to_disk(&path, &next) {
+                    log::error!(
+                        "SFTP TOFU: refusing to trust {} because known_hosts persist failed: {}",
+                        self.host_key,
+                        e
+                    );
+                    return Ok(false);
+                }
                 log::info!("SFTP TOFU: pinning {} -> {}", self.host_key, fp);
                 store.map.insert(self.host_key.clone(), fp);
-                // Snapshot then drop the lock before doing blocking file I/O so
-                // we don't stall the tokio worker or serialize concurrent
-                // host-key checks behind the write
-                let path = store.path.clone();
-                let snapshot = store.map.clone();
-                drop(store);
-                tokio::task::spawn_blocking(move || {
-                    KnownHosts::write_to_disk(&path, &snapshot);
-                });
                 Ok(true)
             }
         }
@@ -270,31 +282,53 @@ impl UploadSink for SftpSink {
         let mut buf = vec![0u8; COPY_BUF];
         let mut sent: u64 = 0;
 
+        // Helper: best-effort cleanup of a partially-written remote file.
+        // Closes the handle (so the server releases its lock) and unlinks
+        // the path so a retry doesn't see a torn file. Errors are logged
+        // but never override the original failure
+        async fn discard_partial(
+            mut remote_file: russh_sftp::client::fs::File,
+            sftp: &SftpSession,
+            remote: &str,
+        ) {
+            let _ = remote_file.shutdown().await;
+            if let Err(e) = sftp.remove_file(remote).await {
+                log::debug!("SFTP cleanup of partial {remote} ignored: {e}");
+            }
+        }
+
         loop {
             if ctl.cancel.is_cancelled() {
-                let _ = remote_file.shutdown().await;
+                discard_partial(remote_file, &sftp, &remote).await;
                 return Err("cancelled".into());
             }
 
-            let n = local_file
-                .read(&mut buf)
-                .await
-                .map_err(|e| format!("local read: {e}"))?;
+            let n = match local_file.read(&mut buf).await {
+                Ok(n) => n,
+                Err(e) => {
+                    discard_partial(remote_file, &sftp, &remote).await;
+                    return Err(format!("local read: {e}"));
+                }
+            };
             if n == 0 {
                 break;
             }
-            remote_file
-                .write_all(&buf[..n])
-                .await
-                .map_err(|e| format!("SFTP write: {e}"))?;
+            if let Err(e) = remote_file.write_all(&buf[..n]).await {
+                discard_partial(remote_file, &sftp, &remote).await;
+                return Err(format!("SFTP write: {e}"));
+            }
             sent += n as u64;
             ctl.report(sent, file.size.max(sent));
         }
 
-        remote_file
-            .shutdown()
-            .await
-            .map_err(|e| format!("SFTP close: {e}"))?;
+        if let Err(e) = remote_file.shutdown().await {
+            // Close failed after a complete write — still try to unlink so
+            // a half-flushed file isn't left behind under our name
+            if let Err(re) = sftp.remove_file(&remote).await {
+                log::debug!("SFTP cleanup after close failure ignored: {re}");
+            }
+            return Err(format!("SFTP close: {e}"));
+        }
 
         ctl.report(file.size, file.size);
         // Always insert exactly one '/' between port and the remote path so

@@ -160,6 +160,8 @@
                     size="sm"
                     variant="ghost"
                     class="action-danger"
+                    :aria-label="$t('cloudSinks.deleteRule')"
+                    :title="`${$t('cloudSinks.deleteRule')} — ${rule.label || $t('cloudSinks.unnamedRule')}`"
                     @click="askRemoveRule(rule)"
                   >
                     <Trash2 :size="13" />
@@ -214,6 +216,8 @@
                     v-if="job.status === 'active' || job.status === 'queued'"
                     size="sm"
                     variant="ghost"
+                    :aria-label="$t('cloudSinks.cancelJob')"
+                    :title="`${$t('cloudSinks.cancelJob')} — ${jobName(job)}`"
                     @click="store.cancelJob(job.id)"
                   >
                     <X :size="13" />
@@ -1146,7 +1150,10 @@ export default defineComponent({
 				f.s3.region = c.region;
 				f.s3.bucket = c.bucket;
 				f.s3.accessKeyId = c.accessKeyId;
-				f.s3.secretAccessKey = c.secretAccessKey;
+				// Backend strips secrets on read; default to empty so the input
+				// renders blank and the merge_secrets path on save can preserve
+				// the stored value when the user doesn't retype it
+				f.s3.secretAccessKey = c.secretAccessKey ?? "";
 				f.s3.prefix = c.prefix ?? "";
 				f.s3.forcePathStyle = !!c.forcePathStyle;
 			} else if (c.kind === "sftp") {
@@ -1186,17 +1193,22 @@ export default defineComponent({
 						password: this.form.webdav.password || "",
 						insecure: this.form.webdav.insecure,
 					};
-				case "s3":
+				case "s3": {
+					const secret = this.form.s3.secretAccessKey;
 					return {
 						kind: "s3",
 						endpoint: this.form.s3.endpoint.trim(),
 						region: this.form.s3.region.trim(),
 						bucket: this.form.s3.bucket.trim(),
 						accessKeyId: this.form.s3.accessKeyId.trim(),
-						secretAccessKey: this.form.s3.secretAccessKey,
+						// Only forward a secret when the user actually typed one;
+						// an empty string would clobber the stored credential on the
+						// backend (see merge_secrets in upload/manager.rs)
+						...(secret ? { secretAccessKey: secret } : {}),
 						prefix: this.form.s3.prefix.trim(),
 						forcePathStyle: this.form.s3.forcePathStyle,
 					};
+				}
 				case "sftp":
 					return {
 						kind: "sftp",
@@ -1240,7 +1252,10 @@ export default defineComponent({
 					if (!this.form.s3.accessKeyId.trim()) {
 						return this.$t("cloudSinks.errS3AccessKeyRequired") as string;
 					}
-					if (!this.form.s3.secretAccessKey.trim()) {
+					// Secrets are only required when creating a new sink. On
+					// edit, an empty input means “keep the stored secret” — the
+					// backend's merge_secrets() reuses the persisted value
+					if (!this.editingId && !this.form.s3.secretAccessKey.trim()) {
 						return this.$t("cloudSinks.errS3SecretKeyRequired") as string;
 					}
 					break;
@@ -1318,7 +1333,7 @@ export default defineComponent({
 			this.removingSink = null;
 			try {
 				await this.store.removeSink(id);
-				toast.success(`Removed “${label}”`);
+				toast.success(this.$t("cloudSinks.removed", { label }) as string);
 			} catch (e) {
 				toast.error(String((e as Error)?.message || e));
 			}

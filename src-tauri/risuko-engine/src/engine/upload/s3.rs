@@ -179,6 +179,15 @@ impl UploadSink for S3Sink {
             return Err("cancelled".into());
         }
 
+        // Single PUT tops out at 5 GiB per the S3 API contract — fail fast
+        // here so the user gets a clear message instead of an obscure error
+        // mid-stream after re-uploading megabytes. Multipart upload is
+        // tracked by the file-level TODO above
+        const SINGLE_PUT_MAX: u64 = 5 * 1024 * 1024 * 1024;
+        if file.size > SINGLE_PUT_MAX {
+            return Err("file too large for single PUT (over 5 GiB); multipart upload not yet implemented".into());
+        }
+
         let key = self.object_key(&file.remote_relative);
         let url = self.object_url(&key)?;
 
@@ -280,44 +289,20 @@ impl UploadSink for S3Sink {
             .map_err(|e| format!("HEAD bucket: {e}"))?;
 
         let status = resp.status();
-        if status.is_success() {
+        // 200 = bucket reachable + ListBucket permission. 403 = bucket
+        // exists and our credentials are recognised but lack ListBucket;
+        // AWS HeadBucket returns *no body* for 403, so we cannot inspect an
+        // error code here — treat 403 as a successful reachability check so
+        // upload-only keys (the common case for app-managed buckets) pass.
+        // Authentication failures surface as 400 ("InvalidAccessKeyId",
+        // "SignatureDoesNotMatch") rather than 403, so accepting 403 here
+        // does not mask credential errors
+        if status.is_success() || status.as_u16() == 403 {
             return Ok(());
         }
         let body = resp.text().await.unwrap_or_default();
-        if status.as_u16() == 403 {
-            // A 403 can mean either "reachable + valid creds, no ListBucket
-            // permission" (fine for an upload-only key) or "signature /
-            // credential rejected" (fatal). Distinguish by parsing the AWS
-            // error code so authentication failures aren't masked
-            return classify_s3_403(&body)
-                .map(|_| ())
-                .map_err(|e| format!("S3 HEAD bucket returned 403: {e}"));
-        }
         Err(format!("S3 HEAD bucket returned {status}: {body}"))
     }
-}
-
-/// Classify a 403 response body. Returns `Ok(())` only when the AWS error
-/// code denotes a permission-denied result the user can legitimately ignore
-/// for an upload-only key. Any auth/signature error — or an unparseable body
-/// — is rejected so credentials are never silently accepted as valid
-fn classify_s3_403(body: &str) -> Result<(), String> {
-    let code = extract_s3_error_code(body).unwrap_or_default();
-    match code.as_str() {
-        "AccessDenied" | "AllAccessDisabled" | "AccountProblem" => Ok(()),
-        "" => Err("unrecognised 403 body, refusing to assume permission-denied".into()),
-        other => Err(format!("S3 error {other}")),
-    }
-}
-
-/// Extract `<Code>...</Code>` from an S3 XML error response. Tolerant of
-/// surrounding whitespace and namespaces; returns `None` if no Code element
-/// is found
-fn extract_s3_error_code(body: &str) -> Option<String> {
-    let lower = body.to_ascii_lowercase();
-    let start = lower.find("<code>")? + "<code>".len();
-    let rel_end = lower[start..].find("</code>")?;
-    Some(body[start..start + rel_end].trim().to_string())
 }
 
 // -- crypto helpers --

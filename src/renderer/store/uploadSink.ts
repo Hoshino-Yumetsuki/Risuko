@@ -71,6 +71,9 @@ export const useUploadSinkStore = defineStore("uploadSink", {
 					this.defaultSinkId = created.id;
 				} catch (err) {
 					logger.warn("uploadSink: failed to persist default sink", err);
+					// Reconcile against the backend so a failed write doesn't
+					// leave the UI showing a default that was never persisted
+					await this._resyncFromBackend();
 				}
 			}
 			return created;
@@ -101,7 +104,26 @@ export const useUploadSinkStore = defineStore("uploadSink", {
 						"uploadSink: failed to update default sink after remove",
 						err,
 					);
+					// Don't leave defaultSinkId pointing at the deleted sink:
+					// re-read both lists from the backend so the UI reflects
+					// reality (engine already cleared the default on remove)
+					await this._resyncFromBackend();
 				}
+			}
+		},
+
+		/// Re-read sinks + default from the engine. Used as a recovery path
+		/// when an optimistic local mutation diverges from the backend
+		async _resyncFromBackend() {
+			try {
+				const [sinks, def] = await Promise.all([
+					api.listUploadSinks(),
+					api.getDefaultUploadSink(),
+				]);
+				this.sinks = sinks;
+				this.defaultSinkId = def;
+			} catch (err) {
+				logger.error("uploadSink: backend resync failed", err);
 			}
 		},
 
