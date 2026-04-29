@@ -1,6 +1,6 @@
 //! HTTP client used by Risuko
 
-pub mod body;
+mod body;
 mod client;
 mod connector;
 mod cookies;
@@ -120,11 +120,30 @@ fn file_stream_body_range_inner(
                 use tokio::io::{AsyncReadExt, AsyncSeekExt};
                 let mut file = tokio::fs::File::open(&path).await
                     .map_err(|e| Error::Body(format!("open {}: {e}", path.display())))?;
+                // Validate the requested range against the file's actual size
+                // up front so we never advertise a Content-Length larger than
+                // we can actually deliver. A short read mid-PUT would otherwise
+                // hang the connection or fail the upload after partial bytes
+                let file_size = file.metadata().await
+                    .map_err(|e| Error::Body(format!("stat {}: {e}", path.display())))?
+                    .len();
+                let remaining = file_size.saturating_sub(offset);
+                let effective_take = match take {
+                    Some(n) if n > remaining => {
+                        Err(Error::Body(format!(
+                            "requested range {n} bytes from offset {offset} but only {remaining} available in {}",
+                            path.display()
+                        )))?;
+                        unreachable!()
+                    }
+                    Some(n) => Some(n.min(remaining)),
+                    None => None,
+                };
                 if offset > 0 {
                     file.seek(std::io::SeekFrom::Start(offset)).await
                         .map_err(|e| Error::Body(format!("seek {} to {offset}: {e}", path.display())))?;
                 }
-                let reader: Box<dyn tokio::io::AsyncRead + Send + Sync + Unpin> = match take {
+                let reader: Box<dyn tokio::io::AsyncRead + Send + Sync + Unpin> = match effective_take {
                     Some(n) => Box::new(file.take(n)),
                     None => Box::new(file),
                 };

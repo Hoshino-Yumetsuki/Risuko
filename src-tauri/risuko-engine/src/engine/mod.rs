@@ -182,13 +182,21 @@ pub async fn start_engine(
                     // Forward completed downloads to the upload pipeline. We
                     // dispatch on `download-complete` only — the BT-specific
                     // event fires before the final move-to-dir step on some
-                    // tasks, so it's the wrong hook for cloud sync
+                    // tasks, so it's the wrong hook for cloud sync.
+                    //
+                    // Hand off to a detached task so a slow files_for_upload
+                    // / enqueue_for_file pair can't stall the broadcast
+                    // receiver and cause it to lag behind other events
                     if matches!(event, EngineEvent::DownloadComplete { .. }) {
-                        if let Some(uploads) = &upload_mgr {
-                            if let Some((files, kind, override_id)) =
-                                mgr_for_uploads.files_for_upload(gid).await
-                            {
-                                let gid_owned = gid.to_string();
+                        if let Some(uploads) = upload_mgr.clone() {
+                            let mgr = mgr_for_uploads.clone();
+                            let gid_owned = gid.to_string();
+                            tokio::spawn(async move {
+                                let Some((files, kind, override_id)) =
+                                    mgr.files_for_upload(&gid_owned).await
+                                else {
+                                    return;
+                                };
                                 for f in files {
                                     uploads
                                         .enqueue_for_file(
@@ -196,13 +204,13 @@ pub async fn start_engine(
                                             f.local_path,
                                             f.remote_relative,
                                             f.size,
-                                            None, // category — wire up once tasks carry one
+                                            f.category,
                                             &kind,
                                             override_id.clone(),
                                         )
                                         .await;
                                 }
-                            }
+                            });
                         }
                     }
                 }

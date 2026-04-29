@@ -129,8 +129,14 @@ impl SftpSink {
     }
 
     fn full_remote_path(&self, remote_relative: &str) -> String {
-        let base = self.cfg.base_path.trim_end_matches('/');
+        // A configured base of "/" is an absolute root mount and must be
+        // preserved — naive trim_end_matches('/') would collapse it to "" and
+        // produce a non-absolute path
         let rel = remote_relative.trim_start_matches('/');
+        if self.cfg.base_path == "/" {
+            return format!("/{rel}");
+        }
+        let base = self.cfg.base_path.trim_end_matches('/');
         if base.is_empty() {
             rel.to_string()
         } else {

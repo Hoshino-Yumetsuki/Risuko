@@ -453,7 +453,8 @@ impl UploadSink for S3Sink {
         }
 
         // Single PUT tops out at 5 GiB per the S3 API contract — anything
-        // larger uses the multipart path which itself caps at 5 TiB
+        // larger uses the multipart path which itself caps at ~48.8 TiB
+        // (10,000 parts × 5 GiB max per part)
         if file.size > SINGLE_PUT_MAX {
             return self.upload_multipart(file, ctl).await;
         }

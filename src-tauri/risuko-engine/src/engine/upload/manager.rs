@@ -282,6 +282,9 @@ impl UploadSinkManager {
         if !s.sinks.iter().any(|x| x.id == rule.sink_id) {
             return Err(format!("rule references unknown sink {}", rule.sink_id));
         }
+        if s.rules.iter().any(|r| r.id == rule.id) {
+            return Err(format!("duplicate rule id {}", rule.id));
+        }
         s.rules.push(rule.clone());
         drop(s);
         self.save().await?;
@@ -522,11 +525,19 @@ impl UploadSinkManager {
             .await
             .insert(job_id.clone(), ActiveJob { progress: rx });
 
-        // Mark active
-        if let Some(j) = self.jobs.lock().await.get_mut(&job_id) {
-            j.status = JobStatus::Active;
-            j.started_at = Some(now_secs());
-            self.emit_event("engine:upload-start", j);
+        // Mark active. Mutate under the lock, then drop the guard before
+        // emitting so the broadcast/event sink can never re-enter the manager
+        // while we still hold `jobs`
+        let snapshot = {
+            let mut jobs = self.jobs.lock().await;
+            jobs.get_mut(&job_id).map(|j| {
+                j.status = JobStatus::Active;
+                j.started_at = Some(now_secs());
+                j.clone()
+            })
+        };
+        if let Some(snap) = snapshot {
+            self.emit_event("engine:upload-start", &snap);
         }
 
         let sink_runtime = match build_sink_runtime(&sink_record.config) {

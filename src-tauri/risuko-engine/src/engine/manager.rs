@@ -1822,10 +1822,15 @@ impl TaskManager {
                 if rel.is_empty() || rel.split('/').any(|seg| seg == "..") {
                     return None;
                 }
+                let category = local
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .and_then(super::upload::resolve_category);
                 Some(UploadFileSnapshot {
                     local_path: local,
                     remote_relative: rel,
                     size,
+                    category,
                 })
             })
             .collect();

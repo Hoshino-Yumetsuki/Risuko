@@ -39,16 +39,33 @@ impl KnownHosts {
         }
         let s =
             serde_json::to_string_pretty(map).map_err(|e| format!("serialize known_hosts: {e}"))?;
-        std::fs::write(path, s).map_err(|e| format!("write {}: {e}", path.display()))
+        // Atomic replace: write to a sibling temp file, fsync, then rename
+        // over the target so a partial write can never truncate the existing
+        // pinned-host state
+        let tmp = path.with_extension("json.tmp");
+        {
+            use std::io::Write as _;
+            let mut f = std::fs::File::create(&tmp)
+                .map_err(|e| format!("create {}: {e}", tmp.display()))?;
+            f.write_all(s.as_bytes())
+                .map_err(|e| format!("write {}: {e}", tmp.display()))?;
+            f.sync_all()
+                .map_err(|e| format!("fsync {}: {e}", tmp.display()))?;
+        }
+        std::fs::rename(&tmp, path).map_err(|e| {
+            // best-effort cleanup of the temp file
+            let _ = std::fs::remove_file(&tmp);
+            format!("rename {} -> {}: {e}", tmp.display(), path.display())
+        })
     }
 }
 
 static KNOWN_HOSTS: LazyLock<Mutex<KnownHosts>> = LazyLock::new(|| Mutex::new(KnownHosts::load()));
 
-pub fn fingerprint(key: &russh::keys::PublicKey) -> String {
+pub fn fingerprint(key: &russh::keys::PublicKey) -> Result<String, russh::Error> {
     let mut h = Sha256::new();
-    h.update(key.to_bytes().unwrap_or_default());
-    format!("SHA256:{}", STANDARD_NO_PAD.encode(h.finalize()))
+    h.update(key.to_bytes()?);
+    Ok(format!("SHA256:{}", STANDARD_NO_PAD.encode(h.finalize())))
 }
 
 /// SSH client handler enforcing TOFU host-key verification.
@@ -79,7 +96,17 @@ impl client::Handler for TofuHandler {
         &mut self,
         key: &russh::keys::PublicKey,
     ) -> Result<bool, Self::Error> {
-        let fp = fingerprint(key);
+        let fp = match fingerprint(key) {
+            Ok(fp) => fp,
+            Err(e) => {
+                log::warn!(
+                    "SFTP host key fingerprint failed for {}: {} — refusing connection",
+                    self.host_key,
+                    e
+                );
+                return Ok(false);
+            }
+        };
         if let Some(ref pin) = self.pinned {
             if pin == &fp {
                 return Ok(true);

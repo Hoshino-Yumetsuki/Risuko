@@ -1409,7 +1409,18 @@ export default defineComponent({
 				parts.push(m.taskKinds.map((k) => k.toUpperCase()).join("/"));
 			}
 			if (m.categories.length) {
-				parts.push(m.categories.join(", "));
+				parts.push(
+					m.categories
+						.map((c) => {
+							const key = `cloudSinks.cat_${c}`;
+							const t = this.$t(key) as string;
+							// $t echoes the key back when no translation exists;
+							// fall back to the raw id so unknown categories
+							// stay visible instead of showing the path
+							return t === key ? c : t;
+						})
+						.join(", "),
+				);
 			}
 			if (m.extensions.length) {
 				parts.push(m.extensions.map((e) => `.${e}`).join(" "));
