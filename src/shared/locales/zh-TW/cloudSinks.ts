@@ -128,6 +128,7 @@ export default {
 	confirmRemoveRuleTitle: "移除規則？",
 	confirmRemoveRule: "該規則將被刪除，儲存不受影響。",
 	errRuleSinkRequired: "請選擇目標儲存。",
+	errRuleSizeRange: "最小大小不能超過最大大小。",
 	cat_music: "音樂",
 	cat_video: "影片",
 	cat_image: "圖片",

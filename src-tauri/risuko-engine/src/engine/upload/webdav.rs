@@ -98,11 +98,19 @@ impl WebdavSink {
 
     /// MKCOL each parent collection in turn. WebDAV servers reject MKCOL if
     /// any ancestor is missing, so we walk top-down. 405 / 409 on an existing
-    /// collection are tolerated
+    /// collection are tolerated. The walk only covers segments below the
+    /// configured sink root \u2014 attempting MKCOL on `/dav/` or `/files/` on
+    /// e.g. a Nextcloud endpoint would return errors and isn't our concern
     async fn ensure_parent_dirs(&self, target: &Url) -> Result<(), String> {
-        let path = target.path();
-        let mut segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
-        // Drop the file segment — only the directories above it need MKCOL
+        let base_path = self.base_url.path().trim_end_matches('/');
+        let target_path = target.path();
+        // `strip_prefix` failure means the resolved target somehow ended up
+        // outside the sink root \u2014 fall back to walking from `/` rather than
+        // skipping creation entirely (the resolve guard above already rejects
+        // `..` segments, so this is just defensive)
+        let rel = target_path.strip_prefix(base_path).unwrap_or(target_path);
+        let mut segments: Vec<&str> = rel.split('/').filter(|s| !s.is_empty()).collect();
+        // Drop the file segment \u2014 only the directories above it need MKCOL
         segments.pop();
         if segments.is_empty() {
             return Ok(());
@@ -112,9 +120,11 @@ impl WebdavSink {
         for seg in &segments {
             accum.push('/');
             accum.push_str(seg);
-            let mut url = target.clone();
-            // Always trailing slash for collections
-            url.set_path(&format!("{accum}/"));
+            // Build the MKCOL URL relative to the sink root, never `target`,
+            // so we don't carry over query/fragment from the file URL and
+            // never attempt to create collections above `base_url`
+            let mut url = self.base_url.clone();
+            url.set_path(&format!("{base_path}{accum}/"));
 
             let mut req = self
                 .client

@@ -198,7 +198,7 @@ export default {
 	"batch-queue-empty": "在上方粘贴链接，或将 .torrent 文件拖到此处以构建队列。",
 	"batch-drop-hint": "将 .torrent 文件拖到此处，或点击浏览",
 	"batch-remove-item": "移除",
-	"batch-item-magnet-resolving": "正在解析磁力链接…",
+	"batch-item-magnet-resolving": "正在解析磁力链接...",
 	"batch-item-resolve-failed": "解析失败",
 	"batch-submit": "添加 {{count}} 个",
 	"batch-partial-success": "已添加 {{ok}}/{{total}} 个任务",

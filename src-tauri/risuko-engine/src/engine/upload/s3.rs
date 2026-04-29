@@ -187,7 +187,16 @@ impl UploadSink for S3Sink {
         let datestamp = now.1;
 
         let auth = self.sign_put(&url, &amz_date, &datestamp);
-        let body = risuko_http::file_stream_body(file.local_path.clone(), Some(file.size));
+        // Wrap the file stream so each yielded chunk reports progress back
+        // through `ctl` and observes cancellation mid-stream
+        let total = file.size;
+        let progress = ctl.clone();
+        let body = risuko_http::file_stream_body_with_progress(
+            file.local_path.clone(),
+            total,
+            move |sent| progress.report(sent.min(total), total),
+            Some(ctl.cancel.clone()),
+        );
 
         let req = self
             .client
@@ -211,6 +220,8 @@ impl UploadSink for S3Sink {
             return Err(format!("S3 PUT {url} returned {status}: {body}"));
         }
 
+        // Final pin so the UI sees 100% even if the last chunk's report was
+        // raced by the response arriving
         ctl.report(file.size, file.size);
         Ok(url.to_string())
     }
@@ -269,15 +280,44 @@ impl UploadSink for S3Sink {
             .map_err(|e| format!("HEAD bucket: {e}"))?;
 
         let status = resp.status();
-        if status.is_success() || status.as_u16() == 403 {
-            // 403 still means reachable + recognised credentials, just no
-            // ListBucket permission — acceptable for an upload-only key
-            Ok(())
-        } else {
-            let body = resp.text().await.unwrap_or_default();
-            Err(format!("S3 HEAD bucket returned {status}: {body}"))
+        if status.is_success() {
+            return Ok(());
         }
+        let body = resp.text().await.unwrap_or_default();
+        if status.as_u16() == 403 {
+            // A 403 can mean either "reachable + valid creds, no ListBucket
+            // permission" (fine for an upload-only key) or "signature /
+            // credential rejected" (fatal). Distinguish by parsing the AWS
+            // error code so authentication failures aren't masked
+            return classify_s3_403(&body)
+                .map(|_| ())
+                .map_err(|e| format!("S3 HEAD bucket returned 403: {e}"));
+        }
+        Err(format!("S3 HEAD bucket returned {status}: {body}"))
     }
+}
+
+/// Classify a 403 response body. Returns `Ok(())` only when the AWS error
+/// code denotes a permission-denied result the user can legitimately ignore
+/// for an upload-only key. Any auth/signature error — or an unparseable body
+/// — is rejected so credentials are never silently accepted as valid
+fn classify_s3_403(body: &str) -> Result<(), String> {
+    let code = extract_s3_error_code(body).unwrap_or_default();
+    match code.as_str() {
+        "AccessDenied" | "AllAccessDisabled" | "AccountProblem" => Ok(()),
+        "" => Err("unrecognised 403 body, refusing to assume permission-denied".into()),
+        other => Err(format!("S3 error {other}")),
+    }
+}
+
+/// Extract `<Code>...</Code>` from an S3 XML error response. Tolerant of
+/// surrounding whitespace and namespaces; returns `None` if no Code element
+/// is found
+fn extract_s3_error_code(body: &str) -> Option<String> {
+    let lower = body.to_ascii_lowercase();
+    let start = lower.find("<code>")? + "<code>".len();
+    let rel_end = lower[start..].find("</code>")?;
+    Some(body[start..start + rel_end].trim().to_string())
 }
 
 // -- crypto helpers --

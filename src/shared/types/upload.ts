@@ -16,7 +16,9 @@ export interface S3Config {
 	region: string;
 	bucket: string;
 	accessKeyId: string;
-	secretAccessKey: string;
+	// Backend strips this on read (see `skip_serializing` on `S3Config` in
+	// risuko-engine), so list responses round-trip the field as undefined
+	secretAccessKey?: string;
 	prefix?: string;
 	forcePathStyle?: boolean;
 }

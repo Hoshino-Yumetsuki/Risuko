@@ -202,14 +202,23 @@ impl UploadSinkManager {
         Ok(record)
     }
 
-    pub async fn update_sink(&self, record: UploadSinkRecord) -> Result<(), String> {
-        let _ = build_sink_runtime(&record.config)?;
+    pub async fn update_sink(&self, mut record: UploadSinkRecord) -> Result<(), String> {
         let mut s = self.store.write().await;
         let slot = s
             .sinks
             .iter_mut()
             .find(|x| x.id == record.id)
             .ok_or_else(|| format!("unknown sink {}", record.id))?;
+        // Secret fields are stripped from the wire (`skip_serializing` on the
+        // Config structs), so the renderer can't echo them back when editing
+        // an existing sink. Treat an empty incoming secret as \u201cunchanged\u201d
+        // and inherit the value already on disk \u2014 otherwise editing any
+        // unrelated field would silently wipe stored credentials
+        merge_secrets(&mut record.config, &slot.config);
+        // Validate after the merge so we surface real misconfigurations
+        // (rather than the post-merge config still being structurally fine
+        // while the unmerged one would have failed)
+        let _ = build_sink_runtime(&record.config)?;
         *slot = record;
         drop(s);
         self.save().await
@@ -662,8 +671,18 @@ async fn run_post_action(
                 .file_name()
                 .ok_or_else(|| "source has no file name".to_string())?;
             let dst = target.join(file_name);
-            // Try rename; if cross-device, fall back to copy + delete
-            if tokio::fs::rename(path, &dst).await.is_err() {
+            // Try rename; only fall back to copy + delete on cross-device.
+            // Other errors (permission, source missing, target busy, etc.)
+            // are surfaced so we don't silently turn a logical move failure
+            // into a successful copy that leaves stale state behind
+            if let Err(e) = tokio::fs::rename(path, &dst).await {
+                if !is_cross_device_error(&e) {
+                    return Err(format!(
+                        "rename {} -> {}: {e}",
+                        path.display(),
+                        dst.display()
+                    ));
+                }
                 tokio::fs::copy(path, &dst)
                     .await
                     .map_err(|e| format!("copy {} -> {}: {e}", path.display(), dst.display()))?;
@@ -673,6 +692,58 @@ async fn run_post_action(
             }
             Ok(())
         }
+    }
+}
+
+/// Detect EXDEV / cross-volume rename failures across platforms. Newer
+/// toolchains classify this via `ErrorKind::CrossesDevices`; older releases
+/// still report it as `Other`, so we also probe the raw OS code (EXDEV=18 on
+/// Linux/macOS, ERROR_NOT_SAME_DEVICE=17 on Windows)
+fn is_cross_device_error(e: &std::io::Error) -> bool {
+    if e.kind() == std::io::ErrorKind::CrossesDevices {
+        return true;
+    }
+    match e.raw_os_error() {
+        #[cfg(unix)]
+        Some(18) => true,
+        #[cfg(windows)]
+        Some(17) => true,
+        _ => false,
+    }
+}
+
+/// Carry forward secret fields from `old` whenever the corresponding field in
+/// `new` is empty. Mirrors the `skip_serializing` set on the protocol Config
+/// structs so the renderer can omit secrets it never received in the first
+/// place. Any non-empty incoming value wins (i.e. the user explicitly retyped
+/// the credential)
+fn merge_secrets(new: &mut SinkConfig, old: &SinkConfig) {
+    match (new, old) {
+        (SinkConfig::Webdav(n), SinkConfig::Webdav(o)) => {
+            if n.password.is_empty() {
+                n.password = o.password.clone();
+            }
+        }
+        (SinkConfig::S3(n), SinkConfig::S3(o)) => {
+            if n.secret_access_key.is_empty() {
+                n.secret_access_key = o.secret_access_key.clone();
+            }
+        }
+        (SinkConfig::Sftp(n), SinkConfig::Sftp(o)) => {
+            if n.password.is_empty() {
+                n.password = o.password.clone();
+            }
+            if n.private_key.is_empty() {
+                n.private_key = o.private_key.clone();
+            }
+        }
+        (SinkConfig::Ftp(n), SinkConfig::Ftp(o)) => {
+            if n.password.is_empty() {
+                n.password = o.password.clone();
+            }
+        }
+        // Protocol switched on edit \u2014 nothing to inherit
+        _ => {}
     }
 }
 

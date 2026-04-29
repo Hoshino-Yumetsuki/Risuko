@@ -62,8 +62,16 @@ export const useUploadSinkStore = defineStore("uploadSink", {
 		async addSink(record: Parameters<typeof api.addUploadSink>[0]) {
 			const created = await api.addUploadSink(record);
 			this.sinks.push(created);
+			// First sink: keep frontend and engine in sync by writing the new
+			// default through the API. Skipping the round-trip here would leave
+			// the engine without a default the moment the renderer is reloaded
 			if (!this.defaultSinkId) {
-				this.defaultSinkId = created.id;
+				try {
+					await api.setDefaultUploadSink(created.id);
+					this.defaultSinkId = created.id;
+				} catch (err) {
+					logger.warn("uploadSink: failed to persist default sink", err);
+				}
 			}
 			return created;
 		},
@@ -81,7 +89,19 @@ export const useUploadSinkStore = defineStore("uploadSink", {
 			this.sinks = this.sinks.filter((s) => s.id !== id);
 			this.rules = this.rules.filter((r) => r.sinkId !== id);
 			if (this.defaultSinkId === id) {
-				this.defaultSinkId = this.sinks[0]?.id ?? null;
+				// Mirror the engine’s own fallback (first remaining sink, or
+				// null) by going through the API so a renderer reload doesn’t
+				// expose a stale default pointing at a deleted sink
+				const nextId = this.sinks[0]?.id ?? null;
+				try {
+					await api.setDefaultUploadSink(nextId);
+					this.defaultSinkId = nextId;
+				} catch (err) {
+					logger.warn(
+						"uploadSink: failed to update default sink after remove",
+						err,
+					);
+				}
 			}
 		},
 

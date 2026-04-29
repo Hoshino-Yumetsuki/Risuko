@@ -76,6 +76,8 @@
                     size="sm"
                     variant="ghost"
                     class="action-danger"
+                    :aria-label="$t('cloudSinks.delete')"
+                    :title="`${$t('cloudSinks.delete')} — ${sink.label}`"
                     @click="askRemove(sink)"
                   >
                     <Trash2 :size="13" />
@@ -452,6 +454,13 @@
               <div>
                 <span class="toggle-title">{{ $t('cloudSinks.ftpSecure') }}</span>
                 <span class="toggle-hint">{{ $t('cloudSinks.ftpSecureHint') }}</span>
+              </div>
+            </div>
+            <div v-if="form.ftp.secure" class="dialog-field-toggle">
+              <ui-checkbox v-model="form.ftp.insecure" />
+              <div>
+                <span class="toggle-title">{{ $t('cloudSinks.allowInsecure') }}</span>
+                <span class="toggle-hint">{{ $t('cloudSinks.allowInsecureHint') }}</span>
               </div>
             </div>
           </template>
@@ -870,6 +879,7 @@ interface FormState {
 		password: string;
 		basePath: string;
 		secure: boolean;
+		insecure: boolean;
 	};
 	postAction: "keep" | "trash" | "move";
 	moveTarget: string;
@@ -948,6 +958,7 @@ function emptyForm(): FormState {
 			password: "",
 			basePath: "",
 			secure: false,
+			insecure: false,
 		},
 		postAction: "keep",
 		moveTarget: "",
@@ -1152,6 +1163,7 @@ export default defineComponent({
 				f.ftp.password = c.password ?? "";
 				f.ftp.basePath = c.basePath ?? "";
 				f.ftp.secure = !!c.secure;
+				f.ftp.insecure = !!c.insecure;
 			}
 			this.form = f;
 			this.editingId = sink.id;
@@ -1204,6 +1216,7 @@ export default defineComponent({
 						password: this.form.ftp.password || "",
 						basePath: this.form.ftp.basePath.trim(),
 						secure: this.form.ftp.secure,
+						insecure: this.form.ftp.insecure,
 					};
 			}
 		},
@@ -1464,6 +1477,13 @@ export default defineComponent({
 			}
 			if (!this.ruleForm.sinkId) {
 				return this.$t("cloudSinks.errRuleSinkRequired") as string;
+			}
+			const minMb = Number(this.ruleForm.minSizeMb);
+			const maxMb = Number(this.ruleForm.maxSizeMb);
+			const hasMin = Number.isFinite(minMb) && minMb > 0;
+			const hasMax = Number.isFinite(maxMb) && maxMb > 0;
+			if (hasMin && hasMax && minMb > maxMb) {
+				return this.$t("cloudSinks.errRuleSizeRange") as string;
 			}
 			return null;
 		},

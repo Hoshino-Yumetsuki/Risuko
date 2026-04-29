@@ -265,16 +265,20 @@ impl Client {
         // sized automatically by hyper from the body's `size_hint`
         if matches!(body, ReqBody::Stream { .. }) {
             let has_length = req_headers.contains_key(CONTENT_LENGTH);
-            // RFC 9112: Transfer-Encoding is a comma-separated list of codings
-            // (e.g. "gzip, chunked"), and the header may appear multiple
-            // times. Treat any token equal to "chunked" as chunked framing
+            // RFC 9112: a request that already carries Transfer-Encoding
+            // *must not* also advertise Content-Length, regardless of which
+            // codings appear (the final coding is implicitly chunked). Detect
+            // both an explicit "chunked" token and the broader "any TE
+            // header present at all" case so we never inject a conflicting
+            // Content-Length on top of the caller's framing
             let has_chunked = req_headers
                 .get_all(http::header::TRANSFER_ENCODING)
                 .iter()
                 .filter_map(|v| v.to_str().ok())
                 .flat_map(|s| s.split(','))
                 .any(|tok| tok.trim().eq_ignore_ascii_case("chunked"));
-            if !has_length && !has_chunked {
+            let has_te = req_headers.contains_key(http::header::TRANSFER_ENCODING);
+            if !has_length && !has_chunked && !has_te {
                 if let Some(len) = body.content_length() {
                     if let Ok(v) = HeaderValue::from_str(&len.to_string()) {
                         req_headers.insert(CONTENT_LENGTH, v);

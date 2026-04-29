@@ -136,16 +136,23 @@ pub fn run() {
             // regardless of whether the embedded engine auto-starts so that
             // sink configuration UI receives upload events when the user
             // starts the engine later.
+            //
+            // Fail fast on a poisoned lock or missing manager: the previous
+            // `lock().ok().and_then(...)` swallowed both, leaving the app
+            // running with no upload event plumbing and no obvious symptom
             let event_sink_clone = event_sink.clone();
-            let upload_mgr = app
-                .state::<state::AppState>()
-                .upload_sinks
-                .lock()
-                .ok()
-                .and_then(|g| g.clone());
-            if let Some(ref m) = upload_mgr {
-                m.set_event_sink(event_sink_clone.clone());
-            }
+            let upload_mgr = {
+                let state = app.state::<state::AppState>();
+                let guard = state
+                    .upload_sinks
+                    .lock()
+                    .map_err(|e| format!("upload_sinks lock poisoned: {e}"))?;
+                guard
+                    .clone()
+                    .ok_or_else(|| "upload_sinks not initialized".to_string())?
+            };
+            upload_mgr.set_event_sink(event_sink_clone.clone());
+            let upload_mgr = Some(upload_mgr);
 
             if should_start {
                 let config_ref = config_guard.config.lock().unwrap();

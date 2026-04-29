@@ -35,13 +35,52 @@ pub use url::Url;
 /// replays) a brand-new `File` is opened so the stream can be re-driven from
 /// byte zero
 pub fn file_stream_body(path: std::path::PathBuf, content_length: Option<u64>) -> ReqBody {
+    file_stream_body_inner(path, content_length, None, None)
+}
+
+/// Same as [`file_stream_body`] but invokes `on_progress(bytes_sent_so_far)`
+/// after each chunk and aborts mid-stream when `cancel` is set.
+///
+/// The progress callback receives the running total of bytes the body has
+/// pushed *in the current send attempt* (counters reset on retry/redirect, so
+/// callers should clamp the reported value against the known total). Cancel
+/// is checked before every chunk yield so even multi-GB uploads can be
+/// interrupted promptly
+pub fn file_stream_body_with_progress<F>(
+    path: std::path::PathBuf,
+    content_length: u64,
+    on_progress: F,
+    cancel: Option<tokio_util::sync::CancellationToken>,
+) -> ReqBody
+where
+    F: Fn(u64) + Send + Sync + 'static,
+{
+    file_stream_body_inner(
+        path,
+        Some(content_length),
+        Some(std::sync::Arc::new(on_progress)),
+        cancel,
+    )
+}
+
+fn file_stream_body_inner(
+    path: std::path::PathBuf,
+    content_length: Option<u64>,
+    on_progress: Option<std::sync::Arc<dyn Fn(u64) + Send + Sync + 'static>>,
+    cancel: Option<tokio_util::sync::CancellationToken>,
+) -> ReqBody {
     use futures_util::stream::TryStreamExt;
     use http_body::Frame;
     use http_body_util::{combinators::BoxBody, StreamBody};
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::Arc;
 
     ReqBody::from_stream(
         move || {
             let path = path.clone();
+            let on_progress = on_progress.clone();
+            let cancel = cancel.clone();
+            let counter = Arc::new(AtomicU64::new(0));
             // Lazily open the file the first time the body is polled. Any IO
             // error becomes a body error — hyper will surface it to the caller
             let stream = async_stream::try_stream! {
@@ -51,7 +90,17 @@ pub fn file_stream_body(path: std::path::PathBuf, content_length: Option<u64>) -
                 let mut reader = std::pin::pin!(reader);
                 use futures_util::StreamExt;
                 while let Some(chunk) = reader.next().await {
+                    if let Some(ref c) = cancel {
+                        if c.is_cancelled() {
+                            Err(Error::Body("cancelled".into()))?;
+                        }
+                    }
                     let bytes = chunk.map_err(|e| Error::Body(e.to_string()))?;
+                    if let Some(ref cb) = on_progress {
+                        let sent = counter.fetch_add(bytes.len() as u64, Ordering::Relaxed)
+                            + bytes.len() as u64;
+                        cb(sent);
+                    }
                     yield bytes;
                 }
             };

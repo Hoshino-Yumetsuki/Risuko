@@ -42,12 +42,12 @@ impl KnownHosts {
         Self { path, map }
     }
 
-    fn persist(&self) {
-        if let Some(parent) = self.path.parent() {
+    fn write_to_disk(path: &std::path::Path, map: &HashMap<String, String>) {
+        if let Some(parent) = path.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
-        if let Ok(s) = serde_json::to_string_pretty(&self.map) {
-            let _ = std::fs::write(&self.path, s);
+        if let Ok(s) = serde_json::to_string_pretty(map) {
+            let _ = std::fs::write(path, s);
         }
     }
 }
@@ -101,7 +101,15 @@ impl client::Handler for SshHandler {
             None => {
                 log::info!("SFTP TOFU: pinning {} -> {}", self.host_key, fp);
                 store.map.insert(self.host_key.clone(), fp);
-                store.persist();
+                // Snapshot then drop the lock before doing blocking file I/O so
+                // we don't stall the tokio worker or serialize concurrent
+                // host-key checks behind the write
+                let path = store.path.clone();
+                let snapshot = store.map.clone();
+                drop(store);
+                tokio::task::spawn_blocking(move || {
+                    KnownHosts::write_to_disk(&path, &snapshot);
+                });
                 Ok(true)
             }
         }
