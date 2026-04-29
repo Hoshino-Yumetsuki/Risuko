@@ -1,6 +1,7 @@
 export default {
 	basic: "基础设置",
 	advanced: "进阶设置",
+	cloudSinks: "云端存储",
 	save: "保存并应用",
 	"save-success-message": "偏好设置保存成功",
 	"save-fail-message": "偏好设置保存失败",

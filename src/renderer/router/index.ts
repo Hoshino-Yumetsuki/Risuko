@@ -58,6 +58,17 @@ export default createRouter({
 								subnav: { current: "advanced" },
 							},
 						},
+						{
+							path: "cloud-sinks",
+							components: {
+								subnav: () =>
+									import("@/components/Subnav/PreferenceSubnav.vue"),
+								form: () => import("@/components/Preference/CloudSinks.vue"),
+							},
+							props: {
+								subnav: { current: "cloud-sinks" },
+							},
+						},
 					],
 				},
 			],

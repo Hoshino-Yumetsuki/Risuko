@@ -123,7 +123,13 @@ pub async fn reset_session(handle: AppHandle) -> Result<(), String> {
         std::sync::Arc::new(crate::bridge::TauriEventSink::new(&handle));
     let storage: std::sync::Arc<dyn risuko_engine::StorageBackend> =
         std::sync::Arc::new(crate::bridge::TauriStorage::new(&handle));
-    risuko_engine::engine::start_engine(&config, event_sink, storage)
+    let upload_mgr = handle
+        .state::<crate::state::AppState>()
+        .upload_sinks
+        .lock()
+        .ok()
+        .and_then(|g| g.clone());
+    risuko_engine::engine::start_engine(&config, event_sink, storage, upload_mgr)
         .await
         .map_err(|e| e.to_string())?;
     Ok(())

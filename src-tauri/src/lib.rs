@@ -130,12 +130,35 @@ pub fn run() {
                 risuko_engine::engine::should_start_embedded_engine(&config)
             };
 
+            // Push the live Tauri event sink into the upload manager so
+            // upload events reach the frontend (we constructed it with a
+            // NoopEventSink before AppHandle was available). This must run
+            // regardless of whether the embedded engine auto-starts so that
+            // sink configuration UI receives upload events when the user
+            // starts the engine later.
+            //
+            // Fail fast on a poisoned lock or missing manager: the previous
+            // `lock().ok().and_then(...)` swallowed both, leaving the app
+            // running with no upload event plumbing and no obvious symptom
+            let event_sink_clone = event_sink.clone();
+            let upload_mgr = {
+                let state = app.state::<state::AppState>();
+                let guard = state
+                    .upload_sinks
+                    .lock()
+                    .map_err(|e| format!("upload_sinks lock poisoned: {e}"))?;
+                guard
+                    .clone()
+                    .ok_or_else(|| "upload_sinks not initialized".to_string())?
+            };
+            upload_mgr.set_event_sink(event_sink_clone.clone());
+            let upload_mgr = Some(upload_mgr);
+
             if should_start {
                 let config_ref = config_guard.config.lock().unwrap();
                 let config_dir = config_ref.config_dir().to_path_buf();
                 drop(config_ref);
 
-                let event_sink_clone = event_sink.clone();
                 let storage_clone = storage.clone();
                 tauri::async_runtime::spawn(async move {
                     let config = match risuko_engine::config::ConfigManager::with_dir(config_dir) {
@@ -149,6 +172,7 @@ pub fn run() {
                         &config,
                         event_sink_clone,
                         storage_clone,
+                        upload_mgr,
                     )
                     .await
                     {
@@ -286,6 +310,21 @@ pub fn run() {
             commands::rss_cmds::clear_rss_download,
             commands::rss_cmds::read_rss_download,
             commands::rss_cmds::download_rss_item_tracked,
+            commands::upload_cmds::list_upload_sinks,
+            commands::upload_cmds::add_upload_sink,
+            commands::upload_cmds::update_upload_sink,
+            commands::upload_cmds::remove_upload_sink,
+            commands::upload_cmds::test_upload_sink,
+            commands::upload_cmds::get_default_upload_sink,
+            commands::upload_cmds::set_default_upload_sink,
+            commands::upload_cmds::set_upload_max_concurrency,
+            commands::upload_cmds::list_upload_rules,
+            commands::upload_cmds::add_upload_rule,
+            commands::upload_cmds::update_upload_rule,
+            commands::upload_cmds::remove_upload_rule,
+            commands::upload_cmds::list_upload_jobs,
+            commands::upload_cmds::cancel_upload_job,
+            commands::upload_cmds::clear_upload_history,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Risuko");

@@ -131,15 +131,24 @@ pub fn reveal_in_folder(path: String) -> Result<(), String> {
 
     #[cfg(target_os = "windows")]
     {
+        use std::os::windows::process::CommandExt;
+
+        // Normalize separators so explorer.exe parses the path reliably.
+        let normalized_path = path.replace('/', "\\");
+
         if is_dir {
-            std::process::Command::new("explorer")
-                .arg(&path)
-                .spawn()
-                .map_err(|e| e.to_string())?;
+            // Use ShellExecute via `open` to avoid explorer.exe quirks
+            // (e.g. non-zero exit codes, race conditions when an Explorer
+            // window is already focused on the same directory).
+            open::that(&normalized_path).map_err(|e| e.to_string())?;
         } else {
-            let normalized_path = path.replace('/', "\\");
+            // explorer.exe parses its command line manually and expects the
+            // form: /select,"<path>". Rust's standard argument escaping
+            // mangles the embedded quotes, so use raw_arg to pass the
+            // command line through verbatim.
+            let raw = format!("/select,\"{}\"", normalized_path);
             std::process::Command::new("explorer")
-                .arg(format!("/select,\"{}\"", normalized_path))
+                .raw_arg(raw)
                 .spawn()
                 .map_err(|e| e.to_string())?;
         }

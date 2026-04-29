@@ -1,5 +1,6 @@
 import about from "./about";
 import app from "./app";
+import cloudSinks from "./cloudSinks";
 import edit from "./edit";
 import help from "./help";
 import menu from "./menu";
@@ -12,6 +13,7 @@ import window from "./window";
 export default {
 	about,
 	app,
+	cloudSinks,
 	edit,
 	help,
 	menu,

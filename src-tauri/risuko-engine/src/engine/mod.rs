@@ -13,8 +13,10 @@ pub mod rpc;
 pub mod rss;
 pub mod session;
 pub mod speed_limiter;
+pub mod ssh_known_hosts;
 pub mod task;
 pub mod torrent;
+pub mod upload;
 pub mod uri_selector;
 
 pub use session::SESSION_FILENAME;
@@ -26,12 +28,13 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use crate::config::ConfigManager;
-use crate::traits::{EventSink, NoopEventSink, StorageBackend};
+use crate::traits::{EventSink, StorageBackend};
 
 use self::events::EventBroadcaster;
 use self::manager::TaskManager;
 use self::options::EngineOptions;
 use self::rpc::RpcServer;
+use self::upload::UploadSinkManager;
 
 static ENGINE_INSTANCE: std::sync::LazyLock<Mutex<Option<EngineInstance>>> =
     std::sync::LazyLock::new(|| Mutex::new(None));
@@ -65,10 +68,13 @@ pub fn should_start_embedded_engine(config: &ConfigManager) -> bool {
 /// - `config`: the loaded ConfigManager
 /// - `event_sink`: receives engine events (Tauri emitter, NAPI callback, or no-op)
 /// - `storage`: persistent storage for RSS data etc
+/// - `upload_sinks`: optional cloud-upload manager — when present, completed
+///   downloads are forwarded to it via the event bridge
 pub async fn start_engine(
     config: &ConfigManager,
     event_sink: Arc<dyn EventSink>,
     _storage: Arc<dyn StorageBackend>,
+    upload_sinks: Option<Arc<UploadSinkManager>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Check if already running
     {
@@ -145,6 +151,8 @@ pub async fn start_engine(
     // Bridge engine events to the event sink
     let sink = event_sink.clone();
     let mut event_rx = events.subscribe();
+    let mgr_for_uploads = manager.clone();
+    let upload_mgr = upload_sinks.clone();
     let event_bridge_task = tokio::spawn(async move {
         use events::EngineEvent;
         loop {
@@ -170,6 +178,41 @@ pub async fn start_engine(
                     };
                     let payload = serde_json::json!({ "gid": gid });
                     sink.emit(name, payload);
+
+                    // Forward completed downloads to the upload pipeline. We
+                    // dispatch on `download-complete` only — the BT-specific
+                    // event fires before the final move-to-dir step on some
+                    // tasks, so it's the wrong hook for cloud sync.
+                    //
+                    // Hand off to a detached task so a slow files_for_upload
+                    // / enqueue_for_file pair can't stall the broadcast
+                    // receiver and cause it to lag behind other events
+                    if matches!(event, EngineEvent::DownloadComplete { .. }) {
+                        if let Some(uploads) = upload_mgr.clone() {
+                            let mgr = mgr_for_uploads.clone();
+                            let gid_owned = gid.to_string();
+                            tokio::spawn(async move {
+                                let Some((files, kind, override_id)) =
+                                    mgr.files_for_upload(&gid_owned).await
+                                else {
+                                    return;
+                                };
+                                for f in files {
+                                    uploads
+                                        .enqueue_for_file(
+                                            &gid_owned,
+                                            f.local_path,
+                                            f.remote_relative,
+                                            f.size,
+                                            f.category,
+                                            &kind,
+                                            override_id.clone(),
+                                        )
+                                        .await;
+                                }
+                            });
+                        }
+                    }
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
                     log::warn!("Event bridge lagged by {} events", n);
@@ -208,28 +251,6 @@ pub async fn start_engine(
     Ok(())
 }
 
-/// Start the engine from a config directory with default (no-op) event sink.
-/// Convenience for headless / CLI usage.
-pub async fn start_engine_headless(
-    config_dir: &std::path::Path,
-    rpc_port_override: Option<u16>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let config = ConfigManager::with_dir(config_dir.to_path_buf())?;
-    let event_sink: Arc<dyn EventSink> = Arc::new(NoopEventSink);
-    let storage: Arc<dyn StorageBackend> =
-        Arc::new(crate::traits::FileStorage::new(config_dir.to_path_buf()));
-
-    if let Some(port) = rpc_port_override {
-        // We need to modify config temporarily — but ConfigManager is immutable from outside.
-        // Instead, start engine and override via EngineOptions directly.
-        // For now, start with default config then override is handled in start_engine.
-        // TODO: Clean up port override path
-        let _ = port;
-    }
-
-    start_engine(&config, event_sink, storage).await
-}
-
 pub async fn stop_engine() -> Result<(), Box<dyn std::error::Error>> {
     let mut guard = ENGINE_INSTANCE.lock().await;
     if let Some(mut instance) = guard.take() {
@@ -260,10 +281,11 @@ pub async fn restart_engine(
     config: &ConfigManager,
     event_sink: Arc<dyn EventSink>,
     storage: Arc<dyn StorageBackend>,
+    upload_sinks: Option<Arc<UploadSinkManager>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     stop_engine().await?;
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-    start_engine(config, event_sink, storage).await?;
+    start_engine(config, event_sink, storage, upload_sinks).await?;
     Ok(())
 }
 

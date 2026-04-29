@@ -41,6 +41,25 @@
           </i>
           <span>{{ $t('preferences.advanced') }}</span>
         </mo-enter>
+        <mo-enter
+          tag="li"
+          preset="fadeInLeft"
+          :delay="0.17"
+          @click="() => nav('cloud-sinks')"
+          :class="[current === 'cloud-sinks' ? 'active' : '']"
+        >
+          <Motion
+            v-if="current === 'cloud-sinks'"
+            layout-id="preference-subnav-pill"
+            class="subnav-active-bg"
+            :initial="false"
+            :transition="pillTransition"
+          />
+          <i class="subnav-icon">
+            <Cloud :size="20" />
+          </i>
+          <span>{{ $t('preferences.cloudSinks') }}</span>
+        </mo-enter>
       </ul>
     </LayoutGroup>
   </nav>
@@ -48,12 +67,13 @@
 
 <script lang="ts">
 import logger from "@shared/utils/logger";
-import { SlidersHorizontal, Wrench } from "lucide-vue-next";
+import { Cloud, SlidersHorizontal, Wrench } from "lucide-vue-next";
 import { LayoutGroup, Motion } from "motion-v";
 
 export default {
 	name: "mo-preference-subnav",
 	components: {
+		Cloud,
 		LayoutGroup,
 		Motion,
 		SlidersHorizontal,

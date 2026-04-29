@@ -223,59 +223,9 @@ pub fn resolve_file_category(filename: String) -> String {
 }
 
 fn resolve_file_category_inner(filename: &str) -> String {
-    if filename.is_empty() {
-        return String::new();
-    }
-
-    let ext = match filename.rfind('.') {
-        Some(idx) if idx > 0 && idx < filename.len() - 1 => filename[idx..].to_ascii_lowercase(),
-        _ => return String::new(),
-    };
-
-    static MUSIC: &[&str] = &[
-        ".aac", ".ape", ".flac", ".flav", ".m4a", ".mp3", ".ogg", ".wav", ".wma",
-    ];
-    static VIDEO: &[&str] = &[
-        ".avi", ".m3u8", ".m4v", ".mkv", ".mov", ".mp4", ".mpg", ".rmvb", ".ts", ".vob", ".wmv",
-    ];
-    static IMAGE: &[&str] = &[
-        ".ai", ".bmp", ".eps", ".fig", ".gif", ".heic", ".icn", ".ico", ".jpeg", ".jpg", ".png",
-        ".psd", ".raw", ".sketch", ".svg", ".tif", ".webp", ".xd",
-    ];
-    static DOCUMENT: &[&str] = &[
-        ".azw3", ".csv", ".doc", ".docx", ".epub", ".key", ".mobi", ".numbers", ".pages", ".pdf",
-        ".ppt", ".pptx", ".txt", ".xsl", ".xslx",
-    ];
-    static COMPRESSED: &[&str] = &[
-        ".zip", ".rar", ".7z", ".tar", ".gz", ".bz2", ".xz", ".zst", ".iso",
-    ];
-    static PROGRAM: &[&str] = &[
-        ".exe",
-        ".msi",
-        ".dmg",
-        ".pkg",
-        ".deb",
-        ".rpm",
-        ".appimage",
-        ".apk",
-    ];
-
-    let categories: &[(&str, &[&str])] = &[
-        ("music", MUSIC),
-        ("video", VIDEO),
-        ("image", IMAGE),
-        ("document", DOCUMENT),
-        ("compressed", COMPRESSED),
-        ("program", PROGRAM),
-    ];
-
-    for &(category, suffixes) in categories {
-        if suffixes.contains(&ext.as_str()) {
-            return category.to_string();
-        }
-    }
-
-    String::new()
+    // Delegate to the engine-side classifier so the rule-matching and the
+    // user-facing category-dirs feature can never disagree on extensions
+    risuko_engine::engine::upload::resolve_category(filename).unwrap_or_default()
 }
 
 fn ensure_temp_download_suffix(value: &str) -> String {
@@ -474,7 +424,13 @@ pub async fn restart_engine(handle: AppHandle) -> Result<(), String> {
         std::sync::Arc::new(crate::bridge::TauriEventSink::new(&handle));
     let storage: std::sync::Arc<dyn risuko_engine::StorageBackend> =
         std::sync::Arc::new(crate::bridge::TauriStorage::new(&handle));
-    risuko_engine::engine::restart_engine(&config, event_sink, storage)
+    let upload_mgr = handle
+        .state::<crate::state::AppState>()
+        .upload_sinks
+        .lock()
+        .ok()
+        .and_then(|g| g.clone());
+    risuko_engine::engine::restart_engine(&config, event_sink, storage, upload_mgr)
         .await
         .map_err(|e| e.to_string())
 }

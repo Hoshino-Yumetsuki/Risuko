@@ -13,26 +13,11 @@ use tokio_util::sync::CancellationToken;
 
 use super::FtpUri;
 use crate::engine::speed_limiter::SpeedLimiter;
+use crate::engine::ssh_known_hosts::TofuHandler;
 
 const PART_SUFFIX: &str = ".part";
 const BUF_SIZE: usize = 64 * 1024;
 const SPEED_EMA_ALPHA: f64 = 0.3;
-
-/// SSH client handler that accepts all host keys
-/// TODO: TOFU verification: v0.1.1
-struct SshHandler;
-
-impl client::Handler for SshHandler {
-    type Error = russh::Error;
-
-    async fn check_server_key(
-        &mut self,
-        _server_public_key: &russh::keys::PublicKey,
-    ) -> Result<bool, Self::Error> {
-        // Accept all host keys for now
-        Ok(true)
-    }
-}
 
 /// Run an SFTP download
 #[allow(clippy::too_many_arguments)]
@@ -95,7 +80,7 @@ pub async fn run_sftp_download(
     });
 
     let addr = format!("{}:{}", parsed.host, parsed.port);
-    let mut session = client::connect(config, &addr, SshHandler)
+    let mut session = client::connect(config, &addr, TofuHandler::new(addr.clone()))
         .await
         .map_err(|e| format!("SSH connect failed: {e}"))?;
 
@@ -264,7 +249,7 @@ pub async fn run_sftp_download(
 
 /// Try to authenticate via SSH key first, then password
 async fn try_authenticate(
-    session: &mut client::Handle<SshHandler>,
+    session: &mut client::Handle<TofuHandler>,
     user: &str,
     password: Option<&str>,
     private_key_source: Option<&str>,

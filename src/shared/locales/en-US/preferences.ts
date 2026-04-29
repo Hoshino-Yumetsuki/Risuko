@@ -1,6 +1,7 @@
 export default {
 	basic: "Basic",
 	advanced: "Advanced",
+	cloudSinks: "Cloud Sinks",
 	save: "Save & Apply",
 	"save-success-message": "Preferences saved successfully",
 	"save-fail-message": "Preferences failed to save",
