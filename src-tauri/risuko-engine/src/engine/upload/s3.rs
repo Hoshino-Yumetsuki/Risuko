@@ -253,13 +253,23 @@ impl S3Sink {
             }
             let len = part_size.min(total - offset);
             let etag = self
-                .upload_part(file, ctl, url, upload_id, part_number, offset, len, bytes_done, total)
+                .upload_part(
+                    file,
+                    ctl,
+                    url,
+                    upload_id,
+                    part_number,
+                    offset,
+                    len,
+                    bytes_done,
+                    total,
+                )
                 .await?;
             parts.push((part_number, etag));
             offset += len;
             bytes_done += len;
             part_number += 1;
-            if part_number as u64 > MAX_PARTS {
+            if part_number as u64 > MAX_PARTS && offset < total {
                 return Err(format!(
                     "S3 multipart: part count exceeded {MAX_PARTS} (file too large for chosen part size)"
                 ));
@@ -272,11 +282,7 @@ impl S3Sink {
         Ok(url.to_string())
     }
 
-    async fn initiate_multipart(
-        &self,
-        url: &Url,
-        ctl: &UploadControl,
-    ) -> Result<String, String> {
+    async fn initiate_multipart(&self, url: &Url, ctl: &UploadControl) -> Result<String, String> {
         let mut init_url = url.clone();
         init_url.set_query(Some("uploads="));
         let now = chrono_now_utc();
@@ -302,9 +308,8 @@ impl S3Sink {
         if !status.is_success() {
             return Err(format!("S3 initiate multipart returned {status}: {body}"));
         }
-        parse_upload_id(&body).ok_or_else(|| {
-            format!("S3 initiate multipart: missing UploadId in response: {body}")
-        })
+        parse_upload_id(&body)
+            .ok_or_else(|| format!("S3 initiate multipart: missing UploadId in response: {body}"))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -384,8 +389,7 @@ impl S3Sink {
         let mut complete_url = url.clone();
         complete_url.set_query(Some(&query));
         let now = chrono_now_utc();
-        let auth =
-            self.sign_request("POST", &complete_url, &query, &payload_hash, &now.0, &now.1);
+        let auth = self.sign_request("POST", &complete_url, &query, &payload_hash, &now.0, &now.1);
 
         let req = self
             .client
@@ -404,7 +408,9 @@ impl S3Sink {
         let status = resp.status();
         let resp_body = resp.text().await.unwrap_or_default();
         if !status.is_success() {
-            return Err(format!("S3 CompleteMultipart returned {status}: {resp_body}"));
+            return Err(format!(
+                "S3 CompleteMultipart returned {status}: {resp_body}"
+            ));
         }
         // S3 returns 200 even on some errors with `<Error>` body; detect that
         if resp_body.contains("<Error>") {
@@ -418,8 +424,7 @@ impl S3Sink {
         let mut abort_url = url.clone();
         abort_url.set_query(Some(&query));
         let now = chrono_now_utc();
-        let auth =
-            self.sign_request("DELETE", &abort_url, &query, UNSIGNED, &now.0, &now.1);
+        let auth = self.sign_request("DELETE", &abort_url, &query, UNSIGNED, &now.0, &now.1);
         let req = self
             .client
             .delete(abort_url.as_str())
@@ -966,10 +971,7 @@ mod tests {
 
     #[test]
     fn build_complete_xml_orders_parts() {
-        let parts = vec![
-            (1, "\"etag1\"".to_string()),
-            (2, "\"etag2\"".to_string()),
-        ];
+        let parts = vec![(1, "\"etag1\"".to_string()), (2, "\"etag2\"".to_string())];
         let xml = build_complete_xml(&parts);
         assert_eq!(
             xml,

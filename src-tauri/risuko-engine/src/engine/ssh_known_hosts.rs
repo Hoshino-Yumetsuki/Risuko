@@ -32,10 +32,7 @@ impl KnownHosts {
         Self { path, map }
     }
 
-    fn write_to_disk(
-        path: &std::path::Path,
-        map: &HashMap<String, String>,
-    ) -> Result<(), String> {
+    fn write_to_disk(path: &std::path::Path, map: &HashMap<String, String>) -> Result<(), String> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)
                 .map_err(|e| format!("create {}: {e}", parent.display()))?;

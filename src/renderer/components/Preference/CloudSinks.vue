@@ -1194,7 +1194,7 @@ export default defineComponent({
 						insecure: this.form.webdav.insecure,
 					};
 				case "s3": {
-					const secret = this.form.s3.secretAccessKey;
+					const secret = this.form.s3.secretAccessKey.trim();
 					return {
 						kind: "s3",
 						endpoint: this.form.s3.endpoint.trim(),
