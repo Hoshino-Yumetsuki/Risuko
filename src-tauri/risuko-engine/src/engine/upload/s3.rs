@@ -128,8 +128,13 @@ impl S3Sink {
                 Some(p) => format!(":{p}"),
                 None => String::new(),
             };
+            // Preserve any subpath baked into the configured endpoint
+            // (e.g. an S3-compatible service mounted behind a reverse-proxy
+            // prefix). Naively dropping it would point requests at the
+            // wrong path on the upstream
+            let base_path = self.base_url.path().trim_end_matches('/');
             let s = format!(
-                "{scheme}://{}.{host}{port_part}/{encoded}",
+                "{scheme}://{}.{host}{port_part}{base_path}/{encoded}",
                 uri_encode(&self.cfg.bucket, false)
             );
             Url::parse(&s).map_err(|e| format!("Invalid object URL: {e}"))

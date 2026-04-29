@@ -158,13 +158,18 @@ impl UploadSink for SftpSink {
         let remote = self.full_remote_path(&file.remote_relative);
         self.ensure_parent_dirs(&sftp, &remote).await?;
 
+        // Stage writes to a sibling `.part` file so an existing good upload
+        // at the final path is never truncated or unlinked on failure.
+        // Only the successful end-state (full body flushed + closed) renames
+        // the temp into the final name
+        let remote_tmp = format!("{remote}.part");
         let mut remote_file = sftp
             .open_with_flags(
-                &remote,
+                &remote_tmp,
                 OpenFlags::CREATE | OpenFlags::WRITE | OpenFlags::TRUNCATE,
             )
             .await
-            .map_err(|e| format!("SFTP open {remote}: {e}"))?;
+            .map_err(|e| format!("SFTP open {remote_tmp}: {e}"))?;
 
         let local: PathBuf = file.local_path.clone();
         let mut local_file = tokio::fs::File::open(&local)
@@ -174,31 +179,32 @@ impl UploadSink for SftpSink {
         let mut buf = vec![0u8; COPY_BUF];
         let mut sent: u64 = 0;
 
-        // Helper: best-effort cleanup of a partially-written remote file.
+        // Helper: best-effort cleanup of the partially-written temp file.
         // Closes the handle (so the server releases its lock) and unlinks
-        // the path so a retry doesn't see a torn file. Errors are logged
-        // but never override the original failure
+        // the temp path so a retry doesn't see a torn file. Errors are
+        // logged but never override the original failure. Crucially this
+        // never touches the final `remote` name
         async fn discard_partial(
             mut remote_file: russh_sftp::client::fs::File,
             sftp: &SftpSession,
-            remote: &str,
+            remote_tmp: &str,
         ) {
             let _ = remote_file.shutdown().await;
-            if let Err(e) = sftp.remove_file(remote).await {
-                log::debug!("SFTP cleanup of partial {remote} ignored: {e}");
+            if let Err(e) = sftp.remove_file(remote_tmp).await {
+                log::debug!("SFTP cleanup of partial {remote_tmp} ignored: {e}");
             }
         }
 
         loop {
             if ctl.cancel.is_cancelled() {
-                discard_partial(remote_file, &sftp, &remote).await;
+                discard_partial(remote_file, &sftp, &remote_tmp).await;
                 return Err("cancelled".into());
             }
 
             let n = match local_file.read(&mut buf).await {
                 Ok(n) => n,
                 Err(e) => {
-                    discard_partial(remote_file, &sftp, &remote).await;
+                    discard_partial(remote_file, &sftp, &remote_tmp).await;
                     return Err(format!("local read: {e}"));
                 }
             };
@@ -206,7 +212,7 @@ impl UploadSink for SftpSink {
                 break;
             }
             if let Err(e) = remote_file.write_all(&buf[..n]).await {
-                discard_partial(remote_file, &sftp, &remote).await;
+                discard_partial(remote_file, &sftp, &remote_tmp).await;
                 return Err(format!("SFTP write: {e}"));
             }
             sent += n as u64;
@@ -214,12 +220,26 @@ impl UploadSink for SftpSink {
         }
 
         if let Err(e) = remote_file.shutdown().await {
-            // Close failed after a complete write — still try to unlink so
-            // a half-flushed file isn't left behind under our name
-            if let Err(re) = sftp.remove_file(&remote).await {
+            // Close failed after a complete write — drop the temp so a
+            // half-flushed file isn't left behind. Final `remote` is
+            // untouched
+            if let Err(re) = sftp.remove_file(&remote_tmp).await {
                 log::debug!("SFTP cleanup after close failure ignored: {re}");
             }
             return Err(format!("SFTP close: {e}"));
+        }
+
+        // Rename the staged temp over the final path. SFTPv3 `rename` may
+        // fail if the destination already exists on some servers; on that
+        // failure unlink the existing remote and retry once so users can
+        // overwrite previous uploads
+        if let Err(e) = sftp.rename(&remote_tmp, &remote).await {
+            log::debug!("SFTP rename {remote_tmp} -> {remote} failed ({e}); retrying after unlink");
+            let _ = sftp.remove_file(&remote).await;
+            if let Err(e2) = sftp.rename(&remote_tmp, &remote).await {
+                let _ = sftp.remove_file(&remote_tmp).await;
+                return Err(format!("SFTP rename {remote_tmp} -> {remote}: {e2}"));
+            }
         }
 
         ctl.report(file.size, file.size);

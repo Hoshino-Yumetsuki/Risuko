@@ -29,9 +29,9 @@ pub struct UploadFileSnapshot {
     pub category: Option<String>,
 }
 
-/// Resolve a file's category bucket from its name/extension. Mirrors the
-/// extension table used by the Tauri-layer `resolve_file_category` command
-/// so rule matching here agrees with the user-facing category-dirs feature
+/// Resolve a file's category bucket from its name/extension. Single source
+/// of truth — the Tauri-layer `resolve_file_category` command delegates here
+/// so rule matching and the user-facing category-dirs feature stay in sync
 pub fn resolve_category(name: &str) -> Option<String> {
     if name.is_empty() {
         return None;
@@ -53,7 +53,7 @@ pub fn resolve_category(name: &str) -> Option<String> {
     ];
     static DOCUMENT: &[&str] = &[
         ".azw3", ".csv", ".doc", ".docx", ".epub", ".key", ".mobi", ".numbers", ".pages", ".pdf",
-        ".ppt", ".pptx", ".txt", ".xsl", ".xslx",
+        ".ppt", ".pptx", ".txt", ".xls", ".xlsx",
     ];
     static COMPRESSED: &[&str] = &[
         ".zip", ".rar", ".7z", ".tar", ".gz", ".bz2", ".xz", ".zst", ".iso",
