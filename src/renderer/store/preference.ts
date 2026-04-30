@@ -180,11 +180,12 @@ export const usePreferenceStore = defineStore("preference", {
 				try {
 					if (Object.keys(secrets).length > 0) {
 						await api.vaultPutCredential(credential.id, secrets);
+						meta.vaulted = true;
 					} else {
 						// No secret material — drop any prior vault entry
 						await api.vaultRemoveCredential(credential.id);
+						meta.vaulted = false;
 					}
-					meta.vaulted = true;
 					toStore = meta;
 				} catch (err) {
 					logger.warn(

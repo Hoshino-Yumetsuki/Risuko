@@ -657,11 +657,17 @@ mod tests {
     use crate::traits::{FileStorage, NoopEventSink};
     use tempfile::TempDir;
 
-    fn test_manager() -> RssManager {
+    struct RssTestCtx {
+        _dir: TempDir,
+        mgr: RssManager,
+    }
+
+    fn test_manager() -> RssTestCtx {
         let dir = TempDir::new().unwrap();
         let storage: Arc<dyn StorageBackend> = Arc::new(FileStorage::new(dir.path().to_path_buf()));
         let event_sink: Arc<dyn EventSink> = Arc::new(NoopEventSink);
-        RssManager::new(storage, event_sink)
+        let mgr = RssManager::new(storage, event_sink);
+        RssTestCtx { _dir: dir, mgr }
     }
 
     fn sample_feed(id: &str, url: &str) -> RssFeed {
@@ -729,7 +735,8 @@ mod tests {
 
     #[test]
     fn get_feeds_returns_populated() {
-        let mgr = test_manager();
+        let ctx = test_manager();
+        let mgr = &ctx.mgr;
         let rt = tokio::runtime::Runtime::new().unwrap();
         {
             let mut s = mgr.store.blocking_lock();
@@ -742,7 +749,8 @@ mod tests {
 
     #[test]
     fn get_items_returns_feed_items() {
-        let mgr = test_manager();
+        let ctx = test_manager();
+        let mgr = &ctx.mgr;
         let rt = tokio::runtime::Runtime::new().unwrap();
         {
             let mut s = mgr.store.blocking_lock();
@@ -757,7 +765,8 @@ mod tests {
 
     #[test]
     fn get_items_missing_feed_returns_empty() {
-        let mgr = test_manager();
+        let ctx = test_manager();
+        let mgr = &ctx.mgr;
         let rt = tokio::runtime::Runtime::new().unwrap();
         let items = rt.block_on(mgr.get_items("none"));
         assert!(items.is_empty());
@@ -765,7 +774,8 @@ mod tests {
 
     #[test]
     fn remove_feed_deletes_items_and_rules() {
-        let mgr = test_manager();
+        let ctx = test_manager();
+        let mgr = &ctx.mgr;
         let rt = tokio::runtime::Runtime::new().unwrap();
         {
             let mut s = mgr.store.blocking_lock();
@@ -794,7 +804,8 @@ mod tests {
 
     #[test]
     fn update_feed_settings_changes_interval_and_active() {
-        let mgr = test_manager();
+        let ctx = test_manager();
+        let mgr = &ctx.mgr;
         let rt = tokio::runtime::Runtime::new().unwrap();
         {
             let mut s = mgr.store.blocking_lock();
@@ -809,7 +820,8 @@ mod tests {
 
     #[test]
     fn update_feed_settings_not_found() {
-        let mgr = test_manager();
+        let ctx = test_manager();
+        let mgr = &ctx.mgr;
         let rt = tokio::runtime::Runtime::new().unwrap();
         let err = rt
             .block_on(mgr.update_feed_settings("none", Some(60), None))
@@ -819,7 +831,8 @@ mod tests {
 
     #[test]
     fn mark_item_downloaded_updates_state() {
-        let mgr = test_manager();
+        let ctx = test_manager();
+        let mgr = &ctx.mgr;
         let rt = tokio::runtime::Runtime::new().unwrap();
         {
             let mut s = mgr.store.blocking_lock();
@@ -837,7 +850,8 @@ mod tests {
 
     #[test]
     fn get_item_download_url_prefers_enclosure() {
-        let mgr = test_manager();
+        let ctx = test_manager();
+        let mgr = &ctx.mgr;
         let rt = tokio::runtime::Runtime::new().unwrap();
         {
             let mut s = mgr.store.blocking_lock();
@@ -853,7 +867,8 @@ mod tests {
 
     #[test]
     fn get_item_download_url_falls_back_to_link() {
-        let mgr = test_manager();
+        let ctx = test_manager();
+        let mgr = &ctx.mgr;
         let rt = tokio::runtime::Runtime::new().unwrap();
         {
             let mut s = mgr.store.blocking_lock();
@@ -869,7 +884,8 @@ mod tests {
 
     #[test]
     fn get_item_download_url_no_url() {
-        let mgr = test_manager();
+        let ctx = test_manager();
+        let mgr = &ctx.mgr;
         let rt = tokio::runtime::Runtime::new().unwrap();
         {
             let mut s = mgr.store.blocking_lock();
@@ -887,7 +903,8 @@ mod tests {
 
     #[test]
     fn add_rule_generates_id_and_validates_regex() {
-        let mgr = test_manager();
+        let ctx = test_manager();
+        let mgr = &ctx.mgr;
         let rt = tokio::runtime::Runtime::new().unwrap();
         let rule = RssRule {
             id: String::new(),
@@ -907,7 +924,8 @@ mod tests {
 
     #[test]
     fn add_rule_rejects_invalid_regex() {
-        let mgr = test_manager();
+        let ctx = test_manager();
+        let mgr = &ctx.mgr;
         let rt = tokio::runtime::Runtime::new().unwrap();
         let rule = RssRule {
             id: String::new(),
@@ -925,7 +943,8 @@ mod tests {
 
     #[test]
     fn remove_rule_deletes() {
-        let mgr = test_manager();
+        let ctx = test_manager();
+        let mgr = &ctx.mgr;
         let rt = tokio::runtime::Runtime::new().unwrap();
         let rule = RssRule {
             id: String::new(),
@@ -945,7 +964,8 @@ mod tests {
 
     #[test]
     fn match_rules_substring() {
-        let mgr = test_manager();
+        let ctx = test_manager();
+        let mgr = &ctx.mgr;
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(mgr.add_rule(RssRule {
             id: "r1".into(),
@@ -978,7 +998,8 @@ mod tests {
 
     #[test]
     fn match_rules_respects_feed_scope() {
-        let mgr = test_manager();
+        let ctx = test_manager();
+        let mgr = &ctx.mgr;
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(mgr.add_rule(RssRule {
             id: "r1".into(),
@@ -1011,7 +1032,8 @@ mod tests {
 
     #[test]
     fn match_rules_skips_inactive() {
-        let mgr = test_manager();
+        let ctx = test_manager();
+        let mgr = &ctx.mgr;
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(mgr.add_rule(RssRule {
             id: "r1".into(),
@@ -1044,7 +1066,8 @@ mod tests {
 
     #[test]
     fn delete_items_removes_selected() {
-        let mgr = test_manager();
+        let ctx = test_manager();
+        let mgr = &ctx.mgr;
         let rt = tokio::runtime::Runtime::new().unwrap();
         {
             let mut s = mgr.store.blocking_lock();

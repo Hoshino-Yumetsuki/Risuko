@@ -124,12 +124,17 @@ export default {
 	},
 	methods: {
 		async handleApply(credential: SavedCredential) {
-			await applyCredentialToForm(this.form, credential);
-			usePreferenceStore().updateCredentialLastUsed(credential.id);
-			this.$msg.success({
-				message: this.$t("task.credential-applied"),
-				duration: 2000,
-			});
+			try {
+				await applyCredentialToForm(this.form, credential);
+				usePreferenceStore().updateCredentialLastUsed(credential.id);
+				this.$msg.success({
+					message: this.$t("task.credential-applied"),
+					duration: 2000,
+				});
+			} catch (err) {
+				console.error("Failed to apply credential:", err);
+				this.$msg.error(this.$t("task.credential-apply-failed"));
+			}
 		},
 		credentialDisplayName(cred: SavedCredential): string {
 			if (cred.label) {

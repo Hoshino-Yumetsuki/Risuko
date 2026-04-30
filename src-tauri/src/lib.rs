@@ -158,14 +158,12 @@ pub fn run() {
             // back into the upload manager. The on-disk records omit them
             // (`skip_serializing` on the protocol Configs) so without this
             // pass the user has to re-enter every password after a restart
-            {
+            if let Some(mgr) = upload_mgr.clone() {
                 let state = app.state::<state::AppState>();
                 let vault = state.vault.clone();
-                if let Some(mgr) = upload_mgr.clone() {
-                    tauri::async_runtime::spawn(async move {
-                        commands::upload_cmds::rehydrate_upload_sinks(&mgr, &vault).await;
-                    });
-                }
+                tauri::async_runtime::block_on(
+                    commands::upload_cmds::rehydrate_upload_sinks(&mgr, &vault)
+                );
             }
 
             if should_start {

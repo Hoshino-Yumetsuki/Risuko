@@ -786,12 +786,19 @@ mod tests {
     use crate::traits::{FileStorage, NoopEventSink};
     use tempfile::TempDir;
 
-    fn test_manager() -> UploadSinkManager {
+    struct UploadTestCtx {
+        #[allow(dead_code)]
+        dir: TempDir,
+        mgr: UploadSinkManager,
+    }
+
+    fn test_manager() -> UploadTestCtx {
         let dir = TempDir::new().unwrap();
         let storage: Arc<dyn crate::traits::StorageBackend> =
             Arc::new(FileStorage::new(dir.path().to_path_buf()));
         let event_sink: Arc<dyn crate::traits::EventSink> = Arc::new(NoopEventSink);
-        UploadSinkManager::new(storage, event_sink)
+        let mgr = UploadSinkManager::new(storage, event_sink);
+        UploadTestCtx { dir, mgr }
     }
 
     fn sftp_config() -> SinkConfig {
@@ -821,7 +828,8 @@ mod tests {
 
     #[test]
     fn add_sink_generates_id_and_created_at() {
-        let mgr = test_manager();
+        let ctx = test_manager();
+        let mgr = &ctx.mgr;
         let record = UploadSinkRecord {
             id: String::new(),
             label: "Test".into(),
@@ -839,7 +847,8 @@ mod tests {
 
     #[test]
     fn add_sink_sets_default_when_first() {
-        let mgr = test_manager();
+        let ctx = test_manager();
+        let mgr = &ctx.mgr;
         let rt = tokio::runtime::Runtime::new().unwrap();
         let created = rt
             .block_on(mgr.add_sink(UploadSinkRecord {
@@ -858,7 +867,8 @@ mod tests {
 
     #[test]
     fn add_sink_rejects_duplicate_id() {
-        let mgr = test_manager();
+        let ctx = test_manager();
+        let mgr = &ctx.mgr;
         let rt = tokio::runtime::Runtime::new().unwrap();
         let created = rt
             .block_on(mgr.add_sink(UploadSinkRecord {
@@ -885,7 +895,8 @@ mod tests {
 
     #[test]
     fn list_sinks_returns_added() {
-        let mgr = test_manager();
+        let ctx = test_manager();
+        let mgr = &ctx.mgr;
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(mgr.add_sink(UploadSinkRecord {
             id: String::new(),
@@ -904,7 +915,8 @@ mod tests {
 
     #[test]
     fn update_sink_modifies_label() {
-        let mgr = test_manager();
+        let ctx = test_manager();
+        let mgr = &ctx.mgr;
         let rt = tokio::runtime::Runtime::new().unwrap();
         let created = rt
             .block_on(mgr.add_sink(UploadSinkRecord {
@@ -926,7 +938,8 @@ mod tests {
 
     #[test]
     fn update_sink_inherits_secrets_when_empty() {
-        let mgr = test_manager();
+        let ctx = test_manager();
+        let mgr = &ctx.mgr;
         let rt = tokio::runtime::Runtime::new().unwrap();
         let created = rt
             .block_on(mgr.add_sink(UploadSinkRecord {
@@ -956,7 +969,8 @@ mod tests {
 
     #[test]
     fn remove_sink_deletes_and_updates_default() {
-        let mgr = test_manager();
+        let ctx = test_manager();
+        let mgr = &ctx.mgr;
         let rt = tokio::runtime::Runtime::new().unwrap();
         let a = rt
             .block_on(mgr.add_sink(UploadSinkRecord {
@@ -992,7 +1006,8 @@ mod tests {
 
     #[test]
     fn remove_sink_clears_default_when_last() {
-        let mgr = test_manager();
+        let ctx = test_manager();
+        let mgr = &ctx.mgr;
         let rt = tokio::runtime::Runtime::new().unwrap();
         let a = rt
             .block_on(mgr.add_sink(UploadSinkRecord {
@@ -1011,7 +1026,8 @@ mod tests {
 
     #[test]
     fn set_default_sink_validates() {
-        let mgr = test_manager();
+        let ctx = test_manager();
+        let mgr = &ctx.mgr;
         let rt = tokio::runtime::Runtime::new().unwrap();
         let err = rt.block_on(mgr.set_default_sink(Some("nonexistent".into())));
         assert!(err.is_err());
@@ -1019,7 +1035,8 @@ mod tests {
 
     #[test]
     fn set_max_concurrency_clamps_and_persists() {
-        let mgr = test_manager();
+        let ctx = test_manager();
+        let mgr = &ctx.mgr;
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(mgr.set_max_concurrency(0)).unwrap();
         // list_sinks doesn't expose concurrency; verify via load/save round-trip

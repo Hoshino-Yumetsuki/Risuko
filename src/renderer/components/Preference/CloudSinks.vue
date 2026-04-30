@@ -1291,6 +1291,7 @@ export default defineComponent({
 				return;
 			}
 			this.saving = true;
+			let savedSink: UploadSinkRecord | null = null;
 			try {
 				const config = this.buildConfig();
 				if (this.editingId) {
@@ -1308,7 +1309,7 @@ export default defineComponent({
 						moveTarget: this.form.moveTarget || null,
 					};
 					await this.store.updateSink(updated);
-					await this.syncCredential(updated);
+					savedSink = updated;
 				} else {
 					const created = await this.store.addSink({
 						label: this.form.label.trim(),
@@ -1316,14 +1317,27 @@ export default defineComponent({
 						postAction: this.form.postAction,
 						moveTarget: this.form.moveTarget || null,
 					});
-					await this.syncCredential(created);
+					savedSink = created;
 				}
 				this.dialogOpen = false;
 			} catch (e) {
 				this.dialogError = String((e as Error)?.message || e);
-			} finally {
 				this.saving = false;
+				return;
 			}
+
+			if (savedSink) {
+				try {
+					await this.syncCredential(savedSink);
+				} catch (e) {
+					this.$msg.error(
+						this.$t("cloudSinks.credentialSyncFailed") +
+						": " +
+						String((e as Error)?.message || e),
+					);
+				}
+			}
+			this.saving = false;
 		},
 		askRemove(sink: UploadSinkRecord) {
 			this.removingSink = sink;

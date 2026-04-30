@@ -191,6 +191,7 @@ export default {
 	"dont-save-credential": "不儲存",
 	"credential-saved": "憑據已儲存",
 	"credential-applied": "憑據已套用",
+	"credential-apply-failed": "套用憑據失敗",
 	"credential-profile-name": "設定檔名稱",
 	"credential-profile-name-placeholder": "例如：工作 FTP、CDN 權杖",
 	"no-saved-credentials": "尚無儲存的憑據",

@@ -139,6 +139,7 @@ export default {
 	confirmRemoveRule: "This rule will be deleted. The sinks remain.",
 	errRuleSinkRequired: "Pick a sink to route to.",
 	errRuleSizeRange: "Min size must be less than or equal to max size.",
+	credentialSyncFailed: "Credential sync failed",
 	cat_music: "Music",
 	cat_video: "Video",
 	cat_image: "Image",

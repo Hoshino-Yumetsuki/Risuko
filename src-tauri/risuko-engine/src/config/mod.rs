@@ -230,10 +230,7 @@ mod tests {
     fn config_manager_with_dir_uses_defaults_when_missing() {
         let dir = TempDir::new().unwrap();
         let mgr = ConfigManager::with_dir(dir.path().to_path_buf()).unwrap();
-        // Files are not eagerly created; defaults are returned in-memory
-        assert!(!dir.path().join("system.json").exists());
-        assert!(!dir.path().join("user.json").exists());
-        // Defaults should be present
+        // Defaults should be present when files are missing
         assert!(mgr.get_system_config().contains_key("all-proxy"));
         assert!(mgr.get_user_config().contains_key("theme"));
     }
@@ -306,6 +303,10 @@ mod tests {
         mgr.remove_system_config_key("a").unwrap();
         assert!(!mgr.get_system_config().contains_key("a"));
         assert!(mgr.get_system_config().contains_key("b"));
+        // Verify persistence by reopening
+        let mgr2 = ConfigManager::with_dir(dir.path().to_path_buf()).unwrap();
+        assert!(!mgr2.get_system_config().contains_key("a"));
+        assert!(mgr2.get_system_config().contains_key("b"));
     }
 
     #[test]

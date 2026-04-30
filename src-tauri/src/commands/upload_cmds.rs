@@ -57,9 +57,10 @@ fn extract_sink_secrets(config: &SinkConfig) -> Option<Value> {
     }
 }
 
-/// Apply secrets pulled from the keychain back onto a sink config. Empty
-/// or missing fields are silently ignored so a partial vault entry never
-/// clobbers a value the user just typed
+/// Apply secrets pulled from the keychain back onto a sink config. Only
+/// fields that are currently empty in the config are filled, so a user
+/// updating one secret does not lose another secret that was left blank
+/// (meaning "unchanged")
 fn apply_sink_secrets(config: &mut SinkConfig, secrets: &Value) {
     let obj = match secrets.as_object() {
         Some(o) => o,
@@ -73,44 +74,43 @@ fn apply_sink_secrets(config: &mut SinkConfig, secrets: &Value) {
     };
     match config {
         SinkConfig::Webdav(c) => {
-            let v = s("password");
-            if !v.is_empty() {
-                c.password = v;
+            if c.password.is_empty() {
+                let v = s("password");
+                if !v.is_empty() {
+                    c.password = v;
+                }
             }
         }
         SinkConfig::S3(c) => {
-            let v = s("secretAccessKey");
-            if !v.is_empty() {
-                c.secret_access_key = v;
+            if c.secret_access_key.is_empty() {
+                let v = s("secretAccessKey");
+                if !v.is_empty() {
+                    c.secret_access_key = v;
+                }
             }
         }
         SinkConfig::Sftp(c) => {
-            let pw = s("password");
-            if !pw.is_empty() {
-                c.password = pw;
+            if c.password.is_empty() {
+                let pw = s("password");
+                if !pw.is_empty() {
+                    c.password = pw;
+                }
             }
-            let pk = s("privateKey");
-            if !pk.is_empty() {
-                c.private_key = pk;
+            if c.private_key.is_empty() {
+                let pk = s("privateKey");
+                if !pk.is_empty() {
+                    c.private_key = pk;
+                }
             }
         }
         SinkConfig::Ftp(c) => {
-            let v = s("password");
-            if !v.is_empty() {
-                c.password = v;
+            if c.password.is_empty() {
+                let v = s("password");
+                if !v.is_empty() {
+                    c.password = v;
+                }
             }
         }
-    }
-}
-
-/// Whether the sink config currently carries any plaintext secret. Used
-/// when deciding whether to clear a stale vault entry
-fn sink_has_secrets(config: &SinkConfig) -> bool {
-    match config {
-        SinkConfig::Webdav(c) => !c.password.is_empty(),
-        SinkConfig::S3(c) => !c.secret_access_key.is_empty(),
-        SinkConfig::Sftp(c) => !c.password.is_empty() || !c.private_key.is_empty(),
-        SinkConfig::Ftp(c) => !c.password.is_empty(),
     }
 }
 
@@ -119,7 +119,7 @@ fn sink_has_secrets(config: &SinkConfig) -> bool {
 /// (treat empty as "unchanged") so editing a sink without retyping the
 /// password keeps it working
 fn fill_from_vault(vault: &VaultManager, id: &str, config: &mut SinkConfig) {
-    if !vault.enabled() || sink_has_secrets(config) {
+    if !vault.enabled() {
         return;
     }
     if let Ok(Some(secrets)) = vault.get_sink(id) {
@@ -404,10 +404,5 @@ mod tests {
         }
     }
 
-    #[test]
-    fn sink_has_secrets_detects_each_variant() {
-        assert!(!sink_has_secrets(&sftp("", "")));
-        assert!(sink_has_secrets(&sftp("p", "")));
-        assert!(sink_has_secrets(&sftp("", "k")));
-    }
+
 }
