@@ -16,6 +16,13 @@
           <span v-if="cred.protocol" class="credential-manager-item-protocol">
             {{ cred.protocol }}
           </span>
+          <span
+            v-if="cred.vaulted"
+            class="credential-manager-item-vaulted"
+            :title="$t('preferences.credential-encrypted-badge')"
+          >
+            <ShieldCheck :size="11" />
+          </span>
           <span v-if="cred.host && cred.label" class="credential-manager-item-host">
             {{ cred.host }}
           </span>
@@ -35,20 +42,34 @@
         </div>
       </li>
     </ul>
+    <div
+      class="credential-manager-status"
+      :class="{ 'credential-manager-status--off': !vaultEnabled }"
+      :title="vaultEnabled ? '' : $t('preferences.credential-vault-unavailable')"
+    >
+      <ShieldCheck v-if="vaultEnabled" :size="12" />
+      <ShieldOff v-else :size="12" />
+      <span>
+        {{ vaultEnabled ? $t('preferences.vault-enabled') : $t('preferences.vault-disabled') }}
+      </span>
+    </div>
   </div>
 </template>
 
 <script lang="ts">
 import type { SavedCredential } from "@shared/types/credential";
-import { Trash2 } from "lucide-vue-next";
+import { ShieldCheck, ShieldOff, Trash2 } from "lucide-vue-next";
 import { usePreferenceStore } from "@/store/preference";
 
 export default {
 	name: "mo-credential-manager",
-	components: { Trash2 },
+	components: { ShieldCheck, ShieldOff, Trash2 },
 	computed: {
 		credentials(): SavedCredential[] {
 			return usePreferenceStore().getSavedCredentials();
+		},
+		vaultEnabled(): boolean {
+			return usePreferenceStore().vaultEnabled;
 		},
 	},
 	methods: {

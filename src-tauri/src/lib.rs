@@ -154,6 +154,20 @@ pub fn run() {
             upload_mgr.set_event_sink(event_sink_clone.clone());
             let upload_mgr = Some(upload_mgr);
 
+            // Inject SFTP/FTP/WebDAV/S3 secrets stored in the OS keychain
+            // back into the upload manager. The on-disk records omit them
+            // (`skip_serializing` on the protocol Configs) so without this
+            // pass the user has to re-enter every password after a restart
+            {
+                let state = app.state::<state::AppState>();
+                let vault = state.vault.clone();
+                if let Some(mgr) = upload_mgr.clone() {
+                    tauri::async_runtime::spawn(async move {
+                        commands::upload_cmds::rehydrate_upload_sinks(&mgr, &vault).await;
+                    });
+                }
+            }
+
             if should_start {
                 let config_ref = config_guard.config.lock().unwrap();
                 let config_dir = config_ref.config_dir().to_path_buf();
@@ -325,6 +339,10 @@ pub fn run() {
             commands::upload_cmds::list_upload_jobs,
             commands::upload_cmds::cancel_upload_job,
             commands::upload_cmds::clear_upload_history,
+            commands::vault_cmds::vault_status,
+            commands::vault_cmds::vault_put_credential,
+            commands::vault_cmds::vault_get_credential,
+            commands::vault_cmds::vault_remove_credential,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Risuko");

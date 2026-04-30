@@ -1,5 +1,6 @@
 pub mod menu;
 pub mod tray;
+pub mod vault;
 
 use tauri::Emitter;
 

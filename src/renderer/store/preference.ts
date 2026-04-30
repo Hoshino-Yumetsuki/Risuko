@@ -4,7 +4,10 @@ import {
 	MAX_NUM_OF_SAVED_CREDENTIALS,
 } from "@shared/constants";
 import type { AppConfig } from "@shared/types/config";
-import type { SavedCredential } from "@shared/types/credential";
+import {
+	CREDENTIAL_SECRET_FIELDS,
+	type SavedCredential,
+} from "@shared/types/credential";
 import {
 	changeKeysToCamelCase,
 	changeKeysToKebabCase,
@@ -25,6 +28,7 @@ import { useTaskStore } from "@/store/task";
 export const usePreferenceStore = defineStore("preference", {
 	state: () => ({
 		engineMode: "MAX",
+		vaultEnabled: false,
 		config: {
 			locale: "en-US",
 		} as AppConfig,
@@ -39,6 +43,9 @@ export const usePreferenceStore = defineStore("preference", {
 			try {
 				const config = await api.fetchPreference();
 				this.updatePreference(config);
+				// Probe the vault before returning so callers awaiting fetchPreference
+				// observe the correct vaultEnabled state on the very next save
+				await this.fetchVaultStatus();
 				return config;
 			} catch (err: unknown) {
 				logger.warn("[Risuko] fetchPreference failed:", (err as Error).message);
@@ -135,29 +142,137 @@ export const usePreferenceStore = defineStore("preference", {
 					(b.lastUsedAt || 0) - (a.lastUsedAt || 0),
 			);
 		},
-		saveCredential(credential: SavedCredential) {
+		async fetchVaultStatus() {
+			try {
+				const { enabled } = await api.vaultStatus();
+				this.vaultEnabled = enabled;
+			} catch (err) {
+				logger.warn("[Risuko] vaultStatus failed:", (err as Error).message);
+				this.vaultEnabled = false;
+			}
+		},
+		/**
+		 * Split a credential into (metadata, secrets). Used when persisting:
+		 * metadata is stored inline in `user.json`, secrets go to the OS
+		 * keychain when the vault is available
+		 */
+		_splitCredentialSecrets(credential: SavedCredential): {
+			meta: SavedCredential;
+			secrets: Record<string, string>;
+		} {
+			const meta: SavedCredential = { ...credential };
+			const secrets: Record<string, string> = {};
+			for (const key of CREDENTIAL_SECRET_FIELDS) {
+				const val = meta[key];
+				if (typeof val === "string" && val.length > 0) {
+					secrets[key] = val;
+				}
+				meta[key] = undefined;
+			}
+			return { meta, secrets };
+		},
+		async saveCredential(credential: SavedCredential) {
 			const { savedCredentials = [] } = this.config;
+			let toStore: SavedCredential = credential;
+
+			if (this.vaultEnabled) {
+				const { meta, secrets } = this._splitCredentialSecrets(credential);
+				try {
+					if (Object.keys(secrets).length > 0) {
+						await api.vaultPutCredential(credential.id, secrets);
+					} else {
+						// No secret material — drop any prior vault entry
+						await api.vaultRemoveCredential(credential.id);
+					}
+					meta.vaulted = true;
+					toStore = meta;
+				} catch (err) {
+					logger.warn(
+						"[Risuko] vaultPutCredential failed, falling back to inline:",
+						(err as Error).message,
+					);
+					// Best-effort cleanup of any stale vault entry so that the
+					// inline fallback isn't silently shadowed by older keychain
+					// secrets the next time the credential is loaded
+					try {
+						await api.vaultRemoveCredential(credential.id);
+					} catch {
+						// already logged above; nothing else we can do here
+					}
+					toStore = { ...credential, vaulted: false };
+				}
+			}
+
 			const idx = savedCredentials.findIndex(
-				(c: SavedCredential) => c.id === credential.id,
+				(c: SavedCredential) => c.id === toStore.id,
 			);
 			let updated: SavedCredential[];
 			if (idx >= 0) {
 				updated = [...savedCredentials];
-				updated[idx] = credential;
+				updated[idx] = toStore;
 			} else {
-				updated = [credential, ...savedCredentials];
+				updated = [toStore, ...savedCredentials];
 				if (updated.length > MAX_NUM_OF_SAVED_CREDENTIALS) {
 					updated = updated.slice(0, MAX_NUM_OF_SAVED_CREDENTIALS);
 				}
 			}
-			this.save({ savedCredentials: updated });
+			await this.save({ savedCredentials: updated });
 		},
-		removeCredential(id: string) {
+		async removeCredential(id: string) {
 			const { savedCredentials = [] } = this.config;
+			const target = savedCredentials.find((c: SavedCredential) => c.id === id);
+			if (target?.vaulted) {
+				try {
+					await api.vaultRemoveCredential(id);
+				} catch (err) {
+					logger.warn(
+						"[Risuko] vaultRemoveCredential failed:",
+						(err as Error).message,
+					);
+				}
+			}
 			const updated = savedCredentials.filter(
 				(c: SavedCredential) => c.id !== id,
 			);
-			this.save({ savedCredentials: updated });
+			await this.save({ savedCredentials: updated });
+		},
+		/**
+		 * Lazily hydrate the secret fields of a vaulted credential from the
+		 * OS keychain. Returns a shallow copy with secrets populated; the
+		 * returned object is NOT cached in the store
+		 */
+		async loadCredentialSecrets(
+			credential: SavedCredential,
+		): Promise<SavedCredential> {
+			if (!credential.vaulted) {
+				return credential;
+			}
+			if (!this.vaultEnabled) {
+				// Stored credential expects the OS keychain but the backend is
+				// unreachable in this session. Surface the issue so the user
+				// understands why the form fields stay blank instead of failing
+				// silently mid-download
+				logger.warn(
+					`[Risuko] credential ${credential.id} is vaulted but the OS keychain is unavailable; secrets will not be applied.`,
+				);
+				return credential;
+			}
+			try {
+				const secrets = await api.vaultGetCredential(credential.id);
+				if (!secrets) {
+					logger.warn(
+						`[Risuko] credential ${credential.id} marked vaulted but no entry in OS keychain.`,
+					);
+					return credential;
+				}
+				return { ...credential, ...secrets };
+			} catch (err) {
+				logger.warn(
+					"[Risuko] vaultGetCredential failed:",
+					(err as Error).message,
+				);
+				return credential;
+			}
 		},
 		updateCredentialLastUsed(id: string) {
 			const { savedCredentials = [] } = this.config;

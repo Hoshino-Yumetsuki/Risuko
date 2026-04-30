@@ -789,6 +789,7 @@
 </template>
 
 <script lang="ts">
+import type { SavedCredential } from "@shared/types/credential";
 import type {
 	SinkConfig,
 	UploadJob,
@@ -846,6 +847,7 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from "@/components/ui/select";
+import { usePreferenceStore } from "@/store/preference";
 import { useUploadSinkStore } from "@/store/uploadSink";
 
 interface FormState {
@@ -1306,13 +1308,15 @@ export default defineComponent({
 						moveTarget: this.form.moveTarget || null,
 					};
 					await this.store.updateSink(updated);
+					await this.syncCredential(updated);
 				} else {
-					await this.store.addSink({
+					const created = await this.store.addSink({
 						label: this.form.label.trim(),
 						config,
 						postAction: this.form.postAction,
 						moveTarget: this.form.moveTarget || null,
 					});
+					await this.syncCredential(created);
 				}
 				this.dialogOpen = false;
 			} catch (e) {
@@ -1333,6 +1337,7 @@ export default defineComponent({
 			this.removingSink = null;
 			try {
 				await this.store.removeSink(id);
+				await usePreferenceStore().removeCredential(id);
 				toast.success(this.$t("cloudSinks.removed", { label }) as string);
 			} catch (e) {
 				toast.error(String((e as Error)?.message || e));
@@ -1353,6 +1358,81 @@ export default defineComponent({
 		},
 		async onSetDefault(id: string) {
 			await this.store.setDefaultSink(id);
+		},
+		mapSinkToCredential(record: UploadSinkRecord): SavedCredential | null {
+			const now = Date.now();
+			const base = {
+				id: record.id,
+				label: record.label,
+				createdAt: now,
+				lastUsedAt: now,
+			};
+			const c = record.config;
+			if (c.kind === "sftp") {
+				return {
+					...base,
+					host: c.host,
+					protocol: "sftp",
+					ftpUser: c.username,
+					ftpPasswd: c.password || "",
+					sftpPrivateKey: c.privateKey || "",
+					sftpPrivateKeyContent: c.privateKey || "",
+				} as SavedCredential;
+			}
+			if (c.kind === "ftp") {
+				return {
+					...base,
+					host: c.host,
+					protocol: "ftp",
+					ftpUser: c.username || "",
+					ftpPasswd: c.password || "",
+				} as SavedCredential;
+			}
+			return null;
+		},
+		async syncCredential(record: UploadSinkRecord) {
+			const preferenceStore = usePreferenceStore();
+			const mapped = this.mapSinkToCredential(record);
+			if (!mapped) {
+				await preferenceStore.removeCredential(record.id);
+				return;
+			}
+			const existing = preferenceStore
+				.getSavedCredentials()
+				.find((c: SavedCredential) => c.id === record.id);
+			if (existing) {
+				const credential: SavedCredential = { ...existing, ...mapped };
+				const secretFields: (keyof SavedCredential)[] = [
+					"authorization",
+					"cookie",
+					"ftpUser",
+					"ftpPasswd",
+					"sftpPrivateKey",
+					"sftpPrivateKeyContent",
+					"sftpKeyPassphrase",
+					"allProxy",
+				];
+				const mappedRec = mapped as unknown as Record<
+					string,
+					string | undefined
+				>;
+				const existingRec = existing as unknown as Record<
+					string,
+					string | undefined
+				>;
+				const credentialRec = credential as unknown as Record<
+					string,
+					string | undefined
+				>;
+				for (const key of secretFields) {
+					if (!mappedRec[key] && existingRec[key]) {
+						credentialRec[key] = existingRec[key];
+					}
+				}
+				await preferenceStore.saveCredential(credential);
+			} else {
+				await preferenceStore.saveCredential(mapped);
+			}
 		},
 		jobStatusLabel(status: UploadJobStatus): string {
 			const map: Record<UploadJobStatus, string> = {

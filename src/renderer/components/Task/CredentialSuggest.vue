@@ -123,8 +123,8 @@ export default {
 		},
 	},
 	methods: {
-		handleApply(credential: SavedCredential) {
-			applyCredentialToForm(this.form, credential);
+		async handleApply(credential: SavedCredential) {
+			await applyCredentialToForm(this.form, credential);
 			usePreferenceStore().updateCredentialLastUsed(credential.id);
 			this.$msg.success({
 				message: this.$t("task.credential-applied"),

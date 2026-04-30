@@ -275,12 +275,19 @@ export function extractProtocolFromUri(uri: string): string | undefined {
 	return "http";
 }
 
-export function applyCredentialToForm(
+export async function applyCredentialToForm(
 	form: TaskForm,
 	credential: SavedCredential,
-): void {
+): Promise<void> {
+	let source: SavedCredential = credential;
+	if (credential.vaulted) {
+		// Lazily hydrate secrets from the OS keychain. Imported inline to
+		// avoid a top-level cycle between utils and the preference store.
+		const { usePreferenceStore } = await import("@/store/preference");
+		source = await usePreferenceStore().loadCredentialSecrets(credential);
+	}
 	for (const key of AUTH_FIELDS) {
-		const val = credential[key];
+		const val = source[key];
 		if (typeof val === "string" && val.trim()) {
 			form[key] = val;
 		}

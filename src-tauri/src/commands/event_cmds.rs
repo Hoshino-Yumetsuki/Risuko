@@ -143,6 +143,37 @@ fn format_speed(bytes: u64) -> String {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::format_speed;
+
+    #[test]
+    fn format_speed_bytes() {
+        assert_eq!(format_speed(0), "0 B");
+        assert_eq!(format_speed(512), "512 B");
+        assert_eq!(format_speed(1023), "1023 B");
+    }
+
+    #[test]
+    fn format_speed_kb() {
+        assert_eq!(format_speed(1024), "1.0 KB");
+        assert_eq!(format_speed(1536), "1.5 KB");
+        assert_eq!(format_speed(1024 * 1024 - 1), "1024.0 KB");
+    }
+
+    #[test]
+    fn format_speed_mb() {
+        assert_eq!(format_speed(1024 * 1024), "1.0 MB");
+        assert_eq!(format_speed(1024 * 1024 * 15), "15.0 MB");
+    }
+
+    #[test]
+    fn format_speed_gb() {
+        assert_eq!(format_speed(1024 * 1024 * 1024), "1.0 GB");
+        assert_eq!(format_speed(1024 * 1024 * 1024 * 3), "3.0 GB");
+    }
+}
+
 fn apply_download_inhibit(downloading: bool) {
     #[cfg(target_os = "windows")]
     {

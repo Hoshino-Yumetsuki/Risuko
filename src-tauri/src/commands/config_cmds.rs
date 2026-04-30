@@ -191,3 +191,208 @@ fn apply_open_at_login(handle: &AppHandle, enabled: bool) -> Result<(), String> 
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    // -- normalize_proxy_bypass --
+
+    #[test]
+    fn normalize_proxy_bypass_empty() {
+        assert_eq!(normalize_proxy_bypass(""), "");
+    }
+
+    #[test]
+    fn normalize_proxy_bypass_comma_and_newline() {
+        assert_eq!(
+            normalize_proxy_bypass("localhost, 127.0.0.1\n::1 , 192.168.1.1"),
+            "localhost,127.0.0.1,::1,192.168.1.1"
+        );
+    }
+
+    #[test]
+    fn normalize_proxy_bypass_trims_and_deduplicates_no_op() {
+        // Normalization does not deduplicate; it only trims and filters empties
+        assert_eq!(normalize_proxy_bypass("a, a, b"), "a,a,b");
+    }
+
+    // -- contains_download_scope --
+
+    #[test]
+    fn contains_download_scope_none() {
+        assert!(!contains_download_scope(None));
+    }
+
+    #[test]
+    fn contains_download_scope_missing() {
+        assert!(!contains_download_scope(Some(&json!("download"))));
+    }
+
+    #[test]
+    fn contains_download_scope_empty_array() {
+        assert!(!contains_download_scope(Some(&json!([]))));
+    }
+
+    #[test]
+    fn contains_download_scope_present() {
+        assert!(contains_download_scope(Some(&json!(["download"]))));
+    }
+
+    #[test]
+    fn contains_download_scope_present_with_spaces() {
+        assert!(contains_download_scope(Some(&json!(["  download  "]))));
+    }
+
+    #[test]
+    fn contains_download_scope_mixed_array() {
+        assert!(contains_download_scope(Some(&json!([
+            "update", "download"
+        ]))));
+    }
+
+    #[test]
+    fn contains_download_scope_no_match() {
+        assert!(!contains_download_scope(Some(&json!([
+            "update", "tracker"
+        ]))));
+    }
+
+    // -- prepare_preference_patch --
+
+    #[test]
+    fn prepare_non_object_returns_empty_map() {
+        let result = prepare_preference_patch(json!("string")).unwrap();
+        let map = result.as_object().unwrap();
+        assert!(map.is_empty());
+    }
+
+    #[test]
+    fn prepare_keep_seeding_false_zeroes_seed_options() {
+        let result = prepare_preference_patch(json!({"keep-seeding": false})).unwrap();
+        let map = result.as_object().unwrap();
+        assert_eq!(map.get("seed-time"), Some(&json!(0)));
+        assert_eq!(map.get("seed-ratio"), Some(&json!(0)));
+    }
+
+    #[test]
+    fn prepare_keep_seeding_true_leaves_seed_options_unchanged() {
+        let result = prepare_preference_patch(json!({"keep-seeding": true})).unwrap();
+        let map = result.as_object().unwrap();
+        assert!(!map.contains_key("seed-time"));
+        assert!(!map.contains_key("seed-ratio"));
+    }
+
+    #[test]
+    fn prepare_keep_seeding_string_true() {
+        let result = prepare_preference_patch(json!({"keep-seeding": "true"})).unwrap();
+        let map = result.as_object().unwrap();
+        assert!(!map.contains_key("seed-time"));
+    }
+
+    #[test]
+    fn prepare_use_remote_file_time_bool() {
+        let result = prepare_preference_patch(json!({"use-remote-file-time": true})).unwrap();
+        let map = result.as_object().unwrap();
+        assert_eq!(map.get("remote-time"), Some(&json!(true)));
+    }
+
+    #[test]
+    fn prepare_use_remote_file_time_string() {
+        let result = prepare_preference_patch(json!({"use-remote-file-time": "true"})).unwrap();
+        let map = result.as_object().unwrap();
+        assert_eq!(map.get("remote-time"), Some(&json!(true)));
+    }
+
+    #[test]
+    fn prepare_use_remote_file_time_false_string() {
+        let result = prepare_preference_patch(json!({"use-remote-file-time": "false"})).unwrap();
+        let map = result.as_object().unwrap();
+        assert_eq!(map.get("remote-time"), Some(&json!(false)));
+    }
+
+    #[test]
+    fn prepare_proxy_disabled_clears_all_proxy() {
+        let result = prepare_preference_patch(json!({
+            "proxy": {
+                "enable": false,
+                "server": "http://proxy.example.com:8080",
+                "scope": ["download"]
+            }
+        }))
+        .unwrap();
+        let map = result.as_object().unwrap();
+        assert_eq!(map.get("all-proxy"), Some(&json!("")));
+        assert_eq!(map.get("no-proxy"), Some(&json!("")));
+    }
+
+    #[test]
+    fn prepare_proxy_enabled_with_download_scope_sets_all_proxy() {
+        let result = prepare_preference_patch(json!({
+            "proxy": {
+                "enable": true,
+                "server": "http://proxy.example.com:8080",
+                "scope": ["download"],
+                "bypass": "localhost, 127.0.0.1"
+            }
+        }))
+        .unwrap();
+        let map = result.as_object().unwrap();
+        assert_eq!(
+            map.get("all-proxy"),
+            Some(&json!("http://proxy.example.com:8080"))
+        );
+        assert_eq!(map.get("no-proxy"), Some(&json!("localhost,127.0.0.1")));
+    }
+
+    #[test]
+    fn prepare_proxy_enabled_without_server_clears_all_proxy() {
+        let result = prepare_preference_patch(json!({
+            "proxy": {
+                "enable": true,
+                "server": "",
+                "scope": ["download"]
+            }
+        }))
+        .unwrap();
+        let map = result.as_object().unwrap();
+        assert_eq!(map.get("all-proxy"), Some(&json!("")));
+    }
+
+    #[test]
+    fn prepare_proxy_enabled_without_download_scope_clears_all_proxy() {
+        let result = prepare_preference_patch(json!({
+            "proxy": {
+                "enable": true,
+                "server": "http://proxy.example.com:8080",
+                "scope": ["update"]
+            }
+        }))
+        .unwrap();
+        let map = result.as_object().unwrap();
+        assert_eq!(map.get("all-proxy"), Some(&json!("")));
+        assert_eq!(map.get("no-proxy"), Some(&json!("")));
+    }
+
+    #[test]
+    fn prepare_proxy_missing_scope_treats_as_no_download() {
+        let result = prepare_preference_patch(json!({
+            "proxy": {
+                "enable": true,
+                "server": "http://proxy.example.com:8080"
+            }
+        }))
+        .unwrap();
+        let map = result.as_object().unwrap();
+        assert_eq!(map.get("all-proxy"), Some(&json!("")));
+    }
+
+    #[test]
+    fn prepare_preserves_unrelated_keys() {
+        let result = prepare_preference_patch(json!({"theme": "dark", "locale": "en-US"})).unwrap();
+        let map = result.as_object().unwrap();
+        assert_eq!(map.get("theme"), Some(&json!("dark")));
+        assert_eq!(map.get("locale"), Some(&json!("en-US")));
+    }
+}

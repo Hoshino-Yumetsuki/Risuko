@@ -206,23 +206,6 @@ export const TRAY_CANVAS_CONFIG = {
 	TEXT_FONT_SIZE: 8,
 };
 
-const COMMON_RESOURCE_TAGS = [
-	"http://",
-	"https://",
-	"ftp://",
-	"ftps://",
-	"sftp://",
-	"file://",
-	"magnet:",
-	"ed2k://",
-];
-const THUNDER_RESOURCE_TAGS = ["thunder://"];
-
-export const RESOURCE_TAGS = [
-	...COMMON_RESOURCE_TAGS,
-	...THUNDER_RESOURCE_TAGS,
-];
-
 export const SUPPORT_RTL_LOCALES = [
 	/* 'العربية', Arabic */
 	"ar",

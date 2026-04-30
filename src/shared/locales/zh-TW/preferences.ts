@@ -198,4 +198,8 @@ export default {
 	"credential-last-used": "上次使用",
 	"credential-delete": "刪除憑證",
 	"credential-delete-confirm": "確定要刪除此儲存的憑證嗎？",
+	"vault-enabled": "憑證已加密儲存在系統鑰匙圈中",
+	"vault-disabled": "系統鑰匙圈不可用，憑證將以明文儲存",
+	"credential-encrypted-badge": "已儲存在系統鑰匙圈中",
+	"credential-vault-unavailable": "系統鑰匙圈不可用；新憑證將以明文儲存",
 };

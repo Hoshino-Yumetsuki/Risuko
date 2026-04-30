@@ -1,17 +1,17 @@
 import { SELECTED_ALL_FILES } from "@shared/constants";
 
-export type BatchItemKind = "torrent" | "uri" | "magnet";
+type BatchItemKind = "torrent" | "uri" | "magnet";
 
-export type BatchItemStatus = "queued" | "submitting" | "success" | "failed";
+type BatchItemStatus = "queued" | "submitting" | "success" | "failed";
 
-export type BatchItemResolveState =
+type BatchItemResolveState =
 	| "idle"
 	| "loading"
 	| "ready"
 	| "error"
 	| "preview-disabled";
 
-export interface BatchItemFileSummary {
+interface BatchItemFileSummary {
 	idx: number;
 	name: string;
 	path: string;
