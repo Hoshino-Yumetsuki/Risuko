@@ -648,4 +648,24 @@ export default class Api {
 	clearUploadHistory() {
 		return invoke("clear_upload_history");
 	}
+
+	// -- Credential vault (OS keychain) --
+
+	vaultStatus() {
+		return invoke<{ enabled: boolean; backend: string }>("vault_status");
+	}
+
+	vaultPutCredential(id: string, secrets: Record<string, string | undefined>) {
+		return invoke("vault_put_credential", { id, secrets });
+	}
+
+	vaultGetCredential(id: string) {
+		return invoke<Record<string, string> | null>("vault_get_credential", {
+			id,
+		});
+	}
+
+	vaultRemoveCredential(id: string) {
+		return invoke("vault_remove_credential", { id });
+	}
 }

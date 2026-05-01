@@ -7,12 +7,15 @@ use risuko_engine::engine::rss::RssManager;
 use risuko_engine::engine::upload::UploadSinkManager;
 use risuko_engine::traits::StorageBackend;
 
+use crate::managers::vault::VaultManager;
+
 pub struct AppState {
     pub config: Mutex<ConfigManager>,
     pub engine_running: Mutex<bool>,
     pub is_quitting: AtomicBool,
     pub rss: Mutex<Option<Arc<RssManager>>>,
     pub upload_sinks: Mutex<Option<Arc<UploadSinkManager>>>,
+    pub vault: Arc<VaultManager>,
     pub log_dir: PathBuf,
     /// Keeps the file logger alive; dropped when AppState is dropped.
     pub _log_guard: Option<tracing_appender::non_blocking::WorkerGuard>,
@@ -40,6 +43,7 @@ impl AppState {
             is_quitting: AtomicBool::new(false),
             rss: Mutex::new(Some(Arc::new(rss_manager))),
             upload_sinks: Mutex::new(Some(Arc::new(upload_manager))),
+            vault: Arc::new(VaultManager::new()),
             log_dir,
             _log_guard: Some(log_guard),
         })

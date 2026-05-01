@@ -213,4 +213,9 @@ export default {
 	"credential-delete": "Delete Credential",
 	"credential-delete-confirm":
 		"Are you sure you want to delete this saved credential?",
+	"vault-enabled": "Secrets stored in OS keychain",
+	"vault-disabled": "OS keychain unavailable — secrets stored in plaintext",
+	"credential-encrypted-badge": "Stored in OS keychain",
+	"credential-vault-unavailable":
+		"OS keychain not reachable; new credentials will be saved in plaintext",
 };

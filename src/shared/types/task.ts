@@ -1,4 +1,4 @@
-export interface FileUri {
+interface FileUri {
 	uri: string;
 	status: string;
 }
@@ -12,7 +12,7 @@ export interface DownloadFile {
 	uris: FileUri[];
 }
 
-export interface BitTorrentInfo {
+interface BitTorrentInfo {
 	info?: {
 		name?: string;
 	};

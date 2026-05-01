@@ -187,7 +187,6 @@ export default {
 	"auto-update": "自动更新",
 	"auto-check-update": "自动检查更新",
 	"last-check-update-time": "上次检查更新时间",
-	"follow-torrent": "种子下载完后自动下载种子内容",
 	"not-saved": "设置未保存",
 	"not-saved-confirm": "已修改的设置将会丢失，确定要离开吗?",
 	"saved-credentials": "已保存的凭据",
@@ -199,4 +198,8 @@ export default {
 	"credential-last-used": "上次使用",
 	"credential-delete": "删除凭据",
 	"credential-delete-confirm": "确定要删除此保存的凭据吗？",
+	"vault-enabled": "凭据已加密存储在系统钥匙串中",
+	"vault-disabled": "系统钥匙串不可用，凭据将以明文存储",
+	"credential-encrypted-badge": "已存储在系统钥匙串中",
+	"credential-vault-unavailable": "系统钥匙串不可用；新凭据将以明文保存",
 };

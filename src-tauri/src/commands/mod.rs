@@ -5,3 +5,4 @@ pub mod event_cmds;
 pub mod file_cmds;
 pub mod rss_cmds;
 pub mod upload_cmds;
+pub mod vault_cmds;

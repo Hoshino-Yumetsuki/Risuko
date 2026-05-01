@@ -203,6 +203,7 @@ export default {
 	"dont-save-credential": "Don't Save",
 	"credential-saved": "Credentials saved",
 	"credential-applied": "Credentials applied",
+	"credential-apply-failed": "Failed to apply credentials",
 	"credential-profile-name": "Profile Name",
 	"credential-profile-name-placeholder": "e.g. Work FTP, CDN Token",
 	"no-saved-credentials": "No saved credentials",

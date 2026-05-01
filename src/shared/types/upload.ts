@@ -3,7 +3,7 @@
 
 export type UploadProtocol = "webdav" | "s3" | "sftp" | "ftp";
 
-export interface WebdavConfig {
+interface WebdavConfig {
 	endpoint: string;
 	basePath: string;
 	username?: string;
@@ -11,7 +11,7 @@ export interface WebdavConfig {
 	insecure?: boolean;
 }
 
-export interface S3Config {
+interface S3Config {
 	endpoint: string;
 	region: string;
 	bucket: string;
@@ -23,7 +23,7 @@ export interface S3Config {
 	forcePathStyle?: boolean;
 }
 
-export interface SftpConfig {
+interface SftpConfig {
 	host: string;
 	port: number;
 	username: string;
@@ -32,7 +32,7 @@ export interface SftpConfig {
 	basePath?: string;
 }
 
-export interface FtpConfig {
+interface FtpConfig {
 	host: string;
 	port: number;
 	username?: string;
@@ -48,7 +48,7 @@ export type SinkConfig =
 	| ({ kind: "sftp" } & SftpConfig)
 	| ({ kind: "ftp" } & FtpConfig);
 
-export type PostUploadAction = "keep" | "trash" | "move";
+type PostUploadAction = "keep" | "trash" | "move";
 
 export interface UploadSinkRecord {
 	id: string;
@@ -60,7 +60,7 @@ export interface UploadSinkRecord {
 	lastUsedAt?: number | null;
 }
 
-export interface RuleMatch {
+interface RuleMatch {
 	categories: string[];
 	extensions: string[];
 	minSize?: number | null;

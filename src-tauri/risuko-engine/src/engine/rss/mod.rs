@@ -650,3 +650,464 @@ fn matches_pattern(pattern: &str, is_regex: bool, text: &str) -> bool {
         lower_text.contains(&lower_pattern)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::traits::{FileStorage, NoopEventSink};
+    use tempfile::TempDir;
+
+    struct RssTestCtx {
+        _dir: TempDir,
+        mgr: RssManager,
+    }
+
+    fn test_manager() -> RssTestCtx {
+        let dir = TempDir::new().unwrap();
+        let storage: Arc<dyn StorageBackend> = Arc::new(FileStorage::new(dir.path().to_path_buf()));
+        let event_sink: Arc<dyn EventSink> = Arc::new(NoopEventSink);
+        let mgr = RssManager::new(storage, event_sink);
+        RssTestCtx { _dir: dir, mgr }
+    }
+
+    fn sample_feed(id: &str, url: &str) -> RssFeed {
+        RssFeed {
+            id: id.into(),
+            url: url.into(),
+            title: "Test Feed".into(),
+            site_link: "https://example.com".into(),
+            description: "desc".into(),
+            update_interval_secs: DEFAULT_UPDATE_INTERVAL_SECS,
+            last_fetched_at: None,
+            created_at: 1,
+            is_active: true,
+            error_count: 0,
+        }
+    }
+
+    fn sample_item(feed_id: &str, item_id: &str, title: &str) -> RssItem {
+        RssItem {
+            id: item_id.into(),
+            feed_id: feed_id.into(),
+            title: title.into(),
+            link: "https://example.com/item".into(),
+            pub_date: Some(12345),
+            description: "desc".into(),
+            enclosure_url: Some("https://example.com/file.torrent".into()),
+            enclosure_type: None,
+            enclosure_length: None,
+            is_read: false,
+            is_downloaded: false,
+            download_path: None,
+        }
+    }
+
+    // -- Pure helpers --
+
+    #[test]
+    fn item_id_is_deterministic() {
+        let a = item_id("hello");
+        let b = item_id("hello");
+        let c = item_id("world");
+        assert_eq!(a, b);
+        assert_ne!(a, c);
+        assert_eq!(a.len(), 64); // SHA-256 hex
+    }
+
+    #[test]
+    fn matches_pattern_substring() {
+        assert!(matches_pattern("hello", false, "Hello World"));
+        assert!(!matches_pattern("xyz", false, "Hello World"));
+    }
+
+    #[test]
+    fn matches_pattern_regex() {
+        assert!(matches_pattern(r"\d+", true, "Episode 42"));
+        assert!(!matches_pattern(r"^\d+$", true, "Episode 42"));
+    }
+
+    #[test]
+    fn matches_pattern_invalid_regex_returns_false() {
+        assert!(!matches_pattern(r"[invalid", true, "text"));
+    }
+
+    // -- RssManager CRUD --
+
+    #[test]
+    fn get_feeds_returns_populated() {
+        let ctx = test_manager();
+        let mgr = &ctx.mgr;
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        {
+            let mut s = mgr.store.blocking_lock();
+            s.feeds.push(sample_feed("f1", "https://a.com"));
+        }
+        let feeds = rt.block_on(mgr.get_feeds());
+        assert_eq!(feeds.len(), 1);
+        assert_eq!(feeds[0].id, "f1");
+    }
+
+    #[test]
+    fn get_items_returns_feed_items() {
+        let ctx = test_manager();
+        let mgr = &ctx.mgr;
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        {
+            let mut s = mgr.store.blocking_lock();
+            s.feeds.push(sample_feed("f1", "https://a.com"));
+            s.items
+                .insert("f1".into(), vec![sample_item("f1", "i1", "Item 1")]);
+        }
+        let items = rt.block_on(mgr.get_items("f1"));
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].title, "Item 1");
+    }
+
+    #[test]
+    fn get_items_missing_feed_returns_empty() {
+        let ctx = test_manager();
+        let mgr = &ctx.mgr;
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let items = rt.block_on(mgr.get_items("none"));
+        assert!(items.is_empty());
+    }
+
+    #[test]
+    fn remove_feed_deletes_items_and_rules() {
+        let ctx = test_manager();
+        let mgr = &ctx.mgr;
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        {
+            let mut s = mgr.store.blocking_lock();
+            s.feeds.push(sample_feed("f1", "https://a.com"));
+            s.items
+                .insert("f1".into(), vec![sample_item("f1", "i1", "Item 1")]);
+            s.rules.push(RssRule {
+                id: "r1".into(),
+                feed_id: Some("f1".into()),
+                name: "Rule".into(),
+                pattern: "*".into(),
+                is_regex: false,
+                is_active: true,
+                auto_download: true,
+                download_dir: None,
+            });
+        }
+        rt.block_on(mgr.remove_feed("f1")).unwrap();
+        let feeds = rt.block_on(mgr.get_feeds());
+        assert!(feeds.is_empty());
+        let items = rt.block_on(mgr.get_items("f1"));
+        assert!(items.is_empty());
+        let rules = rt.block_on(mgr.get_rules());
+        assert!(rules.is_empty());
+    }
+
+    #[test]
+    fn update_feed_settings_changes_interval_and_active() {
+        let ctx = test_manager();
+        let mgr = &ctx.mgr;
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        {
+            let mut s = mgr.store.blocking_lock();
+            s.feeds.push(sample_feed("f1", "https://a.com"));
+        }
+        rt.block_on(mgr.update_feed_settings("f1", Some(60), Some(false)))
+            .unwrap();
+        let feeds = rt.block_on(mgr.get_feeds());
+        assert_eq!(feeds[0].update_interval_secs, 60);
+        assert!(!feeds[0].is_active);
+    }
+
+    #[test]
+    fn update_feed_settings_not_found() {
+        let ctx = test_manager();
+        let mgr = &ctx.mgr;
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let err = rt
+            .block_on(mgr.update_feed_settings("none", Some(60), None))
+            .unwrap_err();
+        assert!(err.contains("not found"));
+    }
+
+    #[test]
+    fn mark_item_downloaded_updates_state() {
+        let ctx = test_manager();
+        let mgr = &ctx.mgr;
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        {
+            let mut s = mgr.store.blocking_lock();
+            s.feeds.push(sample_feed("f1", "https://a.com"));
+            s.items
+                .insert("f1".into(), vec![sample_item("f1", "i1", "Item 1")]);
+        }
+        rt.block_on(mgr.mark_item_downloaded("f1", "i1", Some("/downloads/file.txt".into())))
+            .unwrap();
+        let items = rt.block_on(mgr.get_items("f1"));
+        assert!(items[0].is_downloaded);
+        assert!(items[0].is_read);
+        assert_eq!(items[0].download_path, Some("/downloads/file.txt".into()));
+    }
+
+    #[test]
+    fn get_item_download_url_prefers_enclosure() {
+        let ctx = test_manager();
+        let mgr = &ctx.mgr;
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        {
+            let mut s = mgr.store.blocking_lock();
+            s.feeds.push(sample_feed("f1", "https://a.com"));
+            let mut item = sample_item("f1", "i1", "Item 1");
+            item.enclosure_url = Some("https://enc.example.com/file.torrent".into());
+            item.link = "https://link.example.com/".into();
+            s.items.insert("f1".into(), vec![item]);
+        }
+        let url = rt.block_on(mgr.get_item_download_url("f1", "i1")).unwrap();
+        assert_eq!(url, "https://enc.example.com/file.torrent");
+    }
+
+    #[test]
+    fn get_item_download_url_falls_back_to_link() {
+        let ctx = test_manager();
+        let mgr = &ctx.mgr;
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        {
+            let mut s = mgr.store.blocking_lock();
+            s.feeds.push(sample_feed("f1", "https://a.com"));
+            let mut item = sample_item("f1", "i1", "Item 1");
+            item.enclosure_url = None;
+            item.link = "https://link.example.com/".into();
+            s.items.insert("f1".into(), vec![item]);
+        }
+        let url = rt.block_on(mgr.get_item_download_url("f1", "i1")).unwrap();
+        assert_eq!(url, "https://link.example.com/");
+    }
+
+    #[test]
+    fn get_item_download_url_no_url() {
+        let ctx = test_manager();
+        let mgr = &ctx.mgr;
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        {
+            let mut s = mgr.store.blocking_lock();
+            s.feeds.push(sample_feed("f1", "https://a.com"));
+            let mut item = sample_item("f1", "i1", "Item 1");
+            item.enclosure_url = None;
+            item.link = String::new();
+            s.items.insert("f1".into(), vec![item]);
+        }
+        let err = rt
+            .block_on(mgr.get_item_download_url("f1", "i1"))
+            .unwrap_err();
+        assert!(err.contains("No downloadable URL"));
+    }
+
+    #[test]
+    fn add_rule_generates_id_and_validates_regex() {
+        let ctx = test_manager();
+        let mgr = &ctx.mgr;
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let rule = RssRule {
+            id: String::new(),
+            feed_id: None,
+            name: "Global".into(),
+            pattern: r".*".into(),
+            is_regex: true,
+            is_active: true,
+            auto_download: false,
+            download_dir: None,
+        };
+        let created = rt.block_on(mgr.add_rule(rule)).unwrap();
+        assert!(!created.id.is_empty());
+        let rules = rt.block_on(mgr.get_rules());
+        assert_eq!(rules.len(), 1);
+    }
+
+    #[test]
+    fn add_rule_rejects_invalid_regex() {
+        let ctx = test_manager();
+        let mgr = &ctx.mgr;
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let rule = RssRule {
+            id: String::new(),
+            feed_id: None,
+            name: "Bad".into(),
+            pattern: r"[bad".into(),
+            is_regex: true,
+            is_active: true,
+            auto_download: false,
+            download_dir: None,
+        };
+        let err = rt.block_on(mgr.add_rule(rule)).unwrap_err();
+        assert!(err.contains("Invalid regex"));
+    }
+
+    #[test]
+    fn remove_rule_deletes() {
+        let ctx = test_manager();
+        let mgr = &ctx.mgr;
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let rule = RssRule {
+            id: String::new(),
+            feed_id: None,
+            name: "Rule".into(),
+            pattern: "test".into(),
+            is_regex: false,
+            is_active: true,
+            auto_download: true,
+            download_dir: None,
+        };
+        let created = rt.block_on(mgr.add_rule(rule)).unwrap();
+        rt.block_on(mgr.remove_rule(&created.id)).unwrap();
+        let rules = rt.block_on(mgr.get_rules());
+        assert!(rules.is_empty());
+    }
+
+    #[test]
+    fn match_rules_substring() {
+        let ctx = test_manager();
+        let mgr = &ctx.mgr;
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(mgr.add_rule(RssRule {
+            id: "r1".into(),
+            feed_id: Some("f1".into()),
+            name: "Match".into(),
+            pattern: "hello".into(),
+            is_regex: false,
+            is_active: true,
+            auto_download: true,
+            download_dir: None,
+        }))
+        .unwrap();
+        let item = RssItem {
+            id: "i1".into(),
+            feed_id: "f1".into(),
+            title: "Hello World".into(),
+            link: String::new(),
+            pub_date: None,
+            description: String::new(),
+            enclosure_url: None,
+            enclosure_type: None,
+            enclosure_length: None,
+            is_read: false,
+            is_downloaded: false,
+            download_path: None,
+        };
+        let matched = rt.block_on(mgr.match_rules(&item));
+        assert!(matched.is_some());
+    }
+
+    #[test]
+    fn match_rules_respects_feed_scope() {
+        let ctx = test_manager();
+        let mgr = &ctx.mgr;
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(mgr.add_rule(RssRule {
+            id: "r1".into(),
+            feed_id: Some("f1".into()),
+            name: "Scope".into(),
+            pattern: "hello".into(),
+            is_regex: false,
+            is_active: true,
+            auto_download: true,
+            download_dir: None,
+        }))
+        .unwrap();
+        let item = RssItem {
+            id: "i1".into(),
+            feed_id: "f2".into(),
+            title: "Hello World".into(),
+            link: String::new(),
+            pub_date: None,
+            description: String::new(),
+            enclosure_url: None,
+            enclosure_type: None,
+            enclosure_length: None,
+            is_read: false,
+            is_downloaded: false,
+            download_path: None,
+        };
+        let matched = rt.block_on(mgr.match_rules(&item));
+        assert!(matched.is_none());
+    }
+
+    #[test]
+    fn match_rules_skips_inactive() {
+        let ctx = test_manager();
+        let mgr = &ctx.mgr;
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(mgr.add_rule(RssRule {
+            id: "r1".into(),
+            feed_id: None,
+            name: "Inactive".into(),
+            pattern: "hello".into(),
+            is_regex: false,
+            is_active: false,
+            auto_download: true,
+            download_dir: None,
+        }))
+        .unwrap();
+        let item = RssItem {
+            id: "i1".into(),
+            feed_id: "f1".into(),
+            title: "Hello World".into(),
+            link: String::new(),
+            pub_date: None,
+            description: String::new(),
+            enclosure_url: None,
+            enclosure_type: None,
+            enclosure_length: None,
+            is_read: false,
+            is_downloaded: false,
+            download_path: None,
+        };
+        let matched = rt.block_on(mgr.match_rules(&item));
+        assert!(matched.is_none());
+    }
+
+    #[test]
+    fn delete_items_removes_selected() {
+        let ctx = test_manager();
+        let mgr = &ctx.mgr;
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        {
+            let mut s = mgr.store.blocking_lock();
+            s.feeds.push(sample_feed("f1", "https://a.com"));
+            s.items.insert(
+                "f1".into(),
+                vec![
+                    sample_item("f1", "i1", "A"),
+                    sample_item("f1", "i2", "B"),
+                    sample_item("f1", "i3", "C"),
+                ],
+            );
+        }
+        rt.block_on(mgr.delete_items(vec![("f1".into(), vec!["i1".into(), "i3".into()])]))
+            .unwrap();
+        let items = rt.block_on(mgr.get_items("f1"));
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].id, "i2");
+    }
+
+    #[test]
+    fn load_and_save_round_trip() {
+        let dir = TempDir::new().unwrap();
+        let storage: Arc<dyn StorageBackend> = Arc::new(FileStorage::new(dir.path().to_path_buf()));
+        let event_sink: Arc<dyn EventSink> = Arc::new(NoopEventSink);
+        let mgr = RssManager::new(storage.clone(), event_sink.clone());
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        {
+            let mut s = mgr.store.blocking_lock();
+            s.feeds.push(sample_feed("f1", "https://a.com"));
+            s.items
+                .insert("f1".into(), vec![sample_item("f1", "i1", "Item")]);
+        }
+        rt.block_on(mgr.save()).unwrap();
+
+        let mgr2 = RssManager::new(storage, event_sink);
+        mgr2.load().unwrap();
+        let feeds = rt.block_on(mgr2.get_feeds());
+        assert_eq!(feeds.len(), 1);
+        let items = rt.block_on(mgr2.get_items("f1"));
+        assert_eq!(items.len(), 1);
+    }
+}

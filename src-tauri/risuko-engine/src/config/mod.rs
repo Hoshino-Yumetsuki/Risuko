@@ -202,6 +202,7 @@ fn parse_f64_like(value: Option<&Value>) -> Option<f64> {
 mod tests {
     use super::*;
     use serde_json::json;
+    use tempfile::TempDir;
 
     // -- parse_keep_seeding_option --
 
@@ -221,5 +222,118 @@ mod tests {
                 s
             );
         }
+    }
+
+    // -- ConfigManager --
+
+    #[test]
+    fn config_manager_with_dir_uses_defaults_when_missing() {
+        let dir = TempDir::new().unwrap();
+        let mgr = ConfigManager::with_dir(dir.path().to_path_buf()).unwrap();
+        // Defaults should be present when files are missing
+        assert!(mgr.get_system_config().contains_key("all-proxy"));
+        assert!(mgr.get_user_config().contains_key("theme"));
+    }
+
+    #[test]
+    fn get_merged_config_combines_system_and_user() {
+        let dir = TempDir::new().unwrap();
+        let mut mgr = ConfigManager::with_dir(dir.path().to_path_buf()).unwrap();
+        mgr.set_system_config_map(&serde_json::from_str(r#"{"system-key": "sys-val"}"#).unwrap())
+            .unwrap();
+        mgr.set_user_config_map(&serde_json::from_str(r#"{"user-key": "user-val"}"#).unwrap())
+            .unwrap();
+
+        let merged = mgr.get_merged_config();
+        let map = merged.as_object().unwrap();
+        assert_eq!(map.get("system-key"), Some(&json!("sys-val")));
+        assert_eq!(map.get("user-key"), Some(&json!("user-val")));
+        assert!(map.contains_key("platform"));
+        assert!(map.contains_key("arch"));
+    }
+
+    #[test]
+    fn user_config_overrides_system_config() {
+        let dir = TempDir::new().unwrap();
+        let mut mgr = ConfigManager::with_dir(dir.path().to_path_buf()).unwrap();
+        mgr.set_system_config_map(&serde_json::from_str(r#"{"shared": "system"}"#).unwrap())
+            .unwrap();
+        mgr.set_user_config_map(&serde_json::from_str(r#"{"shared": "user"}"#).unwrap())
+            .unwrap();
+
+        let merged = mgr.get_merged_config();
+        let map = merged.as_object().unwrap();
+        assert_eq!(map.get("shared"), Some(&json!("user")));
+    }
+
+    #[test]
+    fn set_system_config_map_persists() {
+        let dir = TempDir::new().unwrap();
+        {
+            let mut mgr = ConfigManager::with_dir(dir.path().to_path_buf()).unwrap();
+            mgr.set_system_config_map(&serde_json::from_str(r#"{"persisted": true}"#).unwrap())
+                .unwrap();
+        }
+        // Re-open and verify
+        let mgr2 = ConfigManager::with_dir(dir.path().to_path_buf()).unwrap();
+        assert_eq!(
+            mgr2.get_system_config().get("persisted"),
+            Some(&json!(true))
+        );
+    }
+
+    #[test]
+    fn set_user_config_map_persists() {
+        let dir = TempDir::new().unwrap();
+        {
+            let mut mgr = ConfigManager::with_dir(dir.path().to_path_buf()).unwrap();
+            mgr.set_user_config_map(&serde_json::from_str(r#"{"locale": "zh-CN"}"#).unwrap())
+                .unwrap();
+        }
+        let mgr2 = ConfigManager::with_dir(dir.path().to_path_buf()).unwrap();
+        assert_eq!(mgr2.get_user_config().get("locale"), Some(&json!("zh-CN")));
+    }
+
+    #[test]
+    fn remove_system_config_key() {
+        let dir = TempDir::new().unwrap();
+        let mut mgr = ConfigManager::with_dir(dir.path().to_path_buf()).unwrap();
+        mgr.set_system_config_map(&serde_json::from_str(r#"{"a": 1, "b": 2}"#).unwrap())
+            .unwrap();
+        mgr.remove_system_config_key("a").unwrap();
+        assert!(!mgr.get_system_config().contains_key("a"));
+        assert!(mgr.get_system_config().contains_key("b"));
+        // Verify persistence by reopening
+        let mgr2 = ConfigManager::with_dir(dir.path().to_path_buf()).unwrap();
+        assert!(!mgr2.get_system_config().contains_key("a"));
+        assert!(mgr2.get_system_config().contains_key("b"));
+    }
+
+    #[test]
+    fn reset_restores_defaults() {
+        let dir = TempDir::new().unwrap();
+        let mut mgr = ConfigManager::with_dir(dir.path().to_path_buf()).unwrap();
+        mgr.set_user_config_map(&serde_json::from_str(r#"{"locale": "custom"}"#).unwrap())
+            .unwrap();
+        mgr.set_system_config_map(&serde_json::from_str(r#"{"dir": "/tmp"}"#).unwrap())
+            .unwrap();
+        mgr.reset().unwrap();
+
+        let merged = mgr.get_merged_config();
+        let map = merged.as_object().unwrap();
+        assert_eq!(map.get("locale"), Some(&json!("en-US")));
+    }
+
+    #[test]
+    fn load_or_default_fills_missing_keys() {
+        let dir = TempDir::new().unwrap();
+        let user_path = dir.path().join("user.json");
+        fs::write(&user_path, r#"{"locale": "fr-FR"}"#).unwrap();
+
+        let mgr = ConfigManager::with_dir(dir.path().to_path_buf()).unwrap();
+        let user = mgr.get_user_config();
+        assert_eq!(user.get("locale"), Some(&json!("fr-FR")));
+        // theme should be filled from defaults
+        assert!(user.contains_key("theme"));
     }
 }

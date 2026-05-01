@@ -134,6 +134,7 @@ export default {
 	confirmRemoveRule: "该规则将被删除，存储不受影响。",
 	errRuleSinkRequired: "请选择目标存储。",
 	errRuleSizeRange: "最小大小不能超过最大大小。",
+	credentialSyncFailed: "凭据同步失败",
 	cat_music: "音乐",
 	cat_video: "视频",
 	cat_image: "图片",

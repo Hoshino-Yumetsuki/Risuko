@@ -54,6 +54,7 @@
 
 <script lang="ts">
 import type { SavedCredential } from "@shared/types/credential";
+import logger from "@shared/utils/logger";
 import { ChevronDown, KeyRound } from "lucide-vue-next";
 import {
 	DropdownMenu,
@@ -123,13 +124,18 @@ export default {
 		},
 	},
 	methods: {
-		handleApply(credential: SavedCredential) {
-			applyCredentialToForm(this.form, credential);
-			usePreferenceStore().updateCredentialLastUsed(credential.id);
-			this.$msg.success({
-				message: this.$t("task.credential-applied"),
-				duration: 2000,
-			});
+		async handleApply(credential: SavedCredential) {
+			try {
+				await applyCredentialToForm(this.form, credential);
+				usePreferenceStore().updateCredentialLastUsed(credential.id);
+				this.$msg.success({
+					message: this.$t("task.credential-applied"),
+					duration: 2000,
+				});
+			} catch (err) {
+				logger.error("[Risuko] Failed to apply credential:", err);
+				this.$msg.error(this.$t("task.credential-apply-failed"));
+			}
 		},
 		credentialDisplayName(cred: SavedCredential): string {
 			if (cred.label) {
