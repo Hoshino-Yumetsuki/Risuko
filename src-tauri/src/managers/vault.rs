@@ -43,6 +43,16 @@ impl VaultManager {
         self.enabled.load(Ordering::Relaxed)
     }
 
+    /// Build a manager with a forced `enabled` flag, skipping the OS probe.
+    /// Test-only: lets unit tests in sibling modules exercise the
+    /// vault-enabled code paths without depending on a real keychain
+    #[cfg(test)]
+    pub(crate) fn for_test(enabled: bool) -> Self {
+        Self {
+            enabled: AtomicBool::new(enabled),
+        }
+    }
+
     /// Non-destructive reachability check. We only need to confirm that the
     /// keyring backend can be opened and that lookups succeed; a `NoEntry`
     /// result is a healthy outcome (backend reachable, no probe entry

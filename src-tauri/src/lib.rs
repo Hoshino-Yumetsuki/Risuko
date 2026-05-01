@@ -161,9 +161,9 @@ pub fn run() {
             if let Some(mgr) = upload_mgr.clone() {
                 let state = app.state::<state::AppState>();
                 let vault = state.vault.clone();
-                tauri::async_runtime::block_on(
-                    commands::upload_cmds::rehydrate_upload_sinks(&mgr, &vault)
-                );
+                tauri::async_runtime::block_on(commands::upload_cmds::rehydrate_upload_sinks(
+                    &mgr, &vault,
+                ));
             }
 
             if should_start {

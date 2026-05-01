@@ -790,6 +790,7 @@
 
 <script lang="ts">
 import type { SavedCredential } from "@shared/types/credential";
+import { CREDENTIAL_SECRET_FIELDS } from "@shared/types/credential";
 import type {
 	SinkConfig,
 	UploadJob,
@@ -1332,8 +1333,8 @@ export default defineComponent({
 				} catch (e) {
 					this.$msg.error(
 						this.$t("cloudSinks.credentialSyncFailed") +
-						": " +
-						String((e as Error)?.message || e),
+							": " +
+							String((e as Error)?.message || e),
 					);
 				}
 			}
@@ -1361,7 +1362,7 @@ export default defineComponent({
 			} catch (e) {
 				const msg = String((e as Error)?.message || e);
 				toast.error(msg);
-				console.warn("Failed to remove credential for sink", id, msg);
+				logger.warn("[Risuko] Failed to remove credential for sink", id, msg);
 			}
 		},
 		async onTest(id: string) {
@@ -1381,12 +1382,19 @@ export default defineComponent({
 			await this.store.setDefaultSink(id);
 		},
 		mapSinkToCredential(record: UploadSinkRecord): SavedCredential | null {
-			const now = Date.now();
-			const base = {
+			// Timestamps intentionally omitted here: `syncCredential` assigns
+			// `createdAt`/`lastUsedAt` only when the credential is new, so
+			// edits (renames, host changes, password updates) preserve the
+			// original timestamps instead of resetting them on every sync.
+			//
+			// Secret fields owned by this protocol are always included
+			// (even when empty) so the merge loop in `syncCredential` can
+			// distinguish "untouched" (key absent) from "explicit clear"
+			// (key === ""), allowing the user to actually wipe a stored
+			// secret by saving a sink with the field cleared
+			const base: Partial<SavedCredential> = {
 				id: record.id,
 				label: record.label,
-				createdAt: now,
-				lastUsedAt: now,
 			};
 			const c = record.config;
 			if (c.kind === "sftp") {
@@ -1395,13 +1403,9 @@ export default defineComponent({
 					host: c.host,
 					protocol: "sftp",
 					ftpUser: c.username,
-					...(c.password ? { ftpPasswd: c.password } : {}),
-					...(c.privateKey
-						? {
-								sftpPrivateKey: c.privateKey,
-								sftpPrivateKeyContent: c.privateKey,
-							}
-						: {}),
+					ftpPasswd: c.password ?? "",
+					sftpPrivateKey: c.privateKey ?? "",
+					sftpPrivateKeyContent: c.privateKey ?? "",
 				} as SavedCredential;
 			}
 			if (c.kind === "ftp") {
@@ -1410,7 +1414,7 @@ export default defineComponent({
 					host: c.host,
 					protocol: "ftp",
 					ftpUser: c.username || "",
-					...(c.password ? { ftpPasswd: c.password } : {}),
+					ftpPasswd: c.password ?? "",
 				} as SavedCredential;
 			}
 			return null;
@@ -1426,17 +1430,13 @@ export default defineComponent({
 				.getSavedCredentials()
 				.find((c: SavedCredential) => c.id === record.id);
 			if (existing) {
-				const credential: SavedCredential = { ...existing, ...mapped };
-				const secretFields: (keyof SavedCredential)[] = [
-					"authorization",
-					"cookie",
-					"ftpUser",
-					"ftpPasswd",
-					"sftpPrivateKey",
-					"sftpPrivateKeyContent",
-					"sftpKeyPassphrase",
-					"allProxy",
-				];
+				const credential: SavedCredential = {
+					...existing,
+					...mapped,
+					// Preserve original timestamps on edits
+					createdAt: existing.createdAt,
+					lastUsedAt: existing.lastUsedAt,
+				};
 				const mappedRec = mapped as unknown as Record<
 					string,
 					string | undefined
@@ -1449,14 +1449,27 @@ export default defineComponent({
 					string,
 					string | undefined
 				>;
-				for (const key of secretFields) {
-					if (!mappedRec[key] && existingRec[key]) {
-						credentialRec[key] = existingRec[key];
+				// Distinguish "untouched" (key absent on mapped) from
+				// "explicit clear" (key present with empty string). Treating
+				// any falsy value as "keep existing" — the previous behavior
+				// — silently reverted user-initiated clears
+				for (const key of CREDENTIAL_SECRET_FIELDS) {
+					if (!Object.hasOwn(mappedRec, key)) {
+						if (existingRec[key] !== undefined) {
+							credentialRec[key] = existingRec[key];
+						}
+					} else {
+						credentialRec[key] = mappedRec[key];
 					}
 				}
 				await preferenceStore.saveCredential(credential);
 			} else {
-				await preferenceStore.saveCredential(mapped);
+				const now = Date.now();
+				await preferenceStore.saveCredential({
+					...mapped,
+					createdAt: now,
+					lastUsedAt: now,
+				});
 			}
 		},
 		jobStatusLabel(status: UploadJobStatus): string {

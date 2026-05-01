@@ -176,20 +176,36 @@ export const usePreferenceStore = defineStore("preference", {
 			let toStore: SavedCredential = credential;
 
 			if (this.vaultEnabled) {
+				// Derive `wasVaulted` from the *persisted* record, not from
+				// the incoming credential. Callers may construct a fresh
+				// SavedCredential without the `vaulted` flag (e.g. sink-form
+				// sync paths that don't carry vault metadata); trusting the
+				// incoming flag would silently drop the OS-keychain entry on
+				// every metadata-only save
+				const persisted = savedCredentials.find(
+					(c: SavedCredential) => c.id === credential.id,
+				);
+				const wasVaulted = !!persisted?.vaulted;
 				const { meta, secrets } = this._splitCredentialSecrets(credential);
+				// Strip the transient flag before persistence
+				const explicitClear = !!meta.clearVault;
+				delete meta.clearVault;
 				try {
 					if (Object.keys(secrets).length > 0) {
 						await api.vaultPutCredential(credential.id, secrets);
 						meta.vaulted = true;
-					} else if (!meta.vaulted) {
-						// No secret material and not previously vaulted — safe to
-						// remove any stale vault entry
+					} else if (explicitClear) {
+						// User asked to wipe the keychain entry
 						await api.vaultRemoveCredential(credential.id);
 						meta.vaulted = false;
+					} else if (wasVaulted) {
+						// Metadata-only edit on a vaulted credential — leave
+						// the existing keychain entry alone
+						meta.vaulted = true;
 					} else {
-						// Previously vaulted but secrets payload is empty:
-						// treat as a metadata-only edit and preserve the vault entry
-						// meta.vaulted stays true
+						// No prior vault entry and no secret material — nothing
+						// to do, just record the inline (empty) state
+						meta.vaulted = false;
 					}
 					toStore = meta;
 				} catch (err) {
@@ -206,7 +222,12 @@ export const usePreferenceStore = defineStore("preference", {
 						// already logged above; nothing else we can do here
 					}
 					toStore = { ...credential, vaulted: false };
+					delete (toStore as SavedCredential).clearVault;
 				}
+			} else if (credential.clearVault) {
+				// Strip the transient flag even when the vault isn't in use
+				toStore = { ...credential };
+				delete (toStore as SavedCredential).clearVault;
 			}
 
 			const idx = savedCredentials.findIndex(

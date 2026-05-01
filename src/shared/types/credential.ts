@@ -24,6 +24,14 @@ export interface SavedCredential {
 	lastUsedAt: number;
 	/** True when the secret fields live in the OS keychain instead of inline. */
 	vaulted?: boolean;
+	/**
+	 * Transient flag set by callers that want `saveCredential` to drop any
+	 * existing OS-keychain entry for this credential (e.g. the user pressed
+	 * "Clear stored secret"). Not persisted — the store strips this before
+	 * writing to `user.json`. Without it, an empty secrets payload is
+	 * treated as "metadata-only edit" and the prior vault entry is kept
+	 */
+	clearVault?: boolean;
 }
 
 /** Sensitive fields that may be moved to the OS keychain. */

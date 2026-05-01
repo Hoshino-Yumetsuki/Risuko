@@ -119,12 +119,27 @@ fn apply_sink_secrets(config: &mut SinkConfig, secrets: &Value) {
 /// blank. Mirrors the engine's `merge_secrets` behavior (treat empty as
 /// "unchanged") so editing a sink without retyping the password keeps it
 /// working
-async fn fill_from_vault(vault: &VaultManager, mgr: &UploadSinkManager, id: &str, config: &mut SinkConfig) {
+async fn fill_from_vault(
+    vault: &VaultManager,
+    mgr: &UploadSinkManager,
+    id: &str,
+    config: &mut SinkConfig,
+) {
+    // Try vault first when enabled. If it returns a hit, use it. On
+    // `Ok(None)` (no entry) or `Err(_)` (backend hiccup), fall through to
+    // the durable local fallback so secrets that `persist_sink_secrets`
+    // wrote there during a prior vault failure remain recoverable
     if vault.enabled() {
-        if let Ok(Some(secrets)) = vault.get_sink(id) {
-            apply_sink_secrets(config, &secrets);
+        match vault.get_sink(id) {
+            Ok(Some(secrets)) => {
+                apply_sink_secrets(config, &secrets);
+                return;
+            }
+            Ok(None) => {}
+            Err(e) => {
+                log::warn!("Failed to load vault entry for sink {id}: {e}, trying fallback");
+            }
         }
-        return;
     }
     if let Some(secrets) = mgr.get_sink_secret_fallback(id).await {
         apply_sink_secrets(config, &secrets);
@@ -136,7 +151,12 @@ async fn fill_from_vault(vault: &VaultManager, mgr: &UploadSinkManager, id: &str
 /// are written to a durable fallback store inside the upload manager so
 /// they survive restarts. Failures are logged but never block the
 /// user-visible operation — the engine still has the runtime value in memory
-async fn persist_sink_secrets(vault: &VaultManager, mgr: &UploadSinkManager, id: &str, config: &SinkConfig) {
+async fn persist_sink_secrets(
+    vault: &VaultManager,
+    mgr: &UploadSinkManager,
+    id: &str,
+    config: &SinkConfig,
+) {
     match extract_sink_secrets(config) {
         Some(v) => {
             if vault.enabled() {
@@ -149,7 +169,9 @@ async fn persist_sink_secrets(vault: &VaultManager, mgr: &UploadSinkManager, id:
                         return;
                     }
                     Err(e) => {
-                        log::warn!("Failed to store sink secrets in vault for {id}: {e}, falling back");
+                        log::warn!(
+                            "Failed to store sink secrets in vault for {id}: {e}, falling back"
+                        );
                     }
                 }
             }
@@ -177,21 +199,27 @@ async fn persist_sink_secrets(vault: &VaultManager, mgr: &UploadSinkManager, id:
 pub async fn rehydrate_upload_sinks(mgr: &UploadSinkManager, vault: &VaultManager) {
     let sinks = mgr.list_sinks().await;
     for mut record in sinks {
-        let secrets = if vault.enabled() {
+        // Try vault first when enabled, but always fall through to the
+        // local fallback when the vault has no entry or errors — secrets
+        // written by `persist_sink_secrets` during a prior vault outage
+        // would otherwise be unrecoverable
+        let mut secrets: Option<Value> = None;
+        if vault.enabled() {
             match vault.get_sink(&record.id) {
-                Ok(Some(v)) => v,
-                Ok(None) => continue,
+                Ok(Some(v)) => secrets = Some(v),
+                Ok(None) => {}
                 Err(e) => {
-                    log::warn!("Failed to load vault entry for sink {}: {e}", record.id);
-                    continue;
+                    log::warn!(
+                        "Failed to load vault entry for sink {}: {e}, trying fallback",
+                        record.id
+                    );
                 }
             }
-        } else {
-            match mgr.get_sink_secret_fallback(&record.id).await {
-                Some(v) => v,
-                None => continue,
-            }
-        };
+        }
+        if secrets.is_none() {
+            secrets = mgr.get_sink_secret_fallback(&record.id).await;
+        }
+        let Some(secrets) = secrets else { continue };
         let id = record.id.clone();
         apply_sink_secrets(&mut record.config, &secrets);
         if let Err(e) = mgr.update_sink(record).await {
@@ -432,5 +460,56 @@ mod tests {
         }
     }
 
+    /// Regression: when the vault is enabled but its read returns no entry
+    /// (or errors), `fill_from_vault` must still consult the local
+    /// fallback store. Without this, secrets that `persist_sink_secrets`
+    /// wrote to the fallback during a prior vault outage become
+    /// unrecoverable on the very next edit
+    #[tokio::test]
+    async fn fill_from_vault_falls_back_when_vault_misses() {
+        use risuko_engine::traits::{FileStorage, NoopEventSink};
+        use std::sync::Arc;
 
+        let dir = tempfile::TempDir::new().unwrap();
+        let storage: Arc<dyn risuko_engine::traits::StorageBackend> =
+            Arc::new(FileStorage::new(dir.path().to_path_buf()));
+        let event_sink: Arc<dyn risuko_engine::traits::EventSink> = Arc::new(NoopEventSink);
+        let mgr = UploadSinkManager::new(storage, event_sink);
+
+        // Seed the manager's fallback store with a secret for an id the
+        // OS keychain cannot possibly know about (random uuid-ish suffix)
+        let id = format!("test-sink-{}-{}", std::process::id(), uuid_like());
+        let stored = json!({"password": "from-fallback", "privateKey": "pk"});
+        mgr.put_sink_secret_fallback(&id, &stored).await.unwrap();
+
+        // Force the vault into "enabled" without a real keychain probe.
+        // `vault.get_sink(&id)` will then return either Ok(None) (backend
+        // reachable, no entry) or Err(_) (no backend) — both code paths
+        // we want to confirm fall through to the fallback
+        let vault = crate::managers::vault::VaultManager::for_test(true);
+        assert!(vault.enabled());
+
+        let mut cfg = sftp("", "");
+        fill_from_vault(&vault, &mgr, &id, &mut cfg).await;
+        match cfg {
+            SinkConfig::Sftp(c) => {
+                assert_eq!(c.password, "from-fallback", "fallback password not applied");
+                assert_eq!(c.private_key, "pk", "fallback private key not applied");
+            }
+            _ => panic!("expected sftp"),
+        }
+    }
+
+    /// Tiny helper: avoids pulling in the `uuid` crate just for a unique
+    /// string in a single test
+    fn uuid_like() -> String {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        format!(
+            "{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        )
+    }
 }

@@ -54,6 +54,7 @@
 
 <script lang="ts">
 import type { SavedCredential } from "@shared/types/credential";
+import logger from "@shared/utils/logger";
 import { ChevronDown, KeyRound } from "lucide-vue-next";
 import {
 	DropdownMenu,
@@ -132,7 +133,7 @@ export default {
 					duration: 2000,
 				});
 			} catch (err) {
-				console.error("Failed to apply credential:", err);
+				logger.error("[Risuko] Failed to apply credential:", err);
 				this.$msg.error(this.$t("task.credential-apply-failed"));
 			}
 		},
