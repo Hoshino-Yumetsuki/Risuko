@@ -181,10 +181,15 @@ export const usePreferenceStore = defineStore("preference", {
 					if (Object.keys(secrets).length > 0) {
 						await api.vaultPutCredential(credential.id, secrets);
 						meta.vaulted = true;
-					} else {
-						// No secret material — drop any prior vault entry
+					} else if (!meta.vaulted) {
+						// No secret material and not previously vaulted — safe to
+						// remove any stale vault entry
 						await api.vaultRemoveCredential(credential.id);
 						meta.vaulted = false;
+					} else {
+						// Previously vaulted but secrets payload is empty:
+						// treat as a metadata-only edit and preserve the vault entry
+						// meta.vaulted stays true
 					}
 					toStore = meta;
 				} catch (err) {

@@ -1351,10 +1351,17 @@ export default defineComponent({
 			this.removingSink = null;
 			try {
 				await this.store.removeSink(id);
-				await usePreferenceStore().removeCredential(id);
-				toast.success(this.$t("cloudSinks.removed", { label }) as string);
 			} catch (e) {
 				toast.error(String((e as Error)?.message || e));
+				return;
+			}
+			toast.success(this.$t("cloudSinks.removed", { label }) as string);
+			try {
+				await usePreferenceStore().removeCredential(id);
+			} catch (e) {
+				const msg = String((e as Error)?.message || e);
+				toast.error(msg);
+				console.warn("Failed to remove credential for sink", id, msg);
 			}
 		},
 		async onTest(id: string) {
@@ -1388,9 +1395,13 @@ export default defineComponent({
 					host: c.host,
 					protocol: "sftp",
 					ftpUser: c.username,
-					ftpPasswd: c.password || "",
-					sftpPrivateKey: c.privateKey || "",
-					sftpPrivateKeyContent: c.privateKey || "",
+					...(c.password ? { ftpPasswd: c.password } : {}),
+					...(c.privateKey
+						? {
+								sftpPrivateKey: c.privateKey,
+								sftpPrivateKeyContent: c.privateKey,
+							}
+						: {}),
 				} as SavedCredential;
 			}
 			if (c.kind === "ftp") {
@@ -1399,7 +1410,7 @@ export default defineComponent({
 					host: c.host,
 					protocol: "ftp",
 					ftpUser: c.username || "",
-					ftpPasswd: c.password || "",
+					...(c.password ? { ftpPasswd: c.password } : {}),
 				} as SavedCredential;
 			}
 			return null;

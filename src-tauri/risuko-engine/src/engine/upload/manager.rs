@@ -8,6 +8,7 @@ use std::sync::{Arc, Mutex as StdMutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use tokio::sync::{watch, Mutex, RwLock, Semaphore};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
@@ -43,6 +44,11 @@ struct UploadStore {
     default_sink_id: Option<String>,
     #[serde(default = "default_concurrency")]
     max_concurrency: usize,
+    /// Fallback secret map used when the OS keychain vault is unavailable.
+    /// Each key is a sink id; the value is the JSON secrets object that
+    /// would normally live in the vault.
+    #[serde(default)]
+    secret_fallback: HashMap<String, Value>,
 }
 
 fn default_concurrency() -> usize {
@@ -149,6 +155,27 @@ impl UploadSinkManager {
         Ok(())
     }
 
+    // Fallback secret storage — used when the OS keychain vault is unavailable
+
+    pub async fn get_sink_secret_fallback(&self, id: &str) -> Option<Value> {
+        let s = self.store.read().await;
+        s.secret_fallback.get(id).cloned()
+    }
+
+    pub async fn put_sink_secret_fallback(&self, id: &str, secrets: &Value) -> Result<(), String> {
+        let mut s = self.store.write().await;
+        s.secret_fallback.insert(id.to_string(), secrets.clone());
+        drop(s);
+        self.save().await
+    }
+
+    pub async fn remove_sink_secret_fallback(&self, id: &str) -> Result<(), String> {
+        let mut s = self.store.write().await;
+        s.secret_fallback.remove(id);
+        drop(s);
+        self.save().await
+    }
+
     // queries
 
     pub async fn list_sinks(&self) -> Vec<UploadSinkRecord> {
@@ -236,6 +263,8 @@ impl UploadSinkManager {
         if s.default_sink_id.as_deref() == Some(id) {
             s.default_sink_id = s.sinks.first().map(|x| x.id.clone());
         }
+        // Clean up any fallback secrets so they don't leak after deletion
+        s.secret_fallback.remove(id);
         drop(s);
         self.save().await
     }

@@ -114,60 +114,88 @@ fn apply_sink_secrets(config: &mut SinkConfig, secrets: &Value) {
     }
 }
 
-/// Pull stored secrets from the vault into the config when the incoming
-/// record left them blank. Mirrors the engine's `merge_secrets` behavior
-/// (treat empty as "unchanged") so editing a sink without retyping the
-/// password keeps it working
-fn fill_from_vault(vault: &VaultManager, id: &str, config: &mut SinkConfig) {
-    if !vault.enabled() {
+/// Pull stored secrets from the vault (or the local fallback store when the
+/// vault is unavailable) into the config when the incoming record left them
+/// blank. Mirrors the engine's `merge_secrets` behavior (treat empty as
+/// "unchanged") so editing a sink without retyping the password keeps it
+/// working
+async fn fill_from_vault(vault: &VaultManager, mgr: &UploadSinkManager, id: &str, config: &mut SinkConfig) {
+    if vault.enabled() {
+        if let Ok(Some(secrets)) = vault.get_sink(id) {
+            apply_sink_secrets(config, &secrets);
+        }
         return;
     }
-    if let Ok(Some(secrets)) = vault.get_sink(id) {
+    if let Some(secrets) = mgr.get_sink_secret_fallback(id).await {
         apply_sink_secrets(config, &secrets);
     }
 }
 
 /// Persist a record's secrets to the vault, or remove the entry when no
-/// secret is set. Failures are logged but never block the user-visible
-/// operation — the engine still has the runtime value in memory
-fn persist_sink_secrets(vault: &VaultManager, id: &str, config: &SinkConfig) {
-    if !vault.enabled() {
-        return;
-    }
+/// secret is set. When the vault is disabled or returns an error, secrets
+/// are written to a durable fallback store inside the upload manager so
+/// they survive restarts. Failures are logged but never block the
+/// user-visible operation — the engine still has the runtime value in memory
+async fn persist_sink_secrets(vault: &VaultManager, mgr: &UploadSinkManager, id: &str, config: &SinkConfig) {
     match extract_sink_secrets(config) {
         Some(v) => {
-            if let Err(e) = vault.put_sink(id, &v) {
-                log::warn!("Failed to store sink secrets in vault for {id}: {e}");
+            if vault.enabled() {
+                match vault.put_sink(id, &v) {
+                    Ok(()) => {
+                        // Vault succeeded — clear any stale fallback entry
+                        if let Err(e) = mgr.remove_sink_secret_fallback(id).await {
+                            log::warn!("Failed to clear stale fallback for sink {id}: {e}");
+                        }
+                        return;
+                    }
+                    Err(e) => {
+                        log::warn!("Failed to store sink secrets in vault for {id}: {e}, falling back");
+                    }
+                }
+            }
+            if let Err(e) = mgr.put_sink_secret_fallback(id, &v).await {
+                log::warn!("Failed to store sink secrets in fallback for {id}: {e}");
             }
         }
         None => {
-            if let Err(e) = vault.remove_sink(id) {
-                log::warn!("Failed to clear vault entry for sink {id}: {e}");
+            if vault.enabled() {
+                if let Err(e) = vault.remove_sink(id) {
+                    log::warn!("Failed to clear vault entry for sink {id}: {e}");
+                }
+            }
+            if let Err(e) = mgr.remove_sink_secret_fallback(id).await {
+                log::warn!("Failed to clear fallback secrets for sink {id}: {e}");
             }
         }
     }
 }
 
-/// Rehydrate every loaded sink's secrets from the vault. Called once at
-/// startup after the upload manager loads its on-disk records (which omit
-/// secrets by design — see `skip_serializing` on the protocol Configs)
+/// Rehydrate every loaded sink's secrets from the vault (or from the local
+/// fallback store when the vault is unavailable). Called once at startup
+/// after the upload manager loads its on-disk records (which omit secrets
+/// by design — see `skip_serializing` on the protocol Configs)
 pub async fn rehydrate_upload_sinks(mgr: &UploadSinkManager, vault: &VaultManager) {
-    if !vault.enabled() {
-        return;
-    }
     let sinks = mgr.list_sinks().await;
     for mut record in sinks {
-        let secrets = match vault.get_sink(&record.id) {
-            Ok(Some(v)) => v,
-            Ok(None) => continue,
-            Err(e) => {
-                log::warn!("Failed to load vault entry for sink {}: {e}", record.id);
-                continue;
+        let secrets = if vault.enabled() {
+            match vault.get_sink(&record.id) {
+                Ok(Some(v)) => v,
+                Ok(None) => continue,
+                Err(e) => {
+                    log::warn!("Failed to load vault entry for sink {}: {e}", record.id);
+                    continue;
+                }
+            }
+        } else {
+            match mgr.get_sink_secret_fallback(&record.id).await {
+                Some(v) => v,
+                None => continue,
             }
         };
+        let id = record.id.clone();
         apply_sink_secrets(&mut record.config, &secrets);
         if let Err(e) = mgr.update_sink(record).await {
-            log::warn!("Failed to inject vault secrets into upload manager: {e}");
+            log::warn!("Failed to inject secrets into upload manager for sink {id}: {e}");
         }
     }
 }
@@ -189,7 +217,7 @@ pub async fn add_upload_sink(
     let mgr = get_mgr(&state)?;
     let vault = state.vault.clone();
     let created = mgr.add_sink(record).await?;
-    persist_sink_secrets(&vault, &created.id, &created.config);
+    persist_sink_secrets(&vault, &mgr, &created.id, &created.config).await;
     serde_json::to_value(created).map_err(|e| e.to_string())
 }
 
@@ -203,11 +231,11 @@ pub async fn update_upload_sink(
     // Empty incoming secrets mean "unchanged" — fill from vault before the
     // engine's own merge_secrets fallback runs against a disk copy that
     // never held the secret in the first place
-    fill_from_vault(&vault, &record.id, &mut record.config);
+    fill_from_vault(&vault, &mgr, &record.id, &mut record.config).await;
     let id = record.id.clone();
     let config_for_vault = record.config.clone();
     mgr.update_sink(record).await?;
-    persist_sink_secrets(&vault, &id, &config_for_vault);
+    persist_sink_secrets(&vault, &mgr, &id, &config_for_vault).await;
     Ok(())
 }
 
