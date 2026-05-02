@@ -19,6 +19,18 @@ use tokio::task::JoinSet;
 use super::bencode::{decode_all, encode_to_vec, Value};
 use super::core::Id20;
 
+/// Decoded `get_peers` reply: source addr, responder id (if present),
+/// peer list, and learned (id, addr) nodes
+type GetPeersReply = (
+    SocketAddr,
+    Option<Id20>,
+    Vec<SocketAddr>,
+    Vec<(Id20, SocketAddr)>,
+);
+
+/// Body fields parsed from a `get_peers` response (no source addr).
+type GetPeersResponseBody = (Option<Id20>, Vec<SocketAddr>, Vec<(Id20, SocketAddr)>);
+
 const K: usize = 8;
 const ALPHA: usize = 3;
 const QUERY_TIMEOUT: Duration = Duration::from_secs(4);
@@ -185,14 +197,7 @@ impl Dht {
             queried.insert(*a);
         }
 
-        let mut futs: JoinSet<
-            Option<(
-                SocketAddr,
-                Option<Id20>,
-                Vec<SocketAddr>,
-                Vec<(Id20, SocketAddr)>,
-            )>,
-        > = JoinSet::new();
+        let mut futs: JoinSet<Option<GetPeersReply>> = JoinSet::new();
         for a in addrs {
             let this = self.clone();
             futs.spawn(async move { this.query_get_peers(a, info_hash).await });
@@ -290,12 +295,7 @@ impl Dht {
         self: Arc<Self>,
         target: SocketAddr,
         info_hash: Id20,
-    ) -> Option<(
-        SocketAddr,
-        Option<Id20>,
-        Vec<SocketAddr>,
-        Vec<(Id20, SocketAddr)>,
-    )> {
+    ) -> Option<GetPeersReply> {
         let (txn, rx) = self.register_transaction(target);
         let packet = build_get_peers(txn, &self.our_id, &info_hash);
         // Route via the appropriate socket family. If we target an IPv6
@@ -363,8 +363,8 @@ fn pseudo_id(addr: SocketAddr) -> Id20 {
 
 fn xor(a: &Id20, b: &Id20) -> Id20 {
     let mut out = [0u8; 20];
-    for i in 0..20 {
-        out[i] = a.as_bytes()[i] ^ b.as_bytes()[i];
+    for (i, slot) in out.iter_mut().enumerate() {
+        *slot = a.as_bytes()[i] ^ b.as_bytes()[i];
     }
     Id20::from_slice(&out).unwrap()
 }
@@ -396,9 +396,7 @@ fn build_get_peers(txn: u16, our_id: &Id20, info_hash: &Id20) -> Vec<u8> {
     encode_to_vec(&msg)
 }
 
-fn parse_get_peers_response(
-    body: &Value,
-) -> Option<(Option<Id20>, Vec<SocketAddr>, Vec<(Id20, SocketAddr)>)> {
+fn parse_get_peers_response(body: &Value) -> Option<GetPeersResponseBody> {
     let r = body.get(b"r")?.as_dict()?;
     let r_val = Value::Dict(r.to_vec());
     let responder_id = r_val

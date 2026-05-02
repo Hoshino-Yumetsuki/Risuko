@@ -37,6 +37,8 @@ export default {
 	"task-num-pieces": "ชิ้นส่วน",
 	"task-bittorrent-info": "ข้อมูลทอร์เรนต์",
 	"task-info-hash": "แฮช",
+	"task-info-hash-v2": "Hash v2",
+	"task-meta-version": "Meta version",
 	"task-bittorrent-creation-date": "วันที่สร้าง",
 	"task-bittorrent-comment": "ความคิดเห็น",
 	"task-progress-info": "ความคืบหน้า",

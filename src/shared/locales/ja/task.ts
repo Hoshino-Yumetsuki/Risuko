@@ -39,6 +39,8 @@ export default {
 	"task-num-pieces": "ピース",
 	"task-bittorrent-info": "トレント情報",
 	"task-info-hash": "ハッシュ",
+	"task-info-hash-v2": "Hash v2",
+	"task-meta-version": "Meta version",
 	"task-bittorrent-creation-date": "作成日",
 	"task-bittorrent-comment": "コメント",
 	"task-progress-info": "進捗",

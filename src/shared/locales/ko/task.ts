@@ -38,6 +38,8 @@ export default {
 	"task-num-pieces": "조각",
 	"task-bittorrent-info": "토렌트 정보",
 	"task-info-hash": "해시",
+	"task-info-hash-v2": "Hash v2",
+	"task-meta-version": "Meta version",
 	"task-bittorrent-creation-date": "제작일",
 	"task-bittorrent-comment": "코멘트",
 	"task-progress-info": "진행",

@@ -4,7 +4,7 @@
 //! from them using BEP-9 (ut_metadata).  DHT is not used (the in-tree DHT is
 //! a stub)
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -14,7 +14,11 @@ use sha1::{Digest, Sha1};
 use tokio::sync::{mpsc, oneshot, Semaphore};
 use tokio::task::JoinSet;
 
-use super::core::{generate_peer_id, Id20, Magnet};
+use super::core::hash::sha256;
+use super::core::merkle::MerkleProofTable;
+use super::core::{
+    generate_peer_id, parse_info_v2_from_bytes, Id20, Id32, Magnet, ValidatedTorrentMetaV2Info,
+};
 use super::dht::{Dht, DhtConfig};
 use super::peer::{connect, PeerCommand, PeerEvent, SpawnPeer};
 use super::tracker::{announce, AnnounceEvent, AnnounceRequest};
@@ -30,16 +34,28 @@ const OUR_UT_PEX_ID: u8 = 4;
 const TRACKER_TIMEOUT: Duration = Duration::from_secs(10);
 const PEER_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const PEER_READ_TIMEOUT: Duration = Duration::from_secs(10);
-const PEER_TOTAL_TIMEOUT: Duration = Duration::from_secs(12);
+/// Per-peer ceiling: enough to fetch a full info dict + every file's piece
+/// layer over `HASH_REQUEST` on a single connection without timing out
+const PEER_TOTAL_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_CONCURRENT_PEERS: usize = 128;
+/// Stable error-message prefix used by the engine error classifier to map a
+/// failed pure-v2 magnet resolution onto a typed error code. Keep in sync
+/// with `risuko-engine::engine::error_code`
+pub const ERR_PIECE_LAYERS_UNAVAILABLE: &str = "piece layers unavailable";
 
-/// Resolution result: the info-hash, raw bencoded info dict, and the
-/// union of trackers (magnet's `tr=` + caller-supplied)
+/// Resolution result: the wire info-hash, raw bencoded info dict, the
+/// optional v2 SHA-256 info-hash (when the magnet was hybrid or pure-v2),
+/// and the union of trackers (magnet's `tr=` + caller-supplied)
 pub struct Resolved {
     pub info_hash: Id20,
+    pub info_hash_v2: Option<Id32>,
     pub info_bytes: Vec<u8>,
     pub trackers: Vec<String>,
     pub display_name: Option<String>,
+    /// BEP 52 piece layers fetched from peers via `HASH_REQUEST`. Keyed by
+    /// each file's `pieces root`. Empty for v1-only magnets and for v2
+    /// magnets whose every file fits in a single piece (no layer required)
+    pub piece_layers: BTreeMap<Id32, Vec<u8>>,
 }
 
 /// Resolve a magnet URI to its raw info dict.
@@ -49,8 +65,23 @@ pub async fn resolve(
     budget: Duration,
     encryption: crate::peer::EncryptionPolicy,
 ) -> Result<Resolved, String> {
+    resolve_with_peers(magnet_uri, extra_trackers, &[], budget, encryption).await
+}
+
+/// Like [`resolve`] but seeds the peer pool with explicitly known
+/// addresses (in addition to tracker / DHT discovery). Used by tests and
+/// callers that have cached peers from a prior session
+pub async fn resolve_with_peers(
+    magnet_uri: &str,
+    extra_trackers: &[String],
+    extra_peers: &[SocketAddr],
+    budget: Duration,
+    encryption: crate::peer::EncryptionPolicy,
+) -> Result<Resolved, String> {
     let magnet = Magnet::parse(magnet_uri).map_err(|e| e.to_string())?;
     let info_hash = magnet.info_hash();
+    let want_v1 = magnet.info_hash_v1();
+    let want_v2 = magnet.info_hash_v2();
 
     let mut trackers: Vec<String> = magnet.trackers.clone();
     for t in extra_trackers {
@@ -119,12 +150,25 @@ pub async fn resolve(
                 None
             }
         };
+    // Caller-supplied peers go in first so the driver can begin contacting
+    // them immediately, without waiting for any tracker / DHT round-trip
+    for p in extra_peers {
+        let _ = peer_tx.send(*p);
+    }
     drop(peer_tx);
 
-    // First successful metadata download wins via this oneshot
-    let (result_tx, result_rx) = oneshot::channel::<Vec<u8>>();
-    let result_tx: Arc<Mutex<Option<oneshot::Sender<Vec<u8>>>>> =
+    // First successful (info, piece_layers) pair wins via this oneshot
+    type ResolvedPayload = (Vec<u8>, BTreeMap<Id32, Vec<u8>>);
+    let (result_tx, result_rx) = oneshot::channel::<ResolvedPayload>();
+    let result_tx: Arc<Mutex<Option<oneshot::Sender<ResolvedPayload>>>> =
         Arc::new(Mutex::new(Some(result_tx)));
+
+    // Tracks whether *any* peer delivered the info dict but failed to
+    // furnish all required piece layers. If we exhaust the deadline with
+    // info-yes / layers-no, this lets us surface a typed error rather than
+    // a generic "no metadata" failure
+    let info_seen = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let layers_failed = Arc::new(std::sync::atomic::AtomicBool::new(false));
 
     // Bound fan-out so we don't open thousands of sockets
     let sem = Arc::new(Semaphore::new(MAX_CONCURRENT_PEERS));
@@ -133,6 +177,8 @@ pub async fn resolve(
     let driver = {
         let result_tx = result_tx.clone();
         let sem = sem.clone();
+        let info_seen = info_seen.clone();
+        let layers_failed = layers_failed.clone();
         async move {
             let mut seen: HashSet<SocketAddr> = HashSet::new();
             let mut joinset: JoinSet<()> = JoinSet::new();
@@ -160,6 +206,8 @@ pub async fn resolve(
                             Err(_) => break,
                         };
                         let result_tx = result_tx.clone();
+                        let info_seen = info_seen.clone();
+                        let layers_failed = layers_failed.clone();
                         joinset.spawn(async move {
                             let _permit = permit;
                             let fetched = tokio::time::timeout(
@@ -169,18 +217,44 @@ pub async fn resolve(
                             .await
                             .ok()
                             .flatten();
-                            let Some(bytes) = fetched else { return };
+                            let Some((bytes, layers, layers_complete)) = fetched else { return };
 
                             let digest = Sha1::digest(&bytes);
-                            let ok = Id20::from_slice(digest.as_slice())
-                                .map(|h| h == info_hash)
+                            let sha1_ok = Id20::from_slice(digest.as_slice())
+                                .map(|h| match want_v1 {
+                                    // Hybrid / pure-v1: must match declared v1
+                                    Some(v1) => h == v1,
+                                    // Pure-v2 magnet: peer cannot deliver a
+                                    // v1 dict by definition; trust the v2
+                                    // check below and skip the v1 gate
+                                    None => true,
+                                })
                                 .unwrap_or(false);
-                            if !ok {
-                                log::debug!("peer {addr}: info hash mismatch");
+                            // BEP 52: pure-v2 / hybrid magnets must also
+                            // pass SHA-256 cross-validation against
+                            // urn:btmh. Hybrid info dicts hash identically
+                            // under both algorithms
+                            let sha256_ok = match want_v2 {
+                                Some(v2) => sha256(&bytes) == v2,
+                                None => true,
+                            };
+                            if !sha1_ok || !sha256_ok {
+                                log::debug!(
+                                    "peer {addr}: info hash mismatch (sha1_ok={sha1_ok} sha256_ok={sha256_ok})"
+                                );
+                                return;
+                            }
+                            info_seen.store(true, std::sync::atomic::Ordering::Relaxed);
+                            if !layers_complete {
+                                // Hash-validated info dict but the peer could
+                                // not serve every required piece layer; let
+                                // another peer try
+                                layers_failed.store(true, std::sync::atomic::Ordering::Relaxed);
+                                log::debug!("peer {addr}: piece layers incomplete; will try other peers");
                                 return;
                             }
                             if let Some(tx) = result_tx.lock().take() {
-                                let _ = tx.send(bytes);
+                                let _ = tx.send((bytes, layers));
                             }
                         });
                     }
@@ -208,25 +282,47 @@ pub async fn resolve(
     }
 
     match winner {
-        Some(info_bytes) => {
+        Some((info_bytes, piece_layers)) => {
             log::info!("Resolved magnet in {:?}", started.elapsed());
             Ok(Resolved {
                 info_hash,
+                info_hash_v2: want_v2,
                 info_bytes,
                 trackers,
                 display_name: magnet.display_name.clone(),
+                piece_layers,
             })
         }
-        None => Err("failed to fetch metadata from any peer".into()),
+        None => {
+            // Distinguish "no peer ever delivered the info dict" (generic
+            // metadata failure) from "every peer that delivered the info
+            // dict refused to serve piece layers" (pure-v2 specific —
+            // surface a typed error code so the UI can suggest importing
+            // a .torrent instead)
+            if info_seen.load(std::sync::atomic::Ordering::Relaxed)
+                && layers_failed.load(std::sync::atomic::Ordering::Relaxed)
+            {
+                Err(format!(
+                    "{ERR_PIECE_LAYERS_UNAVAILABLE}: no peer served the BEP 52 piece-layer hashes for this magnet"
+                ))
+            } else {
+                Err("failed to fetch metadata from any peer".into())
+            }
+        }
     }
 }
 
+/// Outcome of a single-peer fetch attempt: raw info dict bytes, any piece
+/// layers we managed to validate, and whether the layers cover every file
+/// that requires them. `(_, _, false)` indicates the metadata is v2 but at
+/// least one file's layer was rejected/missing -> caller should try another
+/// peer rather than committing this peer's partial result
 async fn try_fetch_from_peer(
     addr: SocketAddr,
     info_hash: Id20,
     our_peer_id: Id20,
     encryption: crate::peer::EncryptionPolicy,
-) -> Option<Vec<u8>> {
+) -> Option<(Vec<u8>, BTreeMap<Id32, Vec<u8>>, bool)> {
     let (handle, rx) = connect(SpawnPeer {
         addr,
         info_hash,
@@ -249,7 +345,7 @@ async fn try_fetch_from_peer(
 async fn try_fetch_from_peer_inner(
     handle: &super::peer::PeerHandle,
     mut rx: tokio::sync::mpsc::Receiver<PeerEvent>,
-) -> Option<Vec<u8>> {
+) -> Option<(Vec<u8>, BTreeMap<Id32, Vec<u8>>, bool)> {
     // Pipeline our extended handshake immediately; we'll validate that the
     // peer actually supports extensions when we see their Handshook event
     // This saves one async round-trip per peer
@@ -268,6 +364,7 @@ async fn try_fetch_from_peer_inner(
     // the BT handshake event under some orderings; draining two sequential
     // loops would drop whichever arrives first in the other arm.
     let mut peer_supports_ext: Option<bool> = None;
+    let mut peer_supports_v2 = false;
     let peer_ext = loop {
         match rx.recv().await? {
             PeerEvent::Handshook { reserved, .. } => {
@@ -275,18 +372,21 @@ async fn try_fetch_from_peer_inner(
                 if !supports {
                     return None;
                 }
+                // BEP 52 v2 capability bit (reserved byte 7, bit 0x08)
+                peer_supports_v2 = reserved[7] & 0x08 != 0;
                 peer_supports_ext = Some(true);
             }
             PeerEvent::Message(Message::Extended { ext_id: 0, payload }) => {
-                let Some(h) = ExtHandshake::decode(&payload) else {
-                    return None;
-                };
+                let h = ExtHandshake::decode(&payload)?;
                 if peer_supports_ext.is_none() {
                     // Extended handshake must be preceded by Handshook with
                     // the extension bit set. Keep looping until Handshook
                     // confirms support, but stash the decoded dict.
                     match wait_for_handshook(&mut rx).await {
-                        Some(true) => break h,
+                        Some((true, v2)) => {
+                            peer_supports_v2 = v2;
+                            break h;
+                        }
                         _ => return None,
                     }
                 }
@@ -346,22 +446,159 @@ async fn try_fetch_from_peer_inner(
         }
     }
 
-    let mut out = Vec::with_capacity(total_size);
+    let mut info_bytes = Vec::with_capacity(total_size);
     for p in pieces {
-        out.extend_from_slice(&p?);
+        info_bytes.extend_from_slice(&p?);
     }
-    if out.len() != total_size {
+    if info_bytes.len() != total_size {
         return None;
     }
 
+    // If the info dict is v2, attempt to fetch each file's piece layer on
+    // the same connection via BEP 52 HASH_REQUEST. A peer that has the
+    // info but cannot serve layers (HashReject / no v2 support) yields
+    // `(_, _, false)` so the driver tries another peer
+    let v2 = match parse_info_v2_from_bytes(&info_bytes) {
+        Ok(v) => v,
+        Err(_) => return None,
+    };
+    let Some(v2) = v2 else {
+        return Some((info_bytes, BTreeMap::new(), true));
+    };
+    if !peer_supports_v2 {
+        log::debug!("peer does not advertise v2; cannot serve piece layers");
+        return Some((info_bytes, BTreeMap::new(), false));
+    }
+    let layers = fetch_piece_layers(handle, &mut rx, &v2).await;
+    let complete = layers
+        .as_ref()
+        .map(|m| {
+            v2.files
+                .iter()
+                .filter(|f| f.length > v2.piece_length as u64)
+                .all(|f| m.contains_key(&f.pieces_root))
+        })
+        .unwrap_or(false);
+    Some((info_bytes, layers.unwrap_or_default(), complete))
+}
+
+/// Issue a `HASH_REQUEST` for every file's full piece layer in `v2` and
+/// collect the validated responses keyed by `pieces_root`. Returns `None`
+/// only on connection-level errors (peer disappears); a `HashReject` for
+/// any file is reported as a missing entry, which the caller treats as
+/// "incomplete"
+async fn fetch_piece_layers(
+    handle: &super::peer::PeerHandle,
+    rx: &mut tokio::sync::mpsc::Receiver<PeerEvent>,
+    v2: &ValidatedTorrentMetaV2Info,
+) -> Option<BTreeMap<Id32, Vec<u8>>> {
+    let piece_length = v2.piece_length;
+    // base_layer for piece-aligned requests = log2(piece_length / 16 KiB)
+    let base_layer = (piece_length / super::core::merkle::BLOCK_SIZE).trailing_zeros();
+
+    // Group files by `pieces_root` — duplicates can appear when the same
+    // file content is referenced more than once. Send one request per
+    // distinct root that requires a layer (file > piece_length)
+    let mut wanted: BTreeMap<Id32, (u64, u32)> = BTreeMap::new();
+    for f in &v2.files {
+        if f.length <= piece_length as u64 {
+            continue;
+        }
+        wanted
+            .entry(f.pieces_root)
+            .or_insert((f.length, piece_length));
+    }
+    if wanted.is_empty() {
+        return Some(BTreeMap::new());
+    }
+
+    // Send all requests up front so the peer can pipeline its responses
+    for (root, (file_len, plen)) in &wanted {
+        let piece_count = file_len.div_ceil(*plen as u64) as u32;
+        let length = (piece_count as usize).next_power_of_two().max(2) as u32;
+        let req = Message::HashRequest {
+            pieces_root: root.0,
+            base_layer,
+            index: 0,
+            length,
+            proof_layers: 0,
+        };
+        if handle.tx.send(PeerCommand::Send(req)).await.is_err() {
+            return None;
+        }
+    }
+
+    let mut out: BTreeMap<Id32, Vec<u8>> = BTreeMap::new();
+    let mut remaining = wanted.len();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+    while remaining > 0 {
+        let timeout_at = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if timeout_at.is_zero() {
+            break;
+        }
+        let next = match tokio::time::timeout(timeout_at, rx.recv()).await {
+            Ok(Some(ev)) => ev,
+            Ok(None) | Err(_) => break,
+        };
+        match next {
+            PeerEvent::Message(Message::Hashes {
+                pieces_root,
+                base_layer: rb,
+                index: 0,
+                length: rl,
+                proof_layers: 0,
+                hashes,
+            }) => {
+                let root = Id32(pieces_root);
+                let Some((file_len, plen)) = wanted.get(&root).copied() else {
+                    continue;
+                };
+                if rb != base_layer {
+                    continue;
+                }
+                let piece_count = file_len.div_ceil(plen as u64) as u32;
+                let expected_padded = (piece_count as usize).next_power_of_two().max(2) as u32;
+                if rl != expected_padded || hashes.len() != expected_padded as usize * 32 {
+                    continue;
+                }
+                match MerkleProofTable::verify_full_piece_layer_response(
+                    root, file_len, plen, &hashes,
+                ) {
+                    Ok(canonical) => {
+                        if out.insert(root, canonical).is_none() {
+                            remaining -= 1;
+                        }
+                    }
+                    Err(e) => {
+                        log::debug!("piece-layer verify failed for {root:?}: {e}");
+                    }
+                }
+            }
+            PeerEvent::Message(Message::HashReject { pieces_root, .. }) => {
+                let root = Id32(pieces_root);
+                if wanted.contains_key(&root) && !out.contains_key(&root) {
+                    // Single rejection is terminal for this peer — the
+                    // caller will fall back to another seeder
+                    log::debug!("peer rejected piece-layer request for {root:?}");
+                    return Some(out);
+                }
+            }
+            PeerEvent::Disconnected { .. } => return None,
+            _ => continue,
+        }
+    }
     Some(out)
 }
 
-async fn wait_for_handshook(rx: &mut tokio::sync::mpsc::Receiver<PeerEvent>) -> Option<bool> {
+async fn wait_for_handshook(
+    rx: &mut tokio::sync::mpsc::Receiver<PeerEvent>,
+) -> Option<(bool, bool)> {
     loop {
         match rx.recv().await? {
             PeerEvent::Handshook { reserved, .. } => {
-                return Some(reserved[5] & 0x10 != 0);
+                let supports_ext = reserved[5] & 0x10 != 0;
+                let supports_v2 = reserved[7] & 0x08 != 0;
+                return Some((supports_ext, supports_v2));
             }
             PeerEvent::Disconnected { .. } => return None,
             _ => continue,
@@ -369,10 +606,17 @@ async fn wait_for_handshook(rx: &mut tokio::sync::mpsc::Receiver<PeerEvent>) -> 
     }
 }
 
-/// Build a minimal `.torrent` blob from a raw info dict plus optional
-/// trackers, suitable for feeding back into [`crate::parse_torrent`]
-pub fn synth_torrent_bytes(info_bytes: &[u8], trackers: &[String]) -> Vec<u8> {
-    // bencode: d [announce-list] 4:info <info_bytes> e
+/// Build a minimal `.torrent` blob from a raw info dict, optional trackers,
+/// and (for BEP 52 v2 metadata) any piece layers fetched out-of-band via
+/// `HASH_REQUEST`. The result is suitable for feeding back into
+/// [`crate::parse_torrent`]
+pub fn synth_torrent_bytes(
+    info_bytes: &[u8],
+    trackers: &[String],
+    piece_layers: &BTreeMap<Id32, Vec<u8>>,
+) -> Vec<u8> {
+    // Top-level dict keys must appear in lexicographic order: announce,
+    // announce-list, info, piece layers
     let mut out = Vec::with_capacity(info_bytes.len() + 64);
     out.push(b'd');
     if !trackers.is_empty() {
@@ -394,6 +638,19 @@ pub fn synth_torrent_bytes(info_bytes: &[u8], trackers: &[String]) -> Vec<u8> {
     }
     out.extend_from_slice(b"4:info");
     out.extend_from_slice(info_bytes);
+    if !piece_layers.is_empty() {
+        // BEP 52 `piece layers` dict, keys are 32-byte SHA-256 roots.
+        // BTreeMap iteration order matches the bencode lexicographic
+        // requirement on dict keys
+        out.extend_from_slice(b"12:piece layersd");
+        for (root, layer) in piece_layers {
+            out.extend_from_slice(b"32:");
+            out.extend_from_slice(&root.0);
+            out.extend_from_slice(format!("{}:", layer.len()).as_bytes());
+            out.extend_from_slice(layer);
+        }
+        out.push(b'e');
+    }
     out.push(b'e');
     out
 }
@@ -414,7 +671,7 @@ mod tests {
         ]);
         let info_bytes = encode_to_vec(&info);
         let trackers = vec!["http://tracker.example/announce".to_string()];
-        let torrent_bytes = synth_torrent_bytes(&info_bytes, &trackers);
+        let torrent_bytes = synth_torrent_bytes(&info_bytes, &trackers, &BTreeMap::new());
         let meta = crate::parse_torrent(&torrent_bytes).unwrap();
         assert_eq!(meta.info.name, "hello");
         assert_eq!(meta.info.total_length(), 1024);

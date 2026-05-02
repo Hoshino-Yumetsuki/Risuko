@@ -102,10 +102,10 @@ impl ChunkTracker {
                     missing = Some(i);
                     break;
                 }
-                ChunkState::Requested { peer: p, .. } if endgame && p != peer => {
-                    if candidate.is_none() {
-                        candidate = Some(i);
-                    }
+                ChunkState::Requested { peer: p, .. }
+                    if endgame && p != peer && candidate.is_none() =>
+                {
+                    candidate = Some(i);
                 }
                 _ => {}
             }

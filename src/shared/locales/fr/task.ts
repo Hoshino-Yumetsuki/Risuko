@@ -39,6 +39,8 @@ export default {
 	"task-num-pieces": "Pièces",
 	"task-bittorrent-info": "Informations sur le torrent",
 	"task-info-hash": "Hacher",
+	"task-info-hash-v2": "Hash v2",
+	"task-meta-version": "Meta version",
 	"task-bittorrent-creation-date": "Date de création",
 	"task-bittorrent-comment": "Commenter",
 	"task-progress-info": "Le progrès",

@@ -38,6 +38,8 @@ export default {
 	"task-num-pieces": "قطع",
 	"task-bittorrent-info": "معلومات التورنت",
 	"task-info-hash": "تجزئة",
+	"task-info-hash-v2": "Hash v2",
+	"task-meta-version": "Meta version",
 	"task-bittorrent-creation-date": "تاريخ الإنشاء",
 	"task-bittorrent-comment": "تعليق",
 	"task-progress-info": "تقدم",

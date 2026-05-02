@@ -55,6 +55,8 @@ export default {
 	"task-num-pieces": "Pieces",
 	"task-bittorrent-info": "Torrent Info",
 	"task-info-hash": "Hash",
+	"task-info-hash-v2": "Hash v2",
+	"task-meta-version": "Meta version",
 	"task-bittorrent-creation-date": "Creation Date",
 	"task-bittorrent-comment": "Comment",
 	"task-progress-info": "Progress",
@@ -83,6 +85,8 @@ export default {
 	"resolve-magnet-error": "Failed to resolve magnet metadata",
 	"resolve-magnet-timeout":
 		"Timed out resolving magnet. Trackers may be unavailable.",
+	"resolve-magnet-no-piece-layers":
+		"This is a BitTorrent v2 magnet, but no peer would serve the piece-layer hashes required to verify the download. Try again later, or import the .torrent file instead.",
 	"resolve-magnet-retry": "Retry",
 	"loading-delete-task": "Deleting task...",
 	"loading-delete-task-files": "Deleting task and files...",

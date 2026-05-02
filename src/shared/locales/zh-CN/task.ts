@@ -51,6 +51,8 @@ export default {
 	"task-num-pieces": "分片数量",
 	"task-bittorrent-info": "种子信息",
 	"task-info-hash": "Hash",
+	"task-info-hash-v2": "Hash v2",
+	"task-meta-version": "Meta version",
 	"task-bittorrent-creation-date": "发布时间",
 	"task-bittorrent-comment": "备注",
 	"task-progress-info": "任务进度",
@@ -78,6 +80,8 @@ export default {
 	"loading-resolve-magnet": "正在解析磁力链接元数据...",
 	"resolve-magnet-error": "解析磁力链接元数据失败",
 	"resolve-magnet-timeout": "解析磁力链接超时，Tracker 可能不可用。",
+	"resolve-magnet-no-piece-layers":
+		"这是 BitTorrent v2 磁力链接，但没有任何对等节点提供验证下载所需的分片层哈希。请稍后重试，或改用 .torrent 文件。",
 	"resolve-magnet-retry": "重试",
 	"loading-delete-task": "正在移除任务...",
 	"loading-delete-task-files": "正在移除任务并删除文件...",

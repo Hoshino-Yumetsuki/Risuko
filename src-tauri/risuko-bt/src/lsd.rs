@@ -62,6 +62,7 @@ struct LsdInner {
 impl LocalServiceDiscovery {
     /// Spawn the service. Returns the handle and a receiver yielding
     /// `(info_hash, peer_addr)` for every valid incoming announce.
+    #[allow(clippy::type_complexity)]
     pub fn spawn(
         announce_port: u16,
         info_hashes: Vec<Id20>,

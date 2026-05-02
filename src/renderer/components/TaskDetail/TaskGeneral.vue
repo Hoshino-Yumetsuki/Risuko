@@ -39,6 +39,14 @@
           >{{ task.infoHash }} <i class="copy-link" @click="handleCopyClick"><Link :size="12" /></i
         ></span>
       </div>
+      <div v-if="task.infoHashV2" class="general-card-row">
+        <span class="general-card-label">{{ $t('task.task-info-hash-v2') }}</span>
+        <span class="general-card-value mono">{{ task.infoHashV2 }}</span>
+      </div>
+      <div v-if="task.metaVersion" class="general-card-row">
+        <span class="general-card-label">{{ $t('task.task-meta-version') }}</span>
+        <span class="general-card-value">{{ task.metaVersion }}</span>
+      </div>
       <div class="general-card-row">
         <span class="general-card-label">{{ $t('task.task-piece-length') }}</span>
         <span class="general-card-value">{{ pieceLengthText }}</span>

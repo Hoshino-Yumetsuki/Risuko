@@ -95,8 +95,7 @@ impl FilesystemStorage {
             cursor += len;
         }
         for t in tasks {
-            t.await
-                .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))??;
+            t.await.map_err(|e| io::Error::other(e.to_string()))??;
         }
         Ok(())
     }
@@ -119,7 +118,7 @@ impl FilesystemStorage {
                 .open(&path)
         })
         .await
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))??;
+        .map_err(|e| io::Error::other(e.to_string()))??;
         let arc = Arc::new(file);
 
         let mut guard = self.handles.lock();
@@ -165,7 +164,7 @@ impl StorageBackend for FilesystemStorage {
                 Ok(())
             })
             .await
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))??;
+            .map_err(|e| io::Error::other(e.to_string()))??;
         }
         Ok(())
     }
@@ -198,7 +197,7 @@ impl StorageBackend for FilesystemStorage {
                 Ok(out)
             })
             .await
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))??;
+            .map_err(|e| io::Error::other(e.to_string()))??;
             buf[cursor..cursor + len].copy_from_slice(&chunk);
             cursor += len;
         }
@@ -213,7 +212,7 @@ impl StorageBackend for FilesystemStorage {
         for handle in snapshot {
             task::spawn_blocking(move || handle.sync_data())
                 .await
-                .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))??;
+                .map_err(|e| io::Error::other(e.to_string()))??;
         }
         Ok(())
     }

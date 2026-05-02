@@ -38,6 +38,8 @@ export default {
 	"task-num-pieces": "Piese",
 	"task-bittorrent-info": "Informații despre torrent",
 	"task-info-hash": "Hash",
+	"task-info-hash-v2": "Hash v2",
+	"task-meta-version": "Meta version",
 	"task-bittorrent-creation-date": "Data crearii",
 	"task-bittorrent-comment": "cometariu",
 	"task-progress-info": "Progres",

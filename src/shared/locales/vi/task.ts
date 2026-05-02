@@ -38,6 +38,8 @@ export default {
 	"task-num-pieces": "Các mảnh",
 	"task-bittorrent-info": "Thông tin Torrent",
 	"task-info-hash": "Hash",
+	"task-info-hash-v2": "Hash v2",
+	"task-meta-version": "Meta version",
 	"task-bittorrent-creation-date": "Ngày tạo",
 	"task-bittorrent-comment": "Bình luận",
 	"task-progress-info": "Tiến trình",

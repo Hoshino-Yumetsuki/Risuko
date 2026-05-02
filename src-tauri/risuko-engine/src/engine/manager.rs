@@ -228,6 +228,8 @@ impl TaskManager {
                         .await
                         .insert(gid.clone(), handle.id);
                     task.info_hash = handle.info_hash;
+                    task.info_hash_v2 = handle.info_hash_v2;
+                    task.meta_version = handle.meta_version;
                     task.status = TaskStatus::Active;
                 }
                 Err(e) => {
@@ -277,6 +279,8 @@ impl TaskManager {
                         .await
                         .insert(gid.clone(), handle.id);
                     task.info_hash = handle.info_hash;
+                    task.info_hash_v2 = handle.info_hash_v2;
+                    task.meta_version = handle.meta_version;
                     task.status = TaskStatus::Active;
                 }
                 Err(e) => {

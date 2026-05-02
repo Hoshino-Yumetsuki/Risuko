@@ -38,6 +38,8 @@ export default {
 	"task-num-pieces": "Шматочки",
 	"task-bittorrent-info": "Інформація про торрент",
 	"task-info-hash": "Хеш",
+	"task-info-hash-v2": "Hash v2",
+	"task-meta-version": "Meta version",
 	"task-bittorrent-creation-date": "Дата створення",
 	"task-bittorrent-comment": "Прокоментуйте",
 	"task-progress-info": "Прогрес",

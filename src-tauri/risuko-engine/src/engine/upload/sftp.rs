@@ -35,7 +35,14 @@ impl SftpSink {
         Ok(Self { cfg })
     }
 
-    async fn connect(&self) -> Result<SftpSession, String> {
+    /// Returned together so callers keep the russh `Handle` alive for the
+    /// lifetime of the SFTP session. Dropping the `Handle` issues an SSH
+    /// `Disconnect`, which tears down the channel that `SftpSession` is
+    /// streaming over and turns the next SFTP request into an error
+    /// (observed as `russh::client: drop handle` immediately after the
+    /// SFTP `VERSION` reply, followed by an SFTP `STATUS` failure on the
+    /// first real request)
+    async fn connect(&self) -> Result<(client::Handle<TofuHandler>, SftpSession), String> {
         let config = Arc::new(client::Config::default());
         let addr = format!("{}:{}", self.cfg.host, self.cfg.port);
         let handler = TofuHandler::new(addr.clone());
@@ -87,9 +94,10 @@ impl SftpSink {
             .await
             .map_err(|e| format!("SFTP subsystem request failed: {e}"))?;
 
-        SftpSession::new(channel.into_stream())
+        let sftp = SftpSession::new(channel.into_stream())
             .await
-            .map_err(|e| format!("SFTP session init failed: {e}"))
+            .map_err(|e| format!("SFTP session init failed: {e}"))?;
+        Ok((session, sftp))
     }
 
     /// Walk the parent path one directory at a time creating any missing
@@ -152,11 +160,15 @@ impl UploadSink for SftpSink {
             return Err("cancelled".into());
         }
 
-        let sftp = tokio::time::timeout(CONNECT_TIMEOUT, self.connect())
+        let (_ssh, sftp) = tokio::time::timeout(CONNECT_TIMEOUT, self.connect())
             .await
-            .map_err(|_| "SFTP connect timed out".to_string())??;
+            .map_err(|_| "SFTP connect timed out".to_string())?
+            .inspect_err(|e| log::error!("SFTP connect failed: {e}"))?;
         let remote = self.full_remote_path(&file.remote_relative);
-        self.ensure_parent_dirs(&sftp, &remote).await?;
+        log::info!("SFTP upload starting: remote={remote}");
+        self.ensure_parent_dirs(&sftp, &remote)
+            .await
+            .inspect_err(|e| log::error!("SFTP ensure_parent_dirs({remote}) failed: {e}"))?;
 
         // Stage writes to a sibling `.part` file so an existing good upload
         // at the final path is never truncated or unlinked on failure.
@@ -169,7 +181,10 @@ impl UploadSink for SftpSink {
                 OpenFlags::CREATE | OpenFlags::WRITE | OpenFlags::TRUNCATE,
             )
             .await
-            .map_err(|e| format!("SFTP open {remote_tmp}: {e}"))?;
+            .map_err(|e| {
+                log::error!("SFTP open {remote_tmp}: {e}");
+                format!("SFTP open {remote_tmp}: {e}")
+            })?;
 
         let local: PathBuf = file.local_path.clone();
         let mut local_file = tokio::fs::File::open(&local)
@@ -257,7 +272,7 @@ impl UploadSink for SftpSink {
         // Connect with a short overall timeout — if any step hangs we want
         // a fast failure in the UI
         tokio::time::timeout(Duration::from_secs(20), async {
-            let sftp = self.connect().await?;
+            let (_ssh, sftp) = self.connect().await?;
             // Stat the base dir or `/` to confirm we can talk SFTP
             let probe = if self.cfg.base_path.trim().is_empty() {
                 "/".to_string()

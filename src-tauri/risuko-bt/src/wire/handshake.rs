@@ -22,6 +22,10 @@ pub mod reserved {
     pub const DHT: (usize, u8) = (7, 0x01);
     /// Bit 2 of byte 7 — BEP-6 Fast extension
     pub const FAST: (usize, u8) = (7, 0x04);
+    /// Bit 3 of byte 7 (0x08) — BEP 52 BitTorrent v2 capable
+    /// Matches libtorrent's choice for maximum interop. The bit position
+    /// is not yet ratified; flip this single constant if it shifts
+    pub const V2: (usize, u8) = (7, 0x08);
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -48,6 +52,8 @@ impl Handshake {
         reserved[b] |= m;
         let (b, m) = reserved::DHT;
         reserved[b] |= m;
+        let (b, m) = reserved::V2;
+        reserved[b] |= m;
         Self {
             reserved,
             info_hash,
@@ -62,6 +68,12 @@ impl Handshake {
 
     pub fn has_dht(&self) -> bool {
         let (b, m) = reserved::DHT;
+        self.reserved[b] & m != 0
+    }
+
+    /// True if the peer advertises BEP 52 (BitTorrent v2) capability
+    pub fn has_v2(&self) -> bool {
+        let (b, m) = reserved::V2;
         self.reserved[b] & m != 0
     }
 
@@ -106,6 +118,7 @@ mod tests {
         assert_eq!(hs, parsed);
         assert!(parsed.has_ext_protocol());
         assert!(parsed.has_dht());
+        assert!(parsed.has_v2());
     }
 
     #[test]

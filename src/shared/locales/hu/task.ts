@@ -37,6 +37,8 @@ export default {
 	"task-num-pieces": "Darabok",
 	"task-bittorrent-info": "Torrent információ",
 	"task-info-hash": "Hash",
+	"task-info-hash-v2": "Hash v2",
+	"task-meta-version": "Meta version",
 	"task-bittorrent-creation-date": "Létrehozás dátuma",
 	"task-bittorrent-comment": "Megjegyzés",
 	"task-progress-info": "Előrehalad",
