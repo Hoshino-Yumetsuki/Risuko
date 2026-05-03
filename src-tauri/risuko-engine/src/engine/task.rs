@@ -848,6 +848,30 @@ mod tests {
     }
 
     #[test]
+    fn test_info_hash_v2_and_meta_version_emitted_both_places() {
+        let mut task = DownloadTask::new_torrent("tgid".into(), "/dl".into(), Map::new());
+        task.info_hash = Some("aabbccdd".into());
+        task.info_hash_v2 = Some("deadbeef".into());
+        task.meta_version = Some("hybrid".into());
+
+        let status = task.to_rpc_status(&[]);
+        let obj = status.as_object().unwrap();
+
+        // Fields must appear at the top level
+        assert_eq!(obj.get("infoHashV2").unwrap(), "deadbeef",
+            "infoHashV2 must be present at RPC root");
+        assert_eq!(obj.get("metaVersion").unwrap(), "hybrid",
+            "metaVersion must be present at RPC root");
+
+        // Fields must also appear inside the nested bittorrent object
+        let bt = obj.get("bittorrent").unwrap().as_object().unwrap();
+        assert_eq!(bt.get("infoHashV2").unwrap(), "deadbeef",
+            "infoHashV2 must be present inside bittorrent");
+        assert_eq!(bt.get("metaVersion").unwrap(), "hybrid",
+            "metaVersion must be present inside bittorrent");
+    }
+
+    #[test]
     fn rpc_status_ed2k_has_ed2k_link() {
         let task = DownloadTask::new_ed2k(
             "egid".into(),

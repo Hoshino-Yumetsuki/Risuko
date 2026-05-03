@@ -26,8 +26,8 @@ pub enum MetaError {
     BadPieces,
     #[error("metainfo: malformed v2 info dict: {0}")]
     BadInfoV2(&'static str),
-    #[error("metainfo: pure-v2 magnet without piece layers cannot be loaded yet")]
-    PureV2MagnetUnsupported,
+    #[error("metainfo: missing required piece layers for one or more files")]
+    MissingPieceLayers,
 }
 
 /// Which BEP versions a `.torrent` declares
@@ -229,7 +229,7 @@ impl ValidatedTorrentMetaV1Info {
     }
 }
 
-///! BEP 52 (v2) info dict
+// BEP 52 (v2) info dict
 
 /// One file entry derived from the v2 `file tree` (BEP 52). Path components
 /// are sanitised the same way as v1
@@ -363,7 +363,7 @@ pub fn parse_torrent(bytes: &[u8]) -> Result<TorrentMeta, MetaError> {
             }
             let root = file.pieces_root;
             if !piece_layers.contains_key(&root) {
-                return Err(MetaError::PureV2MagnetUnsupported);
+                return Err(MetaError::MissingPieceLayers);
             }
         }
         // Pure-v2 wire infohash is the truncated SHA-256
@@ -992,7 +992,7 @@ mod tests {
         let bytes = super::super::super::bencode::encode_to_vec(&top);
         assert!(matches!(
             parse_torrent(&bytes),
-            Err(MetaError::PureV2MagnetUnsupported)
+            Err(MetaError::MissingPieceLayers)
         ));
     }
 

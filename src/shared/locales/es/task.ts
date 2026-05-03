@@ -40,7 +40,7 @@ export default {
 	"task-bittorrent-info": "Información de Torrent",
 	"task-info-hash": "Hash",
 	"task-info-hash-v2": "Hash v2",
-	"task-meta-version": "Meta version",
+	"task-meta-version": "Versión de metadatos",
 	"task-bittorrent-creation-date": "Fecha de creación",
 	"task-bittorrent-comment": "Comentario",
 	"task-progress-info": "Progreso",

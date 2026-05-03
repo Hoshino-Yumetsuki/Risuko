@@ -324,7 +324,21 @@ impl MerkleProofTable {
                 expected: expected_size as usize,
             });
         }
-        let computed = self.expected_piece_root(piece_bytes);
+        let computed = if self.piece_root_hashes.is_empty() {
+            // Single-piece file: BEP 52 derives the file root by padding to
+            // next_power_of_two(actual_block_count), not to blocks_per_piece.
+            // Using expected_piece_root (which pads to blocks_per_piece) would
+            // produce the wrong root when the two values differ (e.g. 48 KiB
+            // file with 256 KiB pieces: actual_blocks=3 → pad to 4, but
+            // blocks_per_piece=16)
+            let block_hashes: Vec<Id32> = piece_bytes
+                .chunks(BLOCK_SIZE as usize)
+                .map(hash_block)
+                .collect();
+            compute_root(&block_hashes)
+        } else {
+            self.expected_piece_root(piece_bytes)
+        };
         let expected = if self.piece_root_hashes.is_empty() {
             self.file_root
         } else {

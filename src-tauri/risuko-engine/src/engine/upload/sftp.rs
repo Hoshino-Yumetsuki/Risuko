@@ -165,10 +165,10 @@ impl UploadSink for SftpSink {
             .map_err(|_| "SFTP connect timed out".to_string())?
             .inspect_err(|e| log::error!("SFTP connect failed: {e}"))?;
         let remote = self.full_remote_path(&file.remote_relative);
-        log::info!("SFTP upload starting: remote={remote}");
+        log::debug!("SFTP upload starting: remote={remote}");
         self.ensure_parent_dirs(&sftp, &remote)
             .await
-            .inspect_err(|e| log::error!("SFTP ensure_parent_dirs({remote}) failed: {e}"))?;
+            .inspect_err(|e| log::debug!("SFTP ensure_parent_dirs({remote}) failed: {e}"))?;
 
         // Stage writes to a sibling `.part` file so an existing good upload
         // at the final path is never truncated or unlinked on failure.

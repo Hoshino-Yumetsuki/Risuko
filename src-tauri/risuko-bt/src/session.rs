@@ -369,7 +369,9 @@ impl Session {
             Ok(v) => v,
             Err(e) => {
                 let mut inner = self.inner.lock();
-                inner.by_hash.remove(&meta.info_hash);
+                if inner.by_hash.get(&meta.info_hash) == Some(&id) {
+                    inner.by_hash.remove(&meta.info_hash);
+                }
                 return Err(format!("build verifier: {e}"));
             }
         };
@@ -388,7 +390,9 @@ impl Session {
             Err(e) => {
                 // Roll back the reservation so a retry can succeed.
                 let mut inner = self.inner.lock();
-                inner.by_hash.remove(&meta.info_hash);
+                if inner.by_hash.get(&meta.info_hash) == Some(&id) {
+                    inner.by_hash.remove(&meta.info_hash);
+                }
                 return Err(format!("spawn torrent: {e}"));
             }
         };

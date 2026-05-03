@@ -17,7 +17,7 @@ use parking_lot::Mutex;
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::{interval, MissedTickBehavior};
 
-use super::core::{Id20, Lengths, PieceVerifier, TorrentMeta, ValidatedTorrentMetaV1Info};
+use super::core::{Id20, Lengths, MerkleProofTable, PieceVerifier, TorrentMeta, ValidatedTorrentMetaV1Info};
 use super::peer::{connect, PeerCommand, PeerEvent, SpawnPeer};
 use super::piece::{ChunkTracker, PieceTracker};
 use super::storage::{FilesystemStorage, StorageBackend};
@@ -279,6 +279,41 @@ async fn torrent_loop(
     let lengths = init.lengths;
     let encryption = init.encryption;
     let verifier = init.verifier;
+    // V2 Merkle tables for serving HASH_REQUEST — built from the meta for
+    // any torrent that carries v2 data (pure-v2 or hybrid). Hybrid torrents
+    // use V1Sha1 for piece verification but must still be able to serve
+    // BEP-52 hash requests to v2 peers
+    let hash_tables: Option<Arc<Vec<MerkleProofTable>>> = {
+        if let PieceVerifier::V2Merkle { ref tables, .. } = verifier {
+            Some(Arc::clone(tables))
+        } else if let Some(ref v2) = init.meta.info_v2 {
+            // Hybrid torrent: build Merkle tables from the meta's piece_layers
+            let mut tbls = Vec::with_capacity(v2.files.len());
+            let mut ok = true;
+            for f in &v2.files {
+                let layer = init.meta.piece_layers
+                    .get(&f.pieces_root)
+                    .map(|v| v.as_slice())
+                    .unwrap_or(&[]);
+                match super::core::MerkleProofTable::from_layer_bytes(
+                    f.pieces_root,
+                    f.length,
+                    v2.piece_length,
+                    layer,
+                ) {
+                    Ok(t) => tbls.push(t),
+                    Err(e) => {
+                        log::warn!("hybrid torrent {info_hash}: could not build Merkle table for serving: {e}");
+                        ok = false;
+                        break;
+                    }
+                }
+            }
+            if ok { Some(Arc::new(tbls)) } else { None }
+        } else {
+            None
+        }
+    };
     // Per-peer pipeline depth bounds. When the session explicitly sets
     // `max_outstanding_per_peer` we honour it as a fixed value (legacy
     // behaviour, useful for benchmarks / debugging); otherwise we use
@@ -315,7 +350,7 @@ async fn torrent_loop(
         init.meta.announce_infohashes(),
         our_peer_id,
         listen_port,
-        lengths.total_length(),
+        Arc::clone(&stats),
     );
 
     // Large enough to not block peers: with MAX_PEERS peers each potentially
@@ -337,6 +372,13 @@ async fn torrent_loop(
     let mut tick = interval(Duration::from_millis(500));
     tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
     let mut last_tick = Instant::now();
+    // Send a BEP-3 KeepAlive (zero-length message) to every peer roughly
+    // every 90 s. Peers — most clients default to a 2-min idle timeout —
+    // will close us otherwise, which is the dominant reason a fully-seeded
+    // torrent gradually loses every connection (no Request/Piece traffic
+    // flows between two seeders, so without an explicit liveness frame
+    // the TCP session looks dead from their side).
+    let mut last_keepalive = Instant::now();
     let mut bytes_this_tick = (0u64, 0u64);
     // Upload bytes accumulate from spawned send tasks; share via atomic so
     // we only credit them after the disk read and channel send succeed
@@ -418,6 +460,7 @@ async fn torrent_loop(
                     &verify_tx,
                     &verifier,
                     &info_bytes,
+                    hash_tables.as_deref().map(|v| &**v),
                     pipeline_floor,
                     pipeline_cap,
                     max_peers,
@@ -442,6 +485,12 @@ async fn torrent_loop(
                 let now = Instant::now();
                 let dt = now.duration_since(last_tick).as_secs_f32().max(0.001);
                 last_tick = now;
+                if now.duration_since(last_keepalive) >= Duration::from_secs(90) {
+                    last_keepalive = now;
+                    for p in peers.values() {
+                        let _ = p.cmd_tx.try_send(PeerCommand::Send(Message::KeepAlive));
+                    }
+                }
                 // Reclaim chunk requests whose peer has been silent past
                 // the request timeout. Without this, slow-but-TCP-alive
                 // peers progressively hoard pieces (see REQUEST_TIMEOUT
@@ -539,12 +588,16 @@ mod peer_registry {
     use super::*;
     use once_cell::sync::Lazy;
     use std::sync::Mutex as StdMutex;
-    type PeerCmdRegistry = StdMutex<HashMap<(usize, u32), mpsc::Sender<PeerCommand>>>;
+    type PeerCmdRegistry =
+        StdMutex<HashMap<(usize, u32), (mpsc::Sender<PeerCommand>, SocketAddr)>>;
     static REG: Lazy<PeerCmdRegistry> = Lazy::new(|| StdMutex::new(HashMap::new()));
-    pub fn put(torrent_id: usize, pid: u32, tx: mpsc::Sender<PeerCommand>) {
-        REG.lock().unwrap().insert((torrent_id, pid), tx);
+    pub fn put(torrent_id: usize, pid: u32, tx: mpsc::Sender<PeerCommand>, addr: SocketAddr) {
+        REG.lock().unwrap().insert((torrent_id, pid), (tx, addr));
     }
-    pub fn take(torrent_id: usize, pid: u32) -> Option<mpsc::Sender<PeerCommand>> {
+    pub fn take(
+        torrent_id: usize,
+        pid: u32,
+    ) -> Option<(mpsc::Sender<PeerCommand>, SocketAddr)> {
         REG.lock().unwrap().remove(&(torrent_id, pid))
     }
 }
@@ -572,7 +625,7 @@ fn spawn_outbound_peer(
         };
         match connect(spawn).await {
             Ok((handle, mut rx)) => {
-                peer_registry::put(torrent_id, pid, handle.tx.clone());
+                peer_registry::put(torrent_id, pid, handle.tx.clone(), handle.addr);
                 while let Some(ev) = rx.recv().await {
                     if event_tx.send((pid, ev)).await.is_err() {
                         break;
@@ -662,6 +715,7 @@ async fn process_peer_event(
     verify_tx: &mpsc::Sender<VerifyResult>,
     verifier: &PieceVerifier,
     info_bytes: &Arc<Vec<u8>>,
+    hash_tables: Option<&[MerkleProofTable]>,
     pipeline_floor: usize,
     pipeline_cap: usize,
     max_peers: usize,
@@ -673,12 +727,14 @@ async fn process_peer_event(
     match ev {
         PeerEvent::Handshook { reserved, .. } => {
             if !peers.contains_key(&pid) {
-                if let Some(cmd_tx) = peer_registry::take(torrent_id, pid) {
-                    // Move from pending dial to live peer if we tracked it.
-                    let addr = pending_dials.remove(&pid).unwrap_or_else(|| {
-                        // Fallback: unknown addr (shouldn't happen for outbound)
-                        "0.0.0.0:0".parse().unwrap()
-                    });
+                if let Some((cmd_tx, registry_addr)) = peer_registry::take(torrent_id, pid) {
+                    // Move from pending dial to live peer. The registry is
+                    // the authoritative source of `addr` because
+                    // `pending_dials` may have been cleared by Pause/Stop
+                    // while the connect+handshake was in flight; the
+                    // registry entry is only ever written by the spawn
+                    // task that actually completed the TCP connect.
+                    let addr = pending_dials.remove(&pid).unwrap_or(registry_addr);
                     // Pending dials can outrun the max_peers cap (we allow
                     // up to MAX_PENDING_DIALS in flight). If we'd overflow,
                     // reject this freshly-handshook peer rather than
@@ -1015,7 +1071,7 @@ async fn process_peer_event(
                     proof_layers,
                 } => {
                     let response = build_hash_response(
-                        verifier,
+                        hash_tables,
                         pieces_root,
                         base_layer,
                         index,
@@ -1517,7 +1573,7 @@ fn spawn_tracker_pollers(
     info_hashes: Vec<Id20>,
     peer_id: Id20,
     port: u16,
-    left: u64,
+    stats: Arc<Mutex<TorrentStats>>,
 ) -> mpsc::Receiver<SocketAddr> {
     let (tx, rx) = mpsc::channel(256);
     for url in trackers {
@@ -1525,15 +1581,35 @@ fn spawn_tracker_pollers(
             let tx = tx.clone();
             let url = url.clone();
             let info_hash = *info_hash;
+            let stats = Arc::clone(&stats);
             tokio::spawn(async move {
                 let mut event = AnnounceEvent::Started;
+                // Track whether we have already announced `Completed` to
+                // this tracker so we only emit it once per session, even if
+                // the torrent finishes mid-poll loop. Without this,
+                // re-announcing `Completed` every interval would inflate
+                // tracker-side completion counters
+                let mut sent_completed = false;
                 loop {
+                    let (uploaded, downloaded, left, finished) = {
+                        let s = stats.lock();
+                        let left = s.total_bytes.saturating_sub(s.progress_bytes);
+                        (s.uploaded_bytes, s.progress_bytes, left, s.finished)
+                    };
+                    // Promote to `Completed` the first time we observe
+                    // `finished` after Started; trackers use this signal
+                    // to move us into the seeders bucket and start
+                    // returning leechers (who will actually request from
+                    // us) instead of fellow seeders (who won't)
+                    if finished && !sent_completed && !matches!(event, AnnounceEvent::Started) {
+                        event = AnnounceEvent::Completed;
+                    }
                     let req = AnnounceRequest {
                         info_hash,
                         peer_id,
                         port,
-                        uploaded: 0,
-                        downloaded: 0,
+                        uploaded,
+                        downloaded,
                         left,
                         event,
                         // Match aria2/libtorrent: ask for the maximum the BEP-3
@@ -1543,6 +1619,9 @@ fn spawn_tracker_pollers(
                     };
                     match tracker_announce(&url, &req, Duration::from_secs(30)).await {
                         Ok(resp) => {
+                            if matches!(event, AnnounceEvent::Completed) {
+                                sent_completed = true;
+                            }
                             for a in resp.peers {
                                 if tx.send(a).await.is_err() {
                                     return;
@@ -1570,8 +1649,14 @@ fn spawn_tracker_pollers(
 /// shape the magnet resolver uses. All other request shapes are answered
 /// with `HashReject` — the peer can then fall back to v1 verification or
 /// another seeder. This is a valid BEP 52 outcome
+///
+/// `tables` is the optional slice of per-file Merkle proof tables. It is
+/// `Some` for pure-v2 and hybrid torrents and `None` for pure-v1 torrents.
+/// Passing the tables separately (rather than the verifier) means hybrid
+/// torrents — which use `V1Sha1` for piece verification — can still serve
+/// BEP-52 HASH_REQUEST to v2 peers
 fn build_hash_response(
-    verifier: &PieceVerifier,
+    tables: Option<&[MerkleProofTable]>,
     pieces_root: [u8; 32],
     base_layer: u32,
     index: u32,
@@ -1586,8 +1671,7 @@ fn build_hash_response(
         proof_layers,
     };
 
-    // Only the v2 verifier holds the per-file Merkle tables we can serve from
-    let PieceVerifier::V2Merkle { tables, .. } = verifier else {
+    let Some(tables) = tables else {
         return reject();
     };
 
@@ -1633,11 +1717,16 @@ fn serve_ut_metadata(peer: &Peer, payload: &Bytes, info_bytes: &Arc<Vec<u8>>) {
     let total_pieces = total.div_ceil(META_PIECE_SIZE);
     let piece = msg.piece;
     if piece < 0 || (piece as usize) >= total_pieces {
-        let reject = super::wire::extended::ut_metadata_reject(piece);
-        let _ = peer.cmd_tx.try_send(PeerCommand::Send(Message::Extended {
-            ext_id: peer.their_ut_metadata_id.unwrap_or(OUR_UT_METADATA_ID),
-            payload: reject,
-        }));
+        // Only send REJECT when the peer has told us which ext_id to use;
+        // if we haven't received their handshake yet, sending on an id they
+        // don't recognise is useless and potentially confusing
+        if let Some(their_id) = peer.their_ut_metadata_id {
+            let reject = super::wire::extended::ut_metadata_reject(piece);
+            let _ = peer.cmd_tx.try_send(PeerCommand::Send(Message::Extended {
+                ext_id: their_id,
+                payload: reject,
+            }));
+        }
         return;
     }
     let Some(their_id) = peer.their_ut_metadata_id else {
@@ -1662,9 +1751,8 @@ mod tests {
     use super::*;
     use crate::core::merkle::{compute_root, hash_block, MerkleProofTable, BLOCK_SIZE};
     use crate::core::Id32;
-    use std::sync::Arc;
 
-    fn make_v2_verifier(num_pieces: usize, piece_length: u32) -> (PieceVerifier, Id32) {
+    fn make_v2_tables(num_pieces: usize, piece_length: u32) -> (Vec<MerkleProofTable>, Id32) {
         let blocks_per_piece = piece_length / BLOCK_SIZE;
         let total = num_pieces as u64 * piece_length as u64;
         let mut data = vec![0u8; total as usize];
@@ -1700,26 +1788,17 @@ mod tests {
         let table =
             MerkleProofTable::from_layer_bytes(file_root, total, piece_length, &layer_bytes)
                 .expect("build table");
-        let verifier = PieceVerifier::V2Merkle {
-            tables: Arc::new(vec![table]),
-            file_offsets: Arc::new(vec![0]),
-            piece_length,
-        };
-        (verifier, file_root)
+        (vec![table], file_root)
     }
 
     #[test]
     fn build_hash_response_serves_full_piece_layer() {
-        let (verifier, root) = make_v2_verifier(4, 64 * 1024);
-        let table = match &verifier {
-            PieceVerifier::V2Merkle { tables, .. } => &tables[0],
-            _ => unreachable!(),
-        };
-        let base = table.piece_layer_base();
-        let length = table.piece_layer_padded_len();
-        let expected = table.serve_full_piece_layer().unwrap();
+        let (tables, root) = make_v2_tables(4, 64 * 1024);
+        let base = tables[0].piece_layer_base();
+        let length = tables[0].piece_layer_padded_len();
+        let expected = tables[0].serve_full_piece_layer().unwrap();
 
-        match build_hash_response(&verifier, root.0, base, 0, length, 0) {
+        match build_hash_response(Some(&tables), root.0, base, 0, length, 0) {
             Message::Hashes {
                 pieces_root,
                 base_layer,
@@ -1741,24 +1820,53 @@ mod tests {
 
     #[test]
     fn build_hash_response_rejects_unknown_root() {
-        let (verifier, _root) = make_v2_verifier(4, 64 * 1024);
+        let (tables, _root) = make_v2_tables(4, 64 * 1024);
         let bogus = [0xAAu8; 32];
-        match build_hash_response(&verifier, bogus, 2, 0, 4, 0) {
+        match build_hash_response(Some(&tables), bogus, 2, 0, 4, 0) {
             Message::HashReject { pieces_root, .. } => assert_eq!(pieces_root, bogus),
             _ => panic!("expected HashReject"),
         }
     }
 
     #[test]
+    fn build_hash_response_hybrid_torrent_served_via_tables() {
+        // Hybrid torrents use V1Sha1 for piece verification, but must still
+        // serve BEP-52 hash requests. Simulate this by passing Some(tables)
+        // while having a V1Sha1 verifier — the function no longer looks at
+        // the verifier at all
+        let (tables, root) = make_v2_tables(4, 64 * 1024);
+        let base = tables[0].piece_layer_base();
+        let length = tables[0].piece_layer_padded_len();
+        let expected = tables[0].serve_full_piece_layer().unwrap();
+
+        match build_hash_response(Some(&tables), root.0, base, 0, length, 0) {
+            Message::Hashes { hashes, .. } => {
+                assert_eq!(hashes.as_ref(), expected.as_slice(),
+                    "hybrid torrent should serve piece layer via explicit tables");
+            }
+            other => panic!("expected Hashes for hybrid torrent, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn build_hash_response_rejects_when_no_tables() {
+        // Pure-v1 torrent: tables = None → always HashReject
+        match build_hash_response(None, [0u8; 32], 0, 0, 1, 0) {
+            Message::HashReject { .. } => {}
+            _ => panic!("expected HashReject for None tables"),
+        }
+    }
+
+    #[test]
     fn build_hash_response_rejects_partial_request() {
-        let (verifier, root) = make_v2_verifier(4, 64 * 1024);
+        let (tables, root) = make_v2_tables(4, 64 * 1024);
         // proof_layers > 0 → reject
-        match build_hash_response(&verifier, root.0, 2, 0, 4, 1) {
+        match build_hash_response(Some(&tables), root.0, 2, 0, 4, 1) {
             Message::HashReject { .. } => {}
             _ => panic!("expected HashReject for proof_layers != 0"),
         }
         // wrong base_layer → reject
-        match build_hash_response(&verifier, root.0, 99, 0, 4, 0) {
+        match build_hash_response(Some(&tables), root.0, 99, 0, 4, 0) {
             Message::HashReject { .. } => {}
             _ => panic!("expected HashReject for wrong base_layer"),
         }
@@ -1766,12 +1874,10 @@ mod tests {
 
     #[test]
     fn build_hash_response_rejects_v1_verifier() {
-        let verifier = PieceVerifier::V1Sha1 {
-            pieces: Arc::new(vec![0u8; 20]),
-        };
-        match build_hash_response(&verifier, [0u8; 32], 0, 0, 1, 0) {
+        // Passing None tables → HashReject regardless of other params
+        match build_hash_response(None, [0u8; 32], 0, 0, 1, 0) {
             Message::HashReject { .. } => {}
-            _ => panic!("expected HashReject for v1 verifier"),
+            _ => panic!("expected HashReject for None (v1-only) tables"),
         }
     }
 }

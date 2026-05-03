@@ -264,6 +264,15 @@ mod tests {
     }
 
     #[test]
+    fn ut_metadata_reject_parse() {
+        let bytes = ut_metadata_reject(7);
+        let parsed = parse_ut_metadata(bytes).unwrap();
+        assert_eq!(parsed.msg_type, ut_metadata_type::REJECT);
+        assert_eq!(parsed.piece, 7);
+        assert!(parsed.block.is_empty());
+    }
+
+    #[test]
     fn ut_pex_round_trip() {
         let addrs = vec![
             SocketAddrV4::new("1.2.3.4".parse().unwrap(), 6881),
