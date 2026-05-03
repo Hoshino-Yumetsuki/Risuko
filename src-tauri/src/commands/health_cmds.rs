@@ -7,7 +7,7 @@
 //! for now — exposing them properly requires new accessors in `risuko-bt`
 
 use std::collections::HashMap;
-use std::io::{Read, Seek, SeekFrom};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
 use std::time::{Duration, SystemTime};
 
@@ -761,10 +761,12 @@ fn probe_dir(id: &str, path: &str) -> HealthCheck {
         );
     }
 
-    // Touch test: create + remove a temp file
-    let probe = p.join(".risuko-health-probe");
-    let writable = std::fs::write(&probe, b"")
-        .and_then(|_| std::fs::remove_file(&probe))
+    // Touch test: create, write, and auto-remove a unique temp file
+    let writable = tempfile::NamedTempFile::new_in(p)
+        .and_then(|mut probe| {
+            probe.write_all(b"probe")?;
+            probe.flush()
+        })
         .is_ok();
     if !writable {
         return HealthCheck::fail(
@@ -806,9 +808,9 @@ fn probe_dir(id: &str, path: &str) -> HealthCheck {
 }
 
 fn disk_space(p: &Path) -> (Option<u64>, Option<u64>) {
-    // `fs2` wraps `statvfs` on unix and `GetDiskFreeSpaceExW` on windows
-    let free = fs2::available_space(p).ok();
-    let total = fs2::total_space(p).ok();
+    // `fs4` wraps `statvfs` on unix and `GetDiskFreeSpaceExW` on windows
+    let free = fs4::available_space(p).ok();
+    let total = fs4::total_space(p).ok();
     (free, total)
 }
 
@@ -851,7 +853,7 @@ fn check_system(autostart: bool, prevent_sleep_while_downloading: bool) -> Vec<H
     } else if sleep_inhibit_active() {
         out.push(HealthCheck::ok(
             "sleep-inhibit",
-            "Sleep inhibit active (downloads in progress)",
+            "Sleep inhibit active",
         ));
     } else {
         out.push(HealthCheck::skipped(

@@ -37,9 +37,10 @@ export default {
 	continue: "HTTPS/FTP Downloads fortsetzen wenn bereits angefangen",
 	"task-completed-notify":
 		"Benachrichtigung nach abgeschlossenen Download anzeigen",
-	"prevent-sleep-while-downloading": "Prevent system sleep while downloading",
+	"prevent-sleep-while-downloading":
+		"Systemschlaf während des Downloads verhindern",
 	"prevent-sleep-while-downloading-tips":
-		"Keep the computer awake whenever an active task is in progress",
+		"Computer wach halten, solange eine aktive Aufgabe läuft",
 	"auto-purge-record": "Download Protokoll beim Schließen der App löschen",
 	ui: "UI",
 	appearance: "Erscheinungsbild",

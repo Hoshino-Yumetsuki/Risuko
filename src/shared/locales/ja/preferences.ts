@@ -32,9 +32,9 @@ export default {
 	"no-confirm-before-delete-task": "タスクを削除する前に確認は必要ありません",
 	continue: "続ける",
 	"task-completed-notify": "タスク完了後に通知する",
-	"prevent-sleep-while-downloading": "Prevent system sleep while downloading",
+	"prevent-sleep-while-downloading": "ダウンロード中はシステムのスリープを防止",
 	"prevent-sleep-while-downloading-tips":
-		"Keep the computer awake whenever an active task is in progress",
+		"アクティブなタスクがある間はコンピューターをスリープさせません",
 	"auto-purge-record": "アプリケーション終了後自動的にタスク履歴を削除",
 	ui: "UI",
 	appearance: "テーマ",

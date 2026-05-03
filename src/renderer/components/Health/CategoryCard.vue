@@ -34,7 +34,7 @@
         <button
           type="button"
           class="health-cat-icon-btn"
-          :title="expanded ? 'Collapse' : 'Expand'"
+					:title="expanded ? $t('health.collapse') : $t('health.expand')"
           @click="expanded = !expanded"
         >
           <ChevronDown :size="14" :class="{ 'health-cat-toggle-open': expanded }" />

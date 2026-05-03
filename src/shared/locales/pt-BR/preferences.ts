@@ -34,9 +34,10 @@ export default {
 		"Nenhuma confirmação é necessária antes de excluir a tarefa",
 	continue: "Continuar",
 	"task-completed-notify": "Notificação após o download ser completado",
-	"prevent-sleep-while-downloading": "Prevent system sleep while downloading",
+	"prevent-sleep-while-downloading":
+		"Impedir que o sistema entre em suspensão durante o download",
 	"prevent-sleep-while-downloading-tips":
-		"Keep the computer awake whenever an active task is in progress",
+		"Manter o computador ativo enquanto houver uma tarefa em andamento",
 	"auto-purge-record":
 		"Auto remover registro de download quando o app for finalizado",
 	ui: "UI",

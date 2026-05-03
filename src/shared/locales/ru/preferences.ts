@@ -34,9 +34,10 @@ export default {
 		"Перед удалением задачи подтверждение не требуется",
 	continue: "Продолжить",
 	"task-completed-notify": "Сообщение после окончания загрузки",
-	"prevent-sleep-while-downloading": "Prevent system sleep while downloading",
+	"prevent-sleep-while-downloading":
+		"Не допускать перехода системы в спящий режим во время загрузки",
 	"prevent-sleep-while-downloading-tips":
-		"Keep the computer awake whenever an active task is in progress",
+		"Поддерживать компьютер в активном состоянии, пока выполняется задача",
 	"auto-purge-record":
 		"Автоматически чистить записи о загрузках после закрытия приложения",
 	ui: "UI",

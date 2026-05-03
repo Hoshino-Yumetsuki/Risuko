@@ -31,9 +31,9 @@ export default {
 	"no-confirm-before-delete-task": "لاتطلب التأكيد قبل حذف التحميل",
 	continue: "الإستمرارية",
 	"task-completed-notify": "إشعار بعد اكتمال التحميل",
-	"prevent-sleep-while-downloading": "Prevent system sleep while downloading",
+	"prevent-sleep-while-downloading": "منع النظام من السكون أثناء التنزيل",
 	"prevent-sleep-while-downloading-tips":
-		"Keep the computer awake whenever an active task is in progress",
+		"إبقاء الكمبيوتر مستيقظًا طالما توجد مهمة نشطة قيد التنفيذ",
 	"auto-purge-record": "مسح سجلات التحميل تلقائيًا عند الخروج من التطبيق",
 	ui: "الواجهة",
 	appearance: "المظهر",

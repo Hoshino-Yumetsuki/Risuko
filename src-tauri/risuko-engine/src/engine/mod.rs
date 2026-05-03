@@ -284,9 +284,9 @@ pub async fn start_engine(
     if let Ok(mut g) = STARTUP_SNAPSHOT.lock() {
         let mut snap = std::collections::HashMap::new();
         for key in STARTUP_ONLY_KEYS {
-            let v = system
+            let v = user
                 .get(*key)
-                .or_else(|| user.get(*key))
+                .or_else(|| system.get(*key))
                 .cloned()
                 .unwrap_or(serde_json::Value::Null);
             snap.insert((*key).to_string(), v);

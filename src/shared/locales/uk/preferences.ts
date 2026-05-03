@@ -35,9 +35,10 @@ export default {
 		"Перед видаленням завдання не потрібно підтверджувати",
 	continue: "Продовжити",
 	"task-completed-notify": "Повідомлення після завершення завантаження",
-	"prevent-sleep-while-downloading": "Prevent system sleep while downloading",
+	"prevent-sleep-while-downloading":
+		"Запобігати переходу системи в сплячий режим під час завантаження",
 	"prevent-sleep-while-downloading-tips":
-		"Keep the computer awake whenever an active task is in progress",
+		"Тримати комп’ютер пробудженим, поки триває активне завдання",
 	"auto-purge-record":
 		"Автоматично чистити записи про завантаження перед закриттям додатка",
 	ui: "UI",

@@ -644,7 +644,7 @@ const initForm = (config) => {
 		openAtLogin: parseBooleanConfig(openAtLogin),
 		preventSleepWhileDownloading:
 			preventSleepWhileDownloading === undefined
-				? true
+        ? false
 				: parseBooleanConfig(preventSleepWhileDownloading),
 		resumeAllWhenAppLaunched: parseBooleanConfig(resumeAllWhenAppLaunched),
 		runMode,
@@ -893,8 +893,10 @@ export default {
 				"autoRetry",
 				"autoDetectLowSpeedTasks",
 				"newTaskShowDownloading",
+        "preventSleepWhileDownloading",
 				"taskNotification",
 				"noConfirmBeforeDeleteTask",
+        "useRemoteFileTime",
 			];
 			for (const key of booleanKeys) {
 				if (key in data) {

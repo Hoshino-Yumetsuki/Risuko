@@ -109,15 +109,21 @@ export default {
 			}
 			const diff = Math.max(0, this.now - this.report.generatedAtMs);
 			if (diff < 5_000) {
-				return "just now";
+				return this.$t("health.justNow");
 			}
 			if (diff < 60_000) {
-				return `${Math.floor(diff / 1_000)}s ago`;
+				return this.$t("health.secondsAgo", {
+					count: Math.floor(diff / 1_000),
+				});
 			}
 			if (diff < 3_600_000) {
-				return `${Math.floor(diff / 60_000)}m ago`;
+				return this.$t("health.minutesAgo", {
+					count: Math.floor(diff / 60_000),
+				});
 			}
-			return `${Math.floor(diff / 3_600_000)}h ago`;
+			return this.$t("health.hoursAgo", {
+				count: Math.floor(diff / 3_600_000),
+			});
 		},
 		lastRunTitle(): string {
 			if (!this.report) {

@@ -36,9 +36,10 @@ export default {
 		"Aucune confirmation n'est requise avant de supprimer la tâche",
 	continue: "Continuer",
 	"task-completed-notify": "Notifier à la fin d'un téléchargement",
-	"prevent-sleep-while-downloading": "Prevent system sleep while downloading",
+	"prevent-sleep-while-downloading":
+		"Empêcher la mise en veille du système pendant le téléchargement",
 	"prevent-sleep-while-downloading-tips":
-		"Keep the computer awake whenever an active task is in progress",
+		"Garder l'ordinateur éveillé tant qu'une tâche active est en cours",
 	"auto-purge-record":
 		"Purger l'historique de téléchargement lorsque vous quittez l'application",
 	ui: "UI",
