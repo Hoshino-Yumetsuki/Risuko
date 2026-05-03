@@ -259,6 +259,8 @@ pub struct ValidatedTorrentMetaV2Info {
     pub name: String,
     pub piece_length: u32,
     pub meta_version: u32,
+    /// BEP 27 private flag at info-dict level (same semantics as v1)
+    pub private: bool,
     pub file_tree: FileTreeNode,
     /// Flat file list in stable order matching `file_tree` traversal
     pub files: Vec<TorrentMetaInfoV2>,
@@ -580,7 +582,7 @@ fn synthesize_v1_facade_from_v2(v2: &ValidatedTorrentMetaV2Info) -> ValidatedTor
         name: v2.name.clone(),
         piece_length: v2.piece_length,
         pieces: Vec::new(),
-        private: false,
+        private: v2.private,
         files,
         single_file_mode,
     }
@@ -648,10 +650,19 @@ fn validate_info_v2(value: &Value) -> Result<ValidatedTorrentMetaV2Info, MetaErr
         return Err(MetaError::ZeroLength);
     }
 
+    // BEP 27 private flag at info-dict level. Same int-as-bool decoding as v1
+    let private = info
+        .iter()
+        .find(|(k, _)| k == b"private")
+        .and_then(|(_, v)| v.as_int())
+        .map(|i| i != 0)
+        .unwrap_or(false);
+
     Ok(ValidatedTorrentMetaV2Info {
         name,
         piece_length,
         meta_version: meta_version as u32,
+        private,
         file_tree,
         files,
     })

@@ -159,7 +159,7 @@ impl MerkleProofTable {
             });
         }
 
-        if !layer_bytes.len().is_multiple_of(32) {
+        if layer_bytes.len() % 32 != 0 {
             return Err(MerkleError::LayerNotAligned);
         }
         let layer_len = layer_bytes.len() / 32;
@@ -278,7 +278,7 @@ impl MerkleProofTable {
                 expected: 0,
             });
         }
-        if !response_hashes.len().is_multiple_of(32) {
+        if response_hashes.len() % 32 != 0 {
             return Err(MerkleError::LayerNotAligned);
         }
         let padded = (piece_count as usize).next_power_of_two().max(2);

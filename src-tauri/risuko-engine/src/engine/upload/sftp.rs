@@ -182,8 +182,14 @@ impl UploadSink for SftpSink {
             )
             .await
             .map_err(|e| {
-                log::error!("SFTP open {remote_tmp}: {e}");
-                format!("SFTP open {remote_tmp}: {e}")
+                // Don't echo `remote_tmp` (user-controlled, may include
+                // home directory or other host layout details) into
+                // the returned error or info logs. The full path is
+                // still emitted at debug level for operators with
+                // log access
+                log::debug!("SFTP open {remote_tmp}: {e}");
+                log::error!("SFTP open failed: {e}");
+                format!("SFTP open failed: {e}")
             })?;
 
         let local: PathBuf = file.local_path.clone();
