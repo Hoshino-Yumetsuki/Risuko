@@ -38,6 +38,8 @@ export default {
 	"task-num-pieces": "Adet",
 	"task-bittorrent-info": "Torrent Bilgisi",
 	"task-info-hash": "Hash",
+	"task-info-hash-v2": "Hash v2",
+	"task-meta-version": "Meta sürüm",
 	"task-bittorrent-creation-date": "Oluşturulma tarihi",
 	"task-bittorrent-comment": "Yorum Yap",
 	"task-progress-info": "İlerleme",

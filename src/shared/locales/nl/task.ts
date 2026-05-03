@@ -38,6 +38,8 @@ export default {
 	"task-num-pieces": "Delen",
 	"task-bittorrent-info": "Torrent Info",
 	"task-info-hash": "Hash",
+	"task-info-hash-v2": "Hash v2",
+	"task-meta-version": "Meta version",
 	"task-bittorrent-creation-date": "Aanmaakdatum",
 	"task-bittorrent-comment": "Opmerking",
 	"task-progress-info": "Voortgang",

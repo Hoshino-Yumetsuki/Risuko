@@ -52,6 +52,10 @@ impl ErrorCode {
     pub const TORRENT_METADATA_FAILED: Self = Self(500);
     pub const TORRENT_NO_SEEDS: Self = Self(501);
     pub const TORRENT_INVALID_FILE: Self = Self(502);
+    /// Pure-v2 magnet resolved the info dict but no peer served the BEP 52
+    /// piece-layer hashes. The torrent is unverifiable until layers are
+    /// obtained (importing the .torrent file always works)
+    pub const TORRENT_PIECE_LAYERS_UNAVAILABLE: Self = Self(503);
     pub const ED2K_SERVER_UNREACHABLE: Self = Self(510);
     pub const ED2K_FILE_NOT_FOUND: Self = Self(511);
     pub const M3U8_PARSE_FAILED: Self = Self(520);
@@ -110,6 +114,7 @@ impl ErrorCode {
             500 => "Failed to resolve torrent metadata",
             501 => "No seeds available for torrent",
             502 => "Invalid torrent file",
+            503 => "BitTorrent v2 piece layers unavailable",
             510 => "ED2K server unreachable",
             511 => "File not found on ED2K network",
             520 => "Failed to parse M3U8 playlist",
@@ -213,6 +218,12 @@ pub fn classify_error(msg: &str, protocol: &str) -> ErrorCode {
     // -- Protocol-specific patterns --
     match protocol {
         "torrent" => {
+            // Check piece-layers FIRST: the message also contains the
+            // word "metadata" / "peer" so a more general pattern would
+            // shadow this typed error
+            if lower.contains("piece layers unavailable") {
+                return ErrorCode::TORRENT_PIECE_LAYERS_UNAVAILABLE;
+            }
             if lower.contains("metadata") {
                 return ErrorCode::TORRENT_METADATA_FAILED;
             }
@@ -334,6 +345,20 @@ mod tests {
         assert_eq!(
             classify_error("Failed to resolve magnet metadata", "torrent"),
             ErrorCode::TORRENT_METADATA_FAILED
+        );
+    }
+
+    #[test]
+    fn classify_torrent_piece_layers_unavailable() {
+        // The bt::magnet error contract: messages prefixed with this
+        // string must surface as the typed code so the UI can prompt the
+        // user to import the .torrent instead
+        assert_eq!(
+            classify_error(
+                "Failed to resolve magnet: piece layers unavailable: no peer served the BEP 52 piece-layer hashes for this magnet",
+                "torrent"
+            ),
+            ErrorCode::TORRENT_PIECE_LAYERS_UNAVAILABLE
         );
     }
 

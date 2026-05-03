@@ -40,8 +40,8 @@ impl Id20 {
     /// XOR distance used by Kademlia routing
     pub fn distance(&self, other: &Self) -> Self {
         let mut d = [0u8; 20];
-        for i in 0..20 {
-            d[i] = self.0[i] ^ other.0[i];
+        for (i, slot) in d.iter_mut().enumerate() {
+            *slot = self.0[i] ^ other.0[i];
         }
         Self(d)
     }
@@ -132,6 +132,86 @@ pub fn sha1(data: &[u8]) -> Id20 {
     Id20(out.into())
 }
 
+/// Id32 — 32-byte ids used for BEP 52 (BitTorrent v2) info-hashes,
+/// per-file Merkle roots and SHA-256 piece-layer hashes.
+/// A 32-byte id used for BEP 52 info-hashes and Merkle hashes
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct Id32(pub [u8; 32]);
+
+impl Id32 {
+    pub const LEN: usize = 32;
+
+    pub fn new(bytes: [u8; 32]) -> Self {
+        Self(bytes)
+    }
+
+    pub fn from_slice(b: &[u8]) -> Result<Self, HashParseError> {
+        if b.len() != 32 {
+            return Err(HashParseError::BadLength(b.len()));
+        }
+        let mut v = [0u8; 32];
+        v.copy_from_slice(b);
+        Ok(Self(v))
+    }
+
+    pub fn as_bytes(&self) -> &[u8; 32] {
+        &self.0
+    }
+
+    pub fn to_hex(&self) -> String {
+        hex::encode(self.0)
+    }
+
+    pub fn as_string(&self) -> String {
+        self.to_hex()
+    }
+
+    /// Truncate to the leading 20 bytes for use in legacy 20-byte fields
+    /// (BEP-3 handshake info-hash, MSE/PE SKEY, tracker `info_hash`,
+    /// v1-DHT `get_peers`). Per BEP 52, pure-v2 clients send the leading
+    /// 20 bytes of the SHA-256 info-hash in those fields
+    pub fn truncate_to_id20(&self) -> Id20 {
+        let mut out = [0u8; 20];
+        out.copy_from_slice(&self.0[..20]);
+        Id20(out)
+    }
+}
+
+impl fmt::Debug for Id32 {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Id32({})", self.to_hex())
+    }
+}
+
+impl fmt::Display for Id32 {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.to_hex())
+    }
+}
+
+impl FromStr for Id32 {
+    type Err = HashParseError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.len() {
+            64 => {
+                let raw = hex::decode(s).map_err(|_| HashParseError::BadHex)?;
+                Self::from_slice(&raw)
+            }
+            n => Err(HashParseError::BadLength(n)),
+        }
+    }
+}
+
+/// Convenience: SHA-256 hash of `data` as [`Id32`]
+pub fn sha256(data: &[u8]) -> Id32 {
+    use sha2::Digest;
+    let mut h = sha2::Sha256::new();
+    h.update(data);
+    let out = h.finalize();
+    Id32(out.into())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -174,5 +254,32 @@ mod tests {
     fn sha1_matches_known() {
         let empty = sha1(b"");
         assert_eq!(empty.to_hex(), "da39a3ee5e6b4b0d3255bfef95601890afd80709");
+    }
+
+    #[test]
+    fn sha256_matches_known() {
+        let empty = sha256(b"");
+        assert_eq!(
+            empty.to_hex(),
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+    }
+
+    #[test]
+    fn id32_truncate() {
+        let mut raw = [0u8; 32];
+        for (i, b) in raw.iter_mut().enumerate() {
+            *b = i as u8;
+        }
+        let id = Id32(raw);
+        let trunc = id.truncate_to_id20();
+        assert_eq!(trunc.0[..], raw[..20]);
+    }
+
+    #[test]
+    fn id32_hex_round_trip() {
+        let id = Id32([0x5au8; 32]);
+        let parsed: Id32 = id.to_hex().parse().unwrap();
+        assert_eq!(parsed, id);
     }
 }

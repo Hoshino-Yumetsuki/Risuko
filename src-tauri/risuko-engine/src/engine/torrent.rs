@@ -202,8 +202,11 @@ impl TorrentEngine {
             );
             match bt::magnet::resolve(magnet_uri, &trackers, Duration::from_secs(120), enc).await {
                 Ok(resolved) => {
-                    let bytes =
-                        bt::magnet::synth_torrent_bytes(&resolved.info_bytes, &resolved.trackers);
+                    let bytes = bt::magnet::synth_torrent_bytes(
+                        &resolved.info_bytes,
+                        &resolved.trackers,
+                        &resolved.piece_layers,
+                    );
                     if let Ok(meta) = bt::parse_torrent(&bytes) {
                         let name = if meta.info.name.is_empty() {
                             format!("{:?}", meta.info_hash)
@@ -294,8 +297,11 @@ impl TorrentEngine {
         .map_err(|_| "Timed out resolving magnet metadata".to_string())?
         .map_err(|e| format!("Failed to resolve magnet: {}", e))?;
 
-        let torrent_bytes =
-            bt::magnet::synth_torrent_bytes(&resolved.info_bytes, &resolved.trackers);
+        let torrent_bytes = bt::magnet::synth_torrent_bytes(
+            &resolved.info_bytes,
+            &resolved.trackers,
+            &resolved.piece_layers,
+        );
         let meta = bt::parse_torrent(&torrent_bytes)
             .map_err(|e| format!("Failed to parse resolved metadata: {}", e))?;
         let files = extract_file_details(&meta.info);
@@ -424,6 +430,8 @@ fn extract_handle(response: bt::AddTorrentResponse) -> Result<TorrentHandle, Str
         | bt::AddTorrentResponse::AlreadyManaged(id, handle) => Ok(TorrentHandle {
             id,
             info_hash: Some(handle.info_hash().as_string()),
+            info_hash_v2: handle.info_hash_v2().map(|h| h.as_string()),
+            meta_version: handle.meta_version().map(|s| s.to_string()),
         }),
         bt::AddTorrentResponse::ListOnly(_) => {
             Err("Torrent was added in list-only mode".to_string())
@@ -463,6 +471,8 @@ fn build_announce_list(meta: &bt::TorrentMeta) -> Vec<Vec<String>> {
 pub struct TorrentHandle {
     pub id: usize,
     pub info_hash: Option<String>,
+    pub info_hash_v2: Option<String>,
+    pub meta_version: Option<String>,
 }
 
 pub struct TorrentFileInfo {

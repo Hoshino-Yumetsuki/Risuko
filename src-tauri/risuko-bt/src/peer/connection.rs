@@ -883,7 +883,7 @@ fn finish_spawn(
             info_hash: remote_hs.info_hash,
             encrypted,
         })
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("{e}")))?;
+        .map_err(|e| std::io::Error::other(format!("{e}")))?;
 
     tokio::spawn(reader_task(reader, event_tx));
     tokio::spawn(writer_task(writer, cmd_rx));

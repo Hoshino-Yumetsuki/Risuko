@@ -38,6 +38,8 @@ export default {
 	"task-num-pieces": "Potongan",
 	"task-bittorrent-info": "Info Torrent",
 	"task-info-hash": "Hash",
+	"task-info-hash-v2": "Hash v2",
+	"task-meta-version": "Meta version",
 	"task-bittorrent-creation-date": "Tanggal Pembuatan",
 	"task-bittorrent-comment": "Komentar",
 	"task-progress-info": "Kemajuan",

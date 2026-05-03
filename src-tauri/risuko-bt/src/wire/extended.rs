@@ -131,6 +131,16 @@ pub fn ut_metadata_data(piece: i64, total_size: i64, block: &[u8]) -> Bytes {
     Bytes::from(out)
 }
 
+/// Build a `ut_metadata` reject response (sent for out-of-range pieces or
+/// when we cannot serve the request)
+pub fn ut_metadata_reject(piece: i64) -> Bytes {
+    let dict = Value::Dict(vec![
+        (b"msg_type".to_vec(), Value::Int(ut_metadata_type::REJECT)),
+        (b"piece".to_vec(), Value::Int(piece)),
+    ]);
+    Bytes::from(encode_to_vec(&dict))
+}
+
 /// Parse a `ut_metadata` message, returning the parsed header and any trailing
 /// data block (for DATA messages)
 #[derive(Debug)]
@@ -251,6 +261,15 @@ mod tests {
         assert_eq!(parsed.piece, 2);
         assert_eq!(parsed.total_size, Some(1_000_000));
         assert_eq!(parsed.block.as_ref(), data.as_slice());
+    }
+
+    #[test]
+    fn ut_metadata_reject_parse() {
+        let bytes = ut_metadata_reject(7);
+        let parsed = parse_ut_metadata(bytes).unwrap();
+        assert_eq!(parsed.msg_type, ut_metadata_type::REJECT);
+        assert_eq!(parsed.piece, 7);
+        assert!(parsed.block.is_empty());
     }
 
     #[test]

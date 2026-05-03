@@ -39,6 +39,8 @@ export default {
 	"task-num-pieces": "Шт",
 	"task-bittorrent-info": "Информация о торрентах",
 	"task-info-hash": "Хеш",
+	"task-info-hash-v2": "Хеш v2",
+	"task-meta-version": "Версия метаданных",
 	"task-bittorrent-creation-date": "Дата создания",
 	"task-bittorrent-comment": "Комментарий",
 	"task-progress-info": "Прогресс",

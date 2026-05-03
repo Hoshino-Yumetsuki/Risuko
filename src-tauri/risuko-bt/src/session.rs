@@ -34,7 +34,7 @@ pub struct ListenerOptions {
     pub listen_ipv6: bool,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct SessionOptions {
     pub disable_dht: bool,
     pub disable_dht_persistence: bool,
@@ -56,23 +56,6 @@ pub struct SessionOptions {
     /// BEP-8 Message Stream Encryption (MSE/PE) policy for peer connections.
     /// Defaults to `Prefer`, which tries MSE first with plaintext fallback.
     pub encryption: super::peer::EncryptionPolicy,
-}
-
-impl Default for SessionOptions {
-    fn default() -> Self {
-        Self {
-            disable_dht: false,
-            disable_dht_persistence: false,
-            dht_config: None,
-            listen: None,
-            fastresume: false,
-            persistence: None,
-            max_outstanding_requests_per_peer: None,
-            max_peers_per_torrent: None,
-            disable_local_service_discovery: false,
-            encryption: super::peer::EncryptionPolicy::default(),
-        }
-    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -314,8 +297,11 @@ impl Session {
                     self.opts.encryption,
                 )
                 .await?;
-                let torrent_bytes =
-                    super::magnet::synth_torrent_bytes(&resolved.info_bytes, &resolved.trackers);
+                let torrent_bytes = super::magnet::synth_torrent_bytes(
+                    &resolved.info_bytes,
+                    &resolved.trackers,
+                    &resolved.piece_layers,
+                );
                 let meta = parse_torrent(&torrent_bytes)
                     .map_err(|e| format!("parse synthesized torrent: {e}"))?;
                 self.add_from_meta(meta, opts).await
@@ -379,6 +365,16 @@ impl Session {
             inner.by_hash.insert(meta.info_hash, id);
             id
         };
+        let verifier = match crate::core::PieceVerifier::from_meta(&meta) {
+            Ok(v) => v,
+            Err(e) => {
+                let mut inner = self.inner.lock();
+                if inner.by_hash.get(&meta.info_hash) == Some(&id) {
+                    inner.by_hash.remove(&meta.info_hash);
+                }
+                return Err(format!("build verifier: {e}"));
+            }
+        };
         let init = TorrentInit {
             meta: meta.clone(),
             lengths,
@@ -387,13 +383,16 @@ impl Session {
             max_outstanding_per_peer: self.opts.max_outstanding_requests_per_peer,
             max_peers: self.opts.max_peers_per_torrent,
             encryption: self.opts.encryption,
+            verifier,
         };
         let handle = match spawn_torrent(id, init, self.peer_id, self.listen_port).await {
             Ok(h) => h,
             Err(e) => {
                 // Roll back the reservation so a retry can succeed.
                 let mut inner = self.inner.lock();
-                inner.by_hash.remove(&meta.info_hash);
+                if inner.by_hash.get(&meta.info_hash) == Some(&id) {
+                    inner.by_hash.remove(&meta.info_hash);
+                }
                 return Err(format!("spawn torrent: {e}"));
             }
         };

@@ -16,6 +16,9 @@ interface BitTorrentInfo {
 	info?: {
 		name?: string;
 	};
+	infoHash?: string;
+	infoHashV2?: string;
+	metaVersion?: "v1" | "v2" | "hybrid";
 }
 
 export interface DownloadTask {
@@ -33,6 +36,8 @@ export interface DownloadTask {
 	errorMessage?: string;
 	createdAt?: string;
 	infoHash?: string;
+	infoHashV2?: string;
+	metaVersion?: "v1" | "v2" | "hybrid";
 	bittorrent?: BitTorrentInfo;
 	seeder?: string;
 	numSeeders?: string;

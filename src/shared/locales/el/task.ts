@@ -38,6 +38,8 @@ export default {
 	"task-num-pieces": "Κομμάτια",
 	"task-bittorrent-info": "Πληροφορίες Torrent",
 	"task-info-hash": "Χασίσι",
+	"task-info-hash-v2": "Χασίσι v2",
+	"task-meta-version": "Έκδοση μεταδεδομένων",
 	"task-bittorrent-creation-date": "Ημερομηνία δημιουργίας",
 	"task-bittorrent-comment": "Σχόλιο",
 	"task-progress-info": "Πρόοδος",

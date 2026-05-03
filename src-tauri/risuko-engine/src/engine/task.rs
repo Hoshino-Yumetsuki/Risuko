@@ -105,6 +105,12 @@ pub struct DownloadTask {
     pub options: Map<String, Value>,
     // BitTorrent
     pub info_hash: Option<String>,
+    /// BEP-52 v2 (SHA-256) info-hash. Set for hybrid and pure-v2 torrents
+    #[serde(default)]
+    pub info_hash_v2: Option<String>,
+    /// BEP-52 metadata version: "v1", "v2", or "hybrid"
+    #[serde(default)]
+    pub meta_version: Option<String>,
     pub bt_name: Option<String>,
     pub seeder: bool,
     pub num_seeders: u32,
@@ -194,6 +200,8 @@ impl DownloadTask {
             error_message: None,
             options,
             info_hash: None,
+            info_hash_v2: None,
+            meta_version: None,
             bt_name: None,
             seeder: false,
             num_seeders: 0,
@@ -234,6 +242,8 @@ impl DownloadTask {
             error_message: None,
             options,
             info_hash: None,
+            info_hash_v2: None,
+            meta_version: None,
             bt_name: None,
             seeder: false,
             num_seeders: 0,
@@ -303,6 +313,8 @@ impl DownloadTask {
             error_message: None,
             options,
             info_hash: None,
+            info_hash_v2: None,
+            meta_version: None,
             bt_name: None,
             seeder: false,
             num_seeders: 0,
@@ -371,6 +383,8 @@ impl DownloadTask {
             error_message: None,
             options,
             info_hash: None,
+            info_hash_v2: None,
+            meta_version: None,
             bt_name: None,
             seeder: false,
             num_seeders: 0,
@@ -430,6 +444,8 @@ impl DownloadTask {
             error_message: None,
             options,
             info_hash: None,
+            info_hash_v2: None,
+            meta_version: None,
             bt_name: None,
             seeder: false,
             num_seeders: 0,
@@ -525,6 +541,14 @@ impl DownloadTask {
             if let Some(ref hash) = self.info_hash {
                 m.insert("infoHash".into(), Value::String(hash.clone()));
                 bt.insert("infoHash".into(), Value::String(hash.clone()));
+            }
+            if let Some(ref hash) = self.info_hash_v2 {
+                m.insert("infoHashV2".into(), Value::String(hash.clone()));
+                bt.insert("infoHashV2".into(), Value::String(hash.clone()));
+            }
+            if let Some(ref v) = self.meta_version {
+                m.insert("metaVersion".into(), Value::String(v.clone()));
+                bt.insert("metaVersion".into(), Value::String(v.clone()));
             }
             if let Some(ref name) = self.bt_name {
                 let mut info = Map::new();
@@ -821,6 +845,30 @@ mod tests {
         assert!(obj.contains_key("seeder"));
         let bt = obj.get("bittorrent").unwrap().as_object().unwrap();
         assert_eq!(bt.get("infoHash").unwrap(), "abc123");
+    }
+
+    #[test]
+    fn test_info_hash_v2_and_meta_version_emitted_both_places() {
+        let mut task = DownloadTask::new_torrent("tgid".into(), "/dl".into(), Map::new());
+        task.info_hash = Some("aabbccdd".into());
+        task.info_hash_v2 = Some("deadbeef".into());
+        task.meta_version = Some("hybrid".into());
+
+        let status = task.to_rpc_status(&[]);
+        let obj = status.as_object().unwrap();
+
+        // Fields must appear at the top level
+        assert_eq!(obj.get("infoHashV2").unwrap(), "deadbeef",
+            "infoHashV2 must be present at RPC root");
+        assert_eq!(obj.get("metaVersion").unwrap(), "hybrid",
+            "metaVersion must be present at RPC root");
+
+        // Fields must also appear inside the nested bittorrent object
+        let bt = obj.get("bittorrent").unwrap().as_object().unwrap();
+        assert_eq!(bt.get("infoHashV2").unwrap(), "deadbeef",
+            "infoHashV2 must be present inside bittorrent");
+        assert_eq!(bt.get("metaVersion").unwrap(), "hybrid",
+            "metaVersion must be present inside bittorrent");
     }
 
     #[test]

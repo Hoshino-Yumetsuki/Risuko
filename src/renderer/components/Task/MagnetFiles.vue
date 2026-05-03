@@ -70,6 +70,12 @@ export default {
 			if (this.error.includes("Timed out")) {
 				return this.$t("task.resolve-magnet-timeout");
 			}
+			// BEP 52 v2 magnet whose info dict resolved but no peer would
+			// serve the piece-layer hashes — typed error from
+			// `risuko-bt::magnet::ERR_PIECE_LAYERS_UNAVAILABLE`
+			if (this.error.includes("piece layers unavailable")) {
+				return this.$t("task.resolve-magnet-no-piece-layers");
+			}
 			return this.$t("task.resolve-magnet-error");
 		},
 	},

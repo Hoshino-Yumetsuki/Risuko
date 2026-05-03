@@ -37,6 +37,8 @@ export default {
 	"task-num-pieces": "Stykker",
 	"task-bittorrent-info": "Torrentinformasjon",
 	"task-info-hash": "Hash",
+	"task-info-hash-v2": "Hash v2",
+	"task-meta-version": "Meta version",
 	"task-bittorrent-creation-date": "Opprettelsesdato",
 	"task-bittorrent-comment": "Kommentar",
 	"task-progress-info": "Framgang",
