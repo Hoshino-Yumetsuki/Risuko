@@ -1543,6 +1543,39 @@ impl TaskManager {
         })
     }
 
+    /// Read-only BitTorrent diagnostics for the `/health` panel. Returns
+    /// `None` when the torrent engine is not initialized
+    pub async fn bt_health_snapshot(&self) -> Option<super::torrent::BtHealthSnapshot> {
+        let te_guard = self.torrent_engine.read().await;
+        te_guard.as_ref().and_then(|te| te.health_snapshot())
+    }
+
+    /// Unique tracker announce URLs across active/waiting BT tasks. Used by
+    /// the `/health` panel to probe per-tracker reachability without
+    /// touching the live announce loop
+    pub async fn list_active_tracker_urls(&self) -> Vec<String> {
+        use std::collections::BTreeSet;
+        let tasks = self.tasks.read().await;
+        let mut seen: BTreeSet<String> = BTreeSet::new();
+        for t in tasks.iter() {
+            if !matches!(
+                t.status,
+                TaskStatus::Active | TaskStatus::Waiting | TaskStatus::Paused
+            ) {
+                continue;
+            }
+            for tier in &t.bt_announce_list {
+                for url in tier {
+                    let trimmed = url.trim();
+                    if !trimmed.is_empty() {
+                        seen.insert(trimmed.to_string());
+                    }
+                }
+            }
+        }
+        seen.into_iter().collect()
+    }
+
     pub async fn change_position(&self, gid: &str, pos: i64, how: &str) -> Result<Value, String> {
         let mut tasks = self.tasks.write().await;
         let waiting: Vec<usize> = tasks

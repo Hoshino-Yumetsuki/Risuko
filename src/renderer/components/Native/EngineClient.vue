@@ -135,6 +135,12 @@ export default {
 			const kb = normalizePositiveNumber(raw, 20, 1, 10240);
 			return Math.floor(kb * 1024);
 		},
+		preventSleepWhileDownloading() {
+			const raw = usePreferenceStore().config.preventSleepWhileDownloading;
+			// Default to true when the preference has never been set so existing
+			// installs keep their current sleep-inhibit behaviour.
+			return raw === undefined ? true : parseBooleanConfig(raw);
+		},
 		currentTaskIsBT() {
 			return checkTaskIsBT(this.currentTaskItem);
 		},
@@ -148,7 +154,14 @@ export default {
 		},
 		downloading(val, oldVal) {
 			if (val !== oldVal) {
-				this.noSleepDesired = !!val;
+				this.noSleepDesired = !!val && this.preventSleepWhileDownloading;
+				this.syncNoSleepState();
+			}
+		},
+		preventSleepWhileDownloading(val) {
+			const desired = !!val && this.downloading;
+			if (desired !== this.noSleepDesired) {
+				this.noSleepDesired = desired;
 				this.syncNoSleepState();
 			}
 		},
@@ -440,6 +453,9 @@ export default {
 					try {
 						await nosleep.unblock();
 						this.noSleepSource = null;
+						invoke("set_sleep_inhibit_flag", { active: false }).catch(
+							() => undefined,
+						);
 						return true;
 					} catch {
 						return false;
@@ -466,6 +482,9 @@ export default {
 					nosleep.NoSleepType.PreventUserIdleSystemSleep as never,
 				);
 				this.noSleepSource = "plugin";
+				invoke("set_sleep_inhibit_flag", { active: true }).catch(
+					() => undefined,
+				);
 				return true;
 			} catch {
 				// Keep Rust-side fallback for environments where the plugin command is unavailable.

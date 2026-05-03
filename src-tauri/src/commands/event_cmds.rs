@@ -22,6 +22,16 @@ pub fn on_download_status_change(
     Ok(())
 }
 
+/// Reports the sleep-inhibit state from the renderer when the inhibit was
+/// applied via the JS nosleep plugin (which doesn't go through
+/// `apply_download_inhibit`). Keeps the health check's view in sync without
+/// double-applying the platform inhibit
+#[tauri::command]
+pub fn set_sleep_inhibit_flag(active: bool) -> Result<(), String> {
+    SLEEP_INHIBIT_ACTIVE.store(active, std::sync::atomic::Ordering::Relaxed);
+    Ok(())
+}
+
 #[tauri::command]
 pub fn on_speed_change(
     handle: AppHandle,
@@ -194,6 +204,18 @@ fn apply_download_inhibit(downloading: bool) {
     {
         let _ = downloading;
     }
+
+    SLEEP_INHIBIT_ACTIVE.store(downloading, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Tracks whether sleep is currently inhibited. Updated by `apply_download_inhibit`
+/// on every platform; read by health checks via `sleep_inhibit_active()`.
+static SLEEP_INHIBIT_ACTIVE: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Whether the app is currently inhibiting system sleep.
+pub fn sleep_inhibit_active() -> bool {
+    SLEEP_INHIBIT_ACTIVE.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 fn add_recent_document(path: &str) -> Result<(), String> {

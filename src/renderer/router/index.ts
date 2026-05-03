@@ -30,6 +30,11 @@ export default createRouter({
 					component: () => import("@/components/Rss/Index.vue"),
 				},
 				{
+					path: "/health",
+					name: "health",
+					component: () => import("@/components/Health/Index.vue"),
+				},
+				{
 					path: "/preference",
 					name: "preference",
 					component: () => import("@/components/Preference/Index.vue"),

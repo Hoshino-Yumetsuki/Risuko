@@ -17,7 +17,9 @@ use parking_lot::Mutex;
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::{interval, MissedTickBehavior};
 
-use super::core::{Id20, Lengths, MerkleProofTable, PieceVerifier, TorrentMeta, ValidatedTorrentMetaV1Info};
+use super::core::{
+    Id20, Lengths, MerkleProofTable, PieceVerifier, TorrentMeta, ValidatedTorrentMetaV1Info,
+};
 use super::peer::{connect, PeerCommand, PeerEvent, SpawnPeer};
 use super::piece::{ChunkTracker, PieceTracker};
 use super::storage::{FilesystemStorage, StorageBackend};
@@ -291,7 +293,9 @@ async fn torrent_loop(
             let mut tbls = Vec::with_capacity(v2.files.len());
             let mut ok = true;
             for f in &v2.files {
-                let layer = init.meta.piece_layers
+                let layer = init
+                    .meta
+                    .piece_layers
                     .get(&f.pieces_root)
                     .map(|v| v.as_slice())
                     .unwrap_or(&[]);
@@ -309,7 +313,11 @@ async fn torrent_loop(
                     }
                 }
             }
-            if ok { Some(Arc::new(tbls)) } else { None }
+            if ok {
+                Some(Arc::new(tbls))
+            } else {
+                None
+            }
         } else {
             None
         }
@@ -588,16 +596,12 @@ mod peer_registry {
     use super::*;
     use once_cell::sync::Lazy;
     use std::sync::Mutex as StdMutex;
-    type PeerCmdRegistry =
-        StdMutex<HashMap<(usize, u32), (mpsc::Sender<PeerCommand>, SocketAddr)>>;
+    type PeerCmdRegistry = StdMutex<HashMap<(usize, u32), (mpsc::Sender<PeerCommand>, SocketAddr)>>;
     static REG: Lazy<PeerCmdRegistry> = Lazy::new(|| StdMutex::new(HashMap::new()));
     pub fn put(torrent_id: usize, pid: u32, tx: mpsc::Sender<PeerCommand>, addr: SocketAddr) {
         REG.lock().unwrap().insert((torrent_id, pid), (tx, addr));
     }
-    pub fn take(
-        torrent_id: usize,
-        pid: u32,
-    ) -> Option<(mpsc::Sender<PeerCommand>, SocketAddr)> {
+    pub fn take(torrent_id: usize, pid: u32) -> Option<(mpsc::Sender<PeerCommand>, SocketAddr)> {
         REG.lock().unwrap().remove(&(torrent_id, pid))
     }
 }
@@ -1841,8 +1845,11 @@ mod tests {
 
         match build_hash_response(Some(&tables), root.0, base, 0, length, 0) {
             Message::Hashes { hashes, .. } => {
-                assert_eq!(hashes.as_ref(), expected.as_slice(),
-                    "hybrid torrent should serve piece layer via explicit tables");
+                assert_eq!(
+                    hashes.as_ref(),
+                    expected.as_slice(),
+                    "hybrid torrent should serve piece layer via explicit tables"
+                );
             }
             other => panic!("expected Hashes for hybrid torrent, got {other:?}"),
         }

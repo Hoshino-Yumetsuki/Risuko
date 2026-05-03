@@ -19,6 +19,19 @@ pub struct BtTuning {
     pub enable_lsd: Option<bool>,
 }
 
+/// Read-only BT session diagnostics used by the `/health` panel
+#[derive(Debug, Clone, Copy)]
+pub struct BtHealthSnapshot {
+    pub listen_port: u16,
+    pub lsd_active: bool,
+    pub upnp_enabled: bool,
+    pub upnp_mappings: usize,
+    pub upnp_attempts: usize,
+    pub torrents: usize,
+    pub dht_active: bool,
+    pub dht_nodes: usize,
+}
+
 /// BitTorrent download management via the in-tree `risuko-bt` engine
 pub struct TorrentEngine {
     session: Option<Arc<bt::Session>>,
@@ -85,6 +98,23 @@ impl TorrentEngine {
         session.with_torrents(|iter| {
             iter.map(|(id, handle)| (id, handle.info_hash().as_string()))
                 .collect()
+        })
+    }
+
+    /// Snapshot of BitTorrent session health for the `/health` panel
+    /// Returns `None` when the torrent engine has been torn down
+    pub fn health_snapshot(&self) -> Option<BtHealthSnapshot> {
+        let session = self.session.as_ref()?;
+        let upnp = session.upnp_status();
+        Some(BtHealthSnapshot {
+            listen_port: session.listen_port(),
+            lsd_active: session.lsd_active(),
+            upnp_enabled: upnp.enabled,
+            upnp_mappings: upnp.mapping_count,
+            upnp_attempts: upnp.discovery_attempts,
+            torrents: session.with_torrents(|i| i.count()),
+            dht_active: session.dht_active(),
+            dht_nodes: session.dht_routing_table_len(),
         })
     }
 

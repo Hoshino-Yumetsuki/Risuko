@@ -3,12 +3,12 @@
 //!
 //! Supports IPv4 and IPv6 (BEP-32) via two parallel UDP sockets when the
 //! host has global v6 connectivity. The IPv6 path is optional — if the v6
-//! socket fails to bind we continue with v4 only.
+//! socket fails to bind we continue with v4 only
 
 use std::collections::{BTreeMap, HashSet};
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use parking_lot::Mutex;
 use rand::RngExt;
@@ -59,6 +59,7 @@ pub struct Dht {
     our_id: Id20,
     bootstrap: Vec<String>,
     pending: Arc<Mutex<PendingMap>>,
+    routing: Arc<Mutex<RoutingTable>>,
     reader_handle: Mutex<Option<tokio::task::JoinHandle<()>>>,
     reader6_handle: Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
@@ -109,6 +110,7 @@ impl Dht {
             our_id,
             bootstrap,
             pending: pending.clone(),
+            routing: Arc::new(Mutex::new(RoutingTable::new(our_id))),
             reader_handle: Mutex::new(None),
             reader6_handle: Mutex::new(None),
         });
@@ -235,6 +237,9 @@ impl Dht {
             // accurate, which matters for lookup convergence.
             let node_id = responder_id.unwrap_or_else(|| pseudo_id(from));
             shortlist.insert(xor(&node_id, &info_hash), from);
+            if responder_id.is_some() {
+                self.routing.lock().add(node_id, from);
+            }
 
             // Merge any learned nodes into the shortlist
             let mut progressed = false;
@@ -245,6 +250,7 @@ impl Dht {
                     e.insert(*naddr);
                     progressed = true;
                 }
+                self.routing.lock().add(*nid, *naddr);
             }
 
             // Trim to K * 2 to keep memory bounded
@@ -335,6 +341,142 @@ impl Dht {
         }
         map.insert(txn, (tx, target));
         (txn, rx)
+    }
+
+    /// Number of unique nodes currently held in the Kademlia routing table
+    /// Useful as a coarse health signal for DHT bootstrap progress
+    pub fn routing_table_len(&self) -> usize {
+        self.routing.lock().len()
+    }
+
+    /// Snapshot of the routing-table state for diagnostics.
+    pub fn routing_table_status(&self) -> RoutingTableStatus {
+        self.routing.lock().status()
+    }
+
+    /// Warm the routing table by performing an iterative lookup against our
+    /// own id. Bootstrap nodes respond with the contacts they know that are
+    /// closest to us, which is exactly what populates a fresh routing table
+    /// Returns once the lookup converges or `budget` elapses
+    pub async fn bootstrap(self: &Arc<Self>) {
+        let target = self.our_id;
+        // We discard discovered peers; we only care about side-effect node
+        // population in the routing table.
+        let mut rx = self.get_peers_stream(target, Duration::from_secs(15));
+        while rx.recv().await.is_some() {}
+    }
+}
+
+// Kademlia routing table (BEP 5 §"Routing Table").
+//
+// 160 buckets indexed by the position of the highest differing bit between
+// `our_id` and a node's id (XOR distance). Each bucket holds at most K=8
+// nodes; on overflow we evict the stalest entry (LRU on `last_seen`)
+// Nodes are inserted from KRPC responses we receive (the responder plus
+// any contacts it returned). We do not actively ping for liveness — this
+// is a passive table that grows during lookups; staleness is bounded by
+// new traffic replacing old entries
+
+const BUCKET_SIZE: usize = K;
+const NUM_BUCKETS: usize = 160;
+
+#[derive(Debug, Clone)]
+struct RoutingNode {
+    id: Id20,
+    addr: SocketAddr,
+    last_seen: Instant,
+}
+
+pub(crate) struct RoutingTable {
+    our_id: Id20,
+    buckets: Vec<Vec<RoutingNode>>,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct RoutingTableStatus {
+    pub total_nodes: usize,
+    pub non_empty_buckets: usize,
+}
+
+impl RoutingTable {
+    fn new(our_id: Id20) -> Self {
+        let buckets = (0..NUM_BUCKETS)
+            .map(|_| Vec::with_capacity(BUCKET_SIZE))
+            .collect();
+        Self { our_id, buckets }
+    }
+
+    fn len(&self) -> usize {
+        self.buckets.iter().map(|b| b.len()).sum()
+    }
+
+    fn status(&self) -> RoutingTableStatus {
+        let mut total = 0;
+        let mut non_empty = 0;
+        for b in &self.buckets {
+            if !b.is_empty() {
+                non_empty += 1;
+                total += b.len();
+            }
+        }
+        RoutingTableStatus {
+            total_nodes: total,
+            non_empty_buckets: non_empty,
+        }
+    }
+
+    fn bucket_index(&self, id: &Id20) -> Option<usize> {
+        // Position of the highest set bit in XOR(our_id, id). Identical ids
+        // (distance 0) belong to no bucket and are skipped
+        let xord = xor(&self.our_id, id);
+        let bytes = xord.as_bytes();
+        for (byte_pos, byte) in bytes.iter().enumerate() {
+            if *byte != 0 {
+                let leading = byte.leading_zeros() as usize;
+                let bit_pos = byte_pos * 8 + leading;
+                // bit_pos 0 == highest bit set → most-distant bucket → index 0.
+                // bit_pos 159 == lowest bit set → closest bucket → index 159.
+                return Some(bit_pos);
+            }
+        }
+        None
+    }
+
+    fn add(&mut self, id: Id20, addr: SocketAddr) {
+        let Some(idx) = self.bucket_index(&id) else {
+            return;
+        };
+        let now = Instant::now();
+        let bucket = &mut self.buckets[idx];
+        // Refresh existing entry if seen
+        if let Some(existing) = bucket.iter_mut().find(|n| n.id == id) {
+            existing.addr = addr;
+            existing.last_seen = now;
+            return;
+        }
+        if bucket.len() < BUCKET_SIZE {
+            bucket.push(RoutingNode {
+                id,
+                addr,
+                last_seen: now,
+            });
+            return;
+        }
+        // Evict the stalest entry. BEP 5 wants a ping-then-evict dance; this
+        // passive variant trades a tiny bit of routing optimality for
+        // simplicity and zero extra wire traffic
+        if let Some(stalest_idx) = bucket
+            .iter()
+            .enumerate()
+            .min_by_key(|(_, n)| n.last_seen)
+            .map(|(i, _)| i)
+        {
+            bucket[stalest_idx] = RoutingNode {
+                id,
+                addr,
+                last_seen: now,
+            };
+        }
     }
 }
 
@@ -496,6 +638,45 @@ mod tests {
         let b = Id20::from_slice(&[0x22u8; 20]).unwrap();
         assert_eq!(xor(&a, &b), xor(&b, &a));
         assert_eq!(xor(&a, &a).as_bytes(), &[0u8; 20]);
+    }
+
+    #[test]
+    fn routing_table_inserts_dedupes_and_indexes_distance() {
+        let me = Id20::from_slice(&[0u8; 20]).unwrap();
+        let mut rt = RoutingTable::new(me);
+        let n1 = Id20::from_slice(&[1u8; 20]).unwrap();
+        let addr: SocketAddr = "127.0.0.1:1".parse().unwrap();
+        rt.add(n1, addr);
+        rt.add(n1, addr); // dedup → still 1
+        assert_eq!(rt.len(), 1);
+        let n2 = Id20::from_slice(&[2u8; 20]).unwrap();
+        rt.add(n2, addr);
+        assert_eq!(rt.len(), 2);
+        // Inserting our own id is a no-op
+        rt.add(me, addr);
+        assert_eq!(rt.len(), 2);
+    }
+
+    #[test]
+    fn routing_table_caps_bucket_at_k() {
+        let me = Id20::from_slice(&[0u8; 20]).unwrap();
+        let mut rt = RoutingTable::new(me);
+        // All ids share the most-significant bit set (byte[0] = 0x80) ->
+        // bit_pos == 0 for the entire batch, so every entry lands in
+        // bucket 0. The bucket must cap at K
+        for i in 1..=20u8 {
+            let mut id = [0u8; 20];
+            id[0] = 0x80;
+            id[19] = i;
+            rt.add(
+                Id20::from_slice(&id).unwrap(),
+                "127.0.0.1:1".parse().unwrap(),
+            );
+        }
+        assert_eq!(rt.len(), BUCKET_SIZE);
+        let st = rt.status();
+        assert_eq!(st.total_nodes, BUCKET_SIZE);
+        assert_eq!(st.non_empty_buckets, 1);
     }
 
     #[test]

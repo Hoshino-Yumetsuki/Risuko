@@ -44,6 +44,7 @@ export interface AppConfig {
 		scope?: string[];
 	};
 	openAtLogin?: boolean;
+	preventSleepWhileDownloading?: boolean;
 	autoDetectLowSpeedTasks?: boolean;
 	lowSpeedThreshold?: number;
 	lowSpeedStrikeThreshold?: number;

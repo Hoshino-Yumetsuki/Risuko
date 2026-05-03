@@ -38,6 +38,10 @@ export default {
 		"Nessuna conferma richiesta prima di eliminare un'attività",
 	continue: "Continua",
 	"task-completed-notify": "Notifica quando un download è finito",
+	"prevent-sleep-while-downloading":
+		"Impedisci la sospensione del sistema durante il download",
+	"prevent-sleep-while-downloading-tips":
+		"Mantieni il computer attivo finché è in corso un'attività",
 	"auto-purge-record":
 		"Elimina automaticamente la cronologia di download quando esco l'app viene chiusa",
 	ui: "UI",

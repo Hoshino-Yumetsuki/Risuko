@@ -19,6 +19,9 @@
         </mo-enter>
       </ul>
       <ul class="menu bottom-menu">
+        <mo-enter tag="li" preset="fadeInLeft" :delay="0.32" @click="nav('/health')" class="non-draggable">
+          <Activity :size="20" />
+        </mo-enter>
         <mo-enter tag="li" preset="fadeInLeft" :delay="0.35" @click="nav('/preference')" class="non-draggable">
           <Settings2 :size="20" />
         </mo-enter>
@@ -33,7 +36,14 @@
 <script lang="ts">
 import { ADD_TASK_TYPE } from "@shared/constants";
 import logger from "@shared/utils/logger";
-import { Info, ListTodo, Plus, Rss, Settings2 } from "lucide-vue-next";
+import {
+	Activity,
+	Info,
+	ListTodo,
+	Plus,
+	Rss,
+	Settings2,
+} from "lucide-vue-next";
 import LogoMini from "@/components/Logo/LogoMini.vue";
 import is from "@/shims/platform";
 import { useAppStore } from "@/store/app";
@@ -43,6 +53,7 @@ export default {
 	name: "mo-aside",
 	components: {
 		[LogoMini.name]: LogoMini,
+		Activity,
 		Info,
 		ListTodo,
 		Plus,

@@ -858,17 +858,29 @@ mod tests {
         let obj = status.as_object().unwrap();
 
         // Fields must appear at the top level
-        assert_eq!(obj.get("infoHashV2").unwrap(), "deadbeef",
-            "infoHashV2 must be present at RPC root");
-        assert_eq!(obj.get("metaVersion").unwrap(), "hybrid",
-            "metaVersion must be present at RPC root");
+        assert_eq!(
+            obj.get("infoHashV2").unwrap(),
+            "deadbeef",
+            "infoHashV2 must be present at RPC root"
+        );
+        assert_eq!(
+            obj.get("metaVersion").unwrap(),
+            "hybrid",
+            "metaVersion must be present at RPC root"
+        );
 
         // Fields must also appear inside the nested bittorrent object
         let bt = obj.get("bittorrent").unwrap().as_object().unwrap();
-        assert_eq!(bt.get("infoHashV2").unwrap(), "deadbeef",
-            "infoHashV2 must be present inside bittorrent");
-        assert_eq!(bt.get("metaVersion").unwrap(), "hybrid",
-            "metaVersion must be present inside bittorrent");
+        assert_eq!(
+            bt.get("infoHashV2").unwrap(),
+            "deadbeef",
+            "infoHashV2 must be present inside bittorrent"
+        );
+        assert_eq!(
+            bt.get("metaVersion").unwrap(),
+            "hybrid",
+            "metaVersion must be present inside bittorrent"
+        );
     }
 
     #[test]

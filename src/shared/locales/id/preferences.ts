@@ -36,6 +36,10 @@ export default {
 		"Konfirmasi tidak diperlukan sebelum menghapus tugas",
 	continue: "Lanjutkan",
 	"task-completed-notify": "Pemberitahuan setelah pengunduhan selesai",
+	"prevent-sleep-while-downloading":
+		"Cegah sistem tidur saat mengunduh",
+	"prevent-sleep-while-downloading-tips":
+		"Jaga komputer tetap aktif selama ada tugas yang sedang berjalan",
 	"auto-purge-record":
 		"Otomatis bersihkan catatan unduhan saat keluar dari aplikasi",
 	ui: "UI",
