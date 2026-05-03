@@ -35,11 +35,11 @@ jobs:
             binary: risuko
             npm_dir: darwin-x64
           - target: x86_64-unknown-linux-gnu
-            os: ubuntu-latest
+            os: ubuntu-22.04
             binary: risuko
             npm_dir: linux-x64-gnu
           - target: aarch64-unknown-linux-gnu
-            os: ubuntu-24.04-arm
+            os: ubuntu-22.04-arm
             binary: risuko
             npm_dir: linux-arm64-gnu
           - target: x86_64-pc-windows-msvc
@@ -69,9 +69,18 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libssl-dev pkg-config
 
+      - name: Install cross for Linux baseline builds
+        if: startsWith(matrix.os, 'ubuntu')
+        run: cargo install cross --locked
+
       - name: Build risuko-cli
         working-directory: src-tauri
-        run: cargo build --release --target ${{ matrix.target }} -p risuko-cli
+        run: |
+          if [[ "${{ runner.os }}" == "Linux" ]]; then
+            cross build --release --target ${{ matrix.target }} -p risuko-cli
+          else
+            cargo build --release --target ${{ matrix.target }} -p risuko-cli
+          fi
 
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4
@@ -118,11 +127,11 @@ jobs:
             node_file: risuko.darwin-x64.node
             npm_dir: darwin-x64
           - target: x86_64-unknown-linux-gnu
-            os: ubuntu-latest
+            os: ubuntu-22.04
             node_file: risuko.linux-x64-gnu.node
             npm_dir: linux-x64-gnu
           - target: aarch64-unknown-linux-gnu
-            os: ubuntu-24.04-arm
+            os: ubuntu-22.04-arm
             node_file: risuko.linux-arm64-gnu.node
             npm_dir: linux-arm64-gnu
           - target: x86_64-pc-windows-msvc
@@ -152,9 +161,18 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libssl-dev pkg-config
 
+      - name: Install cross for Linux baseline builds
+        if: startsWith(matrix.os, 'ubuntu')
+        run: cargo install cross --locked
+
       - name: Build risuko-napi
         working-directory: src-tauri
-        run: cargo build --release --target ${{ matrix.target }} -p risuko-napi
+        run: |
+          if [[ "${{ runner.os }}" == "Linux" ]]; then
+            cross build --release --target ${{ matrix.target }} -p risuko-napi
+          else
+            cargo build --release --target ${{ matrix.target }} -p risuko-napi
+          fi
 
       - name: Rename .node artifact
         shell: bash
