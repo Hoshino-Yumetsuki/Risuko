@@ -35,6 +35,9 @@ export default {
 		"Δεν χρειάζεται επιβεβαίωση πριν τη διαγραφή της εργασίας",
 	continue: "Συνέχεια",
 	"task-completed-notify": "Ειδοποίηση μόλις τελειώσει η λήψη",
+	"prevent-sleep-while-downloading": "Prevent system sleep while downloading",
+	"prevent-sleep-while-downloading-tips":
+		"Keep the computer awake whenever an active task is in progress",
 	"auto-purge-record":
 		"Καθάρισε αυτόματα τη λίστα λήψεων κατά το κλείσιμο της εφαρμογής",
 	ui: "UI",

@@ -1,5 +1,6 @@
 import { startupOnlyKeys } from "@shared/configKeys";
 import type { AppConfig } from "@shared/types/config";
+import type { HealthReport, RunHealthChecksParams } from "@shared/types/health";
 import type { RssRule } from "@shared/types/rss";
 import type {
 	AutoRetryPlanResult,
@@ -195,6 +196,14 @@ export default class Api {
 
 	getGlobalStat() {
 		return invoke<GlobalStat>("get_global_stat");
+	}
+
+	runHealthChecks(params: RunHealthChecksParams = {}) {
+		const { categories, slowProbes } = params;
+		return invoke<HealthReport>("run_health_checks", {
+			categories: categories ?? null,
+			slowProbes: slowProbes ?? false,
+		});
 	}
 
 	calculateActiveTaskProgress(params: { tasks?: DownloadTask[] } = {}) {

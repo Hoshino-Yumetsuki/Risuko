@@ -1,0 +1,33 @@
+export default {
+	title: "Verificări de stare",
+	subtitle: "Inspectează starea motorului, rețelei și sistemului",
+	"run-all": "Rulează toate verificările",
+	"run-group": "Rulează",
+	"last-run": "Ultima verificare",
+	"never-run": "Niciodată",
+	loading: "Se rulează verificările…",
+	error: "Verificările au eșuat: {{error}}",
+	"engine-not-running": "Motorul nu rulează",
+	overall: "Total",
+	statuses: {
+		ok: "Sănătos",
+		warn: "Avertisment",
+		fail: "Eșec",
+		skipped: "Inactiv",
+	},
+	categories: {
+		general: "General",
+		network: "Rețea",
+		bittorrent: "BitTorrent",
+		disk: "Disc",
+		system: "Sistem",
+		config: "Configurare",
+		logs: "Jurnale",
+	},
+	fixes: {
+		"open-preference": "Deschide preferințe",
+		"restart-engine": "Repornește motorul",
+		"open-log-dir": "Deschide folderul de jurnale",
+	},
+	summary: "{{ok}} sănătoase, {{warn}} avertismente, {{fail}} eșuate",
+};

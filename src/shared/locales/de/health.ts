@@ -1,0 +1,33 @@
+export default {
+	title: "Statusprüfung",
+	subtitle: "Engine, Netzwerk und Systemstatus prüfen",
+	"run-all": "Alle Prüfungen ausführen",
+	"run-group": "Ausführen",
+	"last-run": "Zuletzt geprüft",
+	"never-run": "Nie",
+	loading: "Prüfungen laufen…",
+	error: "Prüfungen fehlgeschlagen: {{error}}",
+	"engine-not-running": "Engine läuft nicht",
+	overall: "Gesamt",
+	statuses: {
+		ok: "Gesund",
+		warn: "Warnung",
+		fail: "Fehler",
+		skipped: "Inaktiv",
+	},
+	categories: {
+		general: "Allgemein",
+		network: "Netzwerk",
+		bittorrent: "BitTorrent",
+		disk: "Festplatte",
+		system: "System",
+		config: "Konfiguration",
+		logs: "Protokolle",
+	},
+	fixes: {
+		"open-preference": "Einstellungen öffnen",
+		"restart-engine": "Engine neu starten",
+		"open-log-dir": "Protokollordner öffnen",
+	},
+	summary: "{{ok}} gesund, {{warn}} Warnungen, {{fail}} Fehler",
+};

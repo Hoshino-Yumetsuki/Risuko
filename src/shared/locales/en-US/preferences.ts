@@ -81,6 +81,9 @@ export default {
 		"Set the file modification time to the timestamp from the remote server",
 	continue: "Continue",
 	"task-completed-notify": "Notify after download is complete",
+	"prevent-sleep-while-downloading": "Prevent system sleep while downloading",
+	"prevent-sleep-while-downloading-tips":
+		"Keep the computer awake whenever an active task is in progress",
 	"auto-purge-record": "Automatically purge download records when exiting app",
 	ui: "UI",
 	appearance: "Appearance",

@@ -76,6 +76,8 @@ export default {
 	"use-remote-file-time-tips": "將檔案修改時間設為遠端伺服器的時間戳記",
 	continue: "斷點續傳",
 	"task-completed-notify": "下載完成後通知",
+	"prevent-sleep-while-downloading": "下載時阻止系統睡眠",
+	"prevent-sleep-while-downloading-tips": "存在活動任務時保持電腦喚醒",
 	"auto-purge-record": "當結束程式時自動清除下載紀錄",
 	ui: "使用者介面",
 	appearance: "外觀",

@@ -1,0 +1,33 @@
+export default {
+	title: "Controlli di stato",
+	subtitle: "Verifica lo stato di motore, rete e sistema",
+	"run-all": "Esegui tutti i controlli",
+	"run-group": "Esegui",
+	"last-run": "Ultimo controllo",
+	"never-run": "Mai",
+	loading: "Esecuzione controlli…",
+	error: "Controlli falliti: {{error}}",
+	"engine-not-running": "Il motore non è in esecuzione",
+	overall: "Generale",
+	statuses: {
+		ok: "Integro",
+		warn: "Avviso",
+		fail: "Fallito",
+		skipped: "Inattivo",
+	},
+	categories: {
+		general: "Generale",
+		network: "Rete",
+		bittorrent: "BitTorrent",
+		disk: "Disco",
+		system: "Sistema",
+		config: "Configurazione",
+		logs: "Registri",
+	},
+	fixes: {
+		"open-preference": "Apri preferenze",
+		"restart-engine": "Riavvia motore",
+		"open-log-dir": "Apri cartella registri",
+	},
+	summary: "{{ok}} integri, {{warn}} avvisi, {{fail}} falliti",
+};

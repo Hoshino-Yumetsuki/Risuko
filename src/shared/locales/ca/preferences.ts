@@ -35,6 +35,9 @@ export default {
 		"No cal confirmar abans de suprimir la tasca",
 	continue: "Continuar",
 	"task-completed-notify": "Notificar després que la descàrrega finalitzi",
+	"prevent-sleep-while-downloading": "Prevent system sleep while downloading",
+	"prevent-sleep-while-downloading-tips":
+		"Keep the computer awake whenever an active task is in progress",
 	"auto-purge-record":
 		"Purgar automàticament el registre de descàrregues en sortir",
 	ui: "UI",

@@ -1,0 +1,33 @@
+export default {
+	title: "Kontrole stanu",
+	subtitle: "Sprawdź stan silnika, sieci i systemu",
+	"run-all": "Uruchom wszystkie kontrole",
+	"run-group": "Uruchom",
+	"last-run": "Ostatnia kontrola",
+	"never-run": "Nigdy",
+	loading: "Wykonywanie kontroli…",
+	error: "Kontrole nie powiodły się: {{error}}",
+	"engine-not-running": "Silnik nie jest uruchomiony",
+	overall: "Ogólny",
+	statuses: {
+		ok: "Sprawny",
+		warn: "Ostrzeżenie",
+		fail: "Błąd",
+		skipped: "Nieaktywny",
+	},
+	categories: {
+		general: "Ogólne",
+		network: "Sieć",
+		bittorrent: "BitTorrent",
+		disk: "Dysk",
+		system: "System",
+		config: "Konfiguracja",
+		logs: "Dzienniki",
+	},
+	fixes: {
+		"open-preference": "Otwórz preferencje",
+		"restart-engine": "Uruchom ponownie silnik",
+		"open-log-dir": "Otwórz folder dzienników",
+	},
+	summary: "{{ok}} sprawnych, {{warn}} ostrzeżeń, {{fail}} błędów",
+};

@@ -33,6 +33,9 @@ export default {
 		"Ingen bekreftelse er nødvendig før du sletter oppgaven",
 	continue: "Fortsette",
 	"task-completed-notify": "Varsling etter nedlasting er fullført",
+	"prevent-sleep-while-downloading": "Prevent system sleep while downloading",
+	"prevent-sleep-while-downloading-tips":
+		"Keep the computer awake whenever an active task is in progress",
 	"auto-purge-record":
 		"Tøm nedlastingsposter automatisk når du avslutter appen",
 	ui: "UI",

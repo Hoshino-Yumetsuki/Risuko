@@ -6,6 +6,7 @@ setActivePinia(pinia);
 export default pinia;
 
 export * from "./app";
+export * from "./health";
 export * from "./preference";
 export * from "./rss";
 export * from "./task";

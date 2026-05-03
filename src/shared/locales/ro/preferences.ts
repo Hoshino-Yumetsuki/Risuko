@@ -35,6 +35,9 @@ export default {
 		"Nu este necesară confirmarea înainte de ștergerea sarcinii",
 	continue: "Continuă",
 	"task-completed-notify": "Notifică după finalizarea sarcinii",
+	"prevent-sleep-while-downloading": "Prevent system sleep while downloading",
+	"prevent-sleep-while-downloading-tips":
+		"Keep the computer awake whenever an active task is in progress",
 	"auto-purge-record":
 		"Ștergeți automat înregistrările de descărcare la ieșirea din aplicație",
 	ui: "Interfață Utilizator",

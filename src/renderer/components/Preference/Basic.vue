@@ -433,6 +433,22 @@
             </div>
             <div class="settings-row">
               <div class="settings-row-content">
+                <div class="settings-row-title">
+                  {{ $t('preferences.prevent-sleep-while-downloading') }}
+                </div>
+                <div class="settings-row-description">
+                  {{ $t('preferences.prevent-sleep-while-downloading-tips') }}
+                </div>
+              </div>
+              <div class="settings-row-action">
+                <ui-checkbox
+                  :model-value="!!form.preventSleepWhileDownloading"
+                  @change="(val) => setBasicBoolean('preventSleepWhileDownloading', val)"
+                />
+              </div>
+            </div>
+            <div class="settings-row">
+              <div class="settings-row-content">
                 <span class="settings-row-title">{{
                   $t('preferences.no-confirm-before-delete-task')
                 }}</span>
@@ -578,6 +594,7 @@ const initForm = (config) => {
 		newTaskShowDownloading,
 		noConfirmBeforeDeleteTask,
 		openAtLogin,
+		preventSleepWhileDownloading,
 		resumeAllWhenAppLaunched,
 		runMode,
 		seedRatio,
@@ -586,6 +603,7 @@ const initForm = (config) => {
 		taskNotification,
 		theme,
 		traySpeedometer,
+		useRemoteFileTime,
 		lowSpeedThreshold,
 	} = config;
 
@@ -624,6 +642,10 @@ const initForm = (config) => {
 		newTaskShowDownloading: parseBooleanConfig(newTaskShowDownloading),
 		noConfirmBeforeDeleteTask: parseBooleanConfig(noConfirmBeforeDeleteTask),
 		openAtLogin: parseBooleanConfig(openAtLogin),
+		preventSleepWhileDownloading:
+			preventSleepWhileDownloading === undefined
+				? true
+				: parseBooleanConfig(preventSleepWhileDownloading),
 		resumeAllWhenAppLaunched: parseBooleanConfig(resumeAllWhenAppLaunched),
 		runMode,
 		seedRatio,
@@ -632,6 +654,7 @@ const initForm = (config) => {
 		taskNotification: parseBooleanConfig(taskNotification),
 		theme,
 		traySpeedometer: parseBooleanConfig(traySpeedometer),
+		useRemoteFileTime: parseBooleanConfig(useRemoteFileTime),
 	};
 	return result;
 };

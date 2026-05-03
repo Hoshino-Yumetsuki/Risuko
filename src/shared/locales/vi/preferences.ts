@@ -31,6 +31,9 @@ export default {
 	"no-confirm-before-delete-task": "Không cần xác nhận trước khi xóa tác vụ",
 	continue: "Tiếp tục",
 	"task-completed-notify": "Thông báo sau khi tải xuống hoàn tất",
+	"prevent-sleep-while-downloading": "Prevent system sleep while downloading",
+	"prevent-sleep-while-downloading-tips":
+		"Keep the computer awake whenever an active task is in progress",
 	"auto-purge-record": "Tự động xoá hồ sơ tải xuống khi thoát khỏi ứng dụng",
 	ui: "UI",
 	appearance: "Giao diện",

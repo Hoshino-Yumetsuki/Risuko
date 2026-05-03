@@ -33,6 +33,9 @@ export default {
 	"no-confirm-before-delete-task": "Görevi silmeden önce onay gerekmez",
 	continue: "Devamlı",
 	"task-completed-notify": "İndirme bittikten sonra bildirim göster",
+	"prevent-sleep-while-downloading": "Prevent system sleep while downloading",
+	"prevent-sleep-while-downloading-tips":
+		"Keep the computer awake whenever an active task is in progress",
 	"auto-purge-record": "Auto purge download record when app exit",
 	ui: "Kullanıcı Arayüzü",
 	appearance: "Görünüş",

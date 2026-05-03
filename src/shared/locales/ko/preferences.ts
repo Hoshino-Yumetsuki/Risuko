@@ -31,6 +31,9 @@ export default {
 	"no-confirm-before-delete-task": "작업을 삭제하기 전에 확인하지 않기",
 	continue: "계속",
 	"task-completed-notify": "다운로드 완료 후 알림",
+	"prevent-sleep-while-downloading": "Prevent system sleep while downloading",
+	"prevent-sleep-while-downloading-tips":
+		"Keep the computer awake whenever an active task is in progress",
 	"auto-purge-record": "앱 종료 시 다운로드 기록 자동 삭제",
 	ui: "UI",
 	appearance: "테마",

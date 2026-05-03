@@ -1,0 +1,33 @@
+export default {
+	title: "Sağlık Kontrolleri",
+	subtitle: "Motor, ağ ve sistem durumunu inceleyin",
+	"run-all": "Tüm kontrolleri çalıştır",
+	"run-group": "Çalıştır",
+	"last-run": "Son kontrol",
+	"never-run": "Asla",
+	loading: "Kontroller çalıştırılıyor…",
+	error: "Kontroller başarısız: {{error}}",
+	"engine-not-running": "Motor çalışmıyor",
+	overall: "Genel",
+	statuses: {
+		ok: "Sağlıklı",
+		warn: "Uyarı",
+		fail: "Başarısız",
+		skipped: "Pasif",
+	},
+	categories: {
+		general: "Genel",
+		network: "Ağ",
+		bittorrent: "BitTorrent",
+		disk: "Disk",
+		system: "Sistem",
+		config: "Yapılandırma",
+		logs: "Günlükler",
+	},
+	fixes: {
+		"open-preference": "Tercihleri aç",
+		"restart-engine": "Motoru yeniden başlat",
+		"open-log-dir": "Günlük klasörünü aç",
+	},
+	summary: "{{ok}} sağlıklı, {{warn}} uyarı, {{fail}} başarısız",
+};

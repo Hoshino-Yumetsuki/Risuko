@@ -1,0 +1,33 @@
+export default {
+	title: "بررسی سلامت",
+	subtitle: "بررسی وضعیت موتور، شبکه و سیستم",
+	"run-all": "اجرای همه بررسی‌ها",
+	"run-group": "اجرا",
+	"last-run": "آخرین بررسی",
+	"never-run": "هرگز",
+	loading: "در حال اجرای بررسی‌ها…",
+	error: "بررسی‌ها ناموفق بود: {{error}}",
+	"engine-not-running": "موتور در حال اجرا نیست",
+	overall: "کلی",
+	statuses: {
+		ok: "سالم",
+		warn: "هشدار",
+		fail: "ناموفق",
+		skipped: "غیرفعال",
+	},
+	categories: {
+		general: "عمومی",
+		network: "شبکه",
+		bittorrent: "BitTorrent",
+		disk: "دیسک",
+		system: "سیستم",
+		config: "پیکربندی",
+		logs: "گزارش‌ها",
+	},
+	fixes: {
+		"open-preference": "باز کردن تنظیمات",
+		"restart-engine": "راه‌اندازی مجدد موتور",
+		"open-log-dir": "باز کردن پوشه گزارش",
+	},
+	summary: "{{ok}} سالم، {{warn}} هشدار، {{fail}} ناموفق",
+};

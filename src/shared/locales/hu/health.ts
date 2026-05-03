@@ -1,0 +1,33 @@
+export default {
+	title: "Állapotellenőrzések",
+	subtitle: "A motor, a hálózat és a rendszer állapotának vizsgálata",
+	"run-all": "Összes ellenőrzés futtatása",
+	"run-group": "Futtatás",
+	"last-run": "Utolsó ellenőrzés",
+	"never-run": "Soha",
+	loading: "Ellenőrzések futnak…",
+	error: "Az ellenőrzések sikertelenek: {{error}}",
+	"engine-not-running": "A motor nem fut",
+	overall: "Összesített",
+	statuses: {
+		ok: "Egészséges",
+		warn: "Figyelmeztetés",
+		fail: "Sikertelen",
+		skipped: "Inaktív",
+	},
+	categories: {
+		general: "Általános",
+		network: "Hálózat",
+		bittorrent: "BitTorrent",
+		disk: "Lemez",
+		system: "Rendszer",
+		config: "Beállítások",
+		logs: "Naplók",
+	},
+	fixes: {
+		"open-preference": "Beállítások megnyitása",
+		"restart-engine": "Motor újraindítása",
+		"open-log-dir": "Naplómappa megnyitása",
+	},
+	summary: "{{ok}} rendben, {{warn}} figyelmeztetés, {{fail}} sikertelen",
+};

@@ -1,0 +1,33 @@
+export default {
+	title: "Verificações de saúde",
+	subtitle: "Inspecione o status do mecanismo, rede e sistema",
+	"run-all": "Executar todas as verificações",
+	"run-group": "Executar",
+	"last-run": "Última verificação",
+	"never-run": "Nunca",
+	loading: "Executando verificações…",
+	error: "Falha nas verificações: {{error}}",
+	"engine-not-running": "O mecanismo não está em execução",
+	overall: "Geral",
+	statuses: {
+		ok: "Saudável",
+		warn: "Aviso",
+		fail: "Falha",
+		skipped: "Inativo",
+	},
+	categories: {
+		general: "Geral",
+		network: "Rede",
+		bittorrent: "BitTorrent",
+		disk: "Disco",
+		system: "Sistema",
+		config: "Configuração",
+		logs: "Registros",
+	},
+	fixes: {
+		"open-preference": "Abrir preferências",
+		"restart-engine": "Reiniciar mecanismo",
+		"open-log-dir": "Abrir pasta de registros",
+	},
+	summary: "{{ok}} saudáveis, {{warn}} avisos, {{fail}} falhas",
+};

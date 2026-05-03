@@ -21,6 +21,22 @@ pub enum SessionPersistenceConfig {
     Json { folder: Option<PathBuf> },
 }
 
+/// Read-only snapshot of the UPnP forwarder state for diagnostics.
+#[derive(Debug, Clone, Copy)]
+pub struct UpnpStatus {
+    /// True if the forwarder was started (config enabled) at session
+    /// creation. False means UPnP is disabled by config
+    pub enabled: bool,
+    /// Number of mappings the router has currently confirmed. Zero is
+    /// possible while the first discovery pass is in flight
+    pub mapping_count: usize,
+    /// Number of completed discover/map passes. Zero means the forwarder
+    /// hasn't finished its first attempt yet (still negotiating); >= 1
+    /// with `mapping_count == 0` means no IGD responded — the router
+    /// likely doesn't speak UPnP or has it blocked
+    pub discovery_attempts: usize,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct ListenerOptions {
     pub listen_addr: Option<SocketAddr>,
@@ -94,6 +110,8 @@ pub struct Session {
     upnp_handle: Mutex<Option<super::upnp::UpnpHandle>>,
     lsd: Mutex<Option<Arc<super::lsd::LocalServiceDiscovery>>>,
     lsd_router_handle: Mutex<Option<tokio::task::JoinHandle<()>>>,
+    dht: Mutex<Option<Arc<super::dht::Dht>>>,
+    dht_bootstrap_handle: Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
 
 impl Drop for Session {
@@ -107,9 +125,13 @@ impl Drop for Session {
         if let Some(h) = self.lsd_router_handle.lock().take() {
             h.abort();
         }
-        // Dropping the UpnpHandle / LSD service triggers their cleanup.
+        if let Some(h) = self.dht_bootstrap_handle.lock().take() {
+            h.abort();
+        }
+        // Dropping the UpnpHandle / LSD service / DHT triggers their cleanup.
         let _ = self.upnp_handle.lock().take();
         let _ = self.lsd.lock().take();
+        let _ = self.dht.lock().take();
     }
 }
 
@@ -173,6 +195,8 @@ impl Session {
             upnp_handle: Mutex::new(upnp_handle),
             lsd: Mutex::new(None),
             lsd_router_handle: Mutex::new(None),
+            dht: Mutex::new(None),
+            dht_bootstrap_handle: Mutex::new(None),
         });
 
         if !session.opts.disable_local_service_discovery {
@@ -191,6 +215,23 @@ impl Session {
                     *session.lsd_router_handle.lock() = Some(router);
                 }
                 Err(e) => log::warn!("lsd: not started: {e}"),
+            }
+        }
+
+        if !session.opts.disable_dht {
+            let dht_cfg = session.opts.dht_config.clone().unwrap_or_default();
+            match super::dht::Dht::spawn(dht_cfg).await {
+                Ok(dht) => {
+                    let dht_for_bg = dht.clone();
+                    // Bootstrap once in the background so the routing table
+                    // becomes useful for diagnostics + future lookups
+                    let handle = tokio::spawn(async move {
+                        dht_for_bg.bootstrap().await;
+                    });
+                    *session.dht.lock() = Some(dht);
+                    *session.dht_bootstrap_handle.lock() = Some(handle);
+                }
+                Err(e) => log::warn!("dht: not started: {e}"),
             }
         }
 
@@ -275,6 +316,41 @@ impl Session {
 
     pub fn listen_port(&self) -> u16 {
         self.listen_port
+    }
+
+    /// True if Local Service Discovery is currently spawned and running
+    pub fn lsd_active(&self) -> bool {
+        self.lsd.lock().is_some()
+    }
+
+    /// True if a DHT node is currently running for this session
+    pub fn dht_active(&self) -> bool {
+        self.dht.lock().is_some()
+    }
+
+    /// Number of nodes currently held in the DHT routing table. Returns 0
+    /// when the DHT is disabled or has not yet learned any contacts
+    pub fn dht_routing_table_len(&self) -> usize {
+        self.dht
+            .lock()
+            .as_ref()
+            .map(|d| d.routing_table_len())
+            .unwrap_or(0)
+    }
+
+    /// Snapshot of UPnP forwarder state: whether it was enabled at startup
+    /// and the count of currently confirmed router-side mappings (0 if not
+    /// enabled or no router responded yet)
+    pub fn upnp_status(&self) -> UpnpStatus {
+        let guard = self.upnp_handle.lock();
+        let enabled = guard.is_some();
+        let mapping_count = guard.as_ref().map(|h| h.mapping_count()).unwrap_or(0);
+        let discovery_attempts = guard.as_ref().map(|h| h.discovery_attempts()).unwrap_or(0);
+        UpnpStatus {
+            enabled,
+            mapping_count,
+            discovery_attempts,
+        }
     }
 
     pub async fn add_torrent(

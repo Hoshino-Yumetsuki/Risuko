@@ -1,0 +1,33 @@
+export default {
+	title: "Kiểm tra tình trạng",
+	subtitle: "Kiểm tra trạng thái của bộ máy, mạng và hệ thống",
+	"run-all": "Chạy tất cả kiểm tra",
+	"run-group": "Chạy",
+	"last-run": "Lần kiểm tra gần nhất",
+	"never-run": "Chưa bao giờ",
+	loading: "Đang chạy kiểm tra…",
+	error: "Kiểm tra thất bại: {{error}}",
+	"engine-not-running": "Bộ máy không chạy",
+	overall: "Tổng thể",
+	statuses: {
+		ok: "Bình thường",
+		warn: "Cảnh báo",
+		fail: "Thất bại",
+		skipped: "Không hoạt động",
+	},
+	categories: {
+		general: "Chung",
+		network: "Mạng",
+		bittorrent: "BitTorrent",
+		disk: "Đĩa",
+		system: "Hệ thống",
+		config: "Cấu hình",
+		logs: "Nhật ký",
+	},
+	fixes: {
+		"open-preference": "Mở tùy chọn",
+		"restart-engine": "Khởi động lại bộ máy",
+		"open-log-dir": "Mở thư mục nhật ký",
+	},
+	summary: "{{ok}} bình thường, {{warn}} cảnh báo, {{fail}} thất bại",
+};

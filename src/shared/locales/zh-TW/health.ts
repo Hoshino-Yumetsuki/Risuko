@@ -1,0 +1,33 @@
+export default {
+	title: "健康檢查",
+	subtitle: "檢查引擎、網路與系統狀態",
+	"run-all": "執行全部檢查",
+	"run-group": "執行",
+	"last-run": "上次檢查",
+	"never-run": "從未",
+	loading: "正在執行檢查…",
+	error: "檢查失敗:{{error}}",
+	"engine-not-running": "引擎未執行",
+	overall: "整體狀態",
+	statuses: {
+		ok: "正常",
+		warn: "警告",
+		fail: "失敗",
+		skipped: "未啟用",
+	},
+	categories: {
+		general: "概覽",
+		network: "網路",
+		bittorrent: "BitTorrent",
+		disk: "磁碟",
+		system: "系統",
+		config: "設定",
+		logs: "日誌",
+	},
+	fixes: {
+		"open-preference": "開啟偏好設定",
+		"restart-engine": "重新啟動引擎",
+		"open-log-dir": "開啟日誌資料夾",
+	},
+	summary: "{{ok}} 正常,{{warn}} 警告,{{fail}} 失敗",
+};

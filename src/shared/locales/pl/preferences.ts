@@ -34,6 +34,9 @@ export default {
 		"Usunięcie zadania nie będzie wymagać potwierdzenia",
 	continue: "Kontynuuj",
 	"task-completed-notify": "Powiadomnie po ukończeniu zadania",
+	"prevent-sleep-while-downloading": "Prevent system sleep while downloading",
+	"prevent-sleep-while-downloading-tips":
+		"Keep the computer awake whenever an active task is in progress",
 	"auto-purge-record":
 		"Automatycznie usuń pobrane zadania po zamknięciu aplikacji",
 	ui: "UI",

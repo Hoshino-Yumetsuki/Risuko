@@ -33,6 +33,9 @@ export default {
 		"Geen bevestiging nodig voor verwijderen taak",
 	continue: "Verder gaan",
 	"task-completed-notify": "Notificatie wanneer download klaar is",
+	"prevent-sleep-while-downloading": "Prevent system sleep while downloading",
+	"prevent-sleep-while-downloading-tips":
+		"Keep the computer awake whenever an active task is in progress",
 	"auto-purge-record":
 		"Automatisch wissen van downloadrecords bij verlaten van app",
 	ui: "UI",

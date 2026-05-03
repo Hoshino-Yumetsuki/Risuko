@@ -1,6 +1,7 @@
 import about from "./about";
 import app from "./app";
 import edit from "./edit";
+import health from "./health";
 import help from "./help";
 import menu from "./menu";
 import preferences from "./preferences";
@@ -12,6 +13,7 @@ export default {
 	about,
 	app,
 	edit,
+	health,
 	help,
 	menu,
 	preferences,

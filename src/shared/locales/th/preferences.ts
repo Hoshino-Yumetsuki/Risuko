@@ -31,6 +31,9 @@ export default {
 	"no-confirm-before-delete-task": "ไม่จำเป็นต้องมีการยืนยันก่อนที่จะลบงาน",
 	continue: "ต่อ",
 	"task-completed-notify": "แจ้งเตือนหลังดาวน์โหลดเสร็จสิ้น",
+	"prevent-sleep-while-downloading": "Prevent system sleep while downloading",
+	"prevent-sleep-while-downloading-tips":
+		"Keep the computer awake whenever an active task is in progress",
 	"auto-purge-record": "ล้างบันทึกการดาวน์โหลดโดยอัตโนมัติเมื่อออกจากแอป",
 	ui: "UI",
 	appearance: "รูปร่าง",

@@ -33,6 +33,9 @@ export default {
 	"no-confirm-before-delete-task": "Ne legyen megerösités a törlésnél",
 	continue: "Folytatás",
 	"task-completed-notify": "Értesités a feladat befejezésnél",
+	"prevent-sleep-while-downloading": "Prevent system sleep while downloading",
+	"prevent-sleep-while-downloading-tips":
+		"Keep the computer awake whenever an active task is in progress",
 	"auto-purge-record": "Automatikusan tisztitsa a feladatokat kilépéskor",
 	ui: "UI",
 	appearance: "Személyre szabás",

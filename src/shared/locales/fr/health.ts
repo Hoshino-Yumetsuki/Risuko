@@ -1,0 +1,33 @@
+export default {
+	title: "Vérifications de santé",
+	subtitle: "Inspecter l'état du moteur, du réseau et du système",
+	"run-all": "Exécuter toutes les vérifications",
+	"run-group": "Exécuter",
+	"last-run": "Dernière vérification",
+	"never-run": "Jamais",
+	loading: "Vérifications en cours…",
+	error: "Échec des vérifications : {{error}}",
+	"engine-not-running": "Le moteur n'est pas en cours d'exécution",
+	overall: "Global",
+	statuses: {
+		ok: "Sain",
+		warn: "Avertissement",
+		fail: "Échec",
+		skipped: "Inactif",
+	},
+	categories: {
+		general: "Général",
+		network: "Réseau",
+		bittorrent: "BitTorrent",
+		disk: "Disque",
+		system: "Système",
+		config: "Configuration",
+		logs: "Journaux",
+	},
+	fixes: {
+		"open-preference": "Ouvrir les préférences",
+		"restart-engine": "Redémarrer le moteur",
+		"open-log-dir": "Ouvrir le dossier des journaux",
+	},
+	summary: "{{ok}} sains, {{warn}} avertissements, {{fail}} en échec",
+};

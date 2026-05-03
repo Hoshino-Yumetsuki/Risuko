@@ -1,0 +1,33 @@
+export default {
+	title: "Helsesjekker",
+	subtitle: "Inspiser status for motor, nettverk og system",
+	"run-all": "Kjør alle sjekker",
+	"run-group": "Kjør",
+	"last-run": "Sist sjekket",
+	"never-run": "Aldri",
+	loading: "Kjører sjekker…",
+	error: "Sjekkene mislyktes: {{error}}",
+	"engine-not-running": "Motoren kjører ikke",
+	overall: "Totalt",
+	statuses: {
+		ok: "Frisk",
+		warn: "Advarsel",
+		fail: "Mislykket",
+		skipped: "Inaktiv",
+	},
+	categories: {
+		general: "Generelt",
+		network: "Nettverk",
+		bittorrent: "BitTorrent",
+		disk: "Disk",
+		system: "System",
+		config: "Konfigurasjon",
+		logs: "Logger",
+	},
+	fixes: {
+		"open-preference": "Åpne innstillinger",
+		"restart-engine": "Start motor på nytt",
+		"open-log-dir": "Åpne loggmappe",
+	},
+	summary: "{{ok}} friske, {{warn}} advarsler, {{fail}} mislykkede",
+};

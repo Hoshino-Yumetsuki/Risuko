@@ -1,0 +1,33 @@
+export default {
+	title: "Comprobaciones de estado",
+	subtitle: "Inspecciona el estado del motor, la red y el sistema",
+	"run-all": "Ejecutar todas las comprobaciones",
+	"run-group": "Ejecutar",
+	"last-run": "Última comprobación",
+	"never-run": "Nunca",
+	loading: "Ejecutando comprobaciones…",
+	error: "Comprobaciones fallidas: {{error}}",
+	"engine-not-running": "El motor no está en ejecución",
+	overall: "General",
+	statuses: {
+		ok: "Correcto",
+		warn: "Advertencia",
+		fail: "Fallido",
+		skipped: "Inactivo",
+	},
+	categories: {
+		general: "General",
+		network: "Red",
+		bittorrent: "BitTorrent",
+		disk: "Disco",
+		system: "Sistema",
+		config: "Configuración",
+		logs: "Registros",
+	},
+	fixes: {
+		"open-preference": "Abrir preferencias",
+		"restart-engine": "Reiniciar motor",
+		"open-log-dir": "Abrir carpeta de registros",
+	},
+	summary: "{{ok}} correctos, {{warn}} advertencias, {{fail}} fallidos",
+};

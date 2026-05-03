@@ -1,0 +1,33 @@
+export default {
+	title: "Pemeriksaan Kesehatan",
+	subtitle: "Periksa status mesin, jaringan, dan sistem",
+	"run-all": "Jalankan semua pemeriksaan",
+	"run-group": "Jalankan",
+	"last-run": "Pemeriksaan terakhir",
+	"never-run": "Tidak pernah",
+	loading: "Menjalankan pemeriksaan…",
+	error: "Pemeriksaan gagal: {{error}}",
+	"engine-not-running": "Mesin tidak berjalan",
+	overall: "Keseluruhan",
+	statuses: {
+		ok: "Sehat",
+		warn: "Peringatan",
+		fail: "Gagal",
+		skipped: "Tidak aktif",
+	},
+	categories: {
+		general: "Umum",
+		network: "Jaringan",
+		bittorrent: "BitTorrent",
+		disk: "Disk",
+		system: "Sistem",
+		config: "Konfigurasi",
+		logs: "Log",
+	},
+	fixes: {
+		"open-preference": "Buka preferensi",
+		"restart-engine": "Mulai ulang mesin",
+		"open-log-dir": "Buka folder log",
+	},
+	summary: "{{ok}} sehat, {{warn}} peringatan, {{fail}} gagal",
+};

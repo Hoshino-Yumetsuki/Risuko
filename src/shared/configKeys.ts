@@ -20,6 +20,7 @@ const userKeys = [
 	"new-task-show-downloading",
 	"no-confirm-before-delete-task",
 	"open-at-login",
+	"prevent-sleep-while-downloading",
 	"protocols",
 	"proxy",
 	"resume-all-when-app-launched",

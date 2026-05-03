@@ -35,6 +35,9 @@ export default {
 		"Не се изисква потвърждение преди изтриване на задача",
 	continue: "Продължи",
 	"task-completed-notify": "съобщение след изтеглянето",
+	"prevent-sleep-while-downloading": "Prevent system sleep while downloading",
+	"prevent-sleep-while-downloading-tips":
+		"Keep the computer awake whenever an active task is in progress",
 	"auto-purge-record":
 		"автоматично почистване на записите за изтегляне след затваряне на приложението",
 	ui: "UI",

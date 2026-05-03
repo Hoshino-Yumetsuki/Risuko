@@ -24,7 +24,25 @@ pub use session::SESSION_FILENAME;
 /// Suffix for per-chunk resume metadata sidecar file
 pub const CHUNK_META_SUFFIX: &str = ".chunks";
 
+/// Startup-only config keys (changes require an engine restart to take effect).
+/// Mirrors the list maintained on the frontend in `src/shared/configKeys.ts`
+pub const STARTUP_ONLY_KEYS: &[&str] = &[
+    "rpc-listen-port",
+    "rpc-secret",
+    "listen-port",
+    "dht-listen-port",
+    "ed2k-port",
+    "bt-max-peers-per-torrent",
+    "bt-max-outstanding-per-peer",
+    "bt-enable-upnp",
+    "bt-upnp-lease",
+    "bt-enable-lsd",
+    "bt-encryption-policy",
+    "bt-listen-v6",
+];
+
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 
 use crate::config::ConfigManager;
@@ -38,6 +56,30 @@ use self::upload::UploadSinkManager;
 
 static ENGINE_INSTANCE: std::sync::LazyLock<Mutex<Option<EngineInstance>>> =
     std::sync::LazyLock::new(|| Mutex::new(None));
+
+/// Set when the engine successfully starts; cleared on stop. Read by health checks
+/// to derive uptime without coupling to TaskManager internals
+static ENGINE_STARTED_AT: std::sync::Mutex<Option<Instant>> = std::sync::Mutex::new(None);
+
+/// Snapshot of the values of `STARTUP_ONLY_KEYS` at the moment the engine last
+/// started. Health checks compare this against the live config to flag drift
+static STARTUP_SNAPSHOT: std::sync::Mutex<
+    Option<std::collections::HashMap<String, serde_json::Value>>,
+> = std::sync::Mutex::new(None);
+
+/// Time since the engine last successfully started, or `None` if not running
+pub fn engine_uptime() -> Option<Duration> {
+    ENGINE_STARTED_AT
+        .lock()
+        .ok()
+        .and_then(|g| g.as_ref().map(|t| Instant::now().duration_since(*t)))
+}
+
+/// Snapshot of startup-only keys captured the last time the engine started
+/// `None` until the engine has run at least once in this process
+pub fn startup_snapshot() -> Option<std::collections::HashMap<String, serde_json::Value>> {
+    STARTUP_SNAPSHOT.lock().ok().and_then(|g| g.clone())
+}
 
 struct EngineInstance {
     manager: Arc<TaskManager>,
@@ -237,6 +279,24 @@ pub async fn start_engine(
 
     *ENGINE_INSTANCE.lock().await = Some(instance);
 
+    // Capture startup-only key snapshot + start time so health checks can
+    // detect drift and report uptime
+    if let Ok(mut g) = STARTUP_SNAPSHOT.lock() {
+        let mut snap = std::collections::HashMap::new();
+        for key in STARTUP_ONLY_KEYS {
+            let v = system
+                .get(*key)
+                .or_else(|| user.get(*key))
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
+            snap.insert((*key).to_string(), v);
+        }
+        *g = Some(snap);
+    }
+    if let Ok(mut g) = ENGINE_STARTED_AT.lock() {
+        *g = Some(Instant::now());
+    }
+
     // Monitor for RPC-initiated shutdown requests
     tokio::spawn(async move {
         if rpc_shutdown_rx.recv().await.is_some() {
@@ -272,6 +332,10 @@ pub async fn stop_engine() -> Result<(), Box<dyn std::error::Error>> {
         instance.manager.shutdown().await;
     }
     drop(guard);
+
+    if let Ok(mut g) = ENGINE_STARTED_AT.lock() {
+        *g = None;
+    }
 
     log::info!("Risuko engine stopped");
     Ok(())

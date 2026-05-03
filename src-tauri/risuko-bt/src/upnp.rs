@@ -9,6 +9,7 @@
 //! a subset of routers; left to a follow-up).
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -91,16 +92,19 @@ impl UpnpPortForwarder {
     pub fn spawn(self) -> UpnpHandle {
         let (shutdown_tx, shutdown_rx) = mpsc::channel::<()>(1);
         let active = Arc::new(Mutex::new(Vec::<ActiveMapping>::new()));
+        let attempts = Arc::new(AtomicUsize::new(0));
         let active_for_task = active.clone();
+        let attempts_for_task = attempts.clone();
         let ports = self.ports.clone();
         let opts = self.opts.clone();
         let join = tokio::spawn(async move {
-            run_forever(ports, opts, active_for_task, shutdown_rx).await;
+            run_forever(ports, opts, active_for_task, attempts_for_task, shutdown_rx).await;
         });
         UpnpHandle {
             shutdown: Some(shutdown_tx),
             join: Some(join),
             active,
+            attempts,
         }
     }
 }
@@ -111,6 +115,7 @@ pub struct UpnpHandle {
     shutdown: Option<mpsc::Sender<()>>,
     join: Option<JoinHandle<()>>,
     active: Arc<Mutex<Vec<ActiveMapping>>>,
+    attempts: Arc<AtomicUsize>,
 }
 
 impl UpnpHandle {
@@ -123,6 +128,19 @@ impl UpnpHandle {
                 external: Some(SocketAddr::new(IpAddr::V4(m.external_ip), m.external_port)),
             })
             .collect()
+    }
+
+    /// Number of currently confirmed mappings without cloning them
+    pub fn mapping_count(&self) -> usize {
+        self.active.lock().len()
+    }
+
+    /// Number of completed discover/map passes since spawn. Health checks
+    /// use this to distinguish "haven't tried yet" (== 0, still negotiating)
+    /// from "tried and got no IGD response" (>= 1, router likely doesn't
+    /// support UPnP or has it disabled)
+    pub fn discovery_attempts(&self) -> usize {
+        self.attempts.load(Ordering::Relaxed)
     }
 }
 
@@ -200,6 +218,7 @@ async fn run_forever(
     ports: Vec<(u16, MapProto)>,
     opts: UpnpOptions,
     active: Arc<Mutex<Vec<ActiveMapping>>>,
+    attempts: Arc<AtomicUsize>,
     mut shutdown: mpsc::Receiver<()>,
 ) {
     // Re-map at lease/2 so a single missed pass doesn't expire the mapping.
@@ -216,6 +235,7 @@ async fn run_forever(
                 if let Err(e) = discover_and_map(&ports, &opts, &active).await {
                     log::debug!("upnp discover/map pass failed: {e}");
                 }
+                attempts.fetch_add(1, Ordering::Relaxed);
             }
             _ = shutdown.recv() => {
                 break;

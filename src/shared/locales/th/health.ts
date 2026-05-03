@@ -1,0 +1,33 @@
+export default {
+	title: "การตรวจสอบสุขภาพ",
+	subtitle: "ตรวจสอบสถานะของเอนจิน เครือข่าย และระบบ",
+	"run-all": "รันการตรวจสอบทั้งหมด",
+	"run-group": "รัน",
+	"last-run": "ตรวจสอบล่าสุด",
+	"never-run": "ไม่เคย",
+	loading: "กำลังรันการตรวจสอบ…",
+	error: "การตรวจสอบล้มเหลว: {{error}}",
+	"engine-not-running": "เอนจินไม่ได้ทำงานอยู่",
+	overall: "โดยรวม",
+	statuses: {
+		ok: "ปกติ",
+		warn: "คำเตือน",
+		fail: "ล้มเหลว",
+		skipped: "ไม่ทำงาน",
+	},
+	categories: {
+		general: "ทั่วไป",
+		network: "เครือข่าย",
+		bittorrent: "BitTorrent",
+		disk: "ดิสก์",
+		system: "ระบบ",
+		config: "การตั้งค่า",
+		logs: "บันทึก",
+	},
+	fixes: {
+		"open-preference": "เปิดการตั้งค่า",
+		"restart-engine": "รีสตาร์ทเอนจิน",
+		"open-log-dir": "เปิดโฟลเดอร์บันทึก",
+	},
+	summary: "{{ok}} ปกติ, {{warn}} คำเตือน, {{fail}} ล้มเหลว",
+};

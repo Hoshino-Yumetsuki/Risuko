@@ -1,0 +1,33 @@
+export default {
+	title: "Health Checks",
+	subtitle: "Inspect engine, network, and system status",
+	"run-all": "Run all checks",
+	"run-group": "Run",
+	"last-run": "Last checked",
+	"never-run": "Never",
+	loading: "Running checks…",
+	error: "Failed to run checks: {{error}}",
+	"engine-not-running": "Engine is not running",
+	overall: "Overall",
+	statuses: {
+		ok: "Healthy",
+		warn: "Warning",
+		fail: "Failed",
+		skipped: "Inactive",
+	},
+	categories: {
+		general: "General",
+		network: "Network",
+		bittorrent: "BitTorrent",
+		disk: "Disk",
+		system: "System",
+		config: "Configuration",
+		logs: "Logs",
+	},
+	fixes: {
+		"open-preference": "Open preference",
+		"restart-engine": "Restart engine",
+		"open-log-dir": "Open log folder",
+	},
+	summary: "{{ok}} healthy, {{warn}} warning, {{fail}} failed",
+};

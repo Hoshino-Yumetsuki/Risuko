@@ -77,6 +77,8 @@ export default {
 		"将文件修改时间设置为远程服务器的时间戳，而非下载完成时间。",
 	continue: "断点续传",
 	"task-completed-notify": "下载完成后通知",
+	"prevent-sleep-while-downloading": "下载时阻止系统休眠",
+	"prevent-sleep-while-downloading-tips": "存在活动任务时保持电脑唤醒",
 	"auto-purge-record": "当应用退出时自动清除下载记录",
 	ui: "界面",
 	appearance: "外观",
