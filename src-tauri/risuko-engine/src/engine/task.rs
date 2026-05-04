@@ -39,6 +39,7 @@ impl std::fmt::Display for TaskStatus {
 #[serde(rename_all = "lowercase")]
 pub enum TaskKind {
     Http,
+    Youtube,
     Torrent,
     Ed2k,
     M3u8,
@@ -187,6 +188,71 @@ impl DownloadTask {
             status: TaskStatus::Waiting,
             kind: TaskKind::Http,
             uris,
+            dir,
+            out,
+            total_length: 0,
+            completed_length: 0,
+            download_speed: 0,
+            upload_speed: 0,
+            upload_length: 0,
+            connections: 0,
+            files: initial_files,
+            error_code: None,
+            error_message: None,
+            options,
+            info_hash: None,
+            info_hash_v2: None,
+            meta_version: None,
+            bt_name: None,
+            seeder: false,
+            num_seeders: 0,
+            peers: Vec::new(),
+            piece_length: 0,
+            num_pieces: 0,
+            bt_comment: None,
+            bt_creation_date: None,
+            bt_announce_list: Vec::new(),
+            created_at: now_ms(),
+            seeding_since: 0,
+            chunk_progress: Vec::new(),
+        }
+    }
+
+    pub fn new_youtube(
+        gid: String,
+        uri: String,
+        dir: String,
+        options: Map<String, Value>,
+    ) -> Self {
+        let out = options
+            .get("out")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        let initial_path = if !out.is_empty() {
+            format!("{}/{}", dir, out)
+        } else {
+            uri.clone()
+        };
+
+        let initial_files = vec![DownloadFile {
+            index: "1".to_string(),
+            path: initial_path,
+            length: "0".to_string(),
+            completed_length: "0".to_string(),
+            selected: "true".to_string(),
+            uris: vec![FileUri {
+                uri: uri.clone(),
+                status: "waiting".to_string(),
+            }],
+        }];
+
+        Self {
+            gid,
+            status: TaskStatus::Waiting,
+            kind: TaskKind::Youtube,
+            uris: vec![uri],
             dir,
             out,
             total_length: 0,

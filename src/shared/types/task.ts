@@ -92,3 +92,36 @@ export interface SyncOrderResult {
 	moved: number;
 	partialError: boolean;
 }
+
+export interface YouTubeFormat {
+	format_id: string;
+	ext: string;
+	resolution: string;
+	fps: number | null;
+	vcodec: string;
+	acodec: string;
+	filesize: number | null;
+	filesize_approx: number | null;
+	tbr: number | null;
+	abr: number | null;
+	vbr: number | null;
+	format_note: string;
+	audio_only: boolean;
+	video_only: boolean;
+}
+
+export interface YouTubeVideoInfo {
+	id: string;
+	title: string;
+	description: string | null;
+	duration: number | null;
+	uploader: string | null;
+	upload_date: string | null;
+	thumbnail: string | null;
+	view_count: number | null;
+	channel: string | null;
+	webpage_url: string;
+	formats: YouTubeFormat[];
+	is_playlist: boolean;
+	playlist_count: number | null;
+}

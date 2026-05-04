@@ -42,6 +42,14 @@ async fn do_download(
     client: &RpcClient,
     args: &DownloadArgs,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    fn is_youtube_url(url: &str) -> bool {
+        let trimmed = url.trim().to_ascii_lowercase();
+        if trimmed.starts_with("https://youtu.be/") || trimmed.starts_with("http://youtu.be/") {
+            return true;
+        }
+        trimmed.contains("youtube.com/")
+    }
+
     let mut options = serde_json::Map::new();
 
     options.insert("split".into(), json!(args.threads.to_string()));
@@ -76,6 +84,9 @@ async fn do_download(
             }
         }
     }
+    if let Some(ref youtube_format) = args.youtube_format {
+        options.insert("youtube-format".into(), json!(youtube_format));
+    }
     if let Some(ratio) = args.seed_ratio {
         options.insert("seed-ratio".into(), json!(ratio.to_string()));
     }
@@ -105,6 +116,11 @@ async fn do_download(
                 "risuko.addTorrent",
                 vec![json!(b64), json!([]), json!(options)],
             )
+            .await?;
+        result.as_str().unwrap_or("").to_string()
+    } else if is_youtube_url(&args.url) {
+        let result = client
+            .call("risuko.addYouTube", vec![json!(&args.url), json!(options)])
             .await?;
         result.as_str().unwrap_or("").to_string()
     } else {

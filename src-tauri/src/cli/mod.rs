@@ -74,6 +74,10 @@ pub struct DownloadArgs {
     #[arg(long)]
     pub cookie: Option<String>,
 
+    /// YouTube format selector passed to yt-dlp
+    #[arg(long)]
+    pub youtube_format: Option<String>,
+
     /// BT seed ratio (e.g. 1.0)
     #[arg(long)]
     pub seed_ratio: Option<f64>,

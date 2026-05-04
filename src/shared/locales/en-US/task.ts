@@ -19,6 +19,8 @@ export default {
 	"ftp-link-detected": "FTP/FTPS link detected. Credentials can be set below.",
 	"sftp-link-detected":
 		"SFTP link detected. SSH key or password can be set below.",
+	"youtube-link-detected":
+		"YouTube link detected. Format can be configured in Preferences.",
 	"ftp-credentials": "FTP / SFTP Credentials",
 	"ftp-username": "Username",
 	"ftp-password": "Password",
@@ -188,6 +190,8 @@ export default {
 	"download-pause-message": "Paused downloading {{taskName}}",
 	"download-stop-message": "Stopped downloading {{taskName}}",
 	"download-error-message": "Error occurred when downloading {{taskName}}",
+	"youtube-tool-required":
+		"yt-dlp is required for YouTube downloads. Please install yt-dlp and ensure it is available in PATH.",
 	"download-complete-message": "Completed downloading {{taskName}}",
 	"download-complete-notify": "Download Completed",
 	"bt-download-complete-message": "Completed downloading {{taskName}}, seeding",

@@ -66,6 +66,9 @@ impl ErrorCode {
     pub const FTP_TRANSFER_FAILED: Self = Self(532);
     pub const SFTP_AUTH_FAILED: Self = Self(533);
     pub const SFTP_HOST_KEY_FAILED: Self = Self(534);
+    pub const YOUTUBE_TOOL_NOT_FOUND: Self = Self(540);
+    pub const YOUTUBE_AUTH_REQUIRED: Self = Self(541);
+    pub const YOUTUBE_FORMAT_UNAVAILABLE: Self = Self(542);
 
     // -- Resource --
     pub const OUT_OF_MEMORY: Self = Self(600);
@@ -125,6 +128,9 @@ impl ErrorCode {
             532 => "FTP transfer failed",
             533 => "SFTP authentication failed",
             534 => "SFTP host key verification failed",
+            540 => "yt-dlp not found in PATH",
+            541 => "YouTube authentication required",
+            542 => "YouTube format unavailable",
 
             600 => "Out of memory",
             601 => "Too many concurrent connections",
@@ -268,6 +274,22 @@ pub fn classify_error(msg: &str, protocol: &str) -> ErrorCode {
             }
             if lower.contains("transfer") {
                 return ErrorCode::FTP_TRANSFER_FAILED;
+            }
+        }
+        "youtube" => {
+            if lower.contains("yt-dlp is not available") || lower.contains("command not found") {
+                return ErrorCode::YOUTUBE_TOOL_NOT_FOUND;
+            }
+            if lower.contains("sign in")
+                || lower.contains("login")
+                || lower.contains("authentication")
+                || lower.contains("members-only")
+                || lower.contains("age-restricted")
+            {
+                return ErrorCode::YOUTUBE_AUTH_REQUIRED;
+            }
+            if lower.contains("requested format") || lower.contains("format is not available") {
+                return ErrorCode::YOUTUBE_FORMAT_UNAVAILABLE;
             }
         }
         _ => {}

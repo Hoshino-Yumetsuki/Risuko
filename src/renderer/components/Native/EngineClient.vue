@@ -595,10 +595,17 @@ export default {
 				logger.error(
 					`[Risuko] download error gid: ${gid}, #${errorCode}, ${errorMessage}`,
 				);
-				const message = this.$t("task.download-error-message", { taskName });
+				const isMissingYtDlp =
+					String(errorCode || "") === "540" ||
+					/yt-dlp\s+is\s+not\s+available|command\s+not\s+found/i.test(
+						String(errorMessage || ""),
+					);
+				const message = isMissingYtDlp
+					? this.$t("task.youtube-tool-required", { taskName })
+					: this.$t("task.download-error-message", { taskName });
 				const link = `https://risuko.vercel.app/docs/reference/error-codes#${errorCode}`;
 				this.$msg.error({
-					duration: 5000,
+					duration: isMissingYtDlp ? 9000 : 5000,
 					message: `${message} (${errorCode}) ${link}`,
 				});
 			});

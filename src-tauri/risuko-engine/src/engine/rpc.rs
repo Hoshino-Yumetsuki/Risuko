@@ -527,6 +527,30 @@ fn dispatch_method<'a>(
                 Ok(Value::String(gid))
             }
 
+            "risuko.addYouTube" => {
+                let uri = params
+                    .first()
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| RpcError::from("YouTube URL required".to_string()))?;
+
+                let options = params
+                    .get(1)
+                    .and_then(|v| v.as_object())
+                    .cloned()
+                    .unwrap_or_default();
+
+                if !super::youtube::is_youtube_uri(uri) {
+                    return Err(RpcError::from("Not a valid YouTube URL".to_string()));
+                }
+
+                let gid = state
+                    .manager
+                    .add_youtube_task(uri, options)
+                    .await
+                    .map_err(RpcError::from)?;
+                Ok(Value::String(gid))
+            }
+
             "risuko.addTorrent" => {
                 let torrent_b64 = params
                     .first()
@@ -793,6 +817,7 @@ fn dispatch_method<'a>(
 fn list_methods() -> Value {
     let risuko_methods = [
         "addUri",
+        "addYouTube",
         "addTorrent",
         "addEd2k",
         "remove",

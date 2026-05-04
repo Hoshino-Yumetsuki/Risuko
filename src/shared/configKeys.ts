@@ -36,6 +36,7 @@ const userKeys = [
 	"rss-auto-update",
 	"rss-update-interval",
 	"saved-credentials",
+	"youtube-format",
 ];
 
 const systemKeys = [
