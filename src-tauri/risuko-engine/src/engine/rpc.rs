@@ -531,7 +531,8 @@ fn dispatch_method<'a>(
                 let uri = params
                     .first()
                     .and_then(|v| v.as_str())
-                    .ok_or_else(|| RpcError::from("YouTube URL required".to_string()))?;
+                    .ok_or_else(|| RpcError::from("YouTube URL required".to_string()))?
+                    .trim();
 
                 let options = params
                     .get(1)

@@ -563,7 +563,7 @@
         <!-- YouTube Section -->
         <div class="settings-section">
           <div class="settings-section-header">
-            <div class="section-icon"><Youtube :size="16" /></div>
+            <div class="section-icon"><Video :size="16" /></div>
             <div class="section-title">
               <h3>{{ $t('preferences.youtube-settings') }}</h3>
               <p>{{ $t('preferences.youtube-settings-tips') }}</p>
@@ -966,8 +966,8 @@ import {
 	Server,
 	Settings,
 	UserCircle,
+	Video,
 	X,
-	Youtube,
 } from "lucide-vue-next";
 import randomize from "randomatic";
 import ShowInFolder from "@/components/Native/ShowInFolder.vue";
@@ -1132,7 +1132,7 @@ export default {
 		RefreshCcw,
 		Dices,
 		ExternalLink,
-		Youtube,
+		Video,
 	},
 	data() {
 		const preferenceStore = usePreferenceStore();

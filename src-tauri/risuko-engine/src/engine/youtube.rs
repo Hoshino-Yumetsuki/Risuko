@@ -7,6 +7,8 @@ use tokio::process::Command;
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 
+use super::speed_limiter::parse_speed_limit;
+
 pub fn is_youtube_uri(uri: &str) -> bool {
     let trimmed = uri.trim();
     if trimmed.is_empty() {
@@ -32,6 +34,7 @@ pub fn is_youtube_uri(uri: &str) -> bool {
         || host == "m.youtube.com"
         || host == "music.youtube.com"
         || host.ends_with(".youtube.com")
+        || host == "youtu.be"
 }
 
 pub async fn check_yt_dlp_available() -> Result<(), String> {
@@ -67,7 +70,7 @@ pub async fn run_youtube_download(
     cancel: Arc<AtomicBool>,
     connections: Arc<AtomicU32>,
     cancel_token: CancellationToken,
-    // Sender for the resolved destination filename 
+    // Sender for the resolved destination filename
     dest_tx: watch::Sender<String>,
 ) -> Result<PathBuf, String> {
     check_yt_dlp_available().await?;
@@ -99,6 +102,15 @@ pub async fn run_youtube_download(
         cmd.arg("--format").arg(fmt);
     }
 
+    // Apply per-task download speed limit if configured
+    let rate_limit = options
+        .get("max-download-limit")
+        .map(parse_speed_limit)
+        .unwrap_or(0);
+    if rate_limit > 0 {
+        cmd.arg("--limit-rate").arg(rate_limit.to_string());
+    }
+
     if !dir.trim().is_empty() {
         cmd.arg("-P").arg(dir);
     }
@@ -106,6 +118,9 @@ pub async fn run_youtube_download(
     if !out.trim().is_empty() {
         cmd.arg("-o").arg(out);
     }
+
+    // Restrict to the single matched video; do not expand playlists
+    cmd.arg("--no-playlist");
 
     cmd.arg(url);
     cmd.stdout(std::process::Stdio::piped());
@@ -270,7 +285,13 @@ pub async fn run_youtube_download(
         Path::new(dir).to_path_buf()
     };
 
-    completed.store(total.load(Ordering::Relaxed), Ordering::Relaxed);
+    // Only sync completed to total if total is known; if yt-dlp never reported a
+    // total size (all fields were NA), total stays 0 and we must not overwrite the
+    // last valid completed counter with 0.
+    let total_val = total.load(Ordering::Relaxed);
+    if total_val > 0 {
+        completed.store(total_val, Ordering::Relaxed);
+    }
     speed.store(0, Ordering::Relaxed);
     Ok(resolved)
 }

@@ -585,7 +585,6 @@ export default {
 		},
 		onDownloadError(payload: { gid: string }) {
 			const { gid } = payload;
-			this.scheduleAutoRetry(gid);
 			this.fetchTaskItem({ gid }).then((task) => {
 				if (!task) {
 					return;
@@ -597,12 +596,25 @@ export default {
 				);
 				const isMissingYtDlp =
 					String(errorCode || "") === "540" ||
-					/yt-dlp\s+is\s+not\s+available|command\s+not\s+found/i.test(
+					/yt-dlp\s+is\s+not\s+available/i.test(String(errorMessage || "")) ||
+					/yt-dlp[^:]*:\s*command\s+not\s+found/i.test(
 						String(errorMessage || ""),
 					);
-				const message = isMissingYtDlp
-					? this.$t("task.youtube-tool-required", { taskName })
-					: this.$t("task.download-error-message", { taskName });
+
+				if (!isMissingYtDlp) {
+					this.scheduleAutoRetry(gid);
+				}
+
+				let message: string;
+				if (isMissingYtDlp) {
+					message = this.$t("task.youtube-tool-required", { taskName });
+				} else if (String(errorCode || "") === "541") {
+					message = this.$t("task.youtube-auth-required", { taskName });
+				} else if (String(errorCode || "") === "542") {
+					message = this.$t("task.youtube-format-unavailable", { taskName });
+				} else {
+					message = this.$t("task.download-error-message", { taskName });
+				}
 				const link = `https://risuko.vercel.app/docs/reference/error-codes#${errorCode}`;
 				this.$msg.error({
 					duration: isMissingYtDlp ? 9000 : 5000,

@@ -32,8 +32,7 @@ export default {
 	"no-confirm-before-delete-task": "قبل از حذف وظیفه نیازی به تأیید نیست",
 	continue: "ادامه",
 	"task-completed-notify": "پس از تکمیل بارگیری اطلاع رسانی کن",
-	"prevent-sleep-while-downloading":
-		"جلوگیری از خواب رفتن سیستم هنگام بارگیری",
+	"prevent-sleep-while-downloading": "جلوگیری از خواب رفتن سیستم هنگام بارگیری",
 	"prevent-sleep-while-downloading-tips":
 		"هر زمان که یک وظیفه فعال در حال اجراست، رایانه را بیدار نگه دار",
 	"auto-purge-record": "به صورت خودکار سابقهٔ بارگیری را هنگام خروج پاک کن",

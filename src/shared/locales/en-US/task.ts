@@ -191,7 +191,11 @@ export default {
 	"download-stop-message": "Stopped downloading {{taskName}}",
 	"download-error-message": "Error occurred when downloading {{taskName}}",
 	"youtube-tool-required":
-		"yt-dlp is required for YouTube downloads. Please install yt-dlp and ensure it is available in PATH.",
+		'Task "{{taskName}}": yt-dlp is required for YouTube downloads. Please install yt-dlp and ensure it is available in PATH.',
+	"youtube-auth-required":
+		'Task "{{taskName}}": YouTube authentication is required. Please sign in or check age-restricted access.',
+	"youtube-format-unavailable":
+		'Task "{{taskName}}": The requested YouTube format is not available for this video.',
 	"download-complete-message": "Completed downloading {{taskName}}",
 	"download-complete-notify": "Download Completed",
 	"bt-download-complete-message": "Completed downloading {{taskName}}, seeding",

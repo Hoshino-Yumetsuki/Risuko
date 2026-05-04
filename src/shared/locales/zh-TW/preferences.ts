@@ -149,7 +149,8 @@ export default {
 	"m3u8-output-format": "M3U8 / HLS",
 	"m3u8-output-format-label": "輸出格式",
 	"youtube-settings": "YouTube (yt-dlp)",
-	"youtube-settings-tips": "YouTube 下載的預設設定，需要在 PATH 中安裝 yt-dlp。",
+	"youtube-settings-tips":
+		"YouTube 下載的預設設定，需要在 PATH 中安裝 yt-dlp。",
 	"youtube-format": "首選格式",
 	"youtube-format-placeholder": "如 bestvideo+bestaudio/best",
 	"youtube-format-tips": "yt-dlp 格式選擇器，留空則選擇最佳畫質。",

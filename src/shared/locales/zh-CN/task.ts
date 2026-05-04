@@ -179,7 +179,11 @@ export default {
 	"download-stop-message": "{{taskName}} 下载中止",
 	"download-error-message": "{{taskName}} 下载发生错误",
 	"youtube-tool-required":
-		"YouTube 下载依赖 yt-dlp。请先安装 yt-dlp，并确保其已加入 PATH。",
+		'任务"{{taskName}}"：YouTube 下载依赖 yt-dlp。请先安装 yt-dlp，并确保其已加入 PATH。',
+	"youtube-auth-required":
+		'任务"{{taskName}}"：YouTube 需要登录验证。请检查是否需要登录或年龄限制访问。',
+	"youtube-format-unavailable":
+		'任务"{{taskName}}"：该视频不支持所请求的 YouTube 格式。',
 	"download-complete-message": "{{taskName}} 下载完成",
 	"download-complete-notify": "下载完成",
 	"bt-download-complete-message": "{{taskName}} 下载完成，正在做种...",

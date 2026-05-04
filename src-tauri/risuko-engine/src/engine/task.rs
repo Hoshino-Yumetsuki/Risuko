@@ -218,12 +218,7 @@ impl DownloadTask {
         }
     }
 
-    pub fn new_youtube(
-        gid: String,
-        uri: String,
-        dir: String,
-        options: Map<String, Value>,
-    ) -> Self {
+    pub fn new_youtube(gid: String, uri: String, dir: String, options: Map<String, Value>) -> Self {
         let out = options
             .get("out")
             .and_then(|v| v.as_str())
@@ -962,5 +957,36 @@ mod tests {
         let status = task.to_rpc_status(&[]);
         let obj = status.as_object().unwrap();
         assert!(obj.contains_key("ed2kLink"));
+    }
+
+    // -- new_youtube --
+
+    #[test]
+    fn new_youtube_with_out() {
+        let mut opts = Map::new();
+        opts.insert("out".into(), json!("video.mp4"));
+        let uri = "https://www.youtube.com/watch?v=test123".to_string();
+        let task = DownloadTask::new_youtube("ygid1".into(), uri.clone(), "/dl".into(), opts);
+
+        assert_eq!(task.kind, TaskKind::Youtube);
+        assert_eq!(task.status, TaskStatus::Waiting);
+        assert_eq!(task.uris, vec![uri.clone()]);
+        assert_eq!(task.files[0].path, "/dl/video.mp4");
+        assert_eq!(task.files[0].uris[0].uri, uri);
+        assert_eq!(task.files[0].uris[0].status, "waiting");
+    }
+
+    #[test]
+    fn new_youtube_without_out() {
+        let opts = Map::new();
+        let uri = "https://www.youtube.com/watch?v=abc".to_string();
+        let task = DownloadTask::new_youtube("ygid2".into(), uri.clone(), "/dl".into(), opts);
+
+        assert_eq!(task.kind, TaskKind::Youtube);
+        assert_eq!(task.status, TaskStatus::Waiting);
+        assert_eq!(task.uris, vec![uri.clone()]);
+        // When no out is given, initial path falls back to the URI itself
+        assert_eq!(task.files[0].path, uri);
+        assert_eq!(task.files[0].uris[0].status, "waiting");
     }
 }

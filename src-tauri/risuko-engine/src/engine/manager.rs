@@ -17,8 +17,8 @@ use super::task::{
     TaskStatus,
 };
 use super::torrent::{self, TorrentEngine};
-use super::youtube;
 use super::upload::UploadFileSnapshot;
+use super::youtube;
 
 struct ActiveDownload {
     cancel: Arc<AtomicBool>,

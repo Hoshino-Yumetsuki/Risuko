@@ -4,6 +4,7 @@ use super::headless;
 use super::progress::{self, format_size, format_size_speed};
 use super::rpc_client::RpcClient;
 use super::{DownloadArgs, PauseArgs, RemoveArgs, ResumeArgs, ServeArgs, StatusArgs};
+use risuko_engine::engine::youtube::is_youtube_uri;
 
 pub async fn download(args: DownloadArgs) -> Result<(), Box<dyn std::error::Error>> {
     let mut secret = args.rpc_secret.clone();
@@ -36,14 +37,6 @@ async fn do_download(
     client: &RpcClient,
     args: &DownloadArgs,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    fn is_youtube_url(url: &str) -> bool {
-        let trimmed = url.trim().to_ascii_lowercase();
-        if trimmed.starts_with("https://youtu.be/") || trimmed.starts_with("http://youtu.be/") {
-            return true;
-        }
-        trimmed.contains("youtube.com/")
-    }
-
     let mut options = serde_json::Map::new();
 
     options.insert("split".into(), json!(args.threads.to_string()));
@@ -115,7 +108,7 @@ async fn do_download(
             )
             .await?;
         result.as_str().unwrap_or("").to_string()
-    } else if is_youtube_url(&args.url) {
+    } else if is_youtube_uri(args.url.trim()) {
         let result = client
             .call("risuko.addYouTube", vec![json!(&args.url), json!(options)])
             .await?;

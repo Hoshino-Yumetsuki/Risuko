@@ -301,9 +301,12 @@ export default class Api {
 	}
 
 	getYouTubeVideoInfo(params: { url: string }) {
-		return invoke<import("@shared/types/task").YouTubeVideoInfo>("get_youtube_video_info", {
-			url: params.url,
-		});
+		return invoke<import("@shared/types/task").YouTubeVideoInfo>(
+			"get_youtube_video_info",
+			{
+				url: params.url,
+			},
+		);
 	}
 
 	addTorrent(params: {

@@ -752,7 +752,12 @@ pub async fn get_youtube_video_info(
     if !engine::youtube::is_youtube_uri(&normalized) {
         return Err("Not a valid YouTube URL".to_string());
     }
-    engine::youtube::get_youtube_video_info(&normalized).await
+    tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        engine::youtube::get_youtube_video_info(&normalized),
+    )
+    .await
+    .map_err(|_| "yt-dlp timed out".to_string())?
 }
 
 #[tauri::command]
@@ -775,7 +780,9 @@ pub async fn add_youtube(
     };
 
     let manager = engine::get_manager().await.ok_or("Engine not running")?;
-    manager.add_youtube_task(&normalized_url, task_options).await
+    manager
+        .add_youtube_task(&normalized_url, task_options)
+        .await
 }
 
 const RESOLVE_MAGNET_TIMEOUT_SECS: u64 = 60;

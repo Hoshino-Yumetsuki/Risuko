@@ -851,10 +851,7 @@ fn check_system(autostart: bool, prevent_sleep_while_downloading: bool) -> Vec<H
             "Sleep inhibit disabled in preferences",
         ));
     } else if sleep_inhibit_active() {
-        out.push(HealthCheck::ok(
-            "sleep-inhibit",
-            "Sleep inhibit active",
-        ));
+        out.push(HealthCheck::ok("sleep-inhibit", "Sleep inhibit active"));
     } else {
         out.push(HealthCheck::skipped(
             "sleep-inhibit",
