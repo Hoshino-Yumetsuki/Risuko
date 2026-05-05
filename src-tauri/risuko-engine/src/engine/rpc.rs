@@ -400,8 +400,13 @@ async fn process_single_request(state: &RpcState, request: Value) -> Option<Valu
         _ => vec![params],
     };
 
-    // Auth check
-    let (authed_params, auth_ok) = check_auth(&state.secret, params_vec);
+    // aria2 special-case: system.multicall does not require outer auth
+    // Each nested call is authenticated independently
+    let (authed_params, auth_ok) = if should_skip_outer_auth(method) {
+        (params_vec, true)
+    } else {
+        check_auth(&state.secret, params_vec)
+    };
     if !auth_ok {
         return Some(rpc_error(id.unwrap_or(Value::Null), 1, "Unauthorized"));
     }
@@ -460,6 +465,29 @@ fn normalize_method(method: &str) -> String {
     } else {
         method.to_string()
     }
+}
+
+fn should_skip_outer_auth(method: &str) -> bool {
+    method == "system.multicall"
+}
+
+fn extract_multicall_methods(params: &[Value]) -> Vec<Value> {
+    // Accept both formats:
+    // 1) standard aria2: [ [ { methodName, params } ] ]
+    // 2) backward-compatible legacy: [ "token:...", [ { methodName, params } ] ]
+    params
+        .first()
+        .and_then(|v| v.as_array())
+        .or_else(|| {
+            params.get(1).and_then(|v| v.as_array()).filter(|_| {
+                params
+                    .first()
+                    .and_then(|v| v.as_str())
+                    .is_some_and(|s| s.starts_with("token:"))
+            })
+        })
+        .cloned()
+        .unwrap_or_default()
 }
 
 struct RpcError {
@@ -770,11 +798,7 @@ fn dispatch_method<'a>(
             })),
 
             "system.multicall" => {
-                let methods = params
-                    .first()
-                    .and_then(|v| v.as_array())
-                    .cloned()
-                    .unwrap_or_default();
+                let methods = extract_multicall_methods(&params);
 
                 let mut results = Vec::with_capacity(methods.len());
                 for call in methods {
@@ -788,7 +812,15 @@ fn dispatch_method<'a>(
                         .cloned()
                         .unwrap_or_default();
 
-                    let (clean_params, _) = check_auth(&state.secret, call_params);
+                    let (clean_params, auth_ok) = check_auth(&state.secret, call_params);
+                    if !auth_ok {
+                        results.push(json!({
+                            "code": 1,
+                            "message": "Unauthorized",
+                        }));
+                        continue;
+                    }
+
                     let normalized = normalize_method(method_name);
 
                     match dispatch_method(state, &normalized, clean_params).await {
@@ -983,6 +1015,48 @@ mod tests {
     fn normalize_passthrough() {
         assert_eq!(normalize_method("risuko.addUri"), "risuko.addUri");
         assert_eq!(normalize_method("system.listMethods"), "system.listMethods");
+    }
+
+    // -- multicall helpers --
+
+    #[test]
+    fn skip_outer_auth_only_for_system_multicall() {
+        assert!(should_skip_outer_auth("system.multicall"));
+        assert!(!should_skip_outer_auth("aria2.tellActive"));
+        assert!(!should_skip_outer_auth("risuko.tellActive"));
+    }
+
+    #[test]
+    fn extract_multicall_methods_standard_shape() {
+        let call = json!({
+            "methodName": "aria2.tellActive",
+            "params": ["token:secret", ["gid"]]
+        });
+        let params = vec![json!([call.clone()])];
+        let methods = extract_multicall_methods(&params);
+        assert_eq!(methods, vec![call]);
+    }
+
+    #[test]
+    fn extract_multicall_methods_legacy_shape() {
+        let call = json!({
+            "methodName": "aria2.tellActive",
+            "params": ["token:secret", ["gid"]]
+        });
+        let params = vec![json!("token:secret"), json!([call.clone()])];
+        let methods = extract_multicall_methods(&params);
+        assert_eq!(methods, vec![call]);
+    }
+
+    #[test]
+    fn extract_multicall_methods_rejects_second_arg_without_token_prefix() {
+        let call = json!({
+            "methodName": "aria2.tellActive",
+            "params": ["token:secret", ["gid"]]
+        });
+        let params = vec![json!("secret"), json!([call])];
+        let methods = extract_multicall_methods(&params);
+        assert!(methods.is_empty());
     }
 
     // -- get_gid --
