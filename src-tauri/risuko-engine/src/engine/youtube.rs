@@ -59,11 +59,20 @@ fn parse_na_u64(s: &str) -> Option<u64> {
     s.parse::<f64>().ok().map(|f| f.max(0.0) as u64)
 }
 
+fn min_nonzero_limit(lhs: u64, rhs: u64) -> u64 {
+    match (lhs, rhs) {
+        (0, 0) => 0,
+        (0, value) | (value, 0) => value,
+        (left, right) => left.min(right),
+    }
+}
+
 pub async fn run_youtube_download(
     url: &str,
     dir: &str,
     out: &str,
     options: &Map<String, Value>,
+    global_rate_limit: u64,
     total: Arc<AtomicU64>,
     completed: Arc<AtomicU64>,
     speed: Arc<AtomicU64>,
@@ -102,11 +111,14 @@ pub async fn run_youtube_download(
         cmd.arg("--format").arg(fmt);
     }
 
-    // Apply per-task download speed limit if configured
-    let rate_limit = options
+    // yt-dlp runs out-of-process, so the shared Rust byte-bucket cannot
+    // throttle it directly. Use the most restrictive configured launch-time
+    // limit so YouTube downloads still respect the current app cap
+    let task_rate_limit = options
         .get("max-download-limit")
         .map(parse_speed_limit)
         .unwrap_or(0);
+    let rate_limit = min_nonzero_limit(task_rate_limit, global_rate_limit);
     if rate_limit > 0 {
         cmd.arg("--limit-rate").arg(rate_limit.to_string());
     }
@@ -125,6 +137,7 @@ pub async fn run_youtube_download(
     cmd.arg(url);
     cmd.stdout(std::process::Stdio::piped());
     cmd.stderr(std::process::Stdio::piped());
+    cmd.kill_on_drop(true);
 
     let mut child = cmd
         .spawn()
@@ -395,13 +408,16 @@ fn extract_format(obj: &serde_json::Value) -> Option<YouTubeFormat> {
 pub async fn get_youtube_video_info(url: &str) -> Result<YouTubeVideoInfo, String> {
     check_yt_dlp_available().await?;
 
-    let output = Command::new("yt-dlp")
-        .arg("--dump-json")
+    let mut cmd = Command::new("yt-dlp");
+    cmd.arg("--dump-json")
         .arg("--no-playlist")
         .arg("--flat-playlist")
         .arg("--extractor-args")
         .arg("youtube:player_client=web,default")
         .arg(url)
+        .kill_on_drop(true);
+
+    let output = cmd
         .output()
         .await
         .map_err(|e| format!("failed to run yt-dlp: {e}"))?;

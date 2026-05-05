@@ -269,16 +269,21 @@ export const moveTaskFilesToTrash = async (
 
 		return [...set];
 	})();
+	let shouldCleanupTempSidecars = false;
 
 	try {
 		const found: boolean = await invoke("trash_item", { path });
 		if (found) {
 			logger.info(`[Risuko] trashed: "${path}"`);
+			shouldCleanupTempSidecars = true;
 		} else if (partPath) {
 			const partFound: boolean = await invoke("trash_item", { path: partPath });
 			if (partFound) {
 				logger.info(`[Risuko] trashed .part file: "${partPath}"`);
 			}
+			shouldCleanupTempSidecars = true;
+		} else {
+			shouldCleanupTempSidecars = true;
 		}
 	} catch (err) {
 		logger.warn(`[Risuko] trash "${path}" failed: ${err}`);
@@ -289,6 +294,7 @@ export const moveTaskFilesToTrash = async (
 				});
 				if (partFound) {
 					logger.info(`[Risuko] trashed .part file: "${partPath}"`);
+					shouldCleanupTempSidecars = true;
 					await cleanupGeneratedTorrentSidecars(task);
 					return true;
 				}
@@ -301,18 +307,20 @@ export const moveTaskFilesToTrash = async (
 		await cleanupGeneratedTorrentSidecars(task);
 		return false;
 	} finally {
-		for (const sidecarPath of tempSidecarPaths) {
-			try {
-				const sidecarFound: boolean = await invoke("trash_item", {
-					path: sidecarPath,
-				});
-				if (sidecarFound) {
-					logger.info(`[Risuko] trashed yt-dlp sidecar: "${sidecarPath}"`);
+		if (shouldCleanupTempSidecars) {
+			for (const sidecarPath of tempSidecarPaths) {
+				try {
+					const sidecarFound: boolean = await invoke("trash_item", {
+						path: sidecarPath,
+					});
+					if (sidecarFound) {
+						logger.info(`[Risuko] trashed yt-dlp sidecar: "${sidecarPath}"`);
+					}
+				} catch (sidecarErr) {
+					logger.warn(
+						`[Risuko] trash yt-dlp sidecar "${sidecarPath}" failed: ${sidecarErr}`,
+					);
 				}
-			} catch (sidecarErr) {
-				logger.warn(
-					`[Risuko] trash yt-dlp sidecar "${sidecarPath}" failed: ${sidecarErr}`,
-				);
 			}
 		}
 	}

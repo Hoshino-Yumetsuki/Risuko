@@ -833,6 +833,7 @@ impl TaskManager {
         let events = self.events.clone();
         let tasks = self.tasks.clone();
         let active = self.active_downloads.clone();
+        let global_limiter = self.global_speed_limiter.clone();
 
         let cancel = Arc::new(AtomicBool::new(false));
         let cancel_token = CancellationToken::new();
@@ -889,11 +890,14 @@ impl TaskManager {
             };
             active_for_insert.write().await.insert(gid_for_insert, ad);
 
+            let global_rate_limit = global_limiter.limit_bps();
+
             let download_result = youtube::run_youtube_download(
                 &uri,
                 &dir,
                 &out,
                 &merged_options,
+                global_rate_limit,
                 total_dl,
                 completed_dl,
                 speed_dl,

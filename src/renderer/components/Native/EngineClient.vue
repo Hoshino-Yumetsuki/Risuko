@@ -591,26 +591,31 @@ export default {
 				}
 				const taskName = getTaskName(task);
 				const { errorCode, errorMessage } = task;
+				const normalizedErrorCode = String(errorCode || "");
 				logger.error(
 					`[Risuko] download error gid: ${gid}, #${errorCode}, ${errorMessage}`,
 				);
 				const isMissingYtDlp =
-					String(errorCode || "") === "540" ||
+					normalizedErrorCode === "540" ||
 					/yt-dlp\s+is\s+not\s+available/i.test(String(errorMessage || "")) ||
 					/yt-dlp[^:]*:\s*command\s+not\s+found/i.test(
 						String(errorMessage || ""),
 					);
 
-				if (!isMissingYtDlp) {
+				if (
+					!isMissingYtDlp &&
+					normalizedErrorCode !== "541" &&
+					normalizedErrorCode !== "542"
+				) {
 					this.scheduleAutoRetry(gid);
 				}
 
 				let message: string;
 				if (isMissingYtDlp) {
 					message = this.$t("task.youtube-tool-required", { taskName });
-				} else if (String(errorCode || "") === "541") {
+				} else if (normalizedErrorCode === "541") {
 					message = this.$t("task.youtube-auth-required", { taskName });
-				} else if (String(errorCode || "") === "542") {
+				} else if (normalizedErrorCode === "542") {
 					message = this.$t("task.youtube-format-unavailable", { taskName });
 				} else {
 					message = this.$t("task.download-error-message", { taskName });
