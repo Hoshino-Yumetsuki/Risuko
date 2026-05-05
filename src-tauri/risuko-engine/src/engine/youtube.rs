@@ -99,7 +99,7 @@ pub async fn run_youtube_download(
         // Progress template with raw byte values for precise tracking
         .arg("--progress")
         .arg("--progress-template")
-        .arg("download:__YTPROG__%(progress.downloaded_bytes)s %(progress.total_bytes_estimate)s %(progress.speed)s");
+        .arg("download:__YTPROG__%(progress.downloaded_bytes)s %(progress.total_bytes,progress.total_bytes_estimate)s %(progress.speed)s");
 
     let format_opt = options
         .get("youtube-format")

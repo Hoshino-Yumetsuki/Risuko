@@ -29,6 +29,7 @@ export default {
 		system: "System",
 		config: "Configuration",
 		logs: "Logs",
+		tools: "Tools",
 	},
 	fixes: {
 		"open-preference": "Open preference",

@@ -23,7 +23,8 @@ export type HealthCategoryId =
 	| "disk"
 	| "system"
 	| "config"
-	| "logs";
+	| "logs"
+	| "tools";
 
 export interface HealthCategory {
 	id: HealthCategoryId;

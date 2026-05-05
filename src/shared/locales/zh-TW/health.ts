@@ -29,6 +29,7 @@ export default {
 		system: "系統",
 		config: "設定",
 		logs: "日誌",
+		tools: "工具",
 	},
 	fixes: {
 		"open-preference": "開啟偏好設定",

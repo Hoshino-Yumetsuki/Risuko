@@ -16,7 +16,7 @@ use serde_json::Value;
 use tauri::{AppHandle, State};
 use tauri_plugin_autostart::ManagerExt;
 
-use risuko_engine::engine::{self, options::EngineOptions, torrent::BtHealthSnapshot};
+use risuko_engine::engine::{self, options::EngineOptions, torrent::BtHealthSnapshot, youtube};
 
 use crate::commands::event_cmds::sleep_inhibit_active;
 use crate::state::AppState;
@@ -236,6 +236,9 @@ pub async fn run_health_checks(
     }
     if want("logs") {
         cats.push(HealthCategory::from_checks("logs", check_logs(&log_dir)));
+    }
+    if want("tools") {
+        cats.push(HealthCategory::from_checks("tools", check_tools().await));
     }
 
     let overall_status = cats
@@ -975,6 +978,39 @@ fn check_logs(log_dir: &Path) -> Vec<HealthCheck> {
         HealthCheck::ok("log-file", msg)
     };
     out.push(check.with_details(details));
+    out
+}
+
+// Tools
+
+async fn check_tools() -> Vec<HealthCheck> {
+    let mut out = Vec::new();
+
+    match youtube::check_yt_dlp_available().await {
+        Ok(()) => {
+            // Capture the version string for display
+            let version = tokio::process::Command::new("yt-dlp")
+                .arg("--version")
+                .output()
+                .await
+                .ok()
+                .and_then(|o| String::from_utf8(o.stdout).ok())
+                .map(|s| s.trim().to_string())
+                .unwrap_or_else(|| "unknown".to_string());
+            out.push(
+                HealthCheck::ok("yt-dlp", format!("yt-dlp available ({})", version))
+                    .with_details(serde_json::json!({ "version": version })),
+            );
+        }
+        Err(_) => {
+            out.push(HealthCheck::fail(
+                "yt-dlp",
+                "yt-dlp not found in PATH — YouTube downloads will fail",
+                None,
+            ));
+        }
+    }
+
     out
 }
 

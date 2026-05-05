@@ -890,6 +890,9 @@ impl TaskManager {
             };
             active_for_insert.write().await.insert(gid_for_insert, ad);
 
+            // Snapshot the global limit at launch time for this yt-dlp child
+            // Runtime max-overall-download-limit changes do not reconfigure
+            // already-running YouTube subprocesses
             let global_rate_limit = global_limiter.limit_bps();
 
             let download_result = youtube::run_youtube_download(
