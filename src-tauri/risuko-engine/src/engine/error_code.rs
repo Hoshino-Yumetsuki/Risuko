@@ -66,6 +66,9 @@ impl ErrorCode {
     pub const FTP_TRANSFER_FAILED: Self = Self(532);
     pub const SFTP_AUTH_FAILED: Self = Self(533);
     pub const SFTP_HOST_KEY_FAILED: Self = Self(534);
+    pub const YOUTUBE_TOOL_NOT_FOUND: Self = Self(540);
+    pub const YOUTUBE_AUTH_REQUIRED: Self = Self(541);
+    pub const YOUTUBE_FORMAT_UNAVAILABLE: Self = Self(542);
 
     // -- Resource --
     pub const OUT_OF_MEMORY: Self = Self(600);
@@ -125,6 +128,9 @@ impl ErrorCode {
             532 => "FTP transfer failed",
             533 => "SFTP authentication failed",
             534 => "SFTP host key verification failed",
+            540 => "yt-dlp not found in PATH",
+            541 => "YouTube authentication required",
+            542 => "YouTube format unavailable",
 
             600 => "Out of memory",
             601 => "Too many concurrent connections",
@@ -174,12 +180,14 @@ pub fn classify_error(msg: &str, protocol: &str) -> ErrorCode {
         return ErrorCode::PROXY_CONNECTION_FAILED;
     }
 
-    // -- HTTP status codes --
-    if lower.contains("401") || lower.contains("unauthorized") {
-        return ErrorCode::HTTP_UNAUTHORIZED;
-    }
-    if lower.contains("403") || lower.contains("forbidden") {
-        return ErrorCode::HTTP_FORBIDDEN;
+    // -- HTTP status codes (skip for youtube: its match arm classifies these) --
+    if protocol != "youtube" {
+        if lower.contains("401") || lower.contains("unauthorized") {
+            return ErrorCode::HTTP_UNAUTHORIZED;
+        }
+        if lower.contains("403") || lower.contains("forbidden") {
+            return ErrorCode::HTTP_FORBIDDEN;
+        }
     }
     if lower.contains("404") || lower.contains("not found") {
         // Distinguish HTTP 404 from file-not-found on disk
@@ -268,6 +276,22 @@ pub fn classify_error(msg: &str, protocol: &str) -> ErrorCode {
             }
             if lower.contains("transfer") {
                 return ErrorCode::FTP_TRANSFER_FAILED;
+            }
+        }
+        "youtube" => {
+            if lower.contains("yt-dlp is not available") || lower.contains("command not found") {
+                return ErrorCode::YOUTUBE_TOOL_NOT_FOUND;
+            }
+            if lower.contains("sign in")
+                || lower.contains("login")
+                || lower.contains("authentication")
+                || lower.contains("members-only")
+                || lower.contains("age-restricted")
+            {
+                return ErrorCode::YOUTUBE_AUTH_REQUIRED;
+            }
+            if lower.contains("requested format") || lower.contains("format is not available") {
+                return ErrorCode::YOUTUBE_FORMAT_UNAVAILABLE;
             }
         }
         _ => {}
@@ -372,6 +396,56 @@ mod tests {
         assert_eq!(
             classify_error("HTTP tracker returned bad status", "torrent"),
             ErrorCode::UNKNOWN
+        );
+    }
+    #[test]
+    fn classify_youtube_tool_not_found() {
+        assert_eq!(
+            classify_error("yt-dlp is not available in PATH", "youtube"),
+            ErrorCode::YOUTUBE_TOOL_NOT_FOUND
+        );
+        assert_eq!(
+            classify_error("yt-dlp: command not found", "youtube"),
+            ErrorCode::YOUTUBE_TOOL_NOT_FOUND
+        );
+    }
+
+    #[test]
+    fn classify_youtube_auth_required() {
+        for msg in &[
+            "This video requires you to sign in",
+            "Please login to view this content",
+            "authentication required",
+            "This is a members-only video",
+            "This content is age-restricted",
+        ] {
+            assert_eq!(
+                classify_error(msg, "youtube"),
+                ErrorCode::YOUTUBE_AUTH_REQUIRED,
+                "expected YOUTUBE_AUTH_REQUIRED for: {msg}"
+            );
+        }
+    }
+
+    #[test]
+    fn classify_youtube_format_unavailable() {
+        assert_eq!(
+            classify_error("ERROR: requested format is not available", "youtube"),
+            ErrorCode::YOUTUBE_FORMAT_UNAVAILABLE
+        );
+        assert_eq!(
+            classify_error("the format is not available for this video", "youtube"),
+            ErrorCode::YOUTUBE_FORMAT_UNAVAILABLE
+        );
+    }
+
+    #[test]
+    fn classify_youtube_wins_over_http_403() {
+        // A YouTube-specific message that also contains an HTTP status code
+        // must be classified by the youtube arm, not the generic HTTP arm
+        assert_eq!(
+            classify_error("HTTP Error 403: age-restricted content", "youtube"),
+            ErrorCode::YOUTUBE_AUTH_REQUIRED
         );
     }
 }

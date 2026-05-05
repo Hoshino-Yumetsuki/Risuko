@@ -18,6 +18,7 @@ pub mod task;
 pub mod torrent;
 pub mod upload;
 pub mod uri_selector;
+pub mod youtube;
 
 pub use session::SESSION_FILENAME;
 

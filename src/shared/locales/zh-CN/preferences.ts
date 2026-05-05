@@ -148,6 +148,12 @@ export default {
 	"sftp-key-passphrase-tips": "无口令则留空",
 	"m3u8-output-format": "M3U8 / HLS",
 	"m3u8-output-format-label": "输出格式",
+	"youtube-settings": "YouTube (yt-dlp)",
+	"youtube-settings-tips":
+		"YouTube 下载的默认设置，需要在 PATH 中安装 yt-dlp。",
+	"youtube-format": "首选格式",
+	"youtube-format-placeholder": "如 bestvideo+bestaudio/best",
+	"youtube-format-tips": "yt-dlp 格式选择器，留空则选择最佳质量。",
 	port: "监听端口",
 	"bt-port": "BT 监听端口",
 	"dht-port": "DHT 监听端口",

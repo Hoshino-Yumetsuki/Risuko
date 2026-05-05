@@ -18,6 +18,7 @@ use super::task::{
 };
 use super::torrent::{self, TorrentEngine};
 use super::upload::UploadFileSnapshot;
+use super::youtube;
 
 struct ActiveDownload {
     cancel: Arc<AtomicBool>,
@@ -185,6 +186,40 @@ impl TaskManager {
             .unwrap_or(false);
 
         let task = DownloadTask::new_http(gid.clone(), uris, dir, options);
+        self.tasks.write().await.push(task);
+
+        if !pause {
+            self.try_start_next().await;
+        }
+
+        self.events
+            .send(EngineEvent::DownloadStart { gid: gid.clone() });
+
+        Ok(gid)
+    }
+
+    pub async fn add_youtube_task(
+        &self,
+        uri: &str,
+        options: Map<String, Value>,
+    ) -> Result<String, String> {
+        let gid = generate_gid();
+        log::info!("[task:{}] Adding YouTube task, uri={}", gid, uri);
+        let dir = {
+            let merged = self.options.read().await.merge_task_options(&options);
+            merged
+                .get("dir")
+                .and_then(|v| v.as_str())
+                .unwrap_or(".")
+                .to_string()
+        };
+
+        let pause = options
+            .get("pause")
+            .and_then(|v| v.as_bool().or_else(|| v.as_str().map(|s| s == "true")))
+            .unwrap_or(false);
+
+        let task = DownloadTask::new_youtube(gid.clone(), uri.to_string(), dir, options);
         self.tasks.write().await.push(task);
 
         if !pause {
@@ -457,6 +492,11 @@ impl TaskManager {
                 task.status = TaskStatus::Active;
                 let merged = options_guard.merge_task_options(&task.options);
                 self.spawn_http_download(task, merged);
+                started += 1;
+            } else if task.kind == TaskKind::Youtube && !task.uris.is_empty() {
+                task.status = TaskStatus::Active;
+                let merged = options_guard.merge_task_options(&task.options);
+                self.spawn_youtube_download(task, merged);
                 started += 1;
             } else if task.kind == TaskKind::M3u8 && !task.uris.is_empty() {
                 task.status = TaskStatus::Active;
@@ -779,6 +819,160 @@ impl TaskManager {
             drop(tasks_guard);
 
             // Remove from active downloads
+            active.write().await.remove(&gid_clone);
+        });
+
+        drop(completion_handle);
+    }
+
+    fn spawn_youtube_download(&self, task: &DownloadTask, merged_options: Map<String, Value>) {
+        let gid = task.gid.clone();
+        let uri = task.uris.first().cloned().unwrap_or_default();
+        let dir = task.dir.clone();
+        let out = task.out.clone();
+        let events = self.events.clone();
+        let tasks = self.tasks.clone();
+        let active = self.active_downloads.clone();
+        let global_limiter = self.global_speed_limiter.clone();
+
+        let cancel = Arc::new(AtomicBool::new(false));
+        let cancel_token = CancellationToken::new();
+        let total = Arc::new(AtomicU64::new(0));
+        let completed = Arc::new(AtomicU64::new(0));
+        let speed = Arc::new(AtomicU64::new(0));
+        let connections = Arc::new(AtomicU32::new(1));
+
+        let cancel_dl = cancel.clone();
+        let cancel_token_dl = cancel_token.clone();
+        let total_dl = total.clone();
+        let completed_dl = completed.clone();
+        let speed_dl = speed.clone();
+        let connections_dl = connections.clone();
+
+        let total_ref = total.clone();
+        let completed_ref = completed.clone();
+        let gid_clone = gid.clone();
+
+        // Watch channel: yt-dlp sends the resolved output path before
+        // download starts so the task name updates in real time.
+        let (dest_tx, mut dest_rx) = tokio::sync::watch::channel(String::new());
+
+        // Spawn a lightweight watcher that updates files[0].path whenever
+        // yt-dlp reports a new destination (before_dl / Destination: lines).
+        let tasks_name = tasks.clone();
+        let gid_name = gid.clone();
+        tokio::spawn(async move {
+            while dest_rx.changed().await.is_ok() {
+                let dest = dest_rx.borrow().clone();
+                if dest.is_empty() {
+                    continue;
+                }
+                let mut guard = tasks_name.write().await;
+                if let Some(t) = guard.iter_mut().find(|t| t.gid == gid_name) {
+                    if let Some(f) = t.files.get_mut(0) {
+                        f.path = dest;
+                    }
+                }
+            }
+        });
+
+        let active_for_insert = active.clone();
+        let gid_for_insert = gid.clone();
+        let completion_handle = tokio::spawn(async move {
+            let ad = ActiveDownload {
+                cancel,
+                cancel_token: cancel_token.clone(),
+                total,
+                completed,
+                speed,
+                connections,
+                chunk_completed: Vec::new(),
+            };
+            active_for_insert.write().await.insert(gid_for_insert, ad);
+
+            // Snapshot the global limit at launch time for this yt-dlp child
+            // Runtime max-overall-download-limit changes do not reconfigure
+            // already-running YouTube subprocesses
+            let global_rate_limit = global_limiter.limit_bps();
+
+            let download_result = youtube::run_youtube_download(
+                &uri,
+                &dir,
+                &out,
+                &merged_options,
+                global_rate_limit,
+                total_dl,
+                completed_dl,
+                speed_dl,
+                cancel_dl,
+                connections_dl,
+                cancel_token_dl,
+                dest_tx,
+            )
+            .await;
+
+            let mut tasks_guard = tasks.write().await;
+            if let Some(task) = tasks_guard.iter_mut().find(|t| t.gid == gid_clone) {
+                task.total_length = total_ref.load(Ordering::Relaxed);
+                task.completed_length = completed_ref.load(Ordering::Relaxed);
+                task.download_speed = 0;
+
+                match download_result {
+                    Ok(path) => {
+                        if let Ok(metadata) = std::fs::metadata(&path) {
+                            let file_size = metadata.len();
+                            task.completed_length = file_size;
+                            if task.total_length == 0 {
+                                task.total_length = file_size;
+                            }
+                        }
+                        log::info!(
+                            "[task:{}] YouTube download complete: {}",
+                            gid_clone,
+                            path.display()
+                        );
+                        task.status = TaskStatus::Complete;
+                        task.files = vec![DownloadFile {
+                            index: "1".to_string(),
+                            path: path.to_string_lossy().to_string(),
+                            length: task.total_length.to_string(),
+                            completed_length: task.completed_length.to_string(),
+                            selected: "true".to_string(),
+                            uris: task
+                                .uris
+                                .iter()
+                                .map(|u| FileUri {
+                                    uri: u.clone(),
+                                    status: "used".to_string(),
+                                })
+                                .collect(),
+                        }];
+                        events.send(EngineEvent::DownloadComplete {
+                            gid: gid_clone.clone(),
+                        });
+                    }
+                    Err(e) => {
+                        if e.contains("cancelled") {
+                            if task.status != TaskStatus::Removed {
+                                task.status = TaskStatus::Paused;
+                            }
+                            events.send(EngineEvent::DownloadPause {
+                                gid: gid_clone.clone(),
+                            });
+                        } else {
+                            tracing::error!("[youtube] Download failed for {}: {}", gid_clone, e);
+                            task.status = TaskStatus::Error;
+                            task.error_code = Some(classify_error(&e, "youtube").to_string());
+                            task.error_message = Some(e);
+                            events.send(EngineEvent::DownloadError {
+                                gid: gid_clone.clone(),
+                            });
+                        }
+                    }
+                }
+            }
+            drop(tasks_guard);
+
             active.write().await.remove(&gid_clone);
         });
 
@@ -1795,6 +1989,7 @@ impl TaskManager {
         let task = tasks.iter().find(|t| t.gid == gid)?;
         let kind = match task.kind {
             super::task::TaskKind::Http => "http",
+            super::task::TaskKind::Youtube => "youtube",
             super::task::TaskKind::Torrent => "torrent",
             super::task::TaskKind::Ed2k => "ed2k",
             super::task::TaskKind::M3u8 => "m3u8",

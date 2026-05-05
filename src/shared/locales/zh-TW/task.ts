@@ -16,6 +16,7 @@ export default {
 	"m3u8-link-detected": "偵測到 M3U8 播放清單連結，將下載並合併所有分片。",
 	"ftp-link-detected": "偵測到 FTP/FTPS 連結，可在下方設定登入憑據。",
 	"sftp-link-detected": "偵測到 SFTP 連結，可在下方設定 SSH 金鑰或密碼。",
+	"youtube-link-detected": "偵測到 YouTube 連結，可在偏好設定中設定格式。",
 	"ftp-credentials": "FTP / SFTP 憑據",
 	"ftp-username": "使用者名稱",
 	"ftp-password": "密碼",
@@ -177,6 +178,12 @@ export default {
 	"download-pause-message": "暫停下載 {{taskName}}",
 	"download-stop-message": "{{taskName}} 下載中止",
 	"download-error-message": "{{taskName}} 下載錯誤",
+	"youtube-tool-required":
+		'任務"{{taskName}}"：YouTube 下載需要 yt-dlp。請先安裝 yt-dlp，並確認已加入 PATH。',
+	"youtube-auth-required":
+		'任務"{{taskName}}"：YouTube 需要登入驗證。請檢查是否需要登入或年齡限制存取。',
+	"youtube-format-unavailable":
+		'任務"{{taskName}}"：此影片不支援所請求的 YouTube 格式。',
 	"download-complete-message": "{{taskName}} 下載完成",
 	"download-complete-notify": "下載完成",
 	"bt-download-complete-message": "{{taskName}} 下載完成，正在做種...",

@@ -43,6 +43,10 @@ impl SpeedLimiter {
         self.limit_bps.store(bps, Ordering::Relaxed);
     }
 
+    pub fn limit_bps(&self) -> u64 {
+        self.limit_bps.load(Ordering::Relaxed)
+    }
+
     fn now_us(&self) -> u64 {
         tokio::time::Instant::now()
             .saturating_duration_since(self.start)

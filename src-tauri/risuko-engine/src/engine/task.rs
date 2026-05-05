@@ -39,6 +39,7 @@ impl std::fmt::Display for TaskStatus {
 #[serde(rename_all = "lowercase")]
 pub enum TaskKind {
     Http,
+    Youtube,
     Torrent,
     Ed2k,
     M3u8,
@@ -187,6 +188,66 @@ impl DownloadTask {
             status: TaskStatus::Waiting,
             kind: TaskKind::Http,
             uris,
+            dir,
+            out,
+            total_length: 0,
+            completed_length: 0,
+            download_speed: 0,
+            upload_speed: 0,
+            upload_length: 0,
+            connections: 0,
+            files: initial_files,
+            error_code: None,
+            error_message: None,
+            options,
+            info_hash: None,
+            info_hash_v2: None,
+            meta_version: None,
+            bt_name: None,
+            seeder: false,
+            num_seeders: 0,
+            peers: Vec::new(),
+            piece_length: 0,
+            num_pieces: 0,
+            bt_comment: None,
+            bt_creation_date: None,
+            bt_announce_list: Vec::new(),
+            created_at: now_ms(),
+            seeding_since: 0,
+            chunk_progress: Vec::new(),
+        }
+    }
+
+    pub fn new_youtube(gid: String, uri: String, dir: String, options: Map<String, Value>) -> Self {
+        let out = options
+            .get("out")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        let initial_path = if !out.is_empty() {
+            format!("{}/{}", dir, out)
+        } else {
+            uri.clone()
+        };
+
+        let initial_files = vec![DownloadFile {
+            index: "1".to_string(),
+            path: initial_path,
+            length: "0".to_string(),
+            completed_length: "0".to_string(),
+            selected: "true".to_string(),
+            uris: vec![FileUri {
+                uri: uri.clone(),
+                status: "waiting".to_string(),
+            }],
+        }];
+
+        Self {
+            gid,
+            status: TaskStatus::Waiting,
+            kind: TaskKind::Youtube,
+            uris: vec![uri],
             dir,
             out,
             total_length: 0,
@@ -896,5 +957,36 @@ mod tests {
         let status = task.to_rpc_status(&[]);
         let obj = status.as_object().unwrap();
         assert!(obj.contains_key("ed2kLink"));
+    }
+
+    // -- new_youtube --
+
+    #[test]
+    fn new_youtube_with_out() {
+        let mut opts = Map::new();
+        opts.insert("out".into(), json!("video.mp4"));
+        let uri = "https://www.youtube.com/watch?v=test123".to_string();
+        let task = DownloadTask::new_youtube("ygid1".into(), uri.clone(), "/dl".into(), opts);
+
+        assert_eq!(task.kind, TaskKind::Youtube);
+        assert_eq!(task.status, TaskStatus::Waiting);
+        assert_eq!(task.uris, vec![uri.clone()]);
+        assert_eq!(task.files[0].path, "/dl/video.mp4");
+        assert_eq!(task.files[0].uris[0].uri, uri);
+        assert_eq!(task.files[0].uris[0].status, "waiting");
+    }
+
+    #[test]
+    fn new_youtube_without_out() {
+        let opts = Map::new();
+        let uri = "https://www.youtube.com/watch?v=abc".to_string();
+        let task = DownloadTask::new_youtube("ygid2".into(), uri.clone(), "/dl".into(), opts);
+
+        assert_eq!(task.kind, TaskKind::Youtube);
+        assert_eq!(task.status, TaskStatus::Waiting);
+        assert_eq!(task.uris, vec![uri.clone()]);
+        // When no out is given, initial path falls back to the URI itself
+        assert_eq!(task.files[0].path, uri);
+        assert_eq!(task.files[0].uris[0].status, "waiting");
     }
 }

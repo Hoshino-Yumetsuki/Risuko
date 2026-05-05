@@ -560,7 +560,31 @@
           </div>
         </div>
 
-        <!-- RPC Section -->
+        <!-- YouTube Section -->
+        <div class="settings-section">
+          <div class="settings-section-header">
+            <div class="section-icon"><Video :size="16" /></div>
+            <div class="section-title">
+              <h3>{{ $t('preferences.youtube-settings') }}</h3>
+              <p>{{ $t('preferences.youtube-settings-tips') }}</p>
+            </div>
+          </div>
+          <div class="settings-section-content">
+            <div class="settings-select-group settings-select-group--stack">
+              <div class="settings-select-item">
+                <label class="settings-select-item-label">{{ $t('preferences.youtube-format') }}</label>
+                <Input
+                  :placeholder="$t('preferences.youtube-format-placeholder')"
+                  v-model="form.youtubeFormat"
+                />
+              </div>
+              <div class="form-info" style="margin-top: 4px">
+                {{ $t('preferences.youtube-format-tips') }}
+              </div>
+            </div>
+          </div>
+        </div>
+
         <div class="settings-section">
           <div class="settings-section-header">
             <div class="section-icon"><Cable :size="16" /></div>
@@ -942,6 +966,7 @@ import {
 	Server,
 	Settings,
 	UserCircle,
+	Video,
 	X,
 } from "lucide-vue-next";
 import randomize from "randomatic";
@@ -1040,6 +1065,7 @@ const initForm = (config) => {
 		ftpPasswd: config.ftpPasswd || "",
 		sftpPrivateKey: config.sftpPrivateKey || "",
 		sftpKeyPassphrase: config.sftpPrivateKeyPassphrase || "",
+		youtubeFormat: config.youtubeFormat ?? config["youtube-format"] ?? "",
 		hideAppMenu,
 		lastCheckUpdateTime,
 		lastSyncTrackerTime,
@@ -1106,6 +1132,7 @@ export default {
 		RefreshCcw,
 		Dices,
 		ExternalLink,
+		Video,
 	},
 	data() {
 		const preferenceStore = usePreferenceStore();
@@ -1370,6 +1397,12 @@ export default {
 			if ("sftpKeyPassphrase" in data) {
 				data.sftpPrivateKeyPassphrase = data.sftpKeyPassphrase;
 				delete data.sftpKeyPassphrase;
+			}
+
+			// Remap YouTube form keys to kebab-case config keys
+			if ("youtubeFormat" in data) {
+				data["youtube-format"] = data.youtubeFormat;
+				delete data.youtubeFormat;
 			}
 
 			if (btTracker) {

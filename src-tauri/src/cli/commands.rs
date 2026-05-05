@@ -4,6 +4,7 @@ use super::headless;
 use super::progress::{self, format_size, format_size_speed};
 use super::rpc_client::RpcClient;
 use super::{DownloadArgs, PauseArgs, RemoveArgs, ResumeArgs, ServeArgs, StatusArgs};
+use risuko_engine::engine::youtube::is_youtube_uri;
 
 pub async fn download(args: DownloadArgs) -> Result<(), Box<dyn std::error::Error>> {
     let mut secret = args.rpc_secret.clone();
@@ -71,6 +72,9 @@ async fn do_download(
             }
         }
     }
+    if let Some(ref youtube_format) = args.youtube_format {
+        options.insert("youtube-format".into(), json!(youtube_format));
+    }
     if let Some(ratio) = args.seed_ratio {
         options.insert("seed-ratio".into(), json!(ratio.to_string()));
     }
@@ -102,6 +106,11 @@ async fn do_download(
                 "risuko.addTorrent",
                 vec![json!(b64), json!([]), json!(options)],
             )
+            .await?;
+        result.as_str().unwrap_or("").to_string()
+    } else if is_youtube_uri(args.url.trim()) {
+        let result = client
+            .call("risuko.addYouTube", vec![json!(&args.url), json!(options)])
             .await?;
         result.as_str().unwrap_or("").to_string()
     } else {
