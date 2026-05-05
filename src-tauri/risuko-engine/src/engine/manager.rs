@@ -919,6 +919,13 @@ impl TaskManager {
 
                 match download_result {
                     Ok(path) => {
+                        if let Ok(metadata) = std::fs::metadata(&path) {
+                            let file_size = metadata.len();
+                            task.completed_length = file_size;
+                            if task.total_length == 0 {
+                                task.total_length = file_size;
+                            }
+                        }
                         log::info!(
                             "[task:{}] YouTube download complete: {}",
                             gid_clone,
@@ -929,7 +936,7 @@ impl TaskManager {
                             index: "1".to_string(),
                             path: path.to_string_lossy().to_string(),
                             length: task.total_length.to_string(),
-                            completed_length: task.total_length.to_string(),
+                            completed_length: task.completed_length.to_string(),
                             selected: "true".to_string(),
                             uris: task
                                 .uris

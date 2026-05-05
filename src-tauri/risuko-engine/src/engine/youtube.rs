@@ -67,6 +67,37 @@ fn min_nonzero_limit(lhs: u64, rhs: u64) -> u64 {
     }
 }
 
+fn option_non_empty_str<'a>(options: &'a Map<String, Value>, key: &str) -> Option<&'a str> {
+    options
+        .get(key)
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+}
+
+fn apply_yt_dlp_network_options(cmd: &mut Command, options: &Map<String, Value>) {
+    if let Some(proxy) = option_non_empty_str(options, "all-proxy")
+        .or_else(|| option_non_empty_str(options, "proxy"))
+    {
+        cmd.arg("--proxy").arg(proxy);
+    }
+
+    if let Some(user_agent) = option_non_empty_str(options, "user-agent") {
+        cmd.arg("--user-agent").arg(user_agent);
+    }
+
+    if let Some(referer) = option_non_empty_str(options, "referer") {
+        cmd.arg("--referer").arg(referer);
+    }
+
+    if let Some(cookies_file) = option_non_empty_str(options, "cookies") {
+        cmd.arg("--cookies").arg(cookies_file);
+    } else if let Some(cookie_header) = option_non_empty_str(options, "cookie") {
+        cmd.arg("--add-header")
+            .arg(format!("Cookie: {cookie_header}"));
+    }
+}
+
 pub async fn run_youtube_download(
     url: &str,
     dir: &str,
@@ -100,6 +131,8 @@ pub async fn run_youtube_download(
         .arg("--progress")
         .arg("--progress-template")
         .arg("download:__YTPROG__%(progress.downloaded_bytes)s %(progress.total_bytes,progress.total_bytes_estimate)s %(progress.speed)s");
+
+    apply_yt_dlp_network_options(&mut cmd, options);
 
     let format_opt = options
         .get("youtube-format")
@@ -405,7 +438,10 @@ fn extract_format(obj: &serde_json::Value) -> Option<YouTubeFormat> {
     })
 }
 
-pub async fn get_youtube_video_info(url: &str) -> Result<YouTubeVideoInfo, String> {
+pub async fn get_youtube_video_info(
+    url: &str,
+    options: &Map<String, Value>,
+) -> Result<YouTubeVideoInfo, String> {
     check_yt_dlp_available().await?;
 
     let mut cmd = Command::new("yt-dlp");
@@ -416,6 +452,8 @@ pub async fn get_youtube_video_info(url: &str) -> Result<YouTubeVideoInfo, Strin
         .arg("youtube:player_client=web,default")
         .arg(url)
         .kill_on_drop(true);
+
+    apply_yt_dlp_network_options(&mut cmd, options);
 
     let output = cmd
         .output()

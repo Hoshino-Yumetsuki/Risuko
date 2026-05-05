@@ -300,11 +300,16 @@ export default class Api {
 		});
 	}
 
-	getYouTubeVideoInfo(params: { url: string }) {
+	getYouTubeVideoInfo(params: {
+		url: string;
+		options?: Record<string, unknown>;
+	}) {
+		const engineOptions = formatOptionsForEngine(params.options);
 		return invoke<import("@shared/types/task").YouTubeVideoInfo>(
 			"get_youtube_video_info",
 			{
 				url: params.url,
+				options: engineOptions,
 			},
 		);
 	}

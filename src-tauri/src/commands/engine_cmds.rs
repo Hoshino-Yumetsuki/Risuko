@@ -744,6 +744,7 @@ pub async fn add_uri(
 pub async fn get_youtube_video_info(
     _state: tauri::State<'_, crate::state::AppState>,
     url: String,
+    options: Option<Value>,
 ) -> Result<engine::youtube::YouTubeVideoInfo, String> {
     let normalized = url.trim().to_string();
     if normalized.is_empty() {
@@ -752,9 +753,25 @@ pub async fn get_youtube_video_info(
     if !engine::youtube::is_youtube_uri(&normalized) {
         return Err("Not a valid YouTube URL".to_string());
     }
+
+    let task_options = match options {
+        Some(Value::Object(map)) => map,
+        _ => Map::new(),
+    };
+    let mut merged_options = match engine::get_manager().await {
+        Some(manager) => match manager.get_global_option().await {
+            Value::Object(map) => map,
+            _ => Map::new(),
+        },
+        None => Map::new(),
+    };
+    for (key, value) in task_options {
+        merged_options.insert(key, value);
+    }
+
     tokio::time::timeout(
         std::time::Duration::from_secs(30),
-        engine::youtube::get_youtube_video_info(&normalized),
+        engine::youtube::get_youtube_video_info(&normalized, &merged_options),
     )
     .await
     .map_err(|_| "yt-dlp timed out".to_string())?
