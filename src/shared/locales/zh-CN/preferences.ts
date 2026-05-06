@@ -164,6 +164,17 @@ export default {
 	"rpc-listen-port": "RPC 监听端口",
 	"rpc-secret": "RPC 授权密钥",
 	"rpc-secret-tips": "查看说明文档",
+	"engine-overrides": "引擎覆盖配置（JSON）",
+	"engine-overrides-placeholder":
+		'{\n  "max-concurrent-downloads": 8,\n  "rpc-host": "127.0.0.1"\n}',
+	"engine-overrides-tips":
+		"高级功能：用 JSON 对象设置任意引擎配置键，保存后重启生效。",
+	"engine-overrides-invalid": "引擎覆盖配置必须是合法的 JSON 对象。",
+	"external-engine-enable": "使用外部引擎",
+	"external-engine-enable-tips": "启用后，Risuko 将不会自动启动内置引擎。",
+	"external-engine-ip": "外部引擎 IP",
+	"external-engine-port": "外部引擎端口",
+	"external-engine-secret": "外部引擎密钥",
 	developer: "开发者",
 	"user-agent": "User-Agent",
 	"mock-user-agent": "模拟用户代理（UA）",

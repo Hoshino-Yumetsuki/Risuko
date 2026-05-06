@@ -90,20 +90,25 @@ struct EngineInstance {
     event_bridge_task: Option<tokio::task::JoinHandle<()>>,
 }
 
-fn is_local_rpc_host(host: &str) -> bool {
-    matches!(host, "127.0.0.1" | "localhost" | "::1" | "[::1]")
+fn parse_config_bool(value: Option<&serde_json::Value>) -> bool {
+    value
+        .and_then(|v| match v {
+            serde_json::Value::Bool(flag) => Some(*flag),
+            serde_json::Value::String(text) => {
+                let normalized = text.trim().to_ascii_lowercase();
+                Some(matches!(normalized.as_str(), "1" | "true" | "yes" | "on"))
+            }
+            serde_json::Value::Number(number) => number.as_i64().map(|n| n != 0),
+            _ => None,
+        })
+        .unwrap_or(false)
 }
 
 pub fn should_start_embedded_engine(config: &ConfigManager) -> bool {
-    let host = config
-        .get_user_config()
-        .get("rpc-host")
-        .and_then(|v| v.as_str())
-        .unwrap_or("127.0.0.1")
-        .trim()
-        .to_lowercase();
+    let external_enabled =
+        parse_config_bool(config.get_user_config().get("external-engine-enabled"));
 
-    is_local_rpc_host(host.as_str())
+    !external_enabled
 }
 
 /// Start the engine with explicit dependencies (no Tauri required).
@@ -349,8 +354,10 @@ pub async fn restart_engine(
     upload_sinks: Option<Arc<UploadSinkManager>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     stop_engine().await?;
-    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-    start_engine(config, event_sink, storage, upload_sinks).await?;
+    if should_start_embedded_engine(config) {
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        start_engine(config, event_sink, storage, upload_sinks).await?;
+    }
     Ok(())
 }
 

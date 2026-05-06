@@ -23,6 +23,11 @@ export interface AppConfig {
 	traySpeedometer?: boolean | string;
 	runMode?: number | string;
 	rpcSecret?: string;
+	externalEngineEnabled?: boolean | string;
+	externalEngineHost?: string;
+	externalEnginePort?: number | string;
+	externalEngineSecret?: string;
+	engineOverrides?: Record<string, unknown>;
 	autoCheckUpdate?: boolean;
 	autoSyncTracker?: boolean;
 	trackerSource?: string[];

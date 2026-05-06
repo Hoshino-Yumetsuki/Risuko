@@ -37,6 +37,15 @@ impl EngineOptions {
             }
         }
 
+        // Advanced escape hatch: allow users to provide arbitrary engine keys
+        // from the UI via `engine-overrides` so newly added backend options can
+        // be configured without waiting for dedicated form fields.
+        if let Some(Value::Object(overrides)) = user.get("engine-overrides") {
+            for (k, v) in overrides {
+                global.insert(k.clone(), v.clone());
+            }
+        }
+
         Self { global }
     }
 
@@ -242,6 +251,24 @@ mod tests {
         assert_eq!(opts.get_str("m3u8-output-format"), Some("mp4"));
         // dir should NOT be overridden from user config
         assert_eq!(opts.dir(), "/downloads");
+    }
+
+    #[test]
+    fn from_config_applies_engine_overrides_map() {
+        let mut user = Map::new();
+        user.insert(
+            "engine-overrides".into(),
+            json!({
+                "dir": "/override-dir",
+                "max-concurrent-downloads": 12,
+                "rpc-host": "10.0.0.2"
+            }),
+        );
+
+        let opts = EngineOptions::from_config(&make_system(), &user);
+        assert_eq!(opts.dir(), "/override-dir");
+        assert_eq!(opts.max_concurrent_downloads(), 12);
+        assert_eq!(opts.rpc_host(), "10.0.0.2");
     }
 
     // -- getters with defaults --

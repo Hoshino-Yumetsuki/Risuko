@@ -25,7 +25,10 @@ import logger from "@shared/utils/logger";
 import { invoke } from "@tauri-apps/api/core";
 import { isEmpty } from "lodash";
 
-const ENGINE_RESTART_USER_KEYS: string[] = [];
+const ENGINE_RESTART_USER_KEYS: string[] = [
+	"external-engine-enabled",
+	"engine-overrides",
+];
 const DEFAULT_TASK_LIST_FETCH_SIZE = 1000;
 const MAX_TASK_LIST_FETCH_SIZE = 2000;
 

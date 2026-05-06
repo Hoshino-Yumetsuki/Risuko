@@ -78,6 +78,18 @@ export default {
 	"rpc-listen-port": "Porta de Escuta RPC",
 	"rpc-secret": "Segredo de RPC",
 	"rpc-secret-tips": "Veja o manual secreto de RPC",
+	"engine-overrides": "Engine Overrides (JSON)",
+	"engine-overrides-placeholder":
+		'{\n  "max-concurrent-downloads": 8,\n  "rpc-host": "127.0.0.1"\n}',
+	"engine-overrides-tips":
+		"Advanced: set arbitrary engine option keys as a JSON object. Changes take effect after restart.",
+	"engine-overrides-invalid": "Engine Overrides must be a valid JSON object.",
+	"external-engine-enable": "Use External Engine",
+	"external-engine-enable-tips":
+		"When enabled, Risuko will not auto-start the embedded engine.",
+	"external-engine-ip": "External Engine IP",
+	"external-engine-port": "External Engine Port",
+	"external-engine-secret": "External Engine Secret",
 	developer: "Desenvolverdor",
 	"user-agent": "User-Agent",
 	"mock-user-agent": "Mock User-Agent",

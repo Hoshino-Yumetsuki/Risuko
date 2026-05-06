@@ -593,6 +593,54 @@
             </div>
           </div>
           <div class="settings-section-content">
+            <div class="settings-row" style="margin-bottom: 8px">
+              <div class="settings-row-content">
+                <div class="settings-row-title">{{ $t('preferences.external-engine-enable') }}</div>
+                <div class="settings-row-description">
+                  {{ $t('preferences.external-engine-enable-tips') }}
+                </div>
+              </div>
+              <div class="settings-row-action">
+                <ui-checkbox
+                  :model-value="form.externalEngineEnabled"
+                  @change="(val) => setAdvancedBoolean('externalEngineEnabled', val)"
+                />
+              </div>
+            </div>
+
+            <div v-if="form.externalEngineEnabled" class="settings-select-group" style="margin-bottom: 8px">
+              <div class="settings-select-item">
+                <label class="settings-select-item-label">{{
+                  $t('preferences.external-engine-ip')
+                }}</label>
+                <Input
+                  :placeholder="externalRpcDefaultHost"
+                  v-model="form.externalEngineHost"
+                  @blur="onExternalEngineHostBlur"
+                />
+              </div>
+              <div class="settings-select-item">
+                <label class="settings-select-item-label">{{
+                  $t('preferences.external-engine-port')
+                }}</label>
+                <Input
+                  :placeholder="String(rpcDefaultPort)"
+                  :maxlength="8"
+                  v-model="form.externalEnginePort"
+                  @blur="onExternalEnginePortBlur"
+                />
+              </div>
+              <div class="settings-select-item">
+                <label class="settings-select-item-label">{{ $t('preferences.external-engine-secret') }}</label>
+                <Input
+                  :type="hideExternalRpcSecret ? 'password' : 'text'"
+                  placeholder="RPC Secret"
+                  :maxlength="64"
+                  v-model="form.externalEngineSecret"
+                />
+              </div>
+            </div>
+
             <div class="settings-select-group">
               <div class="settings-select-item">
                 <label class="settings-select-item-label">{{
@@ -602,10 +650,11 @@
                   <Input
                     :placeholder="String(rpcDefaultPort)"
                     :maxlength="8"
+                    :disabled="form.externalEngineEnabled"
                     v-model="form.rpcListenPort"
                     @blur="onRpcListenPortBlur"
                   />
-                  <span class="mo-input-append">
+                  <span class="mo-input-append" v-if="!form.externalEngineEnabled">
                     <i @click.prevent="onRpcPortDiceClick" style="cursor: pointer">
                       <Dices :size="12" />
                     </i>
@@ -619,9 +668,10 @@
                     :type="hideRpcSecret ? 'password' : 'text'"
                     placeholder="RPC Secret"
                     :maxlength="64"
+                    :disabled="form.externalEngineEnabled"
                     v-model="form.rpcSecret"
                   />
-                  <span class="mo-input-append">
+                  <span class="mo-input-append" v-if="!form.externalEngineEnabled">
                     <i @click.prevent="onRpcSecretDiceClick" style="cursor: pointer">
                       <Dices :size="12" />
                     </i>
@@ -872,6 +922,22 @@
               </div>
             </div>
 
+            <div class="settings-select-group settings-select-group--stack" style="margin-top: 12px">
+              <div class="settings-select-item">
+                <label class="settings-select-item-label">{{ $t('preferences.engine-overrides') }}</label>
+                <Textarea
+                  :rows="8"
+                  autocomplete="off"
+                  :placeholder="$t('preferences.engine-overrides-placeholder')"
+                  v-model="form.engineOverridesText"
+                  style="max-height: 16lh"
+                />
+              </div>
+              <div class="form-info" style="margin-top: 4px">
+                {{ $t('preferences.engine-overrides-tips') }}
+              </div>
+            </div>
+
             <!-- Danger Zone -->
             <div class="dev-danger-zone">
               <div class="dev-danger-zone-label">
@@ -999,6 +1065,11 @@ const initForm = (config) => {
 	const {
 		autoCheckUpdate,
 		autoSyncTracker,
+		engineOverrides,
+		externalEngineEnabled,
+		externalEngineHost,
+		externalEnginePort,
+		externalEngineSecret,
 		btTracker,
 		btMaxPeersPerTorrent,
 		btMaxOutstandingPerPeer,
@@ -1036,6 +1107,11 @@ const initForm = (config) => {
 	const result = {
 		autoCheckUpdate: parseBooleanConfig(autoCheckUpdate),
 		autoSyncTracker: parseBooleanConfig(autoSyncTracker),
+		engineOverridesText: JSON.stringify(engineOverrides || {}, null, 2),
+		externalEngineEnabled: parseBooleanConfig(externalEngineEnabled, false),
+		externalEngineHost: externalEngineHost || ENGINE_RPC_HOST,
+		externalEnginePort: externalEnginePort || ENGINE_RPC_PORT,
+		externalEngineSecret: externalEngineSecret || "",
 		btTracker: convertCommaToLine(btTracker),
 		btMaxPeersPerTorrent: btMaxPeersPerTorrent ?? 100,
 		btMaxOutstandingPerPeer: btMaxOutstandingPerPeer ?? 128,
@@ -1089,6 +1165,18 @@ const initForm = (config) => {
 		userAgent,
 	};
 	return result;
+};
+
+const sanitizeEngineOverrides = (input) => {
+	const filtered = {};
+	for (const [key, value] of Object.entries(input || {})) {
+		const normalized = `${key}`.toLowerCase();
+		if (normalized.includes("port") || normalized.includes("secret")) {
+			continue;
+		}
+		filtered[key] = value;
+	}
+	return filtered;
 };
 
 export default {
@@ -1171,6 +1259,9 @@ export default {
 		rpcDefaultPort() {
 			return ENGINE_RPC_PORT;
 		},
+		externalRpcDefaultHost() {
+			return ENGINE_RPC_HOST;
+		},
 		logLevels() {
 			return LOG_LEVELS;
 		},
@@ -1181,20 +1272,45 @@ export default {
 	watch: {
 		"form.rpcListenPort": "syncRpcUrlToClipboard",
 		"form.rpcSecret": "syncRpcUrlToClipboard",
+		"form.externalEngineEnabled": "syncRpcUrlToClipboard",
+		"form.externalEngineHost": "syncRpcUrlToClipboard",
+		"form.externalEnginePort": "syncRpcUrlToClipboard",
+		"form.externalEngineSecret": "syncRpcUrlToClipboard",
 	},
 	methods: {
 		setAdvancedBoolean(key, enable) {
 			this.form[key] = !!enable;
 		},
 		syncRpcUrlToClipboard() {
+			const host = this.form.externalEngineEnabled
+				? this.form.externalEngineHost
+				: ENGINE_RPC_HOST;
+			const port = this.form.externalEngineEnabled
+				? this.form.externalEnginePort
+				: this.form.rpcListenPort;
+			const secret = this.form.externalEngineEnabled
+				? this.form.externalEngineSecret
+				: this.form.rpcSecret;
 			const url = buildRpcUrl({
-				host: ENGINE_RPC_HOST,
-				port: this.form.rpcListenPort,
-				secret: this.form.rpcSecret,
+				host,
+				port,
+				secret,
 			});
 			writeText(url).catch(() => {
 				/* noop */
 			});
+		},
+		onExternalEngineHostBlur() {
+			const host = `${this.form.externalEngineHost || ""}`.trim();
+			this.form.externalEngineHost = host || ENGINE_RPC_HOST;
+		},
+		onExternalEnginePortBlur() {
+			if (
+				EMPTY_STRING === this.form.externalEnginePort ||
+				!this.form.externalEnginePort
+			) {
+				this.form.externalEnginePort = this.rpcDefaultPort;
+			}
 		},
 		getTrackerLabel(value) {
 			for (const group of this.trackerSourceOptions) {
@@ -1377,7 +1493,35 @@ export default {
 				...diffConfig(this.formOriginal, this.form),
 				...changedConfig.basic,
 			};
-			const booleanKeys = ["autoCheckUpdate", "autoSyncTracker"];
+
+			if ("engineOverridesText" in data) {
+				const raw = `${this.form.engineOverridesText || ""}`.trim();
+				if (!raw) {
+					data.engineOverrides = {};
+				} else {
+					try {
+						const parsed = JSON.parse(raw);
+						if (
+							!parsed ||
+							typeof parsed !== "object" ||
+							Array.isArray(parsed)
+						) {
+							this.$msg.error(this.$t("preferences.engine-overrides-invalid"));
+							return;
+						}
+						data.engineOverrides = sanitizeEngineOverrides(parsed);
+					} catch {
+						this.$msg.error(this.$t("preferences.engine-overrides-invalid"));
+						return;
+					}
+				}
+				delete data.engineOverridesText;
+			}
+			const booleanKeys = [
+				"autoCheckUpdate",
+				"autoSyncTracker",
+				"externalEngineEnabled",
+			];
 			for (const key of booleanKeys) {
 				if (key in data) {
 					data[key] = !!this.form[key];
@@ -1391,7 +1535,13 @@ export default {
 				};
 			}
 
-			const { autoHideWindow, btTracker, ed2kServer, rpcListenPort } = data;
+			const {
+				autoHideWindow,
+				btTracker,
+				ed2kServer,
+				rpcListenPort,
+				externalEnginePort,
+			} = data;
 
 			// Remap form key to config key
 			if ("sftpKeyPassphrase" in data) {
@@ -1468,6 +1618,15 @@ export default {
 
 			if (rpcListenPort === EMPTY_STRING) {
 				data.rpcListenPort = this.rpcDefaultPort;
+			}
+
+			if (externalEnginePort === EMPTY_STRING) {
+				data.externalEnginePort = this.rpcDefaultPort;
+			}
+
+			if ("externalEngineHost" in data) {
+				const host = `${this.form.externalEngineHost || ""}`.trim();
+				data.externalEngineHost = host || ENGINE_RPC_HOST;
 			}
 
 			logger.log("[Risuko] preference changed data:", data);
