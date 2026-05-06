@@ -3,6 +3,40 @@ use serde_json::{Map, Value};
 
 use super::speed_limiter::parse_speed_limit;
 
+const RESERVED_ENGINE_KEYS: &[&str] = &[
+    "dht-listen-port",
+    "ed2k-port",
+    "listen-port",
+    "rpc-host",
+    "rpc-port",
+    "rpc-listen-port",
+    "rpc-secret",
+];
+
+fn is_reserved_engine_key(key: &str) -> bool {
+    let normalized = key.to_ascii_lowercase();
+    RESERVED_ENGINE_KEYS.contains(&normalized.as_str())
+        || normalized.starts_with("rpc-")
+        || normalized.ends_with("-port")
+        || normalized.ends_with("-secret")
+}
+
+fn apply_engine_overrides(global: &mut Map<String, Value>, user: &Map<String, Value>) {
+    if let Some(Value::Object(overrides)) = user.get("engine-overrides") {
+        for (k, v) in overrides {
+            if is_reserved_engine_key(k) {
+                continue;
+            }
+            global.insert(k.clone(), v.clone());
+        }
+    } else if let Some(value) = user.get("engine-overrides") {
+        log::warn!(
+            "Ignoring invalid engine-overrides value: expected object, got {}",
+            value
+        );
+    }
+}
+
 /// Default global options and per-task option management
 /// Maps aria2 option names to internal config values
 
@@ -40,16 +74,7 @@ impl EngineOptions {
         // Advanced escape hatch: allow users to provide arbitrary engine keys
         // from the UI via `engine-overrides` so newly added backend options can
         // be configured without waiting for dedicated form fields.
-        if let Some(Value::Object(overrides)) = user.get("engine-overrides") {
-            for (k, v) in overrides {
-                global.insert(k.clone(), v.clone());
-            }
-        } else if let Some(value) = user.get("engine-overrides") {
-            log::warn!(
-                "Ignoring invalid engine-overrides value: expected object, got {}",
-                value
-            );
-        }
+        apply_engine_overrides(&mut global, user);
 
         Self { global }
     }
@@ -266,14 +291,18 @@ mod tests {
             json!({
                 "dir": "/override-dir",
                 "max-concurrent-downloads": 12,
-                "rpc-host": "10.0.0.2"
+	                "rpc-host": "10.0.0.2",
+	                "rpc-listen-port": 17000,
+	                "rpc-secret": "override-secret"
             }),
         );
 
         let opts = EngineOptions::from_config(&make_system(), &user);
         assert_eq!(opts.dir(), "/override-dir");
         assert_eq!(opts.max_concurrent_downloads(), 12);
-        assert_eq!(opts.rpc_host(), "10.0.0.2");
+	        assert_eq!(opts.rpc_host(), "127.0.0.1");
+	        assert_eq!(opts.rpc_listen_port(), 16800);
+	        assert_eq!(opts.rpc_secret(), "secret123");
     }
 
     // -- getters with defaults --

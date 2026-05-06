@@ -1173,21 +1173,18 @@ const initForm = (config) => {
 };
 
 const sanitizeEngineOverrides = (input) => {
+  const reservedKeys = new Set(["rpc-host", "rpc-listen-port", "rpc-secret"]);
 	const filtered = {};
+  const droppedKeys = [];
 	for (const [key, value] of Object.entries(input || {})) {
 		const normalized = `${key}`.toLowerCase();
-		if (
-			normalized === "rpc-host" ||
-			normalized === "rpc-listen-port" ||
-			normalized === "rpc-secret" ||
-			normalized.includes("port") ||
-			normalized.includes("secret")
-		) {
+    if (reservedKeys.has(normalized)) {
+      droppedKeys.push(key);
 			continue;
 		}
 		filtered[key] = value;
 	}
-	return filtered;
+  return { filtered, droppedKeys };
 };
 
 const normalizePortValue = (value, fallback) => {
@@ -1537,7 +1534,13 @@ export default {
 							this.$msg.error(this.$t("preferences.engine-overrides-invalid"));
 							return;
 						}
-						data.engineOverrides = sanitizeEngineOverrides(parsed);
+            const { filtered, droppedKeys } = sanitizeEngineOverrides(parsed);
+            data.engineOverrides = filtered;
+            if (droppedKeys.length) {
+              this.$msg.warning(
+                `Ignored reserved engine override keys: ${droppedKeys.join(", ")}`,
+              );
+            }
 					} catch {
 						this.$msg.error(this.$t("preferences.engine-overrides-invalid"));
 						return;
