@@ -945,6 +945,33 @@ fn get_keys(params: &[Value], index: usize) -> Vec<String> {
 mod tests {
     use super::*;
     use serde_json::json;
+    use tempfile::TempDir;
+
+    async fn make_rpc_state(secret: &str) -> (RpcState, TempDir) {
+        let events = EventBroadcaster::default();
+        let config_dir = TempDir::new().unwrap();
+        let options = super::super::options::EngineOptions::from_config(
+            &serde_json::Map::new(),
+            &serde_json::Map::new(),
+        );
+        let manager = Arc::new(
+            TaskManager::new(config_dir.path(), options, events.clone())
+                .await
+                .unwrap(),
+        );
+        let (rpc_shutdown_tx, _rpc_shutdown_rx) = tokio::sync::mpsc::channel(1);
+
+        (
+            RpcState {
+                manager,
+                events,
+                secret: secret.to_string(),
+                session_id: "test-session".to_string(),
+                rpc_shutdown_tx,
+            },
+            config_dir,
+        )
+    }
 
     // -- check_auth --
 
@@ -1057,6 +1084,89 @@ mod tests {
         let params = vec![json!("secret"), json!([call])];
         let methods = extract_multicall_methods(&params);
         assert!(methods.is_empty());
+    }
+
+    #[tokio::test]
+    async fn multicall_mixed_nested_auth_standard_shape_keeps_processing() {
+        let (state, _config_dir) = make_rpc_state("secret").await;
+        let request = json!({
+            "jsonrpc": "2.0",
+            "id": "1",
+            "method": "system.multicall",
+            "params": [[
+                {
+                    "methodName": "aria2.getVersion",
+                    "params": []
+                },
+                {
+                    "methodName": "aria2.getVersion",
+                    "params": ["token:secret"]
+                }
+            ]]
+        });
+
+        let response = process_single_request(&state, request).await.unwrap();
+        let results = response
+            .get("result")
+            .and_then(|v| v.as_array())
+            .unwrap();
+
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].get("code").and_then(|v| v.as_i64()), Some(1));
+        assert_eq!(
+            results[0].get("message").and_then(|v| v.as_str()),
+            Some("Unauthorized")
+        );
+
+        let success = results[1].as_array().unwrap();
+        let version_obj = success.first().and_then(|v| v.as_object()).unwrap();
+        assert_eq!(
+            version_obj.get("version").and_then(|v| v.as_str()),
+            Some(ENGINE_VERSION)
+        );
+    }
+
+    #[tokio::test]
+    async fn multicall_mixed_nested_auth_legacy_shape_keeps_processing() {
+        let (state, _config_dir) = make_rpc_state("secret").await;
+        let request = json!({
+            "jsonrpc": "2.0",
+            "id": "1",
+            "method": "system.multicall",
+            "params": [
+                "token:secret",
+                [
+                    {
+                        "methodName": "aria2.getVersion",
+                        "params": ["token:wrong"]
+                    },
+                    {
+                        "methodName": "aria2.getVersion",
+                        "params": ["token:secret"]
+                    }
+                ]
+            ]
+        });
+
+        let response = process_single_request(&state, request).await.unwrap();
+        let results = response
+            .get("result")
+            .and_then(|v| v.as_array())
+            .unwrap();
+
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].get("code").and_then(|v| v.as_i64()), Some(1));
+        assert_eq!(
+            results[0].get("message").and_then(|v| v.as_str()),
+            Some("Unauthorized")
+        );
+
+        let success = results[1].as_array().unwrap();
+        let version_obj = success.first().and_then(|v| v.as_object()).unwrap();
+        assert_eq!(
+            version_obj.get("version").and_then(|v| v.as_str()),
+            Some(ENGINE_VERSION)
+        );
     }
 
     // -- get_gid --
