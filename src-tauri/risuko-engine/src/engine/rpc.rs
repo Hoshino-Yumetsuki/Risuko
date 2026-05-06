@@ -471,6 +471,14 @@ fn should_skip_outer_auth(method: &str) -> bool {
     method == "system.multicall"
 }
 
+/// Extract the nested multicall list from either the standard `[[calls]]`
+/// shape or the legacy `["token:...", [calls]]` shape
+///
+/// This helper only returns the inner call array. It does not validate or use
+/// the outer `"token:..."` value for authentication; outer auth is
+/// intentionally ignored for `system.multicall`, and each nested call is
+/// authenticated independently. Malformed shapes return an empty `Vec`, so the
+/// `starts_with("token:")` check here is shape detection, not auth logic
 fn extract_multicall_methods(params: &[Value]) -> Vec<Value> {
     // Accept both formats:
     // 1) standard aria2: [ [ { methodName, params } ] ]
