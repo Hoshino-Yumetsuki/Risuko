@@ -27,6 +27,9 @@ import { isEmpty } from "lodash";
 
 const ENGINE_RESTART_USER_KEYS: string[] = [
 	"external-engine-enabled",
+	"external-engine-host",
+	"external-engine-port",
+	"external-engine-secret",
 	"engine-overrides",
 ];
 const DEFAULT_TASK_LIST_FETCH_SIZE = 1000;

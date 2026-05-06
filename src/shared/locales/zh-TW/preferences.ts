@@ -166,7 +166,7 @@ export default {
 	"rpc-secret-tips": "查看說明手冊",
 	"engine-overrides": "引擎覆寫設定（JSON）",
 	"engine-overrides-placeholder":
-		'{\n  "max-concurrent-downloads": 8,\n  "rpc-host": "127.0.0.1"\n}',
+		'{\n  "piece-length": "1M",\n  "timeout": 60\n}',
 	"engine-overrides-tips":
 		"進階功能：用 JSON 物件設定任意引擎選項鍵，儲存後重啟生效。",
 	"engine-overrides-invalid": "引擎覆寫設定必須是合法的 JSON 物件。",

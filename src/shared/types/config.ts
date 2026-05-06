@@ -27,7 +27,7 @@ export interface AppConfig {
 	externalEngineHost?: string;
 	externalEnginePort?: number | string;
 	externalEngineSecret?: string;
-	engineOverrides?: Record<string, unknown>;
+	engineOverrides?: Record<string, string | number | boolean | null>;
 	autoCheckUpdate?: boolean;
 	autoSyncTracker?: boolean;
 	trackerSource?: string[];

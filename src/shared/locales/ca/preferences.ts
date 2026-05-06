@@ -79,18 +79,19 @@ export default {
 	"rpc-listen-port": "Port d'Escolta RPC",
 	"rpc-secret": "Clau RPC",
 	"rpc-secret-tips": "Mirar manual de la clau RPC",
-	"engine-overrides": "Engine Overrides (JSON)",
+	"engine-overrides": "Sobreescriptures del motor (JSON)",
 	"engine-overrides-placeholder":
-		'{\n  "max-concurrent-downloads": 8,\n  "rpc-host": "127.0.0.1"\n}',
+		'{\n  "piece-length": "1M",\n  "timeout": 60\n}',
 	"engine-overrides-tips":
-		"Advanced: set arbitrary engine option keys as a JSON object. Changes take effect after restart.",
-	"engine-overrides-invalid": "Engine Overrides must be a valid JSON object.",
-	"external-engine-enable": "Use External Engine",
+		"Avançat: estableix claus arbitràries d'opcions del motor com a objecte JSON. Els canvis tenen efecte després de reiniciar.",
+	"engine-overrides-invalid":
+		"Les sobreescriptures del motor han de ser un objecte JSON vàlid.",
+	"external-engine-enable": "Utilitza un motor extern",
 	"external-engine-enable-tips":
-		"When enabled, Risuko will not auto-start the embedded engine.",
-	"external-engine-ip": "External Engine IP",
-	"external-engine-port": "External Engine Port",
-	"external-engine-secret": "External Engine Secret",
+		"Quan s'activa, Risuko no iniciarà automàticament el motor integrat.",
+	"external-engine-ip": "IP del motor extern",
+	"external-engine-port": "Port del motor extern",
+	"external-engine-secret": "Secret del motor extern",
 	developer: "Desenvolupador",
 	"user-agent": "User-Agent",
 	"mock-user-agent": "Mock User-Agent",

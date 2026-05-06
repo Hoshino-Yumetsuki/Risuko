@@ -72,18 +72,19 @@ export default {
 	"rpc-listen-port": "RPCリッスンポート",
 	"rpc-secret": "RPCシークレット",
 	"rpc-secret-tips": "RPCシークレットマニュアルの閲覧",
-	"engine-overrides": "Engine Overrides (JSON)",
+	"engine-overrides": "エンジン上書き設定（JSON）",
 	"engine-overrides-placeholder":
-		'{\n  "max-concurrent-downloads": 8,\n  "rpc-host": "127.0.0.1"\n}',
+		'{\n  "piece-length": "1M",\n  "timeout": 60\n}',
 	"engine-overrides-tips":
-		"Advanced: set arbitrary engine option keys as a JSON object. Changes take effect after restart.",
-	"engine-overrides-invalid": "Engine Overrides must be a valid JSON object.",
-	"external-engine-enable": "Use External Engine",
+		"高度な設定: 任意のエンジンオプションキーを JSON オブジェクトで指定します。変更は再起動後に反映されます。",
+	"engine-overrides-invalid":
+		"エンジン上書き設定は有効な JSON オブジェクトである必要があります。",
+	"external-engine-enable": "外部エンジンを使用",
 	"external-engine-enable-tips":
-		"When enabled, Risuko will not auto-start the embedded engine.",
-	"external-engine-ip": "External Engine IP",
-	"external-engine-port": "External Engine Port",
-	"external-engine-secret": "External Engine Secret",
+		"有効にすると、Risuko は内蔵エンジンを自動起動しません。",
+	"external-engine-ip": "外部エンジン IP",
+	"external-engine-port": "外部エンジンポート",
+	"external-engine-secret": "外部エンジンシークレット",
 	developer: "開発者",
 	"user-agent": "User-Agent",
 	"mock-user-agent": "偽装ユーザーエージェント（UA）",

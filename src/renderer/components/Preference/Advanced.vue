@@ -1065,6 +1065,7 @@ const initForm = (config) => {
 	const {
 		autoCheckUpdate,
 		autoSyncTracker,
+		engineOverridesText,
 		engineOverrides,
 		externalEngineEnabled,
 		externalEngineHost,
@@ -1104,10 +1105,14 @@ const initForm = (config) => {
 	// Accept both lodash camelCase key (m3U8OutputFormat from backend)
 	// and form key (m3u8OutputFormat from initForm output fed back via extend)
 	const m3u8OutputFormat = config.m3U8OutputFormat ?? config.m3u8OutputFormat;
+	const pendingEngineOverridesText =
+		typeof engineOverridesText === "string"
+			? engineOverridesText
+			: JSON.stringify(engineOverrides || {}, null, 2);
 	const result = {
 		autoCheckUpdate: parseBooleanConfig(autoCheckUpdate),
 		autoSyncTracker: parseBooleanConfig(autoSyncTracker),
-		engineOverridesText: JSON.stringify(engineOverrides || {}, null, 2),
+		engineOverridesText: pendingEngineOverridesText,
 		externalEngineEnabled: parseBooleanConfig(externalEngineEnabled, false),
 		externalEngineHost: externalEngineHost || ENGINE_RPC_HOST,
 		externalEnginePort: externalEnginePort || ENGINE_RPC_PORT,
@@ -1171,12 +1176,36 @@ const sanitizeEngineOverrides = (input) => {
 	const filtered = {};
 	for (const [key, value] of Object.entries(input || {})) {
 		const normalized = `${key}`.toLowerCase();
-		if (normalized.includes("port") || normalized.includes("secret")) {
+		if (
+			normalized === "rpc-host" ||
+			normalized === "rpc-listen-port" ||
+			normalized === "rpc-secret" ||
+			normalized.includes("port") ||
+			normalized.includes("secret")
+		) {
 			continue;
 		}
 		filtered[key] = value;
 	}
 	return filtered;
+};
+
+const normalizePortValue = (value, fallback) => {
+	const normalized = `${value ?? ""}`.trim();
+	if (!normalized) {
+		return fallback;
+	}
+
+	if (!/^\d+$/.test(normalized)) {
+		return fallback;
+	}
+
+	const parsed = Number.parseInt(normalized, 10);
+	if (!Number.isInteger(parsed) || parsed < 1 || parsed > 65535) {
+		return fallback;
+	}
+
+	return parsed;
 };
 
 export default {
@@ -1231,6 +1260,7 @@ export default {
 			form,
 			formOriginal,
 			hideRpcSecret: true,
+			hideExternalRpcSecret: true,
 			proxyScopeOptions: PROXY_SCOPE_OPTIONS,
 			trackerSourceOptions: TRACKER_SOURCE_OPTIONS,
 			trackerSourceOpen: false,
@@ -1305,12 +1335,10 @@ export default {
 			this.form.externalEngineHost = host || ENGINE_RPC_HOST;
 		},
 		onExternalEnginePortBlur() {
-			if (
-				EMPTY_STRING === this.form.externalEnginePort ||
-				!this.form.externalEnginePort
-			) {
-				this.form.externalEnginePort = this.rpcDefaultPort;
-			}
+			this.form.externalEnginePort = normalizePortValue(
+				this.form.externalEnginePort,
+				this.rpcDefaultPort,
+			);
 		},
 		getTrackerLabel(value) {
 			for (const group of this.trackerSourceOptions) {
@@ -1620,8 +1648,11 @@ export default {
 				data.rpcListenPort = this.rpcDefaultPort;
 			}
 
-			if (externalEnginePort === EMPTY_STRING) {
-				data.externalEnginePort = this.rpcDefaultPort;
+			if (externalEnginePort !== undefined) {
+				data.externalEnginePort = normalizePortValue(
+					this.form.externalEnginePort,
+					this.rpcDefaultPort,
+				);
 			}
 
 			if ("externalEngineHost" in data) {

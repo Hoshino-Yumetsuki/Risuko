@@ -166,7 +166,7 @@ export default {
 	"rpc-secret-tips": "查看说明文档",
 	"engine-overrides": "引擎覆盖配置（JSON）",
 	"engine-overrides-placeholder":
-		'{\n  "max-concurrent-downloads": 8,\n  "rpc-host": "127.0.0.1"\n}',
+		'{\n  "piece-length": "1M",\n  "timeout": 60\n}',
 	"engine-overrides-tips":
 		"高级功能：用 JSON 对象设置任意引擎配置键，保存后重启生效。",
 	"engine-overrides-invalid": "引擎覆盖配置必须是合法的 JSON 对象。",

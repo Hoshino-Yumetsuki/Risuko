@@ -98,7 +98,10 @@ fn parse_config_bool(value: Option<&serde_json::Value>) -> bool {
                 let normalized = text.trim().to_ascii_lowercase();
                 Some(matches!(normalized.as_str(), "1" | "true" | "yes" | "on"))
             }
-            serde_json::Value::Number(number) => number.as_i64().map(|n| n != 0),
+            serde_json::Value::Number(number) => number
+                .as_i64()
+                .map(|n| n != 0)
+                .or_else(|| number.as_f64().map(|n| n != 0.0)),
             _ => None,
         })
         .unwrap_or(false)
@@ -124,6 +127,11 @@ pub async fn start_engine(
     _storage: Arc<dyn StorageBackend>,
     upload_sinks: Option<Arc<UploadSinkManager>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    if !should_start_embedded_engine(config) {
+        log::info!("Embedded engine start skipped because external engine mode is enabled");
+        return Ok(());
+    }
+
     // Check if already running
     {
         let guard = ENGINE_INSTANCE.lock().await;

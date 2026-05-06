@@ -73,7 +73,7 @@ export default {
 	"rpc-secret-tips": "Xem RPC bí mật thủ công",
 	"engine-overrides": "Engine Overrides (JSON)",
 	"engine-overrides-placeholder":
-		'{\n  "max-concurrent-downloads": 8,\n  "rpc-host": "127.0.0.1"\n}',
+		'{\n  "piece-length": "1M",\n  "timeout": 60\n}',
 	"engine-overrides-tips":
 		"Advanced: set arbitrary engine option keys as a JSON object. Changes take effect after restart.",
 	"engine-overrides-invalid": "Engine Overrides must be a valid JSON object.",

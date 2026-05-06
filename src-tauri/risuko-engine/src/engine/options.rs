@@ -44,6 +44,11 @@ impl EngineOptions {
             for (k, v) in overrides {
                 global.insert(k.clone(), v.clone());
             }
+        } else if let Some(value) = user.get("engine-overrides") {
+            log::warn!(
+                "Ignoring invalid engine-overrides value: expected object, got {}",
+                value
+            );
         }
 
         Self { global }

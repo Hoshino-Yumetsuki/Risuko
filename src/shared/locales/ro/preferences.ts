@@ -77,18 +77,19 @@ export default {
 	"rpc-listen-port": "Portul de Ascultare RPC",
 	"rpc-secret": "Secret RPC",
 	"rpc-secret-tips": "Vizualizați manualul pentru secret RPC",
-	"engine-overrides": "Engine Overrides (JSON)",
+	"engine-overrides": "Suprascrieri motor (JSON)",
 	"engine-overrides-placeholder":
-		'{\n  "max-concurrent-downloads": 8,\n  "rpc-host": "127.0.0.1"\n}',
+		'{\n  "piece-length": "1M",\n  "timeout": 60\n}',
 	"engine-overrides-tips":
-		"Advanced: set arbitrary engine option keys as a JSON object. Changes take effect after restart.",
-	"engine-overrides-invalid": "Engine Overrides must be a valid JSON object.",
-	"external-engine-enable": "Use External Engine",
+		"Avansat: setați chei arbitrare pentru opțiunile motorului ca obiect JSON. Modificările intră în vigoare după repornire.",
+	"engine-overrides-invalid":
+		"Suprascrierile motorului trebuie să fie un obiect JSON valid.",
+	"external-engine-enable": "Folosește motor extern",
 	"external-engine-enable-tips":
-		"When enabled, Risuko will not auto-start the embedded engine.",
-	"external-engine-ip": "External Engine IP",
-	"external-engine-port": "External Engine Port",
-	"external-engine-secret": "External Engine Secret",
+		"Când este activată, Risuko nu va porni automat motorul încorporat.",
+	"external-engine-ip": "IP motor extern",
+	"external-engine-port": "Port motor extern",
+	"external-engine-secret": "Secret motor extern",
 	developer: "Dezvoltator",
 	"user-agent": "User-Agent",
 	"mock-user-agent": "Mock User-Agent",

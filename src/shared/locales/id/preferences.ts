@@ -77,18 +77,19 @@ export default {
 	"rpc-listen-port": "Port Dengar RPC",
 	"rpc-secret": "RPC Secret",
 	"rpc-secret-tips": "Lihat Petunjuk RPC Secret",
-	"engine-overrides": "Engine Overrides (JSON)",
+	"engine-overrides": "Override mesin (JSON)",
 	"engine-overrides-placeholder":
-		'{\n  "max-concurrent-downloads": 8,\n  "rpc-host": "127.0.0.1"\n}',
+		'{\n  "piece-length": "1M",\n  "timeout": 60\n}',
 	"engine-overrides-tips":
-		"Advanced: set arbitrary engine option keys as a JSON object. Changes take effect after restart.",
-	"engine-overrides-invalid": "Engine Overrides must be a valid JSON object.",
-	"external-engine-enable": "Use External Engine",
+		"Lanjutan: atur kunci opsi mesin apa pun sebagai objek JSON. Perubahan berlaku setelah mulai ulang.",
+	"engine-overrides-invalid":
+		"Override mesin harus berupa objek JSON yang valid.",
+	"external-engine-enable": "Gunakan mesin eksternal",
 	"external-engine-enable-tips":
-		"When enabled, Risuko will not auto-start the embedded engine.",
-	"external-engine-ip": "External Engine IP",
-	"external-engine-port": "External Engine Port",
-	"external-engine-secret": "External Engine Secret",
+		"Saat diaktifkan, Risuko tidak akan memulai mesin bawaan secara otomatis.",
+	"external-engine-ip": "IP mesin eksternal",
+	"external-engine-port": "Port mesin eksternal",
+	"external-engine-secret": "Rahasia mesin eksternal",
 	developer: "Developer",
 	"user-agent": "User-Agent",
 	"mock-user-agent": "Mock User-Agent",

@@ -79,18 +79,19 @@ export default {
 	"rpc-listen-port": "Puerto de Escucha RPC",
 	"rpc-secret": "Clave RPC",
 	"rpc-secret-tips": "Ver manual de la clave RPC",
-	"engine-overrides": "Engine Overrides (JSON)",
+	"engine-overrides": "Sobrescrituras del motor (JSON)",
 	"engine-overrides-placeholder":
-		'{\n  "max-concurrent-downloads": 8,\n  "rpc-host": "127.0.0.1"\n}',
+		'{\n  "piece-length": "1M",\n  "timeout": 60\n}',
 	"engine-overrides-tips":
-		"Advanced: set arbitrary engine option keys as a JSON object. Changes take effect after restart.",
-	"engine-overrides-invalid": "Engine Overrides must be a valid JSON object.",
-	"external-engine-enable": "Use External Engine",
+		"Avanzado: define claves arbitrarias de opciones del motor como un objeto JSON. Los cambios se aplican después de reiniciar.",
+	"engine-overrides-invalid":
+		"Las sobrescrituras del motor deben ser un objeto JSON válido.",
+	"external-engine-enable": "Usar motor externo",
 	"external-engine-enable-tips":
-		"When enabled, Risuko will not auto-start the embedded engine.",
-	"external-engine-ip": "External Engine IP",
-	"external-engine-port": "External Engine Port",
-	"external-engine-secret": "External Engine Secret",
+		"Cuando está activado, Risuko no iniciará automáticamente el motor integrado.",
+	"external-engine-ip": "IP del motor externo",
+	"external-engine-port": "Puerto del motor externo",
+	"external-engine-secret": "Clave del motor externo",
 	developer: "Desarrollador",
 	"user-agent": "User-Agent",
 	"mock-user-agent": "Falsear Agente de Usuario",
