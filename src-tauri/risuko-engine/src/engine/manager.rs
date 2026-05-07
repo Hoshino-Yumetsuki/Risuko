@@ -467,6 +467,257 @@ impl TaskManager {
         Ok(gid)
     }
 
+    /// Add a task for one of the legacy P2P / IPC protocols (ADC, Gnutella,
+    /// G2, giFT). The protocol module's URI parser
+    /// extracts an output filename and size hint when the URI carries them
+    pub async fn add_legacy_p2p_task(
+        &self,
+        kind: TaskKind,
+        uri: &str,
+        options: Map<String, Value>,
+    ) -> Result<String, String> {
+        // Resolve filename + size from the URI when possible
+        let (out_hint, size_hint) = match kind {
+            TaskKind::Adc => super::adc::parse_dchub_file_uri(uri)
+                .map(|p| (p.file_name, p.file_size))
+                .unwrap_or_default(),
+            TaskKind::Gnutella => super::gnutella::parse_gnutella_uri(uri)
+                .map(|p| (p.file_name, p.file_size))
+                .unwrap_or_default(),
+            TaskKind::G2 => super::g2::parse_g2_uri(uri)
+                .map(|p| (p.file_name, p.file_size))
+                .unwrap_or_default(),
+            TaskKind::Gift => super::gift::parse_gift_uri(uri)
+                .map(|p| {
+                    let inner = p.inner;
+                    let name = inner
+                        .split('?')
+                        .next()
+                        .and_then(|s| s.rsplit('/').next())
+                        .unwrap_or("gift-download")
+                        .to_string();
+                    (name, 0u64)
+                })
+                .unwrap_or_default(),
+            _ => (String::new(), 0),
+        };
+
+        let gid = generate_gid();
+        let merged = self.options.read().await.merge_task_options(&options);
+        let dir = merged
+            .get("dir")
+            .and_then(|v| v.as_str())
+            .unwrap_or(".")
+            .to_string();
+
+        let pause = options
+            .get("pause")
+            .and_then(|v| v.as_bool().or_else(|| v.as_str().map(|s| s == "true")))
+            .unwrap_or(false);
+
+        let task = DownloadTask::new_simple_protocol(
+            gid.clone(),
+            kind,
+            uri.to_string(),
+            out_hint,
+            size_hint,
+            dir,
+            options,
+        );
+        self.tasks.write().await.push(task);
+
+        if !pause {
+            self.try_start_next().await;
+        }
+
+        self.events
+            .send(EngineEvent::DownloadStart { gid: gid.clone() });
+
+        Ok(gid)
+    }
+
+    /// Common spawn machinery for ADC / Gnutella / G2 / giFT. Each protocol's `run_*_download` shares the same
+    /// signature: takes the URI, dir, atomic counters, cancel hooks, and an
+    /// `EngineOptions` snapshot, returns `Result<PathBuf, String>`
+    fn spawn_legacy_p2p_download(&self, task: &DownloadTask) {
+        let gid = task.gid.clone();
+        let uri = task.uris.first().cloned().unwrap_or_default();
+        let dir = task.dir.clone();
+        let kind = task.kind;
+        let events = self.events.clone();
+        let tasks = self.tasks.clone();
+        let active = self.active_downloads.clone();
+        let options = self.options.clone();
+
+        let cancel = Arc::new(AtomicBool::new(false));
+        let cancel_token = CancellationToken::new();
+        let total = Arc::new(AtomicU64::new(task.total_length));
+        let completed = Arc::new(AtomicU64::new(0));
+        let speed = Arc::new(AtomicU64::new(0));
+        let connections = Arc::new(AtomicU32::new(0));
+
+        let cancel_dl = cancel.clone();
+        let cancel_token_dl = cancel_token.clone();
+        let total_dl = total.clone();
+        let completed_dl = completed.clone();
+        let speed_dl = speed.clone();
+        let connections_dl = connections.clone();
+
+        let total_ref = total.clone();
+        let completed_ref = completed.clone();
+        let gid_clone = gid.clone();
+
+        let active_for_insert = active.clone();
+        let gid_for_insert = gid.clone();
+        let proto_label = match kind {
+            TaskKind::Adc => "adc",
+            TaskKind::Gnutella => "gnutella",
+            TaskKind::G2 => "g2",
+            TaskKind::Gift => "gift",
+            _ => "p2p",
+        };
+
+        let completion_handle = tokio::spawn(async move {
+            let ad = ActiveDownload {
+                cancel,
+                cancel_token: cancel_token.clone(),
+                total,
+                completed,
+                speed,
+                connections,
+                chunk_completed: Vec::new(),
+            };
+            active_for_insert.write().await.insert(gid_for_insert, ad);
+
+            let opts_snapshot = options.read().await.clone();
+
+            let download_result = match kind {
+                TaskKind::Adc => {
+                    super::adc::run_adc_download(
+                        &uri,
+                        &dir,
+                        &opts_snapshot,
+                        total_dl,
+                        completed_dl,
+                        speed_dl,
+                        cancel_dl,
+                        connections_dl,
+                        cancel_token_dl,
+                    )
+                    .await
+                }
+                TaskKind::Gnutella => {
+                    super::gnutella::run_gnutella_download(
+                        &uri,
+                        &dir,
+                        &opts_snapshot,
+                        total_dl,
+                        completed_dl,
+                        speed_dl,
+                        cancel_dl,
+                        connections_dl,
+                        cancel_token_dl,
+                    )
+                    .await
+                }
+                TaskKind::G2 => {
+                    super::g2::run_g2_download(
+                        &uri,
+                        &dir,
+                        &opts_snapshot,
+                        total_dl,
+                        completed_dl,
+                        speed_dl,
+                        cancel_dl,
+                        connections_dl,
+                        cancel_token_dl,
+                    )
+                    .await
+                }
+                TaskKind::Gift => {
+                    super::gift::run_gift_download(
+                        &uri,
+                        &dir,
+                        &opts_snapshot,
+                        total_dl,
+                        completed_dl,
+                        speed_dl,
+                        cancel_dl,
+                        connections_dl,
+                        cancel_token_dl,
+                    )
+                    .await
+                }
+                _ => Err("Unsupported protocol".to_string()),
+            };
+
+            let mut tasks_guard = tasks.write().await;
+            if let Some(task) = tasks_guard.iter_mut().find(|t| t.gid == gid_clone) {
+                task.total_length = total_ref.load(Ordering::Relaxed);
+                task.completed_length = completed_ref.load(Ordering::Relaxed);
+                task.download_speed = 0;
+
+                match download_result {
+                    Ok(path) => {
+                        log::info!(
+                            "[task:{}] {} download complete: {}",
+                            gid_clone,
+                            proto_label,
+                            path.display()
+                        );
+                        task.status = TaskStatus::Complete;
+                        task.files = vec![DownloadFile {
+                            index: "1".to_string(),
+                            path: path.to_string_lossy().to_string(),
+                            length: task.total_length.to_string(),
+                            completed_length: task.total_length.to_string(),
+                            selected: "true".to_string(),
+                            uris: task
+                                .uris
+                                .iter()
+                                .map(|u| FileUri {
+                                    uri: u.clone(),
+                                    status: "used".to_string(),
+                                })
+                                .collect(),
+                        }];
+                        events.send(EngineEvent::DownloadComplete {
+                            gid: gid_clone.clone(),
+                        });
+                    }
+                    Err(e) => {
+                        if e.contains("cancelled") {
+                            if task.status != TaskStatus::Removed {
+                                task.status = TaskStatus::Paused;
+                            }
+                            events.send(EngineEvent::DownloadPause {
+                                gid: gid_clone.clone(),
+                            });
+                        } else {
+                            tracing::error!(
+                                "[{}] Download failed for {}: {}",
+                                proto_label,
+                                gid_clone,
+                                e
+                            );
+                            task.status = TaskStatus::Error;
+                            task.error_code = Some(classify_error(&e, proto_label).to_string());
+                            task.error_message = Some(e);
+                            events.send(EngineEvent::DownloadError {
+                                gid: gid_clone.clone(),
+                            });
+                        }
+                    }
+                }
+            }
+            drop(tasks_guard);
+
+            active.write().await.remove(&gid_clone);
+        });
+
+        drop(completion_handle);
+    }
+
     /// Start download workers for waiting tasks up to max concurrent limit
     async fn try_start_next(&self) {
         let options_guard = self.options.read().await;
@@ -511,6 +762,14 @@ impl TaskManager {
                 task.status = TaskStatus::Active;
                 let merged = options_guard.merge_task_options(&task.options);
                 self.spawn_ftp_download(task, merged);
+                started += 1;
+            } else if matches!(
+                task.kind,
+                TaskKind::Adc | TaskKind::Gnutella | TaskKind::G2 | TaskKind::Gift
+            ) && !task.uris.is_empty()
+            {
+                task.status = TaskStatus::Active;
+                self.spawn_legacy_p2p_download(task);
                 started += 1;
             }
         }
@@ -1424,7 +1683,7 @@ impl TaskManager {
                                             stats.file_progress.get(fd.index).copied().unwrap_or(0);
                                         let is_selected = selected_indices
                                             .as_ref()
-                                            .map_or(true, |set| set.contains(&fd.index));
+                                            .is_none_or(|set| set.contains(&fd.index));
                                         if is_selected {
                                             selected_total += fd.length;
                                             selected_completed += completed;
@@ -1503,7 +1762,7 @@ impl TaskManager {
                                         .unwrap_or_default()
                                         .as_millis()
                                         as u64;
-                                    if now - task.seeding_since >= seed_time_ms as u64 {
+                                    if now - task.seeding_since >= seed_time_ms {
                                         should_stop = true;
                                     }
                                 }
@@ -1858,7 +2117,7 @@ impl TaskManager {
                             r.as_f64()
                                 .or_else(|| r.as_str().and_then(|s| s.parse().ok()))
                         })
-                        .map_or(true, |r| r <= 0.0);
+                        .is_none_or(|r| r <= 0.0);
                     if ratio_zero {
                         task.seeder = false;
                         task.seeding_since = 0;
@@ -1994,6 +2253,10 @@ impl TaskManager {
             super::task::TaskKind::Ed2k => "ed2k",
             super::task::TaskKind::M3u8 => "m3u8",
             super::task::TaskKind::Ftp => "ftp",
+            super::task::TaskKind::Adc => "adc",
+            super::task::TaskKind::Gnutella => "gnutella",
+            super::task::TaskKind::G2 => "g2",
+            super::task::TaskKind::Gift => "gift",
         }
         .to_string();
         let override_sink_id = task

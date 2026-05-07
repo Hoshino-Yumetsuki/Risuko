@@ -50,10 +50,10 @@ impl ChunkManager {
     /// Find the next chunk to download (Missing state, peer has it)
     pub fn next_needed_chunk(&self, peer_parts: &[bool]) -> Option<u64> {
         for i in 0..self.chunk_count as usize {
-            if self.chunk_status[i] == ChunkStatus::Missing {
-                if peer_parts.is_empty() || (i < peer_parts.len() && peer_parts[i]) {
-                    return Some(i as u64);
-                }
+            if self.chunk_status[i] == ChunkStatus::Missing
+                && (peer_parts.is_empty() || (i < peer_parts.len() && peer_parts[i]))
+            {
+                return Some(i as u64);
             }
         }
         None
@@ -76,6 +76,7 @@ impl ChunkManager {
 
         let file = OpenOptions::new()
             .create(true)
+            .truncate(false)
             .write(true)
             .open(&self.file_path)
             .await

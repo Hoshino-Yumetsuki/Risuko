@@ -96,8 +96,9 @@ impl ServerConnection {
                     }
                     Ok(_) => {
                         while let Ok(Some(packet)) = Ed2kPacket::decode(&mut buf) {
-                            if let Err(_) =
-                                Self::handle_server_packet(&event_tx_clone, &packet).await
+                            if Self::handle_server_packet(&event_tx_clone, &packet)
+                                .await
+                                .is_err()
                             {
                                 break;
                             }

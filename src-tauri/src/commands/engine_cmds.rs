@@ -96,13 +96,7 @@ fn parse_length_like(value: &Value) -> u64 {
                 .map(normalize_non_negative)
                 .unwrap_or(0)
         }
-        Value::Bool(flag) => {
-            if *flag {
-                1
-            } else {
-                0
-            }
-        }
+        Value::Bool(flag) if *flag => 1,
         _ => 0,
     }
 }
@@ -453,7 +447,7 @@ pub async fn probe_m3u8(url: String) -> Result<Value, String> {
 
     match playlist {
         ParsedPlaylist::Master { mut variants } => {
-            variants.sort_by(|a, b| b.bandwidth.cmp(&a.bandwidth));
+            variants.sort_by_key(|v| std::cmp::Reverse(v.bandwidth));
             let variant_vals: Vec<Value> = variants
                 .iter()
                 .map(|v| {
@@ -697,6 +691,38 @@ pub async fn add_uri(
             }
         } else if is_youtube {
             match manager.add_youtube_task(uri, task_options).await {
+                Ok(gid) => results.push(Value::Array(vec![Value::String(gid)])),
+                Err(e) => results.push(json!({"code": 1, "message": e})),
+            }
+        } else if engine::adc::is_adc_uri(uri) {
+            match manager
+                .add_legacy_p2p_task(engine::task::TaskKind::Adc, uri, task_options)
+                .await
+            {
+                Ok(gid) => results.push(Value::Array(vec![Value::String(gid)])),
+                Err(e) => results.push(json!({"code": 1, "message": e})),
+            }
+        } else if engine::gnutella::is_gnutella_uri(uri) {
+            match manager
+                .add_legacy_p2p_task(engine::task::TaskKind::Gnutella, uri, task_options)
+                .await
+            {
+                Ok(gid) => results.push(Value::Array(vec![Value::String(gid)])),
+                Err(e) => results.push(json!({"code": 1, "message": e})),
+            }
+        } else if engine::g2::is_g2_uri(uri) {
+            match manager
+                .add_legacy_p2p_task(engine::task::TaskKind::G2, uri, task_options)
+                .await
+            {
+                Ok(gid) => results.push(Value::Array(vec![Value::String(gid)])),
+                Err(e) => results.push(json!({"code": 1, "message": e})),
+            }
+        } else if engine::gift::is_gift_uri(uri) {
+            match manager
+                .add_legacy_p2p_task(engine::task::TaskKind::Gift, uri, task_options)
+                .await
+            {
                 Ok(gid) => results.push(Value::Array(vec![Value::String(gid)])),
                 Err(e) => results.push(json!({"code": 1, "message": e})),
             }

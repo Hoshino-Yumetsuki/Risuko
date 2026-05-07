@@ -163,7 +163,7 @@ pub async fn add_uri(uris: Vec<String>, options: Option<serde_json::Value>) -> R
         let opts = to_map(options);
         mgr.add_http_task(uris, opts)
             .await
-            .map_err(|e| Error::from_reason(e))
+            .map_err(Error::from_reason)
     })
     .await
 }
@@ -174,7 +174,7 @@ pub async fn add_torrent(data: Buffer, options: Option<serde_json::Value>) -> Re
         let opts = to_map(options);
         mgr.add_torrent_task(data.to_vec(), opts)
             .await
-            .map_err(|e| Error::from_reason(e))
+            .map_err(Error::from_reason)
     })
     .await
 }
@@ -185,7 +185,7 @@ pub async fn add_magnet(uri: String, options: Option<serde_json::Value>) -> Resu
         let opts = to_map(options);
         mgr.add_magnet_task(&uri, opts)
             .await
-            .map_err(|e| Error::from_reason(e))
+            .map_err(Error::from_reason)
     })
     .await
 }
@@ -196,7 +196,7 @@ pub async fn add_ed2k(uri: String, options: Option<serde_json::Value>) -> Result
         let opts = to_map(options);
         mgr.add_ed2k_task(&uri, opts)
             .await
-            .map_err(|e| Error::from_reason(e))
+            .map_err(Error::from_reason)
     })
     .await
 }
@@ -207,7 +207,7 @@ pub async fn add_m3u8(uri: String, options: Option<serde_json::Value>) -> Result
         let opts = to_map(options);
         mgr.add_m3u8_task(&uri, opts)
             .await
-            .map_err(|e| Error::from_reason(e))
+            .map_err(Error::from_reason)
     })
     .await
 }
@@ -218,7 +218,7 @@ pub async fn add_ftp(uri: String, options: Option<serde_json::Value>) -> Result<
         let opts = to_map(options);
         mgr.add_ftp_task(&uri, opts)
             .await
-            .map_err(|e| Error::from_reason(e))
+            .map_err(Error::from_reason)
     })
     .await
 }
@@ -227,20 +227,17 @@ pub async fn add_ftp(uri: String, options: Option<serde_json::Value>) -> Result<
 
 #[napi]
 pub async fn pause(gid: String) -> Result<()> {
-    with_manager(|mgr| async move { mgr.pause(&gid).await.map_err(|e| Error::from_reason(e)) })
-        .await
+    with_manager(|mgr| async move { mgr.pause(&gid).await.map_err(Error::from_reason) }).await
 }
 
 #[napi]
 pub async fn unpause(gid: String) -> Result<()> {
-    with_manager(|mgr| async move { mgr.unpause(&gid).await.map_err(|e| Error::from_reason(e)) })
-        .await
+    with_manager(|mgr| async move { mgr.unpause(&gid).await.map_err(Error::from_reason) }).await
 }
 
 #[napi]
 pub async fn remove(gid: String) -> Result<()> {
-    with_manager(|mgr| async move { mgr.remove(&gid).await.map_err(|e| Error::from_reason(e)) })
-        .await
+    with_manager(|mgr| async move { mgr.remove(&gid).await.map_err(Error::from_reason) }).await
 }
 
 #[napi]
@@ -267,9 +264,7 @@ pub async fn unpause_all() -> Result<()> {
 pub async fn tell_status(gid: String, keys: Option<Vec<String>>) -> Result<serde_json::Value> {
     with_manager(|mgr| async move {
         let k = keys.unwrap_or_default();
-        mgr.tell_status(&gid, &k)
-            .await
-            .map_err(|e| Error::from_reason(e))
+        mgr.tell_status(&gid, &k).await.map_err(Error::from_reason)
     })
     .await
 }
@@ -316,8 +311,7 @@ pub async fn get_global_stat() -> Result<serde_json::Value> {
 
 #[napi]
 pub async fn get_files(gid: String) -> Result<serde_json::Value> {
-    with_manager(|mgr| async move { mgr.get_files(&gid).await.map_err(|e| Error::from_reason(e)) })
-        .await
+    with_manager(|mgr| async move { mgr.get_files(&gid).await.map_err(Error::from_reason) }).await
 }
 
 #[napi]
@@ -327,20 +321,14 @@ pub async fn get_peers(gid: String) -> Result<serde_json::Value> {
 
 #[napi]
 pub async fn get_uris(gid: String) -> Result<serde_json::Value> {
-    with_manager(|mgr| async move { mgr.get_uris(&gid).await.map_err(|e| Error::from_reason(e)) })
-        .await
+    with_manager(|mgr| async move { mgr.get_uris(&gid).await.map_err(Error::from_reason) }).await
 }
 
 // Options
 
 #[napi]
 pub async fn get_option(gid: String) -> Result<serde_json::Value> {
-    with_manager(|mgr| async move {
-        mgr.get_option(&gid)
-            .await
-            .map_err(|e| Error::from_reason(e))
-    })
-    .await
+    with_manager(|mgr| async move { mgr.get_option(&gid).await.map_err(Error::from_reason) }).await
 }
 
 #[napi]
@@ -354,7 +342,7 @@ pub async fn change_option(gid: String, options: serde_json::Value) -> Result<()
         let opts = value_to_map(options);
         mgr.change_option(&gid, opts)
             .await
-            .map_err(|e| Error::from_reason(e))
+            .map_err(Error::from_reason)
     })
     .await
 }
@@ -373,8 +361,7 @@ pub async fn change_global_option(options: serde_json::Value) -> Result<()> {
 
 #[napi]
 pub async fn save_session() -> Result<()> {
-    with_manager(|mgr| async move { mgr.save_session().await.map_err(|e| Error::from_reason(e)) })
-        .await
+    with_manager(|mgr| async move { mgr.save_session().await.map_err(Error::from_reason) }).await
 }
 
 #[napi]
@@ -391,7 +378,7 @@ pub async fn remove_download_result(gid: String) -> Result<()> {
     with_manager(|mgr| async move {
         mgr.remove_download_result(&gid)
             .await
-            .map_err(|e| Error::from_reason(e))
+            .map_err(Error::from_reason)
     })
     .await
 }

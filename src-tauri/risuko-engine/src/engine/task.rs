@@ -44,6 +44,14 @@ pub enum TaskKind {
     Ed2k,
     M3u8,
     Ftp,
+    /// ADC / Direct Connect (NMDC + ADC dialects)
+    Adc,
+    /// Gnutella 0.6
+    Gnutella,
+    /// Gnutella2
+    G2,
+    /// giFT IPC client (delegates to a local giFT daemon)
+    Gift,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -495,6 +503,80 @@ impl DownloadTask {
             dir,
             out,
             total_length: 0,
+            completed_length: 0,
+            download_speed: 0,
+            upload_speed: 0,
+            upload_length: 0,
+            connections: 0,
+            files: initial_files,
+            error_code: None,
+            error_message: None,
+            options,
+            info_hash: None,
+            info_hash_v2: None,
+            meta_version: None,
+            bt_name: None,
+            seeder: false,
+            num_seeders: 0,
+            peers: Vec::new(),
+            piece_length: 0,
+            num_pieces: 0,
+            bt_comment: None,
+            bt_creation_date: None,
+            bt_announce_list: Vec::new(),
+            created_at: now_ms(),
+            seeding_since: 0,
+            chunk_progress: Vec::new(),
+        }
+    }
+
+    /// Generic constructor for the legacy P2P / IPC protocols (ADC, Gnutella,
+    /// G2, giFT). All share the same shape: a single
+    /// URI, an inferred output filename, and no protocol-specific top-level
+    /// fields beyond what the URI carries.
+    pub fn new_simple_protocol(
+        gid: String,
+        kind: TaskKind,
+        uri: String,
+        out_hint: String,
+        size_hint: u64,
+        dir: String,
+        options: Map<String, Value>,
+    ) -> Self {
+        let out = if !out_hint.is_empty() {
+            out_hint
+        } else {
+            options
+                .get("out")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string()
+        };
+        let file_path = if !out.is_empty() {
+            format!("{}/{}", dir, out)
+        } else {
+            String::new()
+        };
+        let initial_files = vec![DownloadFile {
+            index: "1".to_string(),
+            path: file_path,
+            length: size_hint.to_string(),
+            completed_length: "0".to_string(),
+            selected: "true".to_string(),
+            uris: vec![FileUri {
+                uri: uri.clone(),
+                status: "waiting".to_string(),
+            }],
+        }];
+
+        Self {
+            gid,
+            status: TaskStatus::Waiting,
+            kind,
+            uris: vec![uri],
+            dir,
+            out,
+            total_length: size_hint,
             completed_length: 0,
             download_speed: 0,
             upload_speed: 0,

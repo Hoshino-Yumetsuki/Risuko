@@ -241,7 +241,7 @@ import {
 	NONE_SELECTED_FILES,
 	SELECTED_ALL_FILES,
 } from "@shared/constants";
-import { splitTaskLinks } from "@shared/utils";
+import { detectUriProtocol, splitTaskLinks } from "@shared/utils";
 import logger from "@shared/utils/logger";
 import { readText } from "@tauri-apps/plugin-clipboard-manager";
 import { open as tauriOpen } from "@tauri-apps/plugin-dialog";
@@ -555,7 +555,38 @@ export default {
 			}
 			const items = links.map((u) => createUriBatchItem(u));
 			useAppStore().enqueueBatchItems(items);
+			this.notifyDetectedProtocols(links);
 			this.uriDraft = "";
+		},
+		notifyDetectedProtocols(links: string[]) {
+			if (!links || links.length === 0) {
+				return;
+			}
+			const counts = new Map<string, number>();
+			let unknown = 0;
+			for (const uri of links) {
+				const proto = detectUriProtocol(uri);
+				if (proto) {
+					counts.set(proto, (counts.get(proto) || 0) + 1);
+				} else {
+					unknown += 1;
+				}
+			}
+			if (counts.size === 0) {
+				return;
+			}
+			const parts = Array.from(counts.entries()).map(([name, n]) =>
+				n > 1 ? `${name} \u00d7${n}` : name,
+			);
+			if (unknown > 0) {
+				parts.push(unknown > 1 ? `Unknown \u00d7${unknown}` : "Unknown");
+			}
+			const summary = parts.join(", ");
+			const title =
+				counts.size === 1 && unknown === 0 && links.length === 1
+					? `${parts[0]} link detected`
+					: "Links detected";
+			toast.info(title, { description: summary });
 		},
 		handleDrop(ev: DragEvent) {
 			this.dragOver = false;
@@ -578,6 +609,11 @@ export default {
 				return;
 			}
 			useAppStore().enqueueBatchItems(items);
+			toast.info(
+				items.length === 1
+					? "BitTorrent (.torrent) detected"
+					: `BitTorrent (.torrent) \u00d7${items.length} detected`,
+			);
 		},
 		async browseTorrentFiles() {
 			try {

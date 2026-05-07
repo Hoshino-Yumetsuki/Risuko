@@ -164,7 +164,7 @@ impl RssManager {
 
                 // Prepend new items
                 let mut merged = fresh.clone();
-                merged.extend(existing.drain(..));
+                merged.append(existing);
                 merged.truncate(MAX_ITEMS_PER_FEED);
                 *existing = merged;
 
@@ -619,7 +619,7 @@ fn extract_enclosure(
                 return (
                     Some(url.to_string()),
                     content.content_type.as_ref().map(|m| m.to_string()),
-                    content.size.map(|s| s as u64),
+                    content.size,
                 );
             }
         }
@@ -631,7 +631,7 @@ fn extract_enclosure(
             return (
                 Some(link.href.clone()),
                 link.media_type.clone(),
-                link.length.map(|l| l as u64),
+                link.length,
             );
         }
     }

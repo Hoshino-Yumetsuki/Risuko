@@ -488,7 +488,7 @@ fn build_announce_list(meta: &bt::TorrentMeta) -> Vec<Vec<String>> {
         return meta
             .announce_list
             .iter()
-            .map(|tier| tier.iter().cloned().collect())
+            .map(|tier| tier.to_vec())
             .filter(|tier: &Vec<String>| !tier.is_empty())
             .collect();
     }

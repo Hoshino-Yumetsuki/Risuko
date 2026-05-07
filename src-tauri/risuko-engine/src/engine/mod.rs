@@ -20,6 +20,15 @@ pub mod upload;
 pub mod uri_selector;
 pub mod youtube;
 
+// Legacy P2P / IPC protocol stacks
+pub mod adc;
+pub mod g2;
+pub mod gift;
+pub mod gnutella;
+
+#[cfg(test)]
+mod p2p_tests;
+
 pub use session::SESSION_FILENAME;
 
 /// Suffix for per-chunk resume metadata sidecar file

@@ -263,6 +263,102 @@ export const isMagnetTask = (task) => {
 	return bittorrent && !bittorrent.info;
 };
 
+const hasUriScheme = (input: string, schemes: string[]) => {
+	if (!input || typeof input !== "string") {
+		return false;
+	}
+	const lower = input.trim().toLowerCase();
+	return schemes.some((s) => lower.startsWith(`${s}:`));
+};
+
+export const isAdcUri = (uri: string) =>
+	hasUriScheme(uri, ["adc", "adcs", "dchub", "nmdc"]);
+export const isGnutellaUri = (uri: string) =>
+	hasUriScheme(uri, ["gnutella", "gnet"]);
+export const isG2Uri = (uri: string) => hasUriScheme(uri, ["g2"]);
+export const isGiftUri = (uri: string) => hasUriScheme(uri, ["gift"]);
+export const isMagnetUri = (uri: string) => hasUriScheme(uri, ["magnet"]);
+export const isEd2kUri = (uri: string) => hasUriScheme(uri, ["ed2k"]);
+export const isThunderUri = (uri: string) =>
+	hasUriScheme(uri, ["thunder", "flashget", "qqdl"]);
+
+const YOUTUBE_HOST_RE =
+	/^(?:https?:\/\/)?(?:[\w-]+\.)*(?:youtube\.com|youtu\.be|youtube-nocookie\.com)\b/i;
+
+export const isYoutubeUri = (uri: string): boolean => {
+	if (!uri || typeof uri !== "string") {
+		return false;
+	}
+	return YOUTUBE_HOST_RE.test(uri.trim());
+};
+
+export const isM3u8Uri = (uri: string): boolean => {
+	if (!uri || typeof uri !== "string") {
+		return false;
+	}
+	const lower = uri.trim().toLowerCase().split("#")[0].split("?")[0];
+	return lower.endsWith(".m3u8") || lower.endsWith(".m3u");
+};
+
+/**
+ * Friendly protocol label inferred from a URI. Returns `null` when the
+ * scheme is unrecognised. Order matters: more specific schemes (magnet,
+ * yt-dlp hosts, m3u8 path suffix) take precedence over generic HTTP
+ */
+export const detectUriProtocol = (uri: string): string | null => {
+	if (!uri || typeof uri !== "string") {
+		return null;
+	}
+	const trimmed = uri.trim();
+	if (!trimmed) {
+		return null;
+	}
+	if (isMagnetUri(trimmed)) {
+		return "Magnet";
+	}
+	if (isEd2kUri(trimmed)) {
+		return "ED2K";
+	}
+	if (isAdcUri(trimmed)) {
+		return "ADC / Direct Connect";
+	}
+	if (isGnutellaUri(trimmed)) {
+		return "Gnutella";
+	}
+	if (isG2Uri(trimmed)) {
+		return "Gnutella2 (G2)";
+	}
+	if (isGiftUri(trimmed)) {
+		return "giFT";
+	}
+	if (isThunderUri(trimmed)) {
+		return "Thunder";
+	}
+	if (isSftpLink(trimmed)) {
+		return "SFTP";
+	}
+	if (isFtpsLink(trimmed)) {
+		return "FTPS";
+	}
+	if (isFtpLink(trimmed)) {
+		return "FTP";
+	}
+	if (isYoutubeUri(trimmed)) {
+		return "YouTube";
+	}
+	if (isM3u8Uri(trimmed)) {
+		return "M3U8 / HLS";
+	}
+	const lower = trimmed.toLowerCase();
+	if (lower.startsWith("https://")) {
+		return "HTTPS";
+	}
+	if (lower.startsWith("http://")) {
+		return "HTTP";
+	}
+	return null;
+};
+
 export const checkTaskIsSeeder = (task) => {
 	const { bittorrent, seeder } = task;
 	return !!bittorrent && seeder === "true";

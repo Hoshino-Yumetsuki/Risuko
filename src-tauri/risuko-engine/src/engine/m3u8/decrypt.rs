@@ -47,7 +47,7 @@ pub fn decrypt_segment(data: &[u8], key: &[u8; 16], iv: &[u8; 16]) -> Result<Vec
     }
 
     // AES-128-CBC requires data length to be multiple of 16
-    if data.len() % 16 != 0 {
+    if !data.len().is_multiple_of(16) {
         return Err(format!(
             "Ciphertext length {} is not a multiple of 16",
             data.len()

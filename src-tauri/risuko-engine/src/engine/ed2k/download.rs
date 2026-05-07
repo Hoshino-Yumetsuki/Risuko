@@ -1,5 +1,5 @@
 use std::net::SocketAddrV4;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -194,7 +194,7 @@ async fn run_server_session(
     server_ip: u32,
     server_port_val: u16,
     file_hash: [u8; 16],
-    file_path: &PathBuf,
+    file_path: &Path,
     chunks: &Arc<Mutex<ChunkManager>>,
     completed: &Arc<AtomicU64>,
     speed: &Arc<AtomicU64>,
@@ -219,7 +219,7 @@ async fn run_server_session(
         {
             let cm = chunks.lock().await;
             if cm.is_complete() {
-                return Ok(file_path.clone());
+                return Ok(file_path.to_path_buf());
             }
         }
 

@@ -201,7 +201,7 @@ impl UploadSinkManager {
                 job.uploaded = p.uploaded;
             }
         }
-        jobs.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        jobs.sort_by_key(|j| std::cmp::Reverse(j.created_at));
         jobs
     }
 
@@ -780,15 +780,11 @@ fn is_cross_device_error(e: &std::io::Error) -> bool {
 /// the credential)
 fn merge_secrets(new: &mut SinkConfig, old: &SinkConfig) {
     match (new, old) {
-        (SinkConfig::Webdav(n), SinkConfig::Webdav(o)) => {
-            if n.password.is_empty() {
-                n.password = o.password.clone();
-            }
+        (SinkConfig::Webdav(n), SinkConfig::Webdav(o)) if n.password.is_empty() => {
+            n.password = o.password.clone();
         }
-        (SinkConfig::S3(n), SinkConfig::S3(o)) => {
-            if n.secret_access_key.is_empty() {
-                n.secret_access_key = o.secret_access_key.clone();
-            }
+        (SinkConfig::S3(n), SinkConfig::S3(o)) if n.secret_access_key.is_empty() => {
+            n.secret_access_key = o.secret_access_key.clone();
         }
         (SinkConfig::Sftp(n), SinkConfig::Sftp(o)) => {
             if n.password.is_empty() {
@@ -798,10 +794,8 @@ fn merge_secrets(new: &mut SinkConfig, old: &SinkConfig) {
                 n.private_key = o.private_key.clone();
             }
         }
-        (SinkConfig::Ftp(n), SinkConfig::Ftp(o)) => {
-            if n.password.is_empty() {
-                n.password = o.password.clone();
-            }
+        (SinkConfig::Ftp(n), SinkConfig::Ftp(o)) if n.password.is_empty() => {
+            n.password = o.password.clone();
         }
         // Protocol switched on edit \u2014 nothing to inherit
         _ => {}

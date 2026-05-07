@@ -53,7 +53,7 @@ impl ChunkRange {
         Self { start, end }
     }
 
-    fn to_range_header_value(&self) -> String {
+    fn to_range_header_value(self) -> String {
         format!("bytes={}-{}", self.start, self.end)
     }
 }
@@ -217,7 +217,7 @@ struct PieceQueue {
 impl PieceQueue {
     fn new(content_length: u64) -> Self {
         debug_assert!(content_length > 0);
-        let n = ((content_length + PIECE_SIZE - 1) / PIECE_SIZE) as usize;
+        let n = content_length.div_ceil(PIECE_SIZE) as usize;
         let mut pieces = Vec::with_capacity(n);
         for i in 0..n {
             let offset = i as u64 * PIECE_SIZE;
@@ -1958,9 +1958,7 @@ async fn run_single_download(
         ));
     }
 
-    if let Err(e) = result {
-        return Err(e);
-    }
+    result?;
     let final_path = finalize_download(part_path, filename, dir_path)?;
     Ok((final_path, resp_last_modified))
 }
@@ -2049,8 +2047,8 @@ async fn run_speed_tracker(
 
 /// Rename the .part file to the final filename
 fn finalize_download(part_path: &Path, filename: &str, dir_path: &Path) -> Result<PathBuf, String> {
-    let final_name = if filename.ends_with(PART_SUFFIX) {
-        filename[..filename.len() - PART_SUFFIX.len()].to_string()
+    let final_name = if let Some(stripped) = filename.strip_suffix(PART_SUFFIX) {
+        stripped.to_string()
     } else {
         filename.to_string()
     };
@@ -2112,7 +2110,7 @@ fn parse_http_date(s: &str) -> Option<filetime::FileTime> {
 
             // Calculate seconds since epoch
             let days = days_from_civil(year, month, day)?;
-            let secs = days as i64 * 86400 + hour as i64 * 3600 + min as i64 * 60 + sec as i64;
+            let secs = days * 86400 + hour as i64 * 3600 + min as i64 * 60 + sec as i64;
             if secs >= 0 {
                 return Some(filetime::FileTime::from_unix_time(secs, 0));
             }
@@ -2125,7 +2123,7 @@ fn parse_http_date(s: &str) -> Option<filetime::FileTime> {
 /// Convert a civil date (year, month, day) to days since Unix epoch.
 /// Algorithm from Howard Hinnant.
 fn days_from_civil(y: i64, m: u32, d: u32) -> Option<i64> {
-    if m < 1 || m > 12 || d < 1 || d > 31 {
+    if !(1..=12).contains(&m) || !(1..=31).contains(&d) {
         return None;
     }
     let y = if m <= 2 { y - 1 } else { y };

@@ -316,8 +316,8 @@ pub(super) fn finalize_download(
     filename: &str,
     dir_path: &Path,
 ) -> Result<PathBuf, String> {
-    let final_name = if filename.ends_with(PART_SUFFIX) {
-        filename[..filename.len() - PART_SUFFIX.len()].to_string()
+    let final_name = if let Some(stripped) = filename.strip_suffix(PART_SUFFIX) {
+        stripped.to_string()
     } else {
         filename.to_string()
     };

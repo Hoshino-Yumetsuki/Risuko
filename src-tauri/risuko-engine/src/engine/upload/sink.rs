@@ -158,17 +158,13 @@ fn default_ftp_port() -> u16 {
 /// What the manager should do with the local file once the sink reports success
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
+#[derive(Default)]
 pub enum PostUploadAction {
+    #[default]
     Keep,
     Trash,
     /// Move into a configured directory (path resolved at action time)
     Move,
-}
-
-impl Default for PostUploadAction {
-    fn default() -> Self {
-        Self::Keep
-    }
 }
 
 /// Persisted sink record — what the user added in Preferences. Holds the

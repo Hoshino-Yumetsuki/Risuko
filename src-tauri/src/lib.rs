@@ -1,3 +1,5 @@
+#![allow(clippy::large_enum_variant)]
+
 mod bridge;
 pub mod cli;
 mod commands;
@@ -222,7 +224,7 @@ pub fn run() {
                     // Must spawn into Tauri's async runtime so the tokio
                     // reactor is available for the inner tokio::spawn call.
                     tauri::async_runtime::spawn(async move {
-                        let _ = RssManager::start_polling(rss);
+                        drop(RssManager::start_polling(rss));
                     });
                 }
             }
@@ -240,7 +242,7 @@ pub fn run() {
                     return;
                 }
                 api.prevent_close();
-                let _ = commands::app_cmds::hide_main_window(&window.app_handle());
+                let _ = commands::app_cmds::hide_main_window(window.app_handle());
             }
         })
         .invoke_handler(tauri::generate_handler![

@@ -211,7 +211,7 @@ pub fn parse_file_status(payload: &[u8]) -> Result<([u8; 16], Vec<bool>), String
     file_hash.copy_from_slice(&payload[0..16]);
 
     let part_count = u16::from_le_bytes([payload[16], payload[17]]) as usize;
-    let byte_count = (part_count + 7) / 8;
+    let byte_count = part_count.div_ceil(8);
     if payload.len() < 18 + byte_count {
         return Err("File Status bitmap truncated".to_string());
     }

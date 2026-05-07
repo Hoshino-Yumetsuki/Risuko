@@ -53,7 +53,20 @@
 	"plugins": {
 		"deep-link": {
 			"desktop": {
-				"schemes": ["mo", "risuko", "magnet", "thunder", "ed2k"]
+				"schemes": [
+					"mo",
+					"risuko",
+					"magnet",
+					"thunder",
+					"ed2k",
+					"adc",
+					"adcs",
+					"dchub",
+					"nmdc",
+					"gnutella",
+					"gnet",
+					"g2"
+				]
 			}
 		},
 		"updater": {
