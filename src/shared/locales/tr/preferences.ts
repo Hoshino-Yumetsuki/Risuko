@@ -74,6 +74,19 @@ export default {
 	"rpc-listen-port": "RPC Dinleme Portu",
 	"rpc-secret": "RPC sırrı",
 	"rpc-secret-tips": "RPC gizli kılavuzunu görüntüle",
+	"engine-overrides": "Motor geçersiz kılmaları (JSON)",
+	"engine-overrides-placeholder":
+		'{\n  "piece-length": "1M",\n  "timeout": 60\n}',
+	"engine-overrides-tips":
+		"Gelişmiş: rastgele motor seçenek anahtarlarını bir JSON nesnesi olarak ayarlayın. Değişiklikler yeniden başlatmadan sonra geçerli olur.",
+	"engine-overrides-invalid":
+		"Motor geçersiz kılmaları geçerli bir JSON nesnesi olmalıdır.",
+	"external-engine-enable": "Harici motor kullan",
+	"external-engine-enable-tips":
+		"Etkinleştirildiğinde Risuko gömülü motoru otomatik olarak başlatmaz.",
+	"external-engine-ip": "Harici motor IP'si",
+	"external-engine-port": "Harici motor bağlantı noktası",
+	"external-engine-secret": "Harici motor gizli anahtarı",
 	developer: "Geliştirici",
 	"user-agent": "User-Agent",
 	"mock-user-agent": "Sahte Kullanıcı Kimliği (User-Agent)",

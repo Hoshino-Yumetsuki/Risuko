@@ -80,6 +80,19 @@ export default {
 	"rpc-listen-port": "RPC-Hörport",
 	"rpc-secret": "RPC-Geheimnis",
 	"rpc-secret-tips": "Geheime RPC-Anleitung anzeigen",
+	"engine-overrides": "Engine-Überschreibungen (JSON)",
+	"engine-overrides-placeholder":
+		'{\n  "piece-length": "1M",\n  "timeout": 60\n}',
+	"engine-overrides-tips":
+		"Erweitert: Beliebige Engine-Optionsschlüssel als JSON-Objekt setzen. Änderungen werden nach einem Neustart wirksam.",
+	"engine-overrides-invalid":
+		"Engine-Überschreibungen müssen ein gültiges JSON-Objekt sein.",
+	"external-engine-enable": "Externe Engine verwenden",
+	"external-engine-enable-tips":
+		"Wenn aktiviert, startet Risuko die eingebettete Engine nicht automatisch.",
+	"external-engine-ip": "IP der externen Engine",
+	"external-engine-port": "Port der externen Engine",
+	"external-engine-secret": "Geheimnis der externen Engine",
 	developer: "Entwickler",
 	"user-agent": "User-Agent",
 	"mock-user-agent": "User-Agent simulieren",

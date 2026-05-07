@@ -79,6 +79,19 @@ export default {
 	"rpc-listen-port": "RPC слушащ порт",
 	"rpc-secret": "RPC Secret",
 	"rpc-secret-tips": "Гледайте инструкцията RPC Secret",
+	"engine-overrides": "Заместващи настройки на двигателя (JSON)",
+	"engine-overrides-placeholder":
+		'{\n  "piece-length": "1M",\n  "timeout": 60\n}',
+	"engine-overrides-tips":
+		"Разширено: задайте произволни ключове за опциите на двигателя като JSON обект. Промените влизат в сила след рестарт.",
+	"engine-overrides-invalid":
+		"Заместващите настройки на двигателя трябва да са валиден JSON обект.",
+	"external-engine-enable": "Използвай външен двигател",
+	"external-engine-enable-tips":
+		"Когато е включено, Risuko няма автоматично да стартира вградения двигател.",
+	"external-engine-ip": "IP на външния двигател",
+	"external-engine-port": "Порт на външния двигател",
+	"external-engine-secret": "Тайна на външния двигател",
 	developer: "developer",
 	"Mock-user-agent": "оформление User-Agent",
 	"app-log-path": "път към дневника на приложението",

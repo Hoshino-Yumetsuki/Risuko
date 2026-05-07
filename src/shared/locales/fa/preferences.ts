@@ -72,6 +72,19 @@ export default {
 	"rpc-listen-port": "پورت گوش دادن به RPC",
 	"rpc-secret": "رمز RPC",
 	"rpc-secret-tips": "مشاهده راهنمای رمز RPC",
+	"engine-overrides": "جایگزینی تنظیمات موتور (JSON)",
+	"engine-overrides-placeholder":
+		'{\n  "piece-length": "1M",\n  "timeout": 60\n}',
+	"engine-overrides-tips":
+		"پیشرفته: کلیدهای دلخواه گزینه‌های موتور را به صورت یک شیء JSON تنظیم کنید. تغییرات پس از راه‌اندازی دوباره اعمال می‌شوند.",
+	"engine-overrides-invalid":
+		"جایگزینی تنظیمات موتور باید یک شیء JSON معتبر باشد.",
+	"external-engine-enable": "استفاده از موتور خارجی",
+	"external-engine-enable-tips":
+		"وقتی این گزینه فعال باشد، Risuko موتور داخلی را به صورت خودکار اجرا نمی‌کند.",
+	"external-engine-ip": "IP موتور خارجی",
+	"external-engine-port": "پورت موتور خارجی",
+	"external-engine-secret": "رمز موتور خارجی",
 	developer: "توسعه‌دهنده",
 	"user-agent": "User-Agent",
 	"mock-user-agent": "جعل عامل کاربر",

@@ -74,6 +74,19 @@ export default {
 	"rpc-listen-port": "RPC-hallgató-port",
 	"rpc-secret": "RPC Secret",
 	"rpc-secret-tips": "RPC Secret kézikönyv megnyitasa",
+	"engine-overrides": "Motorfelülbírálások (JSON)",
+	"engine-overrides-placeholder":
+		'{\n  "piece-length": "1M",\n  "timeout": 60\n}',
+	"engine-overrides-tips":
+		"Haladó: tetszőleges motorbeállítás-kulcsokat adhatsz meg JSON-objektumként. A módosítások újraindítás után lépnek életbe.",
+	"engine-overrides-invalid":
+		"A motorfelülbírálásoknak érvényes JSON-objektumnak kell lenniük.",
+	"external-engine-enable": "Külső motor használata",
+	"external-engine-enable-tips":
+		"Bekapcsolva a Risuko nem indítja el automatikusan a beépített motort.",
+	"external-engine-ip": "Külső motor IP-címe",
+	"external-engine-port": "Külső motor portja",
+	"external-engine-secret": "Külső motor titka",
 	developer: "feljesztö",
 	"user-agent": "User-Agent",
 	"mock-user-agent": "User-Agent-t",

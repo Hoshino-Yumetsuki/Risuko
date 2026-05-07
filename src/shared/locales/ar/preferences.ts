@@ -71,6 +71,18 @@ export default {
 	"rpc-listen-port": "منفذ استماع RPC",
 	"rpc-secret": "رمز RPC السري",
 	"rpc-secret-tips": "عرض دليل رمز RPC السري",
+	"engine-overrides": "تجاوزات المحرك (JSON)",
+	"engine-overrides-placeholder":
+		'{\n  "piece-length": "1M",\n  "timeout": 60\n}',
+	"engine-overrides-tips":
+		"متقدم: عيّن أي مفاتيح لخيار المحرك ككائن JSON. تسري التغييرات بعد إعادة التشغيل.",
+	"engine-overrides-invalid": "يجب أن تكون تجاوزات المحرك كائن JSON صالحًا.",
+	"external-engine-enable": "استخدام محرك خارجي",
+	"external-engine-enable-tips":
+		"عند التفعيل، لن يقوم Risuko بتشغيل المحرك المدمج تلقائيًا.",
+	"external-engine-ip": "عنوان IP للمحرك الخارجي",
+	"external-engine-port": "منفذ المحرك الخارجي",
+	"external-engine-secret": "السر الخاص بالمحرك الخارجي",
 	developer: "المطور",
 	"user-agent": "User-Agent",
 	"mock-user-agent": "وكيل مستخدم وهمي",

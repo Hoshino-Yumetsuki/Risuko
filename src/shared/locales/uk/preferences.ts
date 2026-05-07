@@ -78,6 +78,19 @@ export default {
 	"rpc-listen-port": "Порт прослуховування RPC",
 	"rpc-secret": "RPC Secret",
 	"rpc-secret-tips": "Дивитись інструкцію RPC Secret",
+	"engine-overrides": "Перевизначення двигуна (JSON)",
+	"engine-overrides-placeholder":
+		'{\n  "piece-length": "1M",\n  "timeout": 60\n}',
+	"engine-overrides-tips":
+		"Додатково: задайте довільні ключі параметрів двигуна як JSON-об'єкт. Зміни набудуть чинності після перезапуску.",
+	"engine-overrides-invalid":
+		"Перевизначення двигуна мають бути коректним JSON-об'єктом.",
+	"external-engine-enable": "Використовувати зовнішній двигун",
+	"external-engine-enable-tips":
+		"Після ввімкнення Risuko не запускатиме вбудований двигун автоматично.",
+	"external-engine-ip": "IP зовнішнього двигуна",
+	"external-engine-port": "Порт зовнішнього двигуна",
+	"external-engine-secret": "Секрет зовнішнього двигуна",
 	developer: "Розробник",
 	"user-agent": "User-Agent",
 	"mock-user-agent": "Макет User-Agent",

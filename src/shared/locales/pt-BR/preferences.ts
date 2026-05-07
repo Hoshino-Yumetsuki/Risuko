@@ -78,6 +78,19 @@ export default {
 	"rpc-listen-port": "Porta de Escuta RPC",
 	"rpc-secret": "Segredo de RPC",
 	"rpc-secret-tips": "Veja o manual secreto de RPC",
+	"engine-overrides": "Substituições do motor (JSON)",
+	"engine-overrides-placeholder":
+		'{\n  "piece-length": "1M",\n  "timeout": 60\n}',
+	"engine-overrides-tips":
+		"Avançado: defina chaves arbitrárias de opções do motor como um objeto JSON. As alterações entram em vigor após reiniciar.",
+	"engine-overrides-invalid":
+		"As substituições do motor devem ser um objeto JSON válido.",
+	"external-engine-enable": "Usar motor externo",
+	"external-engine-enable-tips":
+		"Quando ativado, o Risuko não iniciará automaticamente o motor embutido.",
+	"external-engine-ip": "IP do motor externo",
+	"external-engine-port": "Porta do motor externo",
+	"external-engine-secret": "Segredo do motor externo",
 	developer: "Desenvolverdor",
 	"user-agent": "User-Agent",
 	"mock-user-agent": "Mock User-Agent",

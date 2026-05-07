@@ -79,6 +79,19 @@ export default {
 	"rpc-listen-port": "Port d'Escolta RPC",
 	"rpc-secret": "Clau RPC",
 	"rpc-secret-tips": "Mirar manual de la clau RPC",
+	"engine-overrides": "Sobreescriptures del motor (JSON)",
+	"engine-overrides-placeholder":
+		'{\n  "piece-length": "1M",\n  "timeout": 60\n}',
+	"engine-overrides-tips":
+		"Avançat: estableix claus arbitràries d'opcions del motor com a objecte JSON. Els canvis tenen efecte després de reiniciar.",
+	"engine-overrides-invalid":
+		"Les sobreescriptures del motor han de ser un objecte JSON vàlid.",
+	"external-engine-enable": "Utilitza un motor extern",
+	"external-engine-enable-tips":
+		"Quan s'activa, Risuko no iniciarà automàticament el motor integrat.",
+	"external-engine-ip": "IP del motor extern",
+	"external-engine-port": "Port del motor extern",
+	"external-engine-secret": "Secret del motor extern",
 	developer: "Desenvolupador",
 	"user-agent": "User-Agent",
 	"mock-user-agent": "Mock User-Agent",

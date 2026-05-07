@@ -71,6 +71,18 @@ export default {
 	"rpc-listen-port": "RPC 청취 포트",
 	"rpc-secret": "RPC 비밀",
 	"rpc-secret-tips": "RPC 비밀 매뉴얼 보기",
+	"engine-overrides": "엔진 오버라이드 (JSON)",
+	"engine-overrides-placeholder":
+		'{\n  "piece-length": "1M",\n  "timeout": 60\n}',
+	"engine-overrides-tips":
+		"고급 설정: 임의의 엔진 옵션 키를 JSON 객체로 지정합니다. 변경 사항은 재시작 후 적용됩니다.",
+	"engine-overrides-invalid": "엔진 오버라이드는 유효한 JSON 객체여야 합니다.",
+	"external-engine-enable": "외부 엔진 사용",
+	"external-engine-enable-tips":
+		"활성화하면 Risuko는 내장 엔진을 자동으로 시작하지 않습니다.",
+	"external-engine-ip": "외부 엔진 IP",
+	"external-engine-port": "외부 엔진 포트",
+	"external-engine-secret": "외부 엔진 비밀키",
 	developer: "개발자",
 	"user-agent": "User-Agent",
 	"mock-user-agent": "모의 사용자 에이전트",

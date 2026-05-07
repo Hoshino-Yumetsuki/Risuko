@@ -1114,10 +1114,7 @@ mod tests {
         });
 
         let response = process_single_request(&state, request).await.unwrap();
-        let results = response
-            .get("result")
-            .and_then(|v| v.as_array())
-            .unwrap();
+        let results = response.get("result").and_then(|v| v.as_array()).unwrap();
 
         assert_eq!(results.len(), 2);
         assert_eq!(results[0].get("code").and_then(|v| v.as_i64()), Some(1));
@@ -1157,10 +1154,7 @@ mod tests {
         });
 
         let response = process_single_request(&state, request).await.unwrap();
-        let results = response
-            .get("result")
-            .and_then(|v| v.as_array())
-            .unwrap();
+        let results = response.get("result").and_then(|v| v.as_array()).unwrap();
 
         assert_eq!(results.len(), 2);
         assert_eq!(results[0].get("code").and_then(|v| v.as_i64()), Some(1));

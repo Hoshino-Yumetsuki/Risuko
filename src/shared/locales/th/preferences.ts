@@ -71,6 +71,18 @@ export default {
 	"rpc-listen-port": "พอร์ตฟัง RPC",
 	"rpc-secret": "RPC Secret",
 	"rpc-secret-tips": "ดูคู่มือลับ RPC",
+	"engine-overrides": "การแทนที่ค่าของเอนจิน (JSON)",
+	"engine-overrides-placeholder":
+		'{\n  "piece-length": "1M",\n  "timeout": 60\n}',
+	"engine-overrides-tips":
+		"ขั้นสูง: กำหนดคีย์ตัวเลือกของเอนจินตามต้องการในรูปแบบออบเจ็กต์ JSON การเปลี่ยนแปลงจะมีผลหลังรีสตาร์ต",
+	"engine-overrides-invalid": "การแทนที่ค่าของเอนจินต้องเป็นออบเจ็กต์ JSON ที่ถูกต้อง",
+	"external-engine-enable": "ใช้เอนจินภายนอก",
+	"external-engine-enable-tips":
+		"เมื่อเปิดใช้งาน Risuko จะไม่เริ่มเอนจินที่ฝังมาโดยอัตโนมัติ",
+	"external-engine-ip": "IP ของเอนจินภายนอก",
+	"external-engine-port": "พอร์ตของเอนจินภายนอก",
+	"external-engine-secret": "รหัสลับของเอนจินภายนอก",
 	developer: "นักพัฒนา",
 	"user-agent": "User-Agent",
 	"mock-user-agent": "จำลอง User-Agent",

@@ -71,6 +71,19 @@ export default {
 	"rpc-listen-port": "Cổng Nghe RPC",
 	"rpc-secret": "RPC bí mật",
 	"rpc-secret-tips": "Xem RPC bí mật thủ công",
+	"engine-overrides": "Ghi đè engine (JSON)",
+	"engine-overrides-placeholder":
+		'{\n  "piece-length": "1M",\n  "timeout": 60\n}',
+	"engine-overrides-tips":
+		"Nâng cao: đặt các khóa tùy chọn engine bất kỳ dưới dạng đối tượng JSON. Các thay đổi sẽ có hiệu lực sau khi khởi động lại.",
+	"engine-overrides-invalid":
+		"Ghi đè engine phải là một đối tượng JSON hợp lệ.",
+	"external-engine-enable": "Sử dụng engine bên ngoài",
+	"external-engine-enable-tips":
+		"Khi bật, Risuko sẽ không tự động khởi động engine tích hợp.",
+	"external-engine-ip": "IP engine bên ngoài",
+	"external-engine-port": "Cổng engine bên ngoài",
+	"external-engine-secret": "Mã bí mật engine bên ngoài",
 	developer: "Lập trình viên",
 	"user-agent": "User-Agent",
 	"mock-user-agent": "Mock User-Agent",

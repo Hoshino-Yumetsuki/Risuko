@@ -76,6 +76,19 @@ export default {
 	"rpc-listen-port": "Port nasłuchu RPC",
 	"rpc-secret": "Sekret RPC",
 	"rpc-secret-tips": "Pokaż instrukcję sekretu RPC",
+	"engine-overrides": "Nadpisania silnika (JSON)",
+	"engine-overrides-placeholder":
+		'{\n  "piece-length": "1M",\n  "timeout": 60\n}',
+	"engine-overrides-tips":
+		"Zaawansowane: ustaw dowolne klucze opcji silnika jako obiekt JSON. Zmiany zaczną działać po ponownym uruchomieniu.",
+	"engine-overrides-invalid":
+		"Nadpisania silnika muszą być prawidłowym obiektem JSON.",
+	"external-engine-enable": "Użyj zewnętrznego silnika",
+	"external-engine-enable-tips":
+		"Po włączeniu Risuko nie uruchomi automatycznie wbudowanego silnika.",
+	"external-engine-ip": "IP zewnętrznego silnika",
+	"external-engine-port": "Port zewnętrznego silnika",
+	"external-engine-secret": "Sekret zewnętrznego silnika",
 	developer: "Developer",
 	"user-agent": "User-Agent",
 	"mock-user-agent": "Udawaj user-agent'a",

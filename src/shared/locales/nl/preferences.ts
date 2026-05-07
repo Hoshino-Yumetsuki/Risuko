@@ -74,6 +74,19 @@ export default {
 	"rpc-listen-port": "RPC Luisterpoort",
 	"rpc-secret": "RPC geheim",
 	"rpc-secret-tips": "bekijk RPC geheim handleiding",
+	"engine-overrides": "Engine-overrides (JSON)",
+	"engine-overrides-placeholder":
+		'{\n  "piece-length": "1M",\n  "timeout": 60\n}',
+	"engine-overrides-tips":
+		"Geavanceerd: stel willekeurige engine-optiesleutels in als een JSON-object. Wijzigingen worden van kracht na een herstart.",
+	"engine-overrides-invalid":
+		"Engine-overrides moeten een geldig JSON-object zijn.",
+	"external-engine-enable": "Externe engine gebruiken",
+	"external-engine-enable-tips":
+		"Wanneer ingeschakeld, start Risuko de ingebouwde engine niet automatisch.",
+	"external-engine-ip": "IP-adres van externe engine",
+	"external-engine-port": "Poort van externe engine",
+	"external-engine-secret": "Geheim van externe engine",
 	developer: "Ontwikkelaar",
 	"user-agent": "User-Agent",
 	"mock-user-agent": "User-Agent nabootsen",

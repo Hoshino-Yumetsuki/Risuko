@@ -164,6 +164,17 @@ export default {
 	"rpc-listen-port": "RPC 監聽埠",
 	"rpc-secret": "RPC 授權密鑰",
 	"rpc-secret-tips": "查看說明手冊",
+	"engine-overrides": "引擎覆寫設定（JSON）",
+	"engine-overrides-placeholder":
+		'{\n  "piece-length": "1M",\n  "timeout": 60\n}',
+	"engine-overrides-tips":
+		"進階功能：用 JSON 物件設定任意引擎選項鍵，儲存後重啟生效。",
+	"engine-overrides-invalid": "引擎覆寫設定必須是合法的 JSON 物件。",
+	"external-engine-enable": "使用外部引擎",
+	"external-engine-enable-tips": "啟用後，Risuko 將不會自動啟動內建引擎。",
+	"external-engine-ip": "外部引擎 IP",
+	"external-engine-port": "外部引擎連接埠",
+	"external-engine-secret": "外部引擎密鑰",
 	developer: "開發者",
 	"user-agent": "User-Agent",
 	"mock-user-agent": "偽裝 User Agent",
