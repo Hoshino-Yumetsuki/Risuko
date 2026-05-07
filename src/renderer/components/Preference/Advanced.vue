@@ -1173,17 +1173,22 @@ const initForm = (config) => {
 };
 
 const sanitizeEngineOverrides = (input) => {
-  const reservedKeys = new Set(["rpc-host", "rpc-listen-port", "rpc-secret"]);
-	const filtered = {};
+  const reservedKeys = new Set(["rpc-host"]);
+  const filtered = {};
   const droppedKeys = [];
-	for (const [key, value] of Object.entries(input || {})) {
-		const normalized = `${key}`.toLowerCase();
-    if (reservedKeys.has(normalized)) {
+  for (const [key, value] of Object.entries(input || {})) {
+    const normalized = `${key}`.toLowerCase();
+    if (
+      reservedKeys.has(normalized) ||
+      normalized.startsWith("rpc-") ||
+      normalized.endsWith("-port") ||
+      normalized.endsWith("-secret")
+    ) {
       droppedKeys.push(key);
-			continue;
-		}
-		filtered[key] = value;
-	}
+      continue;
+    }
+    filtered[key] = value;
+  }
   return { filtered, droppedKeys };
 };
 

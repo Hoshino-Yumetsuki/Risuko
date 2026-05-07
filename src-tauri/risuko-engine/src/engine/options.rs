@@ -3,15 +3,7 @@ use serde_json::{Map, Value};
 
 use super::speed_limiter::parse_speed_limit;
 
-const RESERVED_ENGINE_KEYS: &[&str] = &[
-    "dht-listen-port",
-    "ed2k-port",
-    "listen-port",
-    "rpc-host",
-    "rpc-port",
-    "rpc-listen-port",
-    "rpc-secret",
-];
+const RESERVED_ENGINE_KEYS: &[&str] = &["rpc-host"];
 
 fn is_reserved_engine_key(key: &str) -> bool {
     let normalized = key.to_ascii_lowercase();
@@ -291,18 +283,18 @@ mod tests {
             json!({
                 "dir": "/override-dir",
                 "max-concurrent-downloads": 12,
-	                "rpc-host": "10.0.0.2",
-	                "rpc-listen-port": 17000,
-	                "rpc-secret": "override-secret"
+                "rpc-host": "10.0.0.2",
+                "rpc-listen-port": 17000,
+                "rpc-secret": "override-secret"
             }),
         );
 
         let opts = EngineOptions::from_config(&make_system(), &user);
         assert_eq!(opts.dir(), "/override-dir");
         assert_eq!(opts.max_concurrent_downloads(), 12);
-	        assert_eq!(opts.rpc_host(), "127.0.0.1");
-	        assert_eq!(opts.rpc_listen_port(), 16800);
-	        assert_eq!(opts.rpc_secret(), "secret123");
+        assert_eq!(opts.rpc_host(), "127.0.0.1");
+        assert_eq!(opts.rpc_listen_port(), 16800);
+        assert_eq!(opts.rpc_secret(), "secret123");
     }
 
     // -- getters with defaults --
