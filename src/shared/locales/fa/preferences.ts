@@ -77,7 +77,8 @@ export default {
 		'{\n  "piece-length": "1M",\n  "timeout": 60\n}',
 	"engine-overrides-tips":
 		"پیشرفته: کلیدهای دلخواه گزینه‌های موتور را به صورت یک شیء JSON تنظیم کنید. تغییرات پس از راه‌اندازی دوباره اعمال می‌شوند.",
-	"engine-overrides-invalid": "جایگزینی تنظیمات موتور باید یک شیء JSON معتبر باشد.",
+	"engine-overrides-invalid":
+		"جایگزینی تنظیمات موتور باید یک شیء JSON معتبر باشد.",
 	"external-engine-enable": "استفاده از موتور خارجی",
 	"external-engine-enable-tips":
 		"وقتی این گزینه فعال باشد، Risuko موتور داخلی را به صورت خودکار اجرا نمی‌کند.",

@@ -679,7 +679,7 @@
                 </div>
               </div>
             </div>
-            <div class="form-info" style="margin-top: 8px">
+            <div class="form-info" style="margin-top: 8px; display: flex; align-items: center; gap: 8px">
               <a
                 target="_blank"
                 href="https://github.com/YueMiyuki/Risuko/wiki/RPC"
@@ -688,6 +688,10 @@
                 {{ $t('preferences.rpc-secret-tips') }}
                 <ExternalLink :size="12" />
               </a>
+              <ui-button size="sm" variant="outline" @click="copyRpcUrlToClipboard">
+                <Copy :size="12" />
+                {{ $t('preferences.copy-rpc-url') }}
+              </ui-button>
             </div>
           </div>
         </div>
@@ -1173,23 +1177,23 @@ const initForm = (config) => {
 };
 
 const sanitizeEngineOverrides = (input) => {
-  const reservedKeys = new Set(["rpc-host"]);
-  const filtered = {};
-  const droppedKeys = [];
-  for (const [key, value] of Object.entries(input || {})) {
-    const normalized = `${key}`.toLowerCase();
-    if (
-      reservedKeys.has(normalized) ||
-      normalized.startsWith("rpc-") ||
-      normalized.endsWith("-port") ||
-      normalized.endsWith("-secret")
-    ) {
-      droppedKeys.push(key);
-      continue;
-    }
-    filtered[key] = value;
-  }
-  return { filtered, droppedKeys };
+	const reservedKeys = new Set(["rpc-host"]);
+	const filtered = {};
+	const droppedKeys = [];
+	for (const [key, value] of Object.entries(input || {})) {
+		const normalized = `${key}`.toLowerCase();
+		if (
+			reservedKeys.has(normalized) ||
+			normalized.startsWith("rpc-") ||
+			normalized.endsWith("-port") ||
+			normalized.endsWith("-secret")
+		) {
+			droppedKeys.push(key);
+			continue;
+		}
+		filtered[key] = value;
+	}
+	return { filtered, droppedKeys };
 };
 
 const normalizePortValue = (value, fallback) => {
@@ -1300,20 +1304,7 @@ export default {
 		logPath() {
 			return usePreferenceStore().config.appLogPath;
 		},
-	},
-	watch: {
-		"form.rpcListenPort": "syncRpcUrlToClipboard",
-		"form.rpcSecret": "syncRpcUrlToClipboard",
-		"form.externalEngineEnabled": "syncRpcUrlToClipboard",
-		"form.externalEngineHost": "syncRpcUrlToClipboard",
-		"form.externalEnginePort": "syncRpcUrlToClipboard",
-		"form.externalEngineSecret": "syncRpcUrlToClipboard",
-	},
-	methods: {
-		setAdvancedBoolean(key, enable) {
-			this.form[key] = !!enable;
-		},
-		syncRpcUrlToClipboard() {
+		currentRpcUrl() {
 			const host = this.form.externalEngineEnabled
 				? this.form.externalEngineHost
 				: ENGINE_RPC_HOST;
@@ -1323,12 +1314,15 @@ export default {
 			const secret = this.form.externalEngineEnabled
 				? this.form.externalEngineSecret
 				: this.form.rpcSecret;
-			const url = buildRpcUrl({
-				host,
-				port,
-				secret,
-			});
-			writeText(url).catch(() => {
+			return buildRpcUrl({ host, port, secret });
+		},
+	},
+	methods: {
+		setAdvancedBoolean(key, enable) {
+			this.form[key] = !!enable;
+		},
+		copyRpcUrlToClipboard() {
+			writeText(this.currentRpcUrl).catch(() => {
 				/* noop */
 			});
 		},
@@ -1539,13 +1533,15 @@ export default {
 							this.$msg.error(this.$t("preferences.engine-overrides-invalid"));
 							return;
 						}
-            const { filtered, droppedKeys } = sanitizeEngineOverrides(parsed);
-            data.engineOverrides = filtered;
-            if (droppedKeys.length) {
-              this.$msg.warning(
-                `Ignored reserved engine override keys: ${droppedKeys.join(", ")}`,
-              );
-            }
+						const { filtered, droppedKeys } = sanitizeEngineOverrides(parsed);
+						data.engineOverrides = filtered;
+						if (droppedKeys.length) {
+							this.$msg.warning(
+								this.$t("preferences.engine-overrides-reserved-keys", {
+									keys: droppedKeys.join(", "),
+								}),
+							);
+						}
 					} catch {
 						this.$msg.error(this.$t("preferences.engine-overrides-invalid"));
 						return;
@@ -1668,7 +1664,21 @@ export default {
 				data.externalEngineHost = host || ENGINE_RPC_HOST;
 			}
 
-			logger.log("[Risuko] preference changed data:", data);
+			{
+				const safeData = { ...data };
+				if ("externalEngineSecret" in safeData) {
+					safeData.externalEngineSecret = "[REDACTED]";
+				}
+				if (
+					safeData.engineOverrides &&
+					typeof safeData.engineOverrides === "object"
+				) {
+					safeData.engineOverrides = Object.fromEntries(
+						Object.keys(safeData.engineOverrides).map((k) => [k, "[REDACTED]"]),
+					);
+				}
+				logger.log("[Risuko] preference changed data:", safeData);
+			}
 
 			usePreferenceStore()
 				.save(data)

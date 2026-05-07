@@ -79,7 +79,8 @@ export default {
 		'{\n  "piece-length": "1M",\n  "timeout": 60\n}',
 	"engine-overrides-tips":
 		"Haladó: tetszőleges motorbeállítás-kulcsokat adhatsz meg JSON-objektumként. A módosítások újraindítás után lépnek életbe.",
-	"engine-overrides-invalid": "A motorfelülbírálásoknak érvényes JSON-objektumnak kell lenniük.",
+	"engine-overrides-invalid":
+		"A motorfelülbírálásoknak érvényes JSON-objektumnak kell lenniük.",
 	"external-engine-enable": "Külső motor használata",
 	"external-engine-enable-tips":
 		"Bekapcsolva a Risuko nem indítja el automatikusan a beépített motort.",

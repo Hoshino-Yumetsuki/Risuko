@@ -86,7 +86,8 @@ export default {
 		'{\n  "piece-length": "1M",\n  "timeout": 60\n}',
 	"engine-overrides-tips":
 		"Avanzato: imposta chiavi arbitrarie delle opzioni del motore come oggetto JSON. Le modifiche avranno effetto dopo il riavvio.",
-	"engine-overrides-invalid": "Gli override del motore devono essere un oggetto JSON valido.",
+	"engine-overrides-invalid":
+		"Gli override del motore devono essere un oggetto JSON valido.",
 	"external-engine-enable": "Usa motore esterno",
 	"external-engine-enable-tips":
 		"Se abilitato, Risuko non avvierà automaticamente il motore integrato.",

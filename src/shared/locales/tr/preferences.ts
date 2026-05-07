@@ -79,7 +79,8 @@ export default {
 		'{\n  "piece-length": "1M",\n  "timeout": 60\n}',
 	"engine-overrides-tips":
 		"Gelişmiş: rastgele motor seçenek anahtarlarını bir JSON nesnesi olarak ayarlayın. Değişiklikler yeniden başlatmadan sonra geçerli olur.",
-	"engine-overrides-invalid": "Motor geçersiz kılmaları geçerli bir JSON nesnesi olmalıdır.",
+	"engine-overrides-invalid":
+		"Motor geçersiz kılmaları geçerli bir JSON nesnesi olmalıdır.",
 	"external-engine-enable": "Harici motor kullan",
 	"external-engine-enable-tips":
 		"Etkinleştirildiğinde Risuko gömülü motoru otomatik olarak başlatmaz.",

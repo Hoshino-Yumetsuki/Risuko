@@ -76,7 +76,8 @@ export default {
 		'{\n  "piece-length": "1M",\n  "timeout": 60\n}',
 	"engine-overrides-tips":
 		"Nâng cao: đặt các khóa tùy chọn engine bất kỳ dưới dạng đối tượng JSON. Các thay đổi sẽ có hiệu lực sau khi khởi động lại.",
-	"engine-overrides-invalid": "Ghi đè engine phải là một đối tượng JSON hợp lệ.",
+	"engine-overrides-invalid":
+		"Ghi đè engine phải là một đối tượng JSON hợp lệ.",
 	"external-engine-enable": "Sử dụng engine bên ngoài",
 	"external-engine-enable-tips":
 		"Khi bật, Risuko sẽ không tự động khởi động engine tích hợp.",
