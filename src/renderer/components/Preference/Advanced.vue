@@ -1021,6 +1021,7 @@ import {
 	ChevronDown,
 	Code,
 	Cookie,
+	Copy,
 	Dices,
 	ExternalLink,
 	FileKey,
@@ -1255,6 +1256,7 @@ export default {
 		RefreshCcw,
 		Dices,
 		ExternalLink,
+		Copy,
 		Video,
 	},
 	data() {
