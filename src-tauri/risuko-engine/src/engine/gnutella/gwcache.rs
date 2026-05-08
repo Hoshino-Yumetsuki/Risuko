@@ -48,11 +48,11 @@ pub async fn fetch_peers(cache_url: &str) -> Vec<String> {
             if trimmed.is_empty() {
                 in_body = true;
             }
-        } else if trimmed.contains(':') && !trimmed.starts_with('H') {
+        } else if trimmed.contains(':') && !trimmed.starts_with("HTTP/") {
             peers.push(trimmed);
         }
         line.clear();
-        if peers.len() > 32 {
+        if peers.len() >= 32 {
             break;
         }
     }
@@ -62,8 +62,6 @@ pub async fn fetch_peers(cache_url: &str) -> Vec<String> {
 fn parse_http_url(url: &str) -> Option<(String, u16, String)> {
     let (scheme_stripped, default_port) = if let Some(r) = url.strip_prefix("http://") {
         (r, 80u16)
-    } else if let Some(r) = url.strip_prefix("https://") {
-        (r, 443u16)
     } else {
         return None;
     };

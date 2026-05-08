@@ -572,7 +572,7 @@ export default {
 					unknown += 1;
 				}
 			}
-			if (counts.size === 0) {
+			if (counts.size === 0 && unknown === 0) {
 				return;
 			}
 			const parts = Array.from(counts.entries()).map(([name, n]) =>
@@ -584,8 +584,8 @@ export default {
 			const summary = parts.join(", ");
 			const title =
 				counts.size === 1 && unknown === 0 && links.length === 1
-					? `${parts[0]} link detected`
-					: "Links detected";
+					? this.$t("task.link-detected-single", { name: parts[0] })
+					: this.$t("task.links-detected");
 			toast.info(title, { description: summary });
 		},
 		handleDrop(ev: DragEvent) {
@@ -611,8 +611,10 @@ export default {
 			useAppStore().enqueueBatchItems(items);
 			toast.info(
 				items.length === 1
-					? "BitTorrent (.torrent) detected"
-					: `BitTorrent (.torrent) \u00d7${items.length} detected`,
+					? this.$t("task.bittorrent-detected")
+					: this.$t("task.bittorrent-detected-multi", {
+							count: items.length,
+						}),
 			);
 		},
 		async browseTorrentFiles() {
@@ -842,7 +844,15 @@ function isLikelyTaskLink(line: string): boolean {
 		lower.startsWith("sftp://") ||
 		lower.startsWith("magnet:") ||
 		lower.startsWith("thunder://") ||
-		lower.startsWith("ed2k://")
+		lower.startsWith("ed2k://") ||
+		lower.startsWith("adc://") ||
+		lower.startsWith("adcs://") ||
+		lower.startsWith("dchub://") ||
+		lower.startsWith("nmdc://") ||
+		lower.startsWith("gnutella://") ||
+		lower.startsWith("gnet://") ||
+		lower.startsWith("g2://") ||
+		lower.startsWith("gift://")
 	);
 }
 </script>

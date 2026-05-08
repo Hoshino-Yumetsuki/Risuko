@@ -19,13 +19,13 @@ use tokio::time::timeout;
 
 use super::types::{AdcError, FileEntry, HubInfo, PeerInfo};
 
-const HUB_IO_TIMEOUT: Duration = Duration::from_secs(30);
+pub(super) const HUB_IO_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// NMDC `$Lock` -> `$Key` transformation. Implements the standard
 /// nibble-swap algorithm published in DC++ source. Returned bytes are
 /// raw — caller must escape via `escape_key` before sending on the wire
 pub fn lock_to_key(lock: &[u8]) -> Vec<u8> {
-    if lock.is_empty() {
+    if lock.len() < 3 {
         return Vec::new();
     }
     let n = lock.len();

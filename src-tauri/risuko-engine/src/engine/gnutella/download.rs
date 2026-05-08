@@ -52,6 +52,9 @@ pub async fn run_gnutella_download(
     } else {
         &link.file_name
     });
+    if safe.is_empty() || safe == "." || safe == ".." {
+        return Err("invalid file name".into());
+    }
     let out_path = PathBuf::from(dir).join(safe);
 
     fetch_by_urn(

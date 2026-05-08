@@ -127,9 +127,9 @@ pub fn parse_adc_hub_uri(uri: &str) -> Result<HubInfo, AdcError> {
 /// Parse a direct-file URI carrying TTH+size+name in the query string
 /// Returns `None` when the URI lacks the required parameters
 pub fn parse_dchub_file_uri(uri: &str) -> Option<FileEntry> {
-    let lower = uri.trim();
-    let qpos = lower.find('?')?;
-    let query = &lower[qpos + 1..];
+    let trimmed = uri.trim();
+    let qpos = trimmed.find('?')?;
+    let query = &trimmed[qpos + 1..];
     let mut tth: Option<String> = None;
     let mut size: u64 = 0;
     let mut name: String = String::new();

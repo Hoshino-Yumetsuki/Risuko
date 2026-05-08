@@ -3,7 +3,7 @@
 use std::io;
 
 use async_compression::tokio::bufread::{BrotliDecoder, DeflateDecoder, GzipDecoder, ZlibDecoder};
-use futures_util::{StreamExt, TryStreamExt};
+use futures_util::TryStreamExt;
 use http_body_util::BodyExt;
 use tokio_util::io::{ReaderStream, StreamReader};
 
@@ -38,7 +38,7 @@ fn wrap<D>(dec: D) -> RespBody
 where
     D: tokio::io::AsyncRead + Send + Sync + Unpin + 'static,
 {
-    let s = ReaderStream::new(dec).map(|r| r);
+    let s = ReaderStream::new(dec);
     StreamBody::new(s).boxed()
 }
 

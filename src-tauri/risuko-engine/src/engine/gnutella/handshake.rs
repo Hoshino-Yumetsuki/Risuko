@@ -16,19 +16,18 @@ pub async fn perform_handshake(sock: &mut TcpStream) -> Result<(), GnutellaError
     let req = "GNUTELLA CONNECT/0.6\r\n\
 User-Agent: Risuko/0.1\r\n\
 X-Ultrapeer: False\r\n\
-Listen-IP: 0.0.0.0:6346\r\n\
 \r\n";
     sock.write_all(req.as_bytes()).await?;
 
     let mut buf = Vec::with_capacity(1024);
-    let mut tmp = [0u8; 1024];
+    let mut tmp = [0u8; 1];
     loop {
         let n = sock.read(&mut tmp).await?;
         if n == 0 {
             return Err(GnutellaError::Network("eof during handshake".into()));
         }
-        buf.extend_from_slice(&tmp[..n]);
-        if buf.windows(4).any(|w| w == b"\r\n\r\n") {
+        buf.push(tmp[0]);
+        if buf.ends_with(b"\r\n\r\n") {
             break;
         }
         if buf.len() > 64 * 1024 {

@@ -32,12 +32,14 @@ pub fn is_gift_uri(uri: &str) -> bool {
 /// Parse a `gift://<inner>` URI and capture the inner payload as-is
 pub fn parse_gift_uri(uri: &str) -> Option<GiftLink> {
     let s = uri.trim();
-    let inner = s
-        .strip_prefix("gift://")
-        .or_else(|| s.strip_prefix("GIFT://"))?;
-    Some(GiftLink {
-        inner: inner.to_string(),
-    })
+    let lower = s.to_ascii_lowercase();
+    if lower.starts_with("gift://") {
+        Some(GiftLink {
+            inner: s[7..].to_string(),
+        })
+    } else {
+        None
+    }
 }
 
 /// Drive a download through a locally-running `giftd` daemon over its IPC
@@ -95,8 +97,15 @@ pub async fn run_gift_download(
         .map_err(|e| e.to_string())?;
 
     // TRANSFER ADD url="..." path="..."
-    let safe_name = sanitize(&extract_name(&link.inner));
+    let safe_name = sanitize(&extract_gift_name(&link.inner));
     let out_path = out_dir.join(&safe_name);
+    let out_path_str = out_path.display().to_string();
+    if out_path_str
+        .chars()
+        .any(|c| matches!(c, '"' | '\n' | '\r' | '\0'))
+    {
+        return Err("output path contains forbidden control characters".into());
+    }
     let cmd = format!(
         "TRANSFER ADD url=\"{}\" path=\"{}\"\n",
         link.inner,
@@ -177,10 +186,6 @@ pub fn extract_gift_name(inner: &str) -> String {
     "gift-download".to_string()
 }
 
-fn extract_name(inner: &str) -> String {
-    extract_gift_name(inner)
-}
-
 fn sanitize(name: &str) -> String {
     let cleaned: String = name
         .chars()
@@ -194,7 +199,7 @@ fn sanitize(name: &str) -> String {
         })
         .collect();
     let trimmed = cleaned.trim_matches('.');
-    if trimmed.is_empty() || trimmed == ".." {
+    if trimmed.is_empty() {
         "gift-download".to_string()
     } else {
         trimmed.to_string()

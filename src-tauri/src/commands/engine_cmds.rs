@@ -659,7 +659,11 @@ pub async fn add_uri(
         let is_youtube = engine::youtube::is_youtube_uri(uri);
         // M3u8 uses a temp directory for segments, not a .part file
         let is_m3u8 = engine::m3u8::is_m3u8_uri(uri);
-        if !is_m3u8 && !is_youtube {
+        let is_legacy_p2p = engine::adc::is_adc_uri(uri)
+            || engine::gnutella::is_gnutella_uri(uri)
+            || engine::g2::is_g2_uri(uri)
+            || engine::gift::is_gift_uri(uri);
+        if !is_m3u8 && !is_youtube && !is_legacy_p2p {
             let temp_out = ensure_temp_download_suffix(&preferred_out);
             if !temp_out.is_empty() {
                 task_options.insert("out".to_string(), Value::String(temp_out));

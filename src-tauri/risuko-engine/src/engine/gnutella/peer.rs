@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
@@ -37,25 +37,27 @@ pub async fn fetch_by_urn(
     wr.write_all(req.as_bytes()).await?;
 
     let mut reader = BufReader::new(rd);
-    // read headers
+    // read headers line-by-line until the blank CRLF separator
     let mut header_buf = Vec::new();
-    let mut tmp = [0u8; 1];
     loop {
-        let n = reader.read(&mut tmp).await?;
+        let n = reader.read_until(b'\n', &mut header_buf).await?;
         if n == 0 {
             return Err(GnutellaError::Network("eof in headers".into()));
-        }
-        header_buf.push(tmp[0]);
-        if header_buf.ends_with(b"\r\n\r\n") {
-            break;
         }
         if header_buf.len() > 32 * 1024 {
             return Err(GnutellaError::Network("header too large".into()));
         }
+        if header_buf.ends_with(b"\r\n\r\n") {
+            break;
+        }
     }
     let header_str = String::from_utf8_lossy(&header_buf);
     let status_line = header_str.lines().next().unwrap_or("");
-    if !status_line.contains(" 200") && !status_line.contains(" 206") {
+    let code: Option<u16> = status_line
+        .split_whitespace()
+        .nth(1)
+        .and_then(|t| t.parse().ok());
+    if !matches!(code, Some(200) | Some(206)) {
         return Err(GnutellaError::Network(format!("HTTP: {status_line}")));
     }
 
@@ -72,7 +74,9 @@ pub async fn fetch_by_urn(
         let take = buf.len().min(remaining as usize);
         let n = reader.read(&mut buf[..take]).await?;
         if n == 0 {
-            break;
+            return Err(GnutellaError::Network(
+                "unexpected EOF while reading file".into(),
+            ));
         }
         f.write_all(&buf[..n]).await?;
         remaining -= n as u64;

@@ -88,7 +88,7 @@ impl ServerConnection {
         tokio::spawn(async move {
             let mut reader = read_half;
             let mut buf = bytes::BytesMut::with_capacity(8192);
-            loop {
+            'outer: loop {
                 match reader.read_buf(&mut buf).await {
                     Ok(0) => {
                         let _ = event_tx_clone.send(ServerEvent::Disconnected(None)).await;
@@ -100,7 +100,7 @@ impl ServerConnection {
                                 .await
                                 .is_err()
                             {
-                                break;
+                                break 'outer;
                             }
                         }
                     }

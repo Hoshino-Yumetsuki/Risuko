@@ -282,14 +282,36 @@ export const isEd2kUri = (uri: string) => hasUriScheme(uri, ["ed2k"]);
 export const isThunderUri = (uri: string) =>
 	hasUriScheme(uri, ["thunder", "flashget", "qqdl"]);
 
-const YOUTUBE_HOST_RE =
-	/^(?:https?:\/\/)?(?:[\w-]+\.)*(?:youtube\.com|youtu\.be|youtube-nocookie\.com)\b/i;
+const YOUTUBE_HOSTS = new Set([
+	"youtu.be",
+	"youtube.com",
+	"youtube-nocookie.com",
+]);
 
 export const isYoutubeUri = (uri: string): boolean => {
 	if (!uri || typeof uri !== "string") {
 		return false;
 	}
-	return YOUTUBE_HOST_RE.test(uri.trim());
+	const trimmed = uri.trim();
+	if (!trimmed) {
+		return false;
+	}
+	const withScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed)
+		? trimmed
+		: `https://${trimmed}`;
+	let hostname: string;
+	try {
+		hostname = new URL(withScheme).hostname.toLowerCase();
+	} catch {
+		return false;
+	}
+	if (YOUTUBE_HOSTS.has(hostname)) {
+		return true;
+	}
+	return (
+		hostname.endsWith(".youtube.com") ||
+		hostname.endsWith(".youtube-nocookie.com")
+	);
 };
 
 export const isM3u8Uri = (uri: string): boolean => {

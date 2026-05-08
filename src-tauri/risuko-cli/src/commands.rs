@@ -310,7 +310,7 @@ pub async fn peers(args: GidArgs) -> Result<(), Box<dyn std::error::Error>> {
         if peers.is_empty() {
             println!("No peers.");
         } else {
-            println!("{:<22} {:<12} {:<12} Client", "IP", "DL Speed", "UL Speed");
+            println!("{:<22} {:<12} {:<12} Peer ID", "IP", "DL Speed", "UL Speed");
             println!("{}", "-".repeat(60));
             for p in peers {
                 let ip = p.get("ip").and_then(|v| v.as_str()).unwrap_or("-");

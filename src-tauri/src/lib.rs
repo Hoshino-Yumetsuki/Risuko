@@ -1,5 +1,3 @@
-#![allow(clippy::large_enum_variant)]
-
 mod bridge;
 pub mod cli;
 mod commands;

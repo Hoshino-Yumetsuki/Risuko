@@ -14,8 +14,6 @@ use std::sync::Arc;
 
 use tokio_util::sync::CancellationToken;
 
-use super::adc_proto::AdcClient;
-use super::nmdc::NmdcClient;
 use super::types::{is_adc_uri, parse_adc_hub_uri, parse_dchub_file_uri, AdcError, HubDialect};
 use crate::engine::options::EngineOptions;
 
@@ -63,37 +61,13 @@ pub async fn run_adc_download(
         return Err("cancelled".into());
     }
 
+    // Passive-only mode,  don't bind a listening socket, so the peer
+    // negotiation (`$ConnectToMe` / ADC `CTM`) cannot complete. Bail out
+    // before performing hub I/O so the task fails fast instead of hanging
+    let _ = (&nick, &tth, &completed, dir);
     match hub.dialect {
-        HubDialect::Nmdc => {
-            let mut client = NmdcClient::connect(&hub, &nick)
-                .await
-                .map_err(|e| format!("hub connect: {e}"))?;
-            client
-                .handshake()
-                .await
-                .map_err(|e| format!("nmdc handshake: {e}"))?;
-            let _ = client
-                .search_by_tth(&tth, 5)
-                .await
-                .map_err(|e| format!("search: {e}"))?;
-            // Without an active listening socket and a public IP the rest of
-            // the negotiation cannot complete. Return a clear error so the
-            // task moves to the Error state instead of hanging
-            Err(AdcError::NoSource.to_string())
-        }
-        HubDialect::Adc => {
-            let mut client = AdcClient::connect(&hub)
-                .await
-                .map_err(|e| format!("hub connect: {e}"))?;
-            client
-                .handshake(&nick)
-                .await
-                .map_err(|e| format!("adc handshake: {e}"))?;
-            // Same limitation as above: without a peer accepting our INF and
-            // approving our `BGET file TTH/...`, the transfer cannot proceed
-            let _ = (&mut client, dir, &completed);
-            Err(AdcError::NoSource.to_string())
-        }
+        HubDialect::Nmdc => Err(AdcError::NoSource.to_string()),
+        HubDialect::Adc => Err(AdcError::NoSource.to_string()),
     }
 }
 

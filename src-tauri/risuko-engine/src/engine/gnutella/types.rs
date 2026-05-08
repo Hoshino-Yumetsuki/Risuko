@@ -37,9 +37,15 @@ pub fn is_gnutella_uri(uri: &str) -> bool {
 /// Returns `None` for malformed input or non-Gnutella schemes
 pub fn parse_gnutella_uri(uri: &str) -> Option<GnutellaLink> {
     let s = uri.trim();
-    let rest = s
-        .strip_prefix("gnutella://")
-        .or_else(|| s.strip_prefix("gnet://"))?;
+    let lower = s.to_ascii_lowercase();
+    let prefix_len = if lower.starts_with("gnutella://") {
+        "gnutella://".len()
+    } else if lower.starts_with("gnet://") {
+        "gnet://".len()
+    } else {
+        return None;
+    };
+    let rest = &s[prefix_len..];
     // Split host:port and the rest
     let (host_port, path_query) = match rest.find('/') {
         Some(idx) => (&rest[..idx], &rest[idx..]),

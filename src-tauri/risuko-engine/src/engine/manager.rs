@@ -488,16 +488,7 @@ impl TaskManager {
                 .map(|p| (p.file_name, p.file_size))
                 .unwrap_or_default(),
             TaskKind::Gift => super::gift::parse_gift_uri(uri)
-                .map(|p| {
-                    let inner = p.inner;
-                    let name = inner
-                        .split('?')
-                        .next()
-                        .and_then(|s| s.rsplit('/').next())
-                        .unwrap_or("gift-download")
-                        .to_string();
-                    (name, 0u64)
-                })
+                .map(|p| (super::gift::extract_gift_name(&p.inner), 0u64))
                 .unwrap_or_default(),
             _ => (String::new(), 0),
         };
@@ -1762,7 +1753,9 @@ impl TaskManager {
                                         .unwrap_or_default()
                                         .as_millis()
                                         as u64;
-                                    if now - task.seeding_since >= seed_time_ms {
+                                    if now >= task.seeding_since
+                                        && now - task.seeding_since >= seed_time_ms
+                                    {
                                         should_stop = true;
                                     }
                                 }

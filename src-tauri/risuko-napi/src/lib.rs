@@ -20,6 +20,9 @@ struct NapiEngine {
     events: EventBroadcaster,
     progress_task: tokio::task::JoinHandle<()>,
     auto_save_task: tokio::task::JoinHandle<()>,
+    // Kept alive so any in-band `RpcServer::stop` send through `rpc_shutdown_tx` succeeds
+    _rpc_shutdown_rx: tokio::sync::mpsc::Receiver<()>,
+    event_task: Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
 
 static ENGINE: std::sync::LazyLock<Mutex<Option<NapiEngine>>> =
@@ -80,7 +83,7 @@ pub async fn start_engine(config: Option<EngineConfig>) -> Result<()> {
             .map_err(|e| Error::from_reason(format!("Failed to create task manager: {}", e)))?,
     );
 
-    let (rpc_shutdown_tx, _) = tokio::sync::mpsc::channel::<()>(1);
+    let (rpc_shutdown_tx, rpc_shutdown_rx) = tokio::sync::mpsc::channel::<()>(1);
 
     let mut rpc_server = RpcServer::new(
         rpc_host,
@@ -125,6 +128,8 @@ pub async fn start_engine(config: Option<EngineConfig>) -> Result<()> {
         events,
         progress_task,
         auto_save_task,
+        _rpc_shutdown_rx: rpc_shutdown_rx,
+        event_task: Mutex::new(None),
     });
 
     Ok(())
@@ -138,6 +143,9 @@ pub async fn stop_engine() -> Result<()> {
         .ok_or_else(|| Error::from_reason("Engine not running"))?;
     engine.progress_task.abort();
     engine.auto_save_task.abort();
+    if let Some(handle) = engine.event_task.lock().await.take() {
+        handle.abort();
+    }
     engine.rpc_server.stop();
     engine.manager.shutdown().await;
     Ok(())
@@ -150,11 +158,14 @@ where
     F: FnOnce(Arc<TaskManager>) -> Fut,
     Fut: std::future::Future<Output = Result<T>>,
 {
-    let guard = ENGINE.lock().await;
-    let engine = guard
-        .as_ref()
-        .ok_or_else(|| Error::from_reason("Engine not running"))?;
-    f(engine.manager.clone()).await
+    let manager = {
+        let guard = ENGINE.lock().await;
+        let engine = guard
+            .as_ref()
+            .ok_or_else(|| Error::from_reason("Engine not running"))?;
+        engine.manager.clone()
+    };
+    f(manager).await
 }
 
 #[napi]
@@ -388,38 +399,35 @@ pub async fn remove_download_result(gid: String) -> Result<()> {
 /// Subscribe to engine events. The callback receives (eventName, gid).
 /// Returns an unsubscribe function ID.
 #[napi(ts_args_type = "callback: (eventName: string, gid: string) => void")]
-pub fn on_event(
+pub async fn on_event(
     callback: napi::threadsafe_function::ThreadsafeFunction<(String, String)>,
 ) -> Result<()> {
-    let _guard_handle = std::thread::spawn(move || {
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .expect("Failed to build event runtime");
-
-        rt.block_on(async {
-            let guard = ENGINE.lock().await;
-            if let Some(engine) = guard.as_ref() {
-                let mut rx = engine.events.subscribe();
-                drop(guard);
-                loop {
-                    match rx.recv().await {
-                        Ok(event) => {
-                            let name = event.method_name().to_string();
-                            let gid = event.gid().to_string();
-                            callback.call(
-                                Ok((name, gid)),
-                                napi::threadsafe_function::ThreadsafeFunctionCallMode::NonBlocking,
-                            );
-                        }
-                        Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
-                        Err(_) => continue, // lagged, skip
-                    }
+    let guard = ENGINE.lock().await;
+    let engine = guard
+        .as_ref()
+        .ok_or_else(|| Error::from_reason("Engine not running"))?;
+    let mut slot = engine.event_task.lock().await;
+    if let Some(prev) = slot.take() {
+        prev.abort();
+    }
+    let mut rx = engine.events.subscribe();
+    let handle = tokio::spawn(async move {
+        loop {
+            match rx.recv().await {
+                Ok(event) => {
+                    let name = event.method_name().to_string();
+                    let gid = event.gid().to_string();
+                    callback.call(
+                        Ok((name, gid)),
+                        napi::threadsafe_function::ThreadsafeFunctionCallMode::NonBlocking,
+                    );
                 }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                Err(_) => continue, // lagged, skip
             }
-        });
+        }
     });
-
+    *slot = Some(handle);
     Ok(())
 }
 

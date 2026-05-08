@@ -75,7 +75,13 @@ pub fn parse_g2_uri(uri: &str) -> Option<G2Link> {
         } else if let Some(rest) = part.strip_prefix("xl=") {
             file_size = rest.parse().unwrap_or(0);
         } else if let Some(rest) = part.strip_prefix("urn=") {
-            urn = Some(rest.to_string());
+            if rest.starts_with("urn:sha1:") {
+                urn = Some(rest.to_string());
+            } else if rest.len() == 32
+                && rest.bytes().all(|b| matches!(b, b'A'..=b'Z' | b'2'..=b'7'))
+            {
+                urn = Some(format!("urn:sha1:{rest}"));
+            }
         }
     }
     Some(G2Link {

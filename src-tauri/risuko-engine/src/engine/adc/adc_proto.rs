@@ -11,6 +11,7 @@
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 
+use super::nmdc::HUB_IO_TIMEOUT;
 use super::types::{AdcError, HubInfo};
 
 /// Connected ADC hub session: split read/write halves of the TCP stream
@@ -34,7 +35,12 @@ impl AdcClient {
                 "ADCS (TLS) not yet supported in this build".into(),
             ));
         }
-        let stream = TcpStream::connect((hub.host.as_str(), hub.port)).await?;
+        let stream = tokio::time::timeout(
+            HUB_IO_TIMEOUT,
+            TcpStream::connect((hub.host.as_str(), hub.port)),
+        )
+        .await
+        .map_err(|_| AdcError::Protocol("hub connect timeout".into()))??;
         let (rd, wr) = tokio::io::split(stream);
         Ok(Self {
             reader: BufReader::new(rd),
@@ -68,6 +74,12 @@ impl AdcClient {
 
     /// Run the ADC handshake: HSUP -> SID -> INF
     pub async fn handshake(&mut self, nick: &str) -> Result<(), AdcError> {
+        if nick
+            .chars()
+            .any(|c| matches!(c, ' ' | '\t' | '\n' | '\r' | '\0'))
+        {
+            return Err(AdcError::Protocol("invalid nick".into()));
+        }
         self.write_frame("HSUP ADBASE ADTIGR ADBLOM").await?;
         loop {
             let frame = self.read_frame().await?;
@@ -95,7 +107,7 @@ impl AdcClient {
     }
 }
 
-/// Random base32 string (RFC 4648 lower-case alphabet) for placeholder IDs
+/// Random base32 string (RFC 4648 upper-case alphabet) for placeholder IDs
 fn base32_random(n_bytes: usize) -> String {
     use rand::RngExt;
     let mut rng = rand::rng();
@@ -112,6 +124,10 @@ fn base32_random(n_bytes: usize) -> String {
             let idx = ((bits >> nbits) & 0x1f) as usize;
             out.push(alphabet[idx] as char);
         }
+    }
+    if nbits > 0 {
+        let idx = ((bits << (5 - nbits)) & 0x1f) as usize;
+        out.push(alphabet[idx] as char);
     }
     out
 }
