@@ -34,6 +34,12 @@ pub struct ServerConnection {
     tx: Option<mpsc::Sender<Ed2kPacket>>,
 }
 
+/// Errors from processing a single server packet
+enum ServerPacketError {
+    Parse(#[allow(dead_code)] String),
+    ChannelClosed,
+}
+
 impl ServerConnection {
     pub fn new(addr: SocketAddrV4, client_hash: [u8; 16], client_port: u16) -> Self {
         Self {
@@ -96,11 +102,10 @@ impl ServerConnection {
                     }
                     Ok(_) => {
                         while let Ok(Some(packet)) = Ed2kPacket::decode(&mut buf) {
-                            if Self::handle_server_packet(&event_tx_clone, &packet)
-                                .await
-                                .is_err()
-                            {
-                                break 'outer;
+                            match Self::handle_server_packet(&event_tx_clone, &packet).await {
+                                Ok(()) => {}
+                                Err(ServerPacketError::Parse(_)) => {} // malformed packet; keep going
+                                Err(ServerPacketError::ChannelClosed) => break 'outer,
                             }
                         }
                     }
@@ -120,10 +125,11 @@ impl ServerConnection {
     async fn handle_server_packet(
         tx: &mpsc::Sender<ServerEvent>,
         packet: &Ed2kPacket,
-    ) -> Result<(), ()> {
+    ) -> Result<(), ServerPacketError> {
         let event = match packet.opcode {
             OP_ID_CHANGE => {
-                let client_id = parse_id_change(&packet.payload).map_err(|_| ())?;
+                let client_id =
+                    parse_id_change(&packet.payload).map_err(ServerPacketError::Parse)?;
                 ServerEvent::Connected { client_id }
             }
             OP_SERVER_MESSAGE => {
@@ -131,11 +137,13 @@ impl ServerConnection {
                 ServerEvent::ServerMessage(msg)
             }
             OP_SERVER_STATUS => {
-                let (users, files) = parse_server_status(&packet.payload).map_err(|_| ())?;
+                let (users, files) =
+                    parse_server_status(&packet.payload).map_err(ServerPacketError::Parse)?;
                 ServerEvent::ServerStatus { users, files }
             }
             OP_FOUND_SOURCES => {
-                let (hash, sources) = parse_found_sources(&packet.payload).map_err(|_| ())?;
+                let (hash, sources) =
+                    parse_found_sources(&packet.payload).map_err(ServerPacketError::Parse)?;
                 ServerEvent::FoundSources {
                     file_hash: hash,
                     sources,
@@ -145,7 +153,7 @@ impl ServerConnection {
             _ => return Ok(()), // Ignore unknown opcodes
         };
 
-        tx.send(event).await.map_err(|_| ())
+        tx.send(event).await.map_err(|_| ServerPacketError::ChannelClosed)
     }
 
     /// Send a GetSources request for a file

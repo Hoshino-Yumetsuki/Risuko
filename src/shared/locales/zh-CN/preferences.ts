@@ -199,7 +199,7 @@ export default {
 	"protocols-magnet": "磁力链接 [ magnet:// ]",
 	"protocols-thunder": "迅雷链接 [ thunder:// ]",
 	"protocols-ed2k": "电驴链接 [ ed2k:// ]",
-	"protocols-adc": "Direct Connect [ adc:// dchub:// nmdc:// ]",
+	"protocols-adc": "Direct Connect [ adc:// adcs:// dchub:// nmdc:// ]",
 	"protocols-gnutella": "Gnutella [ gnutella:// ]",
 	"protocols-g2": "Gnutella2 [ g2:// ]",
 	"gift-integration": "giFT 守护进程集成",

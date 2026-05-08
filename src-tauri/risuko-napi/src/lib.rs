@@ -22,7 +22,7 @@ struct NapiEngine {
     auto_save_task: tokio::task::JoinHandle<()>,
     // Kept alive so any in-band `RpcServer::stop` send through `rpc_shutdown_tx` succeeds
     _rpc_shutdown_rx: tokio::sync::mpsc::Receiver<()>,
-    event_task: Mutex<Option<tokio::task::JoinHandle<()>>>,
+    event_task: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
 }
 
 static ENGINE: std::sync::LazyLock<Mutex<Option<NapiEngine>>> =
@@ -129,7 +129,7 @@ pub async fn start_engine(config: Option<EngineConfig>) -> Result<()> {
         progress_task,
         auto_save_task,
         _rpc_shutdown_rx: rpc_shutdown_rx,
-        event_task: Mutex::new(None),
+        event_task: Arc::new(Mutex::new(None)),
     });
 
     Ok(())
@@ -402,15 +402,20 @@ pub async fn remove_download_result(gid: String) -> Result<()> {
 pub async fn on_event(
     callback: napi::threadsafe_function::ThreadsafeFunction<(String, String)>,
 ) -> Result<()> {
-    let guard = ENGINE.lock().await;
-    let engine = guard
-        .as_ref()
-        .ok_or_else(|| Error::from_reason("Engine not running"))?;
-    let mut slot = engine.event_task.lock().await;
+    let (event_task, mut rx) = {
+        let guard = ENGINE.lock().await;
+        let engine = guard
+            .as_ref()
+            .ok_or_else(|| Error::from_reason("Engine not running"))?;
+        let event_task = Arc::clone(&engine.event_task);
+        let rx = engine.events.subscribe();
+        (event_task, rx)
+    }; // ENGINE guard released before the async lock below
+    let mut slot = event_task.lock().await;
     if let Some(prev) = slot.take() {
         prev.abort();
     }
-    let mut rx = engine.events.subscribe();
+    let mut rx = rx;
     let handle = tokio::spawn(async move {
         loop {
             match rx.recv().await {

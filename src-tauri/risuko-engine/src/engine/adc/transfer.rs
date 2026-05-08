@@ -40,9 +40,10 @@ pub async fn download_from_peer(
     let req = format!("$ADCGET file TTH/{tth} 0 {file_size}|");
     wr.write_all(req.as_bytes()).await?;
 
-    // Read response header up to `|`
+    // Read response header up to `|` — cap at 4097 bytes before the check so
+    // a peer cannot trigger unbounded allocation with an unterminated response
     let mut header = Vec::with_capacity(128);
-    reader.read_until(b'|', &mut header).await?;
+    (&mut reader).take(4097).read_until(b'|', &mut header).await?;
     if header.len() > 4096 {
         return Err(AdcError::Protocol("oversized $ADCSND header".into()));
     }

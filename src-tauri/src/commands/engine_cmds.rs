@@ -659,10 +659,18 @@ pub async fn add_uri(
         let is_youtube = engine::youtube::is_youtube_uri(uri);
         // M3u8 uses a temp directory for segments, not a .part file
         let is_m3u8 = engine::m3u8::is_m3u8_uri(uri);
-        let is_legacy_p2p = engine::adc::is_adc_uri(uri)
-            || engine::gnutella::is_gnutella_uri(uri)
-            || engine::g2::is_g2_uri(uri)
-            || engine::gift::is_gift_uri(uri);
+        let legacy_kind = if engine::adc::is_adc_uri(uri) {
+            Some(engine::task::TaskKind::Adc)
+        } else if engine::gnutella::is_gnutella_uri(uri) {
+            Some(engine::task::TaskKind::Gnutella)
+        } else if engine::g2::is_g2_uri(uri) {
+            Some(engine::task::TaskKind::G2)
+        } else if engine::gift::is_gift_uri(uri) {
+            Some(engine::task::TaskKind::Gift)
+        } else {
+            None
+        };
+        let is_legacy_p2p = legacy_kind.is_some();
         if !is_m3u8 && !is_youtube && !is_legacy_p2p {
             let temp_out = ensure_temp_download_suffix(&preferred_out);
             if !temp_out.is_empty() {
@@ -698,35 +706,8 @@ pub async fn add_uri(
                 Ok(gid) => results.push(Value::Array(vec![Value::String(gid)])),
                 Err(e) => results.push(json!({"code": 1, "message": e})),
             }
-        } else if engine::adc::is_adc_uri(uri) {
-            match manager
-                .add_legacy_p2p_task(engine::task::TaskKind::Adc, uri, task_options)
-                .await
-            {
-                Ok(gid) => results.push(Value::Array(vec![Value::String(gid)])),
-                Err(e) => results.push(json!({"code": 1, "message": e})),
-            }
-        } else if engine::gnutella::is_gnutella_uri(uri) {
-            match manager
-                .add_legacy_p2p_task(engine::task::TaskKind::Gnutella, uri, task_options)
-                .await
-            {
-                Ok(gid) => results.push(Value::Array(vec![Value::String(gid)])),
-                Err(e) => results.push(json!({"code": 1, "message": e})),
-            }
-        } else if engine::g2::is_g2_uri(uri) {
-            match manager
-                .add_legacy_p2p_task(engine::task::TaskKind::G2, uri, task_options)
-                .await
-            {
-                Ok(gid) => results.push(Value::Array(vec![Value::String(gid)])),
-                Err(e) => results.push(json!({"code": 1, "message": e})),
-            }
-        } else if engine::gift::is_gift_uri(uri) {
-            match manager
-                .add_legacy_p2p_task(engine::task::TaskKind::Gift, uri, task_options)
-                .await
-            {
+        } else if let Some(kind) = legacy_kind {
+            match manager.add_legacy_p2p_task(kind, uri, task_options).await {
                 Ok(gid) => results.push(Value::Array(vec![Value::String(gid)])),
                 Err(e) => results.push(json!({"code": 1, "message": e})),
             }

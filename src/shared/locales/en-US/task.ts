@@ -33,6 +33,8 @@ export default {
 	"new-task-torrent-required": "Please select a torrent file",
 	"link-detected-single": "{{name}} link detected",
 	"links-detected": "Links detected",
+	"unknown-protocol": "Unknown",
+	"unknown-protocol-multi": "Unknown \u00d7{{count}}",
 	"bittorrent-detected": "BitTorrent (.torrent) detected",
 	"bittorrent-detected-multi": "BitTorrent (.torrent) ×{{count}} detected",
 	"file-name": "Name",

@@ -2,7 +2,7 @@
   <Dialog :open="visible" @update:open="handleDialogOpenChange">
     <DialogContent
       :show-close-button="false"
-      class="add-task-dialog flex max-h-[80vh] w-[680px] flex-col gap-0 overflow-hidden p-0"
+      class="add-task-dialog flex max-h-[80vh] w-170 flex-col gap-0 overflow-hidden p-0"
     >
       <DialogHeader class="flex shrink-0 flex-row items-center gap-2 border-b border-border/60 px-4 py-3">
         <div class="flex size-7 items-center justify-center rounded-md bg-muted text-muted-foreground">
@@ -62,7 +62,7 @@
         <div class="mt-3 mb-12 px-4">
           <div
             v-if="queue.length === 0"
-            class="flex min-h-[120px] items-center justify-center rounded-md border border-dashed border-border/40 text-xs text-muted-foreground"
+            class="flex min-h-30 items-center justify-center rounded-md border border-dashed border-border/40 text-xs text-muted-foreground"
           >
             {{ $t('task.batch-queue-empty') }}
           </div>
@@ -579,7 +579,11 @@ export default {
 				n > 1 ? `${name} \u00d7${n}` : name,
 			);
 			if (unknown > 0) {
-				parts.push(unknown > 1 ? `Unknown \u00d7${unknown}` : "Unknown");
+				parts.push(
+					unknown > 1
+						? this.$t("task.unknown-protocol-multi", { count: unknown })
+						: this.$t("task.unknown-protocol"),
+				);
 			}
 			const summary = parts.join(", ");
 			const title =

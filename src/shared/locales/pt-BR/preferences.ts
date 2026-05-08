@@ -104,7 +104,7 @@ export default {
 		"Definir como cliente padrão para os seguintes protocolos",
 	"protocols-magnet": "Magnético [ magnet:// ]",
 	"protocols-thunder": "Trovão [ thunder:// ]",
-	"protocols-adc": "Direct Connect [ adc:// dchub:// nmdc:// ]",
+	"protocols-adc": "Direct Connect [ adc:// adcs:// dchub:// nmdc:// ]",
 	"protocols-gnutella": "Gnutella [ gnutella:// ]",
 	"protocols-g2": "Gnutella2 [ g2:// ]",
 	"gift-integration": "Integração com o daemon giFT",

@@ -99,7 +99,7 @@ export default {
 		"تنظیم به عنوان کارخواه پیش‌گزیده برای شیوه‌نامه‌های زیر",
 	"protocols-magnet": "آهن‌ربا [ magnet:// ]",
 	"protocols-thunder": "تندر [ thunder:// ]",
-	"protocols-adc": "Direct Connect [ adc:// dchub:// nmdc:// ]",
+	"protocols-adc": "Direct Connect [ adc:// adcs:// dchub:// nmdc:// ]",
 	"protocols-gnutella": "Gnutella [ gnutella:// ]",
 	"protocols-g2": "Gnutella2 [ g2:// ]",
 	"gift-integration": "یکپارچه‌سازی دیمن giFT",

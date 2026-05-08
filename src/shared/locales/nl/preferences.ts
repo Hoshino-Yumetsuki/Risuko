@@ -103,7 +103,7 @@ export default {
 		"Als Standardclient voor de volgende protocollen instellen",
 	"protocols-magnet": "Magnet [ magnet:// ]",
 	"protocols-thunder": "Donner [ thunder:// ]",
-	"protocols-adc": "Direct Connect [ adc:// dchub:// nmdc:// ]",
+	"protocols-adc": "Direct Connect [ adc:// adcs:// dchub:// nmdc:// ]",
 	"protocols-gnutella": "Gnutella [ gnutella:// ]",
 	"protocols-g2": "Gnutella2 [ g2:// ]",
 	"gift-integration": "giFT-daemonintegratie",

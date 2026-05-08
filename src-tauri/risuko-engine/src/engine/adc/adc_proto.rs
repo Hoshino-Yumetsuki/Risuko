@@ -59,7 +59,9 @@ impl AdcClient {
     /// Read one newline-terminated ADC frame, stripping any trailing CR/LF
     pub async fn read_frame(&mut self) -> Result<String, AdcError> {
         let mut buf = String::new();
-        let n = self.reader.read_line(&mut buf).await?;
+        let n = tokio::time::timeout(HUB_IO_TIMEOUT, self.reader.read_line(&mut buf))
+            .await
+            .map_err(|_| AdcError::Protocol("read frame timeout".into()))??;
         if n == 0 {
             return Err(AdcError::HubDisconnect("eof".into()));
         }

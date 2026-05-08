@@ -106,7 +106,7 @@ export default {
 		"Définir comme client par défaut pour les protocoles suivants",
 	"protocols-magnet": "Aimant [ magnet:// ]",
 	"protocols-thunder": "Tonnerre [ thunder:// ]",
-	"protocols-adc": "Direct Connect [ adc:// dchub:// nmdc:// ]",
+	"protocols-adc": "Direct Connect [ adc:// adcs:// dchub:// nmdc:// ]",
 	"protocols-gnutella": "Gnutella [ gnutella:// ]",
 	"protocols-g2": "Gnutella2 [ g2:// ]",
 	"gift-integration": "Intégration du démon giFT",

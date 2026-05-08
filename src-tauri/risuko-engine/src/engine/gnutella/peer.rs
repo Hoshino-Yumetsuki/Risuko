@@ -68,11 +68,13 @@ pub async fn fetch_by_urn(
     let mut buf = vec![0u8; 64 * 1024];
     let mut remaining = file_size;
     while remaining > 0 {
-        if cancel.is_cancelled() {
-            return Err(GnutellaError::Network("cancelled".into()));
-        }
         let take = buf.len().min(remaining as usize);
-        let n = reader.read(&mut buf[..take]).await?;
+        let n = tokio::select! {
+            res = reader.read(&mut buf[..take]) => res?,
+            _ = cancel.cancelled() => {
+                return Err(GnutellaError::Network("cancelled".into()));
+            }
+        };
         if n == 0 {
             return Err(GnutellaError::Network(
                 "unexpected EOF while reading file".into(),

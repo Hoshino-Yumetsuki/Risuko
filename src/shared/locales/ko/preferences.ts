@@ -96,7 +96,7 @@ export default {
 	"protocols-default-client": "다음 프로토콜의 기본 클라이언트로 설정",
 	"protocols-magnet": "마그넷 [ magnet:// ]",
 	"protocols-thunder": "썬더 [ thunder:// ]",
-	"protocols-adc": "Direct Connect [ adc:// dchub:// nmdc:// ]",
+	"protocols-adc": "Direct Connect [ adc:// adcs:// dchub:// nmdc:// ]",
 	"protocols-gnutella": "Gnutella [ gnutella:// ]",
 	"protocols-g2": "Gnutella2 [ g2:// ]",
 	"gift-integration": "giFT 데몬 통합",

@@ -100,7 +100,7 @@ export default {
 		"Aşağıdaki protokoller için varsayılan istemci olarak ayarla",
 	"protocols-magnet": "Mıknatıs [ magnet:// ]",
 	"protocols-thunder": "gök gürültüsü [ thunder:// ]",
-	"protocols-adc": "Direct Connect [ adc:// dchub:// nmdc:// ]",
+	"protocols-adc": "Direct Connect [ adc:// adcs:// dchub:// nmdc:// ]",
 	"protocols-gnutella": "Gnutella [ gnutella:// ]",
 	"protocols-g2": "Gnutella2 [ g2:// ]",
 	"gift-integration": "giFT Daemon Entegrasyonu",

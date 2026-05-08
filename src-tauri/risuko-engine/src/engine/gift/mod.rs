@@ -58,7 +58,7 @@ pub async fn run_gift_download(
     connections: Arc<AtomicU32>,
     cancel_token: CancellationToken,
 ) -> Result<PathBuf, String> {
-    let _ = (speed, connections);
+    let _ = cancel_token;
     if !is_gift_uri(uri) {
         return Err(format!("not a giFT URI: {uri}"));
     }
@@ -118,6 +118,7 @@ pub async fn run_gift_download(
     // Watch transfer status events. giftd emits lines like
     // `TRANSFER STATUS id=<n> total=<bytes> done=<bytes> state=<active|complete|...>`
     let mut transfer_id: Option<String> = None;
+    let mut last_progress: Option<(tokio::time::Instant, u64)> = None;
     let mut line = String::new();
     loop {
         if cancel.load(Ordering::Relaxed) || cancel_token.is_cancelled() {
@@ -163,6 +164,19 @@ pub async fn run_gift_download(
                 total.store(t, Ordering::Relaxed);
             }
             completed.store(d, Ordering::Relaxed);
+            // Compute speed from delta bytes / elapsed time
+            let now = tokio::time::Instant::now();
+            if let Some((prev_time, prev_done)) = last_progress {
+                let elapsed_ms = now.duration_since(prev_time).as_millis() as u64;
+                if elapsed_ms > 0 {
+                    let delta = d.saturating_sub(prev_done);
+                    speed.store(delta * 1000 / elapsed_ms, Ordering::Relaxed);
+                }
+            }
+            last_progress = Some((now, d));
+            if matches!(state.as_str(), "active" | "complete") {
+                connections.store(1, Ordering::Relaxed);
+            }
             match state.as_str() {
                 "complete" => return Ok(out_path),
                 "cancelled" | "error" | "failed" => return Err(format!("giftd transfer {state}")),

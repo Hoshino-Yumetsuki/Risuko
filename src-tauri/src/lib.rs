@@ -222,7 +222,7 @@ pub fn run() {
                     // Must spawn into Tauri's async runtime so the tokio
                     // reactor is available for the inner tokio::spawn call.
                     tauri::async_runtime::spawn(async move {
-                        drop(RssManager::start_polling(rss));
+                        let _ = RssManager::start_polling(rss);
                     });
                 }
             }

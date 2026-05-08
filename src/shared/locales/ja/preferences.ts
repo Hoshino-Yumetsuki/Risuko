@@ -97,7 +97,7 @@ export default {
 		"以下のプロトコルのデフォルトクライアントとして設定",
 	"protocols-magnet": "磁石 [ magnet:// ]",
 	"protocols-thunder": "サンダー [ thunder:// ]",
-	"protocols-adc": "Direct Connect [ adc:// dchub:// nmdc:// ]",
+	"protocols-adc": "Direct Connect [ adc:// adcs:// dchub:// nmdc:// ]",
 	"protocols-gnutella": "Gnutella [ gnutella:// ]",
 	"protocols-g2": "Gnutella2 [ g2:// ]",
 	"gift-integration": "giFT デーモン連携",

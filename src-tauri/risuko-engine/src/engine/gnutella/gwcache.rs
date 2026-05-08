@@ -19,9 +19,9 @@ pub async fn fetch_peers(cache_url: &str) -> Vec<String> {
         None => return peers,
     };
     let (host, port, path) = parsed;
+    let sep = if path.contains('?') { '&' } else { '?' };
     let req = format!(
-        "GET {}?hostfile=1&client=RSKO&version=0.1 HTTP/1.0\r\nHost: {}\r\nUser-Agent: Risuko/0.1\r\nConnection: close\r\n\r\n",
-        path, host
+        "GET {path}{sep}hostfile=1&client=RSKO&version=0.1 HTTP/1.0\r\nHost: {host}\r\nUser-Agent: Risuko/0.1\r\nConnection: close\r\n\r\n",
     );
     let stream = match timeout(
         Duration::from_secs(8),
