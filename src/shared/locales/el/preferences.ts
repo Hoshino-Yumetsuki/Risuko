@@ -109,7 +109,8 @@ export default {
 	"gift-enabled": "Ενεργοποίηση ανάθεσης giFT",
 	"gift-host": "Υπολογιστής giFT",
 	"gift-port": "Θύρα giFT",
-	"gift-not-detected": "Ο δαίμονας giFT δεν εντοπίστηκε στον ρυθμισμένο υπολογιστή:θύρα.",
+	"gift-not-detected":
+		"Ο δαίμονας giFT δεν εντοπίστηκε στον ρυθμισμένο υπολογιστή:θύρα.",
 	"browser-extensions": "Επεκτάσεις",
 	"baidu-exporter": "BaiduExporter",
 	"browser-extensions-tips": "Παρέχεται από την κοινότητα, ",

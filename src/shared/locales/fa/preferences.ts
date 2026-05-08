@@ -100,7 +100,7 @@ export default {
 	"protocols-magnet": "آهن‌ربا [ magnet:// ]",
 	"protocols-thunder": "تندر [ thunder:// ]",
 	"protocols-adc": "Direct Connect [ adc:// adcs:// dchub:// nmdc:// ]",
-	"protocols-gnutella": "Gnutella [ gnutella:// ]",
+	"protocols-gnutella": "Gnutella [ gnutella://, gnet:// ]",
 	"protocols-g2": "Gnutella2 [ g2:// ]",
 	"gift-integration": "یکپارچه‌سازی دیمن giFT",
 	"gift-enabled": "فعال‌سازی واگذاری giFT",

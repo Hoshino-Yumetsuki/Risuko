@@ -397,7 +397,7 @@ pub async fn remove_download_result(gid: String) -> Result<()> {
 // Events
 
 /// Subscribe to engine events. The callback receives (eventName, gid).
-/// Returns an unsubscribe function ID.
+/// Registers the callback and returns `Result<()>` on success.
 #[napi(ts_args_type = "callback: (eventName: string, gid: string) => void")]
 pub async fn on_event(
     callback: napi::threadsafe_function::ThreadsafeFunction<(String, String)>,

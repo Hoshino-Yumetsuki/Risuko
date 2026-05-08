@@ -97,7 +97,7 @@ export default {
 	"protocols-magnet": "المغناطيس [ magnet:// ]",
 	"protocols-thunder": "الرعد [ thunder:// ]",
 	"protocols-adc": "Direct Connect [ adc:// adcs:// dchub:// nmdc:// ]",
-	"protocols-gnutella": "Gnutella [ gnutella:// ]",
+	"protocols-gnutella": "Gnutella [ gnutella://, gnet:// ]",
 	"protocols-g2": "Gnutella2 [ g2:// ]",
 	"gift-integration": "تكامل خدمة giFT",
 	"gift-enabled": "تفعيل تفويض giFT",

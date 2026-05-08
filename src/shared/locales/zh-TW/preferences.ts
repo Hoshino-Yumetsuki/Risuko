@@ -200,7 +200,7 @@ export default {
 	"protocols-thunder": "迅雷連結 [ thunder:// ]",
 	"protocols-ed2k": "電驢連結 [ ed2k:// ]",
 	"protocols-adc": "Direct Connect [ adc:// adcs:// dchub:// nmdc:// ]",
-	"protocols-gnutella": "Gnutella [ gnutella:// ]",
+	"protocols-gnutella": "Gnutella [ gnutella://, gnet:// ]",
 	"protocols-g2": "Gnutella2 [ g2:// ]",
 	"gift-integration": "giFT 常駐程式整合",
 	"gift-enabled": "啟用 giFT 委派",

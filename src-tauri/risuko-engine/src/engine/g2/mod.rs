@@ -5,9 +5,11 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 
+use percent_encoding::percent_decode_str;
 use tokio_util::sync::CancellationToken;
 
 use crate::engine::gnutella::peer::fetch_by_urn;
+use crate::engine::gnutella::types::GnutellaError;
 use crate::engine::options::EngineOptions;
 
 /// Errors emitted by the G2 download pipeline
@@ -98,31 +100,16 @@ pub fn parse_g2_uri(uri: &str) -> Option<G2Link> {
 }
 
 fn url_decode(s: &str) -> String {
-    let bytes = s.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        let b = bytes[i];
-        if b == b'%' && i + 2 < bytes.len() {
-            if let (Some(h), Some(l)) = (
-                (bytes[i + 1] as char).to_digit(16),
-                (bytes[i + 2] as char).to_digit(16),
-            ) {
-                out.push((h * 16 + l) as u8);
-                i += 3;
-                continue;
-            }
-        }
-        out.push(if b == b'+' { b' ' } else { b });
-        i += 1;
-    }
-    String::from_utf8_lossy(&out).into_owned()
+    let normalized = s.replace('+', " ");
+    percent_decode_str(&normalized)
+        .decode_utf8_lossy()
+        .to_string()
 }
 
 /// Run a single G2 download to completion. Reuses the Gnutella HTTP
 /// `uri-res/N2R` fetch path since both networks serve content over the same
 /// peer-to-peer HTTP/1.1 endpoint. Returns the absolute output path on
-/// success or a string describing the failure (`"cancelled"` when aborted)
+/// success or a typed `G2Error` describing the failure
 pub async fn run_g2_download(
     uri: &str,
     dir: &str,
@@ -133,22 +120,22 @@ pub async fn run_g2_download(
     cancel: Arc<AtomicBool>,
     connections: Arc<AtomicU32>,
     cancel_token: CancellationToken,
-) -> Result<PathBuf, String> {
+) -> Result<PathBuf, G2Error> {
     let _ = (speed, connections);
     if !is_g2_uri(uri) {
-        return Err(format!("not a G2 URI: {uri}"));
+        return Err(G2Error::InvalidUri(format!("not a G2 URI: {uri}")));
     }
-    let link = parse_g2_uri(uri).ok_or_else(|| "invalid g2 URI".to_string())?;
+    let link = parse_g2_uri(uri).ok_or_else(|| G2Error::InvalidUri("invalid g2 URI".into()))?;
     let urn = link
         .urn
         .as_deref()
-        .ok_or_else(|| "G2 URI missing sha1/urn".to_string())?;
+        .ok_or_else(|| G2Error::InvalidUri("G2 URI missing sha1/urn".into()))?;
     if link.file_size == 0 {
-        return Err("G2 URI missing xl/size".into());
+        return Err(G2Error::InvalidUri("G2 URI missing xl/size".into()));
     }
     total.store(link.file_size, Ordering::Relaxed);
     if cancel.load(Ordering::Relaxed) || cancel_token.is_cancelled() {
-        return Err("cancelled".into());
+        return Err(G2Error::Network("cancelled".into()));
     }
     let safe = sanitize(if link.file_name.is_empty() {
         urn.trim_start_matches("urn:sha1:")
@@ -167,7 +154,12 @@ pub async fn run_g2_download(
         cancel_token,
     )
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| match e {
+        GnutellaError::InvalidUri(msg) => G2Error::InvalidUri(msg),
+        GnutellaError::Io(err) => G2Error::Io(err),
+        GnutellaError::Network(msg) => G2Error::Network(msg),
+        GnutellaError::NoSource => G2Error::NoSource,
+    })?;
     Ok(out_path)
 }
 
@@ -184,7 +176,7 @@ fn sanitize(name: &str) -> String {
         })
         .collect();
     let trimmed = cleaned.trim_matches('.');
-    if trimmed.is_empty() || trimmed == ".." {
+    if trimmed.is_empty() {
         "g2-download".to_string()
     } else {
         trimmed.to_string()

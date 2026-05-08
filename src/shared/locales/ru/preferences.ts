@@ -102,7 +102,7 @@ export default {
 	"protocols-magnet": "Magnet [ magnet:// ]",
 	"protocols-thunder": "Thunder [ thunder:// ]",
 	"protocols-adc": "Direct Connect [ adc:// adcs:// dchub:// nmdc:// ]",
-	"protocols-gnutella": "Gnutella [ gnutella:// ]",
+	"protocols-gnutella": "Gnutella [ gnutella://, gnet:// ]",
 	"protocols-g2": "Gnutella2 [ g2:// ]",
 	"gift-integration": "Интеграция демона giFT",
 	"gift-enabled": "Включить делегирование giFT",

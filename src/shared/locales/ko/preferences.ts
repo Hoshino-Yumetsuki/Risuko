@@ -97,7 +97,7 @@ export default {
 	"protocols-magnet": "마그넷 [ magnet:// ]",
 	"protocols-thunder": "썬더 [ thunder:// ]",
 	"protocols-adc": "Direct Connect [ adc:// adcs:// dchub:// nmdc:// ]",
-	"protocols-gnutella": "Gnutella [ gnutella:// ]",
+	"protocols-gnutella": "Gnutella [ gnutella://, gnet:// ]",
 	"protocols-g2": "Gnutella2 [ g2:// ]",
 	"gift-integration": "giFT 데몬 통합",
 	"gift-enabled": "giFT 위임 사용",

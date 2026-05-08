@@ -70,7 +70,13 @@ pub async fn fetch_by_urn(
     while remaining > 0 {
         let take = buf.len().min(remaining as usize);
         let n = tokio::select! {
-            res = reader.read(&mut buf[..take]) => res?,
+            read_res = timeout(Duration::from_secs(30), reader.read(&mut buf[..take])) => {
+                match read_res {
+                    Ok(Ok(n)) => n,
+                    Ok(Err(e)) => return Err(GnutellaError::Io(e)),
+                    Err(_) => return Err(GnutellaError::Network("read timeout".into())),
+                }
+            }
             _ = cancel.cancelled() => {
                 return Err(GnutellaError::Network("cancelled".into()));
             }

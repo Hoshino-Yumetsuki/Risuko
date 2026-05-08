@@ -12,6 +12,7 @@ use std::sync::Arc;
 
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
+use tokio_util::sync::CancellationToken;
 
 use super::types::AdcError;
 
@@ -25,7 +26,12 @@ pub async fn download_from_peer(
     file_size: u64,
     out_path: &Path,
     completed: Arc<AtomicU64>,
+    cancel_token: CancellationToken,
 ) -> Result<(), AdcError> {
+    if cancel_token.is_cancelled() {
+        return Err(AdcError::Peer("cancelled".into()));
+    }
+
     let (rd, mut wr) = tokio::io::split(socket);
     let mut reader = BufReader::new(rd);
 
@@ -43,7 +49,15 @@ pub async fn download_from_peer(
     // Read response header up to `|` — cap at 4097 bytes before the check so
     // a peer cannot trigger unbounded allocation with an unterminated response
     let mut header = Vec::with_capacity(128);
-    (&mut reader).take(4097).read_until(b'|', &mut header).await?;
+    let mut limited_reader = (&mut reader).take(4097);
+    tokio::select! {
+        read_res = limited_reader.read_until(b'|', &mut header) => {
+            let _ = read_res?;
+        }
+        _ = cancel_token.cancelled() => {
+            return Err(AdcError::Peer("cancelled".into()));
+        }
+    }
     if header.len() > 4096 {
         return Err(AdcError::Protocol("oversized $ADCSND header".into()));
     }
@@ -73,11 +87,21 @@ pub async fn download_from_peer(
     let mut buf = vec![0u8; 64 * 1024];
     while remaining > 0 {
         let take = buf.len().min(remaining as usize);
-        let n = reader.read(&mut buf[..take]).await?;
+        let n = tokio::select! {
+            read_res = reader.read(&mut buf[..take]) => read_res?,
+            _ = cancel_token.cancelled() => {
+                return Err(AdcError::Peer("cancelled".into()));
+            }
+        };
         if n == 0 {
             return Err(AdcError::Peer("peer closed mid-transfer".into()));
         }
-        f.write_all(&buf[..n]).await?;
+        tokio::select! {
+            write_res = f.write_all(&buf[..n]) => write_res?,
+            _ = cancel_token.cancelled() => {
+                return Err(AdcError::Peer("cancelled".into()));
+            }
+        }
         remaining -= n as u64;
         completed.fetch_add(n as u64, Ordering::Relaxed);
     }

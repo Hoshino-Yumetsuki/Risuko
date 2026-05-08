@@ -240,7 +240,7 @@ pub fn run() {
                     return;
                 }
                 api.prevent_close();
-                let _ = commands::app_cmds::hide_main_window(window.app_handle());
+                let _ = commands::app_cmds::hide_main_window(&window.app_handle());
             }
         })
         .invoke_handler(tauri::generate_handler![

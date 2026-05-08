@@ -58,7 +58,6 @@ pub async fn run_gift_download(
     connections: Arc<AtomicU32>,
     cancel_token: CancellationToken,
 ) -> Result<PathBuf, String> {
-    let _ = cancel_token;
     if !is_gift_uri(uri) {
         return Err(format!("not a giFT URI: {uri}"));
     }

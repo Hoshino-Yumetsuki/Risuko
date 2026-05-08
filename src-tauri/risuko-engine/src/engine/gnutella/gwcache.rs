@@ -33,13 +33,20 @@ pub async fn fetch_peers(cache_url: &str) -> Vec<String> {
         _ => return peers,
     };
     let (rd, mut wr) = tokio::io::split(stream);
-    if wr.write_all(req.as_bytes()).await.is_err() {
-        return peers;
+    match timeout(Duration::from_secs(5), wr.write_all(req.as_bytes())).await {
+        Ok(Ok(())) => {}
+        _ => return peers,
     }
     let mut reader = BufReader::new(rd);
     let mut in_body = false;
     let mut line = String::new();
-    while let Ok(n) = reader.read_line(&mut line).await {
+    loop {
+        line.clear();
+        let n = match timeout(Duration::from_secs(5), reader.read_line(&mut line)).await {
+            Ok(Ok(n)) => n,
+            Ok(Err(_)) => break,
+            Err(_) => break,
+        };
         if n == 0 {
             break;
         }
@@ -51,7 +58,6 @@ pub async fn fetch_peers(cache_url: &str) -> Vec<String> {
         } else if trimmed.contains(':') && !trimmed.starts_with("HTTP/") {
             peers.push(trimmed);
         }
-        line.clear();
         if peers.len() >= 32 {
             break;
         }

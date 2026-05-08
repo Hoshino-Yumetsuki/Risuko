@@ -14,6 +14,8 @@ use tokio::net::TcpStream;
 use super::nmdc::HUB_IO_TIMEOUT;
 use super::types::{AdcError, HubInfo};
 
+const MAX_HANDSHAKE_FRAMES: usize = 3;
+
 /// Connected ADC hub session: split read/write halves of the TCP stream
 /// plus the Session ID assigned by the hub during `ISID`
 pub struct AdcClient {
@@ -83,7 +85,7 @@ impl AdcClient {
             return Err(AdcError::Protocol("invalid nick".into()));
         }
         self.write_frame("HSUP ADBASE ADTIGR ADBLOM").await?;
-        loop {
+        for _ in 0..MAX_HANDSHAKE_FRAMES {
             let frame = self.read_frame().await?;
             if let Some(rest) = frame.strip_prefix("ISID ") {
                 let sid = rest.split(' ').next().unwrap_or("AAAA").to_string();
@@ -101,6 +103,9 @@ impl AdcClient {
                 return Err(AdcError::Protocol(format!("hub status: {frame}")));
             }
         }
+        Err(AdcError::Protocol(format!(
+            "handshake exceeded {MAX_HANDSHAKE_FRAMES} frames"
+        )))
     }
 
     /// Session ID assigned to us by the hub via `ISID`, if handshake done

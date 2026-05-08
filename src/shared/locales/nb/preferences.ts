@@ -110,7 +110,8 @@ export default {
 	"gift-enabled": "Aktiver giFT-delegering",
 	"gift-host": "giFT-vert",
 	"gift-port": "giFT-port",
-	"gift-not-detected": "giFT-daemon ble ikke funnet på den konfigurerte vert:port.",
+	"gift-not-detected":
+		"giFT-daemon ble ikke funnet på den konfigurerte vert:port.",
 	"browser-extensions": "Utvidelser",
 	"baidu-exporter": "BaiduExporter",
 	"browser-extensions-tips": "Levert av samfunnet,",

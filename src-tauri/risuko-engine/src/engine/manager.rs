@@ -611,20 +611,19 @@ impl TaskManager {
                     )
                     .await
                 }
-                TaskKind::G2 => {
-                    super::g2::run_g2_download(
-                        &uri,
-                        &dir,
-                        &opts_snapshot,
-                        total_dl,
-                        completed_dl,
-                        speed_dl,
-                        cancel_dl,
-                        connections_dl,
-                        cancel_token_dl,
-                    )
-                    .await
-                }
+                TaskKind::G2 => super::g2::run_g2_download(
+                    &uri,
+                    &dir,
+                    &opts_snapshot,
+                    total_dl,
+                    completed_dl,
+                    speed_dl,
+                    cancel_dl,
+                    connections_dl,
+                    cancel_token_dl,
+                )
+                .await
+                .map_err(|e| e.to_string()),
                 TaskKind::Gift => {
                     super::gift::run_gift_download(
                         &uri,

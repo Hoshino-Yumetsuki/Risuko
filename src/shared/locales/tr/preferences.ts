@@ -107,7 +107,8 @@ export default {
 	"gift-enabled": "giFT yetkilendirmesini etkinleştir",
 	"gift-host": "giFT Sunucusu",
 	"gift-port": "giFT Bağlantı Noktası",
-	"gift-not-detected": "Yapılandırılan sunucu:bağlantı noktasında giFT daemon bulunamadı.",
+	"gift-not-detected":
+		"Yapılandırılan sunucu:bağlantı noktasında giFT daemon bulunamadı.",
 	"browser-extensions": "Eklentiler",
 	"baidu-exporter": "BaiduExporter",
 	"browser-extensions-tips": "Topluluk tarafından sağlanan, ",

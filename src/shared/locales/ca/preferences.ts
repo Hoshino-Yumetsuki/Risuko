@@ -111,7 +111,8 @@ export default {
 	"gift-enabled": "Activa la delegació a giFT",
 	"gift-host": "Amfitrió de giFT",
 	"gift-port": "Port de giFT",
-	"gift-not-detected": "No s'ha detectat el dimoni giFT a l'amfitrió:port configurats.",
+	"gift-not-detected":
+		"No s'ha detectat el dimoni giFT a l'amfitrió:port configurats.",
 	"browser-extensions": "Extensions",
 	"baidu-exporter": "BaiduExporter",
 	"browser-extensions-tips": "Proporcionats per la comunitat, ",
