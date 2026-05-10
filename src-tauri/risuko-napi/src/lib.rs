@@ -20,6 +20,9 @@ struct NapiEngine {
     events: EventBroadcaster,
     progress_task: tokio::task::JoinHandle<()>,
     auto_save_task: tokio::task::JoinHandle<()>,
+    // Kept alive so any in-band `RpcServer::stop` send through `rpc_shutdown_tx` succeeds
+    _rpc_shutdown_rx: tokio::sync::mpsc::Receiver<()>,
+    event_task: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
 }
 
 static ENGINE: std::sync::LazyLock<Mutex<Option<NapiEngine>>> =
@@ -80,7 +83,7 @@ pub async fn start_engine(config: Option<EngineConfig>) -> Result<()> {
             .map_err(|e| Error::from_reason(format!("Failed to create task manager: {}", e)))?,
     );
 
-    let (rpc_shutdown_tx, _) = tokio::sync::mpsc::channel::<()>(1);
+    let (rpc_shutdown_tx, rpc_shutdown_rx) = tokio::sync::mpsc::channel::<()>(1);
 
     let mut rpc_server = RpcServer::new(
         rpc_host,
@@ -125,6 +128,8 @@ pub async fn start_engine(config: Option<EngineConfig>) -> Result<()> {
         events,
         progress_task,
         auto_save_task,
+        _rpc_shutdown_rx: rpc_shutdown_rx,
+        event_task: Arc::new(Mutex::new(None)),
     });
 
     Ok(())
@@ -138,6 +143,9 @@ pub async fn stop_engine() -> Result<()> {
         .ok_or_else(|| Error::from_reason("Engine not running"))?;
     engine.progress_task.abort();
     engine.auto_save_task.abort();
+    if let Some(handle) = engine.event_task.lock().await.take() {
+        handle.abort();
+    }
     engine.rpc_server.stop();
     engine.manager.shutdown().await;
     Ok(())
@@ -150,11 +158,14 @@ where
     F: FnOnce(Arc<TaskManager>) -> Fut,
     Fut: std::future::Future<Output = Result<T>>,
 {
-    let guard = ENGINE.lock().await;
-    let engine = guard
-        .as_ref()
-        .ok_or_else(|| Error::from_reason("Engine not running"))?;
-    f(engine.manager.clone()).await
+    let manager = {
+        let guard = ENGINE.lock().await;
+        let engine = guard
+            .as_ref()
+            .ok_or_else(|| Error::from_reason("Engine not running"))?;
+        engine.manager.clone()
+    };
+    f(manager).await
 }
 
 #[napi]
@@ -163,7 +174,7 @@ pub async fn add_uri(uris: Vec<String>, options: Option<serde_json::Value>) -> R
         let opts = to_map(options);
         mgr.add_http_task(uris, opts)
             .await
-            .map_err(|e| Error::from_reason(e))
+            .map_err(Error::from_reason)
     })
     .await
 }
@@ -174,7 +185,7 @@ pub async fn add_torrent(data: Buffer, options: Option<serde_json::Value>) -> Re
         let opts = to_map(options);
         mgr.add_torrent_task(data.to_vec(), opts)
             .await
-            .map_err(|e| Error::from_reason(e))
+            .map_err(Error::from_reason)
     })
     .await
 }
@@ -185,7 +196,7 @@ pub async fn add_magnet(uri: String, options: Option<serde_json::Value>) -> Resu
         let opts = to_map(options);
         mgr.add_magnet_task(&uri, opts)
             .await
-            .map_err(|e| Error::from_reason(e))
+            .map_err(Error::from_reason)
     })
     .await
 }
@@ -196,7 +207,7 @@ pub async fn add_ed2k(uri: String, options: Option<serde_json::Value>) -> Result
         let opts = to_map(options);
         mgr.add_ed2k_task(&uri, opts)
             .await
-            .map_err(|e| Error::from_reason(e))
+            .map_err(Error::from_reason)
     })
     .await
 }
@@ -207,7 +218,7 @@ pub async fn add_m3u8(uri: String, options: Option<serde_json::Value>) -> Result
         let opts = to_map(options);
         mgr.add_m3u8_task(&uri, opts)
             .await
-            .map_err(|e| Error::from_reason(e))
+            .map_err(Error::from_reason)
     })
     .await
 }
@@ -218,7 +229,7 @@ pub async fn add_ftp(uri: String, options: Option<serde_json::Value>) -> Result<
         let opts = to_map(options);
         mgr.add_ftp_task(&uri, opts)
             .await
-            .map_err(|e| Error::from_reason(e))
+            .map_err(Error::from_reason)
     })
     .await
 }
@@ -227,20 +238,17 @@ pub async fn add_ftp(uri: String, options: Option<serde_json::Value>) -> Result<
 
 #[napi]
 pub async fn pause(gid: String) -> Result<()> {
-    with_manager(|mgr| async move { mgr.pause(&gid).await.map_err(|e| Error::from_reason(e)) })
-        .await
+    with_manager(|mgr| async move { mgr.pause(&gid).await.map_err(Error::from_reason) }).await
 }
 
 #[napi]
 pub async fn unpause(gid: String) -> Result<()> {
-    with_manager(|mgr| async move { mgr.unpause(&gid).await.map_err(|e| Error::from_reason(e)) })
-        .await
+    with_manager(|mgr| async move { mgr.unpause(&gid).await.map_err(Error::from_reason) }).await
 }
 
 #[napi]
 pub async fn remove(gid: String) -> Result<()> {
-    with_manager(|mgr| async move { mgr.remove(&gid).await.map_err(|e| Error::from_reason(e)) })
-        .await
+    with_manager(|mgr| async move { mgr.remove(&gid).await.map_err(Error::from_reason) }).await
 }
 
 #[napi]
@@ -267,9 +275,7 @@ pub async fn unpause_all() -> Result<()> {
 pub async fn tell_status(gid: String, keys: Option<Vec<String>>) -> Result<serde_json::Value> {
     with_manager(|mgr| async move {
         let k = keys.unwrap_or_default();
-        mgr.tell_status(&gid, &k)
-            .await
-            .map_err(|e| Error::from_reason(e))
+        mgr.tell_status(&gid, &k).await.map_err(Error::from_reason)
     })
     .await
 }
@@ -316,8 +322,7 @@ pub async fn get_global_stat() -> Result<serde_json::Value> {
 
 #[napi]
 pub async fn get_files(gid: String) -> Result<serde_json::Value> {
-    with_manager(|mgr| async move { mgr.get_files(&gid).await.map_err(|e| Error::from_reason(e)) })
-        .await
+    with_manager(|mgr| async move { mgr.get_files(&gid).await.map_err(Error::from_reason) }).await
 }
 
 #[napi]
@@ -327,20 +332,14 @@ pub async fn get_peers(gid: String) -> Result<serde_json::Value> {
 
 #[napi]
 pub async fn get_uris(gid: String) -> Result<serde_json::Value> {
-    with_manager(|mgr| async move { mgr.get_uris(&gid).await.map_err(|e| Error::from_reason(e)) })
-        .await
+    with_manager(|mgr| async move { mgr.get_uris(&gid).await.map_err(Error::from_reason) }).await
 }
 
 // Options
 
 #[napi]
 pub async fn get_option(gid: String) -> Result<serde_json::Value> {
-    with_manager(|mgr| async move {
-        mgr.get_option(&gid)
-            .await
-            .map_err(|e| Error::from_reason(e))
-    })
-    .await
+    with_manager(|mgr| async move { mgr.get_option(&gid).await.map_err(Error::from_reason) }).await
 }
 
 #[napi]
@@ -354,7 +353,7 @@ pub async fn change_option(gid: String, options: serde_json::Value) -> Result<()
         let opts = value_to_map(options);
         mgr.change_option(&gid, opts)
             .await
-            .map_err(|e| Error::from_reason(e))
+            .map_err(Error::from_reason)
     })
     .await
 }
@@ -373,8 +372,7 @@ pub async fn change_global_option(options: serde_json::Value) -> Result<()> {
 
 #[napi]
 pub async fn save_session() -> Result<()> {
-    with_manager(|mgr| async move { mgr.save_session().await.map_err(|e| Error::from_reason(e)) })
-        .await
+    with_manager(|mgr| async move { mgr.save_session().await.map_err(Error::from_reason) }).await
 }
 
 #[napi]
@@ -391,7 +389,7 @@ pub async fn remove_download_result(gid: String) -> Result<()> {
     with_manager(|mgr| async move {
         mgr.remove_download_result(&gid)
             .await
-            .map_err(|e| Error::from_reason(e))
+            .map_err(Error::from_reason)
     })
     .await
 }
@@ -399,40 +397,42 @@ pub async fn remove_download_result(gid: String) -> Result<()> {
 // Events
 
 /// Subscribe to engine events. The callback receives (eventName, gid).
-/// Returns an unsubscribe function ID.
+/// Registers the callback and returns `Result<()>` on success.
 #[napi(ts_args_type = "callback: (eventName: string, gid: string) => void")]
-pub fn on_event(
+pub async fn on_event(
     callback: napi::threadsafe_function::ThreadsafeFunction<(String, String)>,
 ) -> Result<()> {
-    let _guard_handle = std::thread::spawn(move || {
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .expect("Failed to build event runtime");
-
-        rt.block_on(async {
-            let guard = ENGINE.lock().await;
-            if let Some(engine) = guard.as_ref() {
-                let mut rx = engine.events.subscribe();
-                drop(guard);
-                loop {
-                    match rx.recv().await {
-                        Ok(event) => {
-                            let name = event.method_name().to_string();
-                            let gid = event.gid().to_string();
-                            callback.call(
-                                Ok((name, gid)),
-                                napi::threadsafe_function::ThreadsafeFunctionCallMode::NonBlocking,
-                            );
-                        }
-                        Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
-                        Err(_) => continue, // lagged, skip
-                    }
+    let (event_task, mut rx) = {
+        let guard = ENGINE.lock().await;
+        let engine = guard
+            .as_ref()
+            .ok_or_else(|| Error::from_reason("Engine not running"))?;
+        let event_task = Arc::clone(&engine.event_task);
+        let rx = engine.events.subscribe();
+        (event_task, rx)
+    }; // ENGINE guard released before the async lock below
+    let mut slot = event_task.lock().await;
+    if let Some(prev) = slot.take() {
+        prev.abort();
+    }
+    let mut rx = rx;
+    let handle = tokio::spawn(async move {
+        loop {
+            match rx.recv().await {
+                Ok(event) => {
+                    let name = event.method_name().to_string();
+                    let gid = event.gid().to_string();
+                    callback.call(
+                        Ok((name, gid)),
+                        napi::threadsafe_function::ThreadsafeFunctionCallMode::NonBlocking,
+                    );
                 }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                Err(_) => continue, // lagged, skip
             }
-        });
+        }
     });
-
+    *slot = Some(handle);
     Ok(())
 }
 

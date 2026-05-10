@@ -130,7 +130,7 @@ async fn do_download(
         eprintln!("Download started (GID: {})", gid);
     }
 
-    progress::watch_download(&client, &gid, args.json).await
+    progress::watch_download(client, &gid, args.json).await
 }
 
 // Status
@@ -278,7 +278,7 @@ pub async fn files(args: GidArgs) -> Result<(), Box<dyn std::error::Error>> {
     if args.json {
         println!("{}", serde_json::to_string_pretty(&result)?);
     } else if let Some(files) = result.as_array() {
-        println!("{:<4} {:<10} {:<10} {}", "Idx", "Size", "Done", "Path");
+        println!("{:<4} {:<10} {:<10} Path", "Idx", "Size", "Done");
         println!("{}", "-".repeat(60));
         for (i, f) in files.iter().enumerate() {
             let length = parse_num(f, "length");
@@ -310,10 +310,7 @@ pub async fn peers(args: GidArgs) -> Result<(), Box<dyn std::error::Error>> {
         if peers.is_empty() {
             println!("No peers.");
         } else {
-            println!(
-                "{:<22} {:<12} {:<12} {}",
-                "IP", "DL Speed", "UL Speed", "Client"
-            );
+            println!("{:<22} {:<12} {:<12} Peer ID", "IP", "DL Speed", "UL Speed");
             println!("{}", "-".repeat(60));
             for p in peers {
                 let ip = p.get("ip").and_then(|v| v.as_str()).unwrap_or("-");

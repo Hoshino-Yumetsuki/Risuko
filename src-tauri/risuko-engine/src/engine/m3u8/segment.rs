@@ -136,13 +136,11 @@ pub async fn download_segments(
 
     for (index, segment) in segments.iter().enumerate() {
         // Skip already-completed segments
-        if progress.completed_indices.contains(&index) {
-            if segment_paths[index].exists() {
-                handles.push(None);
-                continue;
-            }
-            // File missing despite progress marker —> re-download
+        if progress.completed_indices.contains(&index) && segment_paths[index].exists() {
+            handles.push(None);
+            continue;
         }
+        // File missing despite progress marker —> re-download
 
         let permit = semaphore.clone();
         let client = client.clone();

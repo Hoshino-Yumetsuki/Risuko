@@ -792,6 +792,45 @@
                 />
               </div>
             </div>
+            <div class="settings-row">
+              <div class="settings-row-content">
+                <div class="settings-row-title">
+                  {{ $t('preferences.protocols-adc') }}
+                </div>
+              </div>
+              <div class="settings-row-action">
+                <ui-checkbox
+                  :model-value="!!form.protocols.adc"
+                  @change="(val) => onProtocolsChange('adc', val)"
+                />
+              </div>
+            </div>
+            <div class="settings-row">
+              <div class="settings-row-content">
+                <div class="settings-row-title">
+                  {{ $t('preferences.protocols-gnutella') }}
+                </div>
+              </div>
+              <div class="settings-row-action">
+                <ui-checkbox
+                  :model-value="!!form.protocols.gnutella"
+                  @change="(val) => onProtocolsChange('gnutella', val)"
+                />
+              </div>
+            </div>
+            <div class="settings-row">
+              <div class="settings-row-content">
+                <div class="settings-row-title">
+                  {{ $t('preferences.protocols-g2') }}
+                </div>
+              </div>
+              <div class="settings-row-action">
+                <ui-checkbox
+                  :model-value="!!form.protocols.g2"
+                  @change="(val) => onProtocolsChange('g2', val)"
+                />
+              </div>
+            </div>
           </div>
         </div>
 
@@ -1168,6 +1207,9 @@ const initForm = (config) => {
 			magnet: parseBooleanConfig(protocols?.magnet, true),
 			thunder: parseBooleanConfig(protocols?.thunder, false),
 			ed2k: parseBooleanConfig(protocols?.ed2k, true),
+			adc: parseBooleanConfig(protocols?.adc, false),
+			gnutella: parseBooleanConfig(protocols?.gnutella, false),
+			g2: parseBooleanConfig(protocols?.g2, false),
 		},
 		rpcListenPort,
 		rpcSecret,
@@ -1566,6 +1608,9 @@ export default {
 					magnet: !!this.form.protocols.magnet,
 					thunder: !!this.form.protocols.thunder,
 					ed2k: !!this.form.protocols.ed2k,
+					adc: !!this.form.protocols.adc,
+					gnutella: !!this.form.protocols.gnutella,
+					g2: !!this.form.protocols.g2,
 				};
 			}
 

@@ -312,17 +312,13 @@ pub async fn run_youtube_download(
     }
 
     let resolved = if let Some(path) = last_path {
-        if path.is_absolute() {
-            path
-        } else if dir.trim().is_empty() {
+        if path.is_absolute() || dir.trim().is_empty() {
             path
         } else {
             Path::new(dir).join(path)
         }
     } else if !out.trim().is_empty() {
-        if Path::new(out).is_absolute() {
-            PathBuf::from(out)
-        } else if dir.trim().is_empty() {
+        if Path::new(out).is_absolute() || dir.trim().is_empty() {
             PathBuf::from(out)
         } else {
             Path::new(dir).join(out)

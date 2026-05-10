@@ -18,6 +18,7 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Command {
+    #[allow(clippy::large_enum_variant)]
     /// Download a file from a URL, magnet link, or torrent file
     Download(DownloadArgs),
 

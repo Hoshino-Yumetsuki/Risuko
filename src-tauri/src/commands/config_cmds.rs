@@ -100,7 +100,7 @@ pub fn save_preference(
 
 fn normalize_proxy_bypass(value: &str) -> String {
     value
-        .split(|c| c == ',' || c == '\r' || c == '\n')
+        .split([',', '\r', '\n'])
         .map(|item| item.trim())
         .filter(|item| !item.is_empty())
         .collect::<Vec<_>>()

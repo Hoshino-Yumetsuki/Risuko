@@ -988,9 +988,7 @@ fn resolve_task_info_hash(task: &Value) -> Option<String> {
         }
     }
 
-    let Some(files) = task.get("files").and_then(Value::as_array) else {
-        return None;
-    };
+    let files = task.get("files").and_then(Value::as_array)?;
 
     for file in files {
         let Some(uris) = file.get("uris").and_then(Value::as_array) else {
@@ -1098,10 +1096,8 @@ fn trash_generated_torrent_sidecars_in_dir(dir: &Path, normalized_info_hash: Opt
             })
             .unwrap_or(false);
 
-        if matched {
-            if delete_file_best_effort(&path) {
-                deleted += 1;
-            }
+        if matched && delete_file_best_effort(&path) {
+            deleted += 1;
         }
     }
 

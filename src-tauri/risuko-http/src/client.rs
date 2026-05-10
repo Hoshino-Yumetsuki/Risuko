@@ -519,9 +519,7 @@ impl ClientBuilder {
 
         let connector = Connector {
             tls: Arc::new(tls),
-            resolver: self
-                .resolver
-                .unwrap_or_else(|| Arc::new(GaiResolver::default())),
+            resolver: self.resolver.unwrap_or_else(|| Arc::new(GaiResolver)),
             proxy: self.proxy.map(Arc::new),
             connect_timeout: self.connect_timeout,
             tcp_nodelay: self.tcp_nodelay,

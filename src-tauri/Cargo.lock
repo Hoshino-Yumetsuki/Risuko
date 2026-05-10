@@ -5511,6 +5511,7 @@ dependencies = [
  "suppaftp",
  "tempfile",
  "thiserror 2.0.18",
+ "tiger",
  "tokio",
  "tokio-util",
  "tower-http",
@@ -7208,6 +7209,15 @@ dependencies = [
  "quick-error",
  "weezl",
  "zune-jpeg",
+]
+
+[[package]]
+name = "tiger"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8ad6ecb56d435fa53bca61a6b7c9019bf1f18b56760150e2e97afd97290ff401"
+dependencies = [
+ "digest 0.11.2",
 ]
 
 [[package]]

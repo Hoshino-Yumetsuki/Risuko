@@ -32,6 +32,7 @@ uuid = { version = "1", features = ["v4"] }
 base64 = "0.22"
 futures-util = "0.3"
 rand = "0.10"
+tiger = "0.3"
 tower-http = { version = "0.6", features = ["cors"] }
 tracing = "0.1"
 risuko-http = { workspace = true }

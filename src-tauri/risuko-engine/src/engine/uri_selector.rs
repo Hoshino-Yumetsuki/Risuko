@@ -100,9 +100,9 @@ impl ServerStats {
 /// Decide which URI from `uris` to try next given the current strategy and
 /// per-host stats. Returns `None` only when *all* URIs are blacklisted —
 /// callers should treat that as terminal
-pub fn pick<'a>(
+pub fn pick(
     strategy: Strategy,
-    uris: &'a [String],
+    uris: &[String],
     stats: &ServerStats,
     failed_in_this_attempt: &[usize],
 ) -> Option<usize> {

@@ -226,10 +226,10 @@ impl Connector {
     }
 
     async fn direct(&self, host: &str, port: u16) -> Result<TcpStream, Error> {
-        let mut addrs = self.resolver.resolve(host).await?;
+        let addrs = self.resolver.resolve(host).await?;
         let mut last: Option<io::Error> = None;
         let timeout = self.connect_timeout;
-        while let Some(addr) = addrs.next() {
+        for addr in addrs {
             let addr = SocketAddr::new(addr.ip(), port);
             let fut = TcpStream::connect(addr);
             let res = match timeout {
@@ -303,7 +303,7 @@ impl Connector {
                 let pass = percent_decode_str(pass_raw);
                 let target_addr_str = format!("{host}:{port}");
                 let proxy_addr = format!("{phost}:{pport}");
-                let auth = (!user.is_empty()).then(|| (user.as_str(), pass.as_str()));
+                let auth = (!user.is_empty()).then_some((user.as_str(), pass.as_str()));
 
                 // Apply the same connect-timeout budget to SOCKS5 as to
                 // direct/HTTP-CONNECT paths so a misbehaving proxy can't

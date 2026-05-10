@@ -1,6 +1,8 @@
 //! Test for the new HTTP feature stack:
 //! - multi-URI mirror failover (`uri_selector` strategies)
 //! - Range probe + multi-piece worker pool
+
+#![allow(clippy::type_complexity)]
 //! - Whole-file SHA-256 verification
 //! - Cookie jar (Netscape format on disk -> loaded via `load-cookies`)
 //! - File pre-allocation (`file-allocation = falloc`)

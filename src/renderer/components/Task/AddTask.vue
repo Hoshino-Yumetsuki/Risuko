@@ -2,7 +2,7 @@
   <Dialog :open="visible" @update:open="handleDialogOpenChange">
     <DialogContent
       :show-close-button="false"
-      class="add-task-dialog flex max-h-[80vh] w-[680px] flex-col gap-0 overflow-hidden p-0"
+      class="add-task-dialog flex max-h-[80vh] w-170 flex-col gap-0 overflow-hidden p-0"
     >
       <DialogHeader class="flex shrink-0 flex-row items-center gap-2 border-b border-border/60 px-4 py-3">
         <div class="flex size-7 items-center justify-center rounded-md bg-muted text-muted-foreground">
@@ -62,7 +62,7 @@
         <div class="mt-3 mb-12 px-4">
           <div
             v-if="queue.length === 0"
-            class="flex min-h-[120px] items-center justify-center rounded-md border border-dashed border-border/40 text-xs text-muted-foreground"
+            class="flex min-h-30 items-center justify-center rounded-md border border-dashed border-border/40 text-xs text-muted-foreground"
           >
             {{ $t('task.batch-queue-empty') }}
           </div>
@@ -241,7 +241,7 @@ import {
 	NONE_SELECTED_FILES,
 	SELECTED_ALL_FILES,
 } from "@shared/constants";
-import { splitTaskLinks } from "@shared/utils";
+import { detectUriProtocol, splitTaskLinks } from "@shared/utils";
 import logger from "@shared/utils/logger";
 import { readText } from "@tauri-apps/plugin-clipboard-manager";
 import { open as tauriOpen } from "@tauri-apps/plugin-dialog";
@@ -555,7 +555,42 @@ export default {
 			}
 			const items = links.map((u) => createUriBatchItem(u));
 			useAppStore().enqueueBatchItems(items);
+			this.notifyDetectedProtocols(links);
 			this.uriDraft = "";
+		},
+		notifyDetectedProtocols(links: string[]) {
+			if (!links || links.length === 0) {
+				return;
+			}
+			const counts = new Map<string, number>();
+			let unknown = 0;
+			for (const uri of links) {
+				const proto = detectUriProtocol(uri);
+				if (proto) {
+					counts.set(proto, (counts.get(proto) || 0) + 1);
+				} else {
+					unknown += 1;
+				}
+			}
+			if (counts.size === 0 && unknown === 0) {
+				return;
+			}
+			const parts = Array.from(counts.entries()).map(([name, n]) =>
+				n > 1 ? `${name} \u00d7${n}` : name,
+			);
+			if (unknown > 0) {
+				parts.push(
+					unknown > 1
+						? this.$t("task.unknown-protocol-multi", { count: unknown })
+						: this.$t("task.unknown-protocol"),
+				);
+			}
+			const summary = parts.join(", ");
+			const title =
+				counts.size === 1 && unknown === 0 && links.length === 1
+					? this.$t("task.link-detected-single", { name: parts[0] })
+					: this.$t("task.links-detected");
+			toast.info(title, { description: summary });
 		},
 		handleDrop(ev: DragEvent) {
 			this.dragOver = false;
@@ -578,6 +613,13 @@ export default {
 				return;
 			}
 			useAppStore().enqueueBatchItems(items);
+			toast.info(
+				items.length === 1
+					? this.$t("task.bittorrent-detected")
+					: this.$t("task.bittorrent-detected-multi", {
+							count: items.length,
+						}),
+			);
 		},
 		async browseTorrentFiles() {
 			try {
@@ -806,7 +848,15 @@ function isLikelyTaskLink(line: string): boolean {
 		lower.startsWith("sftp://") ||
 		lower.startsWith("magnet:") ||
 		lower.startsWith("thunder://") ||
-		lower.startsWith("ed2k://")
+		lower.startsWith("ed2k://") ||
+		lower.startsWith("adc://") ||
+		lower.startsWith("adcs://") ||
+		lower.startsWith("dchub://") ||
+		lower.startsWith("nmdc://") ||
+		lower.startsWith("gnutella://") ||
+		lower.startsWith("gnet://") ||
+		lower.startsWith("g2://") ||
+		lower.startsWith("gift://")
 	);
 }
 </script>

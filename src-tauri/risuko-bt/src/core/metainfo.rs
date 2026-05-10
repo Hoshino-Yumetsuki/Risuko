@@ -543,8 +543,8 @@ fn validate_info(value: &Value) -> Result<ValidatedTorrentMetaV1Info, MetaError>
     })
 }
 
-///! BEP 52 v2 parsing
-
+// BEP 52 v2 parsing
+//
 /// Build a v1-shaped facade from a parsed v2 info view, so the rest of the
 /// engine — which iterates `files`, `name`, `piece_length` and
 /// `single_file_mode` — keeps working uniformly. The synthesized facade has

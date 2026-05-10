@@ -97,6 +97,15 @@ export default {
 		"以下のプロトコルのデフォルトクライアントとして設定",
 	"protocols-magnet": "磁石 [ magnet:// ]",
 	"protocols-thunder": "サンダー [ thunder:// ]",
+	"protocols-adc": "Direct Connect [ adc://, adcs://, dchub://, nmdc:// ]",
+	"protocols-gnutella": "Gnutella [ gnutella://, gnet:// ]",
+	"protocols-g2": "Gnutella2 [ g2:// ]",
+	"gift-integration": "giFT デーモン連携",
+	"gift-enabled": "giFT への委譲を有効化",
+	"gift-host": "giFT ホスト",
+	"gift-port": "giFT ポート",
+	"gift-not-detected":
+		"設定されたホスト:ポートで giFT デーモンが検出できませんでした。",
 	"browser-extensions": "ブラウザ拡張機能",
 	"baidu-exporter": "バイドゥオンラインストレージ拡張機能",
 	"browser-extensions-tips":

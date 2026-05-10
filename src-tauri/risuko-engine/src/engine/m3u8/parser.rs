@@ -130,7 +130,7 @@ fn parse_playlist_bytes(bytes: &[u8], base_url: &str) -> Result<ParsedPlaylist, 
             Ok(ParsedPlaylist::Master { variants })
         }
         m3u8_rs::Playlist::MediaPlaylist(media) => {
-            let media_sequence = media.media_sequence as u64;
+            let media_sequence = media.media_sequence;
             let end_list = media.end_list;
             let mut current_encryption: Option<EncryptionInfo> = None;
             let mut total_duration: f64 = 0.0;
@@ -150,8 +150,8 @@ fn parse_playlist_bytes(bytes: &[u8], base_url: &str) -> Result<ParsedPlaylist, 
                     total_duration += duration;
 
                     let byte_range = seg.byte_range.map(|br| {
-                        let length = br.length as u64;
-                        let offset = br.offset.map(|o| o as u64).unwrap_or(byte_range_offset);
+                        let length = br.length;
+                        let offset = br.offset.unwrap_or(byte_range_offset);
                         byte_range_offset = offset + length;
                         ByteRange { length, offset }
                     });

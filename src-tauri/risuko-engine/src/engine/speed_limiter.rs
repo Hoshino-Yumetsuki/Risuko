@@ -59,7 +59,7 @@ impl SpeedLimiter {
     fn try_consume(&self, bytes: u64, limit: u64) -> Result<(), f64> {
         // Microseconds of virtual time this request consumes. Use ceil so
         // small writes still cost at least 1us and we never under-charge.
-        let cost_us = ((bytes as u128 * 1_000_000 + limit as u128 - 1) / limit as u128) as u64;
+        let cost_us = (bytes as u128 * 1_000_000).div_ceil(limit as u128) as u64;
 
         loop {
             let now_us = self.now_us();

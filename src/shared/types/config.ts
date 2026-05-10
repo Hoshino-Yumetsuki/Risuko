@@ -42,6 +42,9 @@ export interface AppConfig {
 		magnet?: boolean | string;
 		thunder?: boolean | string;
 		ed2k?: boolean | string;
+		adc?: boolean | string;
+		gnutella?: boolean | string;
+		g2?: boolean | string;
 	};
 	proxy?: {
 		enable?: boolean;
