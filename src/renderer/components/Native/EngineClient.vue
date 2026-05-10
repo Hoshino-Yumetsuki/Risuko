@@ -821,7 +821,10 @@ export default {
 			// reappears, so we won't miss state changes. Paused tasks are included
 			// in numWaiting, so exclude them to treat paused-only sessions as idle
 			const stat = useAppStore().stat;
-			const nonPausedWaiting = (stat.numWaiting || 0) - (stat.numPaused || 0);
+		const derivedPaused = useTaskStore().taskList.filter(
+			(task) => task.status === "paused",
+		).length;
+		const nonPausedWaiting = (stat.numWaiting || 0) - derivedPaused;
 			if (stat.numActive === 0 && nonPausedWaiting === 0) {
 				this.stopPolling();
 			}

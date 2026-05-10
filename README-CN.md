@@ -109,14 +109,14 @@ Risuko 相比原始版本使用内存减少一半，CPU 使用率峰值也显著
 相比原始版本，Risuko v0.3.0 具有：
   - ~91% 的包体积减少（219.3 MB -> 19.6 MB）
   - ~70% 的内存使用量减少（四舍五入到最近的十位，~425MB -> ~125MB）
-  - ~90% 的峰值 CPU 使用率降低（~140% -> ~45%）
+  - ~90% 的峰值 CPU 使用率降低（~145% -> ~15%）
 
 | 原始版本 | Next | Risuko v0.3.0 |
 | ------- | ---- | ----------- |
 | ![orignal_mem](./static/readme/Original_Memory.png) | ![0.0.4_mem](./static/readme/v0.0.4_Memory.png) | ![0.3.0_mem](./static/readme/v0.3.0_Memory.png) |
 | ![original_appinfo](./static/readme/Original_AppInfo.png) | ![0.0.4_appinfo](./static/readme/v0.0.4_AppInfo.png) | ![0.3.0_appinfo](./static/readme/v0.3.0_AppInfo.png) |
 
-本数据通过 ![psrecord](https://github.com/astrofrog/psrecord) 生成
+本数据通过 [psrecord](https://github.com/astrofrog/psrecord) 生成
 
 ## 🤝 参与共建 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg?style=flat)](http://makeapullrequest.com)
 

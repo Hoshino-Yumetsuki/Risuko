@@ -185,7 +185,7 @@ export default {
 			const tags = new Set<string>();
 			for (const task of useTaskStore().taskList) {
 				if (task.tag) {
-					tags.add(task.tag);
+					tags.add(task.tag.toLowerCase());
 				}
 			}
 			return Array.from(tags).sort();

@@ -534,7 +534,15 @@ impl TaskManager {
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
-        let (dir, tag) = self.resolve_routing_for_task(&options, &out).await;
+
+        // Derive filename hint from FTP URI if out is empty
+        let filename_hint = if out.is_empty() {
+            extract_filename_from_uri(&[uri.to_string()])
+        } else {
+            out.clone()
+        };
+
+        let (dir, tag) = self.resolve_routing_for_task(&options, &filename_hint).await;
 
         let pause = options
             .get("pause")

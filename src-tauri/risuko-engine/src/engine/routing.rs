@@ -48,7 +48,7 @@ pub fn resolve_routing(
             if !rule.dir.trim().is_empty() {
                 return RoutingDecision {
                     tag: Some(rule.label.clone()),
-                    dir: rule.dir.clone(),
+                    dir: rule.dir.trim().to_string(),
                 };
             }
         }
@@ -61,7 +61,7 @@ pub fn resolve_routing(
             if !cat_dir.trim().is_empty() {
                 return RoutingDecision {
                     tag: Some(category),
-                    dir: cat_dir.clone(),
+                    dir: cat_dir.trim().to_string(),
                 };
             }
         }

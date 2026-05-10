@@ -620,8 +620,11 @@ export default class Api {
 	}
 
 	addRoutingRule(rule: Omit<TaskRoutingRule, "id"> & { id?: string }) {
-		const { id, ...payload } = rule;
-		const rulePayload = id ? { ...payload, id } : payload;
+		// Always include id in payload; backend will generate one if empty
+		const rulePayload = {
+			...rule,
+			id: rule.id || "",
+		};
 		return invoke<TaskRoutingRule>("add_routing_rule", { rule: rulePayload });
 	}
 

@@ -102,15 +102,15 @@ If you are interested in participating in joint development, PR and Forks are we
 
 ## Optimizations
 
-Risuko use half the memory comparing to original, also significantly less CPU usage bursts  
-In Next v0.1.0, there is performance optimization because aria2 is replaced by native Rust  
-All captured while idle, with command `psrecord <PID> --plot memory.png --include-children --duration 60`  
-App info provided by Finder  
-Risuko v0.3.0 has a singnificantly less CPU and memory usage, and smaller bundle size comparing to v0.4.0-alpha
-Comparing to original, Risuko v0.3.0 has:
+Risuko uses half the memory compared to the original, with significantly less CPU usage bursts  
+In Next v0.1.0, there is performance optimization because aria2 was replaced with native Rust  
+All measurements were captured while idle using the command `psrecord <PID> --plot memory.png --include-children --duration 60`  
+Application info provided by Finder  
+Risuko v0.3.0 has significantly less CPU and memory usage, and a smaller bundle size compared to v0.4.0-alpha
+Compared to the original, Risuko v0.3.0 has:
   - ~91% less bundle size (219.3 MB -> 19.6 MB)
   - ~70% less memory usage (taking nearest tenth, ~425MB -> ~125MB)
-  - ~90% less peak CPU usage (~140% -> ~45%)
+  - ~90% less peak CPU usage (~145% -> ~15%)
 
 This is achieved by using rust build params:
 ```
