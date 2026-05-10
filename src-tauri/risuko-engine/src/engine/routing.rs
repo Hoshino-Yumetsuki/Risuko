@@ -44,20 +44,26 @@ pub fn resolve_routing(
             continue;
         }
         if glob_matches(&rule.pattern, filename) {
-            return RoutingDecision {
-                tag: Some(rule.label.clone()),
-                dir: rule.dir.clone(),
-            };
+            // Only return if dir is non-empty after trimming
+            if !rule.dir.trim().is_empty() {
+                return RoutingDecision {
+                    tag: Some(rule.label.clone()),
+                    dir: rule.dir.clone(),
+                };
+            }
         }
     }
 
     // 2. Legacy category-based fallback
     if let Some(category) = super::upload::resolve_category(filename) {
         if let Some(cat_dir) = file_category_dirs.get(&category) {
-            return RoutingDecision {
-                tag: Some(category),
-                dir: cat_dir.clone(),
-            };
+            // Only return if dir is non-empty after trimming
+            if !cat_dir.trim().is_empty() {
+                return RoutingDecision {
+                    tag: Some(category),
+                    dir: cat_dir.clone(),
+                };
+            }
         }
     }
 

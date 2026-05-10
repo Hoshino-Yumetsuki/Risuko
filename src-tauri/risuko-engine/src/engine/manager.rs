@@ -43,6 +43,42 @@ pub struct TaskManager {
     global_speed_limiter: Arc<SpeedLimiter>,
 }
 
+/// Extract filename hint from the first HTTP URI by parsing URL path
+fn extract_filename_from_uri(uris: &[String]) -> String {
+    if uris.is_empty() {
+        return String::new();
+    }
+
+    // Try to extract path component from URI
+    let uri = &uris[0];
+
+    // Find the path after the domain (skip scheme and host)
+    if let Some(start) = uri.find("://") {
+        let after_scheme = &uri[start + 3..];
+        // Skip the host part (up to the first / or ? or #)
+        if let Some(path_start) = after_scheme.find('/') {
+            let path = &after_scheme[path_start..];
+            // Extract last path segment, strip query params and fragments
+            if let Some(file_part) = path.split('/').next_back() {
+                if !file_part.is_empty() {
+                    let file_name = file_part
+                        .split('?')
+                        .next()
+                        .unwrap_or("")
+                        .split('#')
+                        .next()
+                        .unwrap_or("");
+                    if !file_name.is_empty() {
+                        return file_name.to_string();
+                    }
+                }
+            }
+        }
+    }
+
+    String::new()
+}
+
 impl TaskManager {
     pub async fn new(
         config_dir: &Path,
@@ -198,7 +234,17 @@ impl TaskManager {
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
-        let (dir, tag) = self.resolve_routing_for_task(&options, &out).await;
+
+        // Derive filename hint from URI if out is empty
+        let filename_hint = if out.is_empty() {
+            extract_filename_from_uri(&uris)
+        } else {
+            out.clone()
+        };
+
+        let (dir, tag) = self
+            .resolve_routing_for_task(&options, &filename_hint)
+            .await;
 
         // Only honor pause if explicitly set in per-task options (not from global defaults)
         let pause = options
@@ -231,7 +277,17 @@ impl TaskManager {
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
-        let (dir, tag) = self.resolve_routing_for_task(&options, &out).await;
+
+        // Use YouTube extension as hint if out is empty
+        let filename_hint = if out.is_empty() {
+            "video.mp4".to_string()
+        } else {
+            out.clone()
+        };
+
+        let (dir, tag) = self
+            .resolve_routing_for_task(&options, &filename_hint)
+            .await;
 
         let pause = options
             .get("pause")
@@ -263,7 +319,17 @@ impl TaskManager {
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
-        let (dir, tag) = self.resolve_routing_for_task(&options, &out).await;
+
+        // Use .torrent extension as hint if out is empty
+        let filename_hint = if out.is_empty() {
+            "download.torrent".to_string()
+        } else {
+            out.clone()
+        };
+
+        let (dir, tag) = self
+            .resolve_routing_for_task(&options, &filename_hint)
+            .await;
 
         let mut task = DownloadTask::new_torrent(gid.clone(), dir.clone(), tag, options.clone());
 
@@ -321,7 +387,17 @@ impl TaskManager {
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
-        let (dir, tag) = self.resolve_routing_for_task(&options, &out).await;
+
+        // Use magnet extension as hint if out is empty
+        let filename_hint = if out.is_empty() {
+            "download.magnet".to_string()
+        } else {
+            out.clone()
+        };
+
+        let (dir, tag) = self
+            .resolve_routing_for_task(&options, &filename_hint)
+            .await;
 
         let mut task = DownloadTask::new_torrent(gid.clone(), dir.clone(), tag, options.clone());
         task.uris = vec![magnet_uri.to_string()];

@@ -214,7 +214,7 @@
             </div>
             <div
               v-for="(rule, index) in form.taskRoutingRules"
-              :key="rule.id || index"
+              :key="rule.id"
               class="settings-row"
               style="margin-bottom: 6px; align-items: flex-start"
             >
@@ -701,7 +701,10 @@ const initForm = (config) => {
 			rss: "",
 			...(fileCategoryDirs || {}),
 		},
-		taskRoutingRules: config.taskRoutingRules || [],
+		taskRoutingRules: (config.taskRoutingRules || []).map((rule) => ({
+			...rule,
+			id: rule.id || crypto.randomUUID(),
+		})),
 		followTorrent,
 		hideAppMenu: parseBooleanConfig(hideAppMenu),
 		keepSeeding: parseBooleanConfig(keepSeeding),
@@ -905,7 +908,7 @@ export default {
 				[category]: dir,
 			};
 		},
-		handleRoutingRuleDirectorySelected(index: number, dir: string) {
+		handleRoutingRuleDirectorySelected(index, dir) {
 			this.updateRuleField(index, "dir", dir);
 		},
 		addRoutingRule() {
@@ -924,7 +927,7 @@ export default {
 			rules.splice(index, 1);
 			this.form.taskRoutingRules = rules;
 		},
-		updateRuleField(index: number, field: string, value: unknown) {
+		updateRuleField(index, field, value) {
 			const rules = [...this.form.taskRoutingRules];
 			rules[index] = { ...rules[index], [field]: value };
 			this.form.taskRoutingRules = rules;

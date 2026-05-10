@@ -102,15 +102,15 @@ If you are interested in participating in joint development, PR and Forks are we
 
 ## Optimizations
 
-The Next version use half the memory comparing to original, also significantly less CPU usage bursts  
+Risuko use half the memory comparing to original, also significantly less CPU usage bursts  
 In Next v0.1.0, there is performance optimization because aria2 is replaced by native Rust  
 All captured while idle, with command `psrecord <PID> --plot memory.png --include-children --duration 60`  
 App info provided by Finder  
-v0.1.0 has a singnificantly less CPU and memory usage, and smaller bundle size comparing to v0.4.0-alpha
-Comparing to original, v0.1.0 has:
-  - ~92% less bundle size (219.3 MB -> 17.3 MB)
-  - ~70% less memory usage (taking nearest tenth, ~400MB -> ~120MB)
-  - ~70% less peak CPU usage (~140% -> ~40%)
+Risuko v0.3.0 has a singnificantly less CPU and memory usage, and smaller bundle size comparing to v0.4.0-alpha
+Comparing to original, Risuko v0.3.0 has:
+  - ~91% less bundle size (219.3 MB -> 19.6 MB)
+  - ~70% less memory usage (taking nearest tenth, ~425MB -> ~125MB)
+  - ~90% less peak CPU usage (~140% -> ~45%)
 
 This is achieved by using rust build params:
 ```
@@ -137,10 +137,10 @@ Crash immediately on panic—no unwinding, no cleanup. Smaller binaries, but des
 The small bundle size, cpu and memory performance is also acheived by removing aria2, and replace by native rust codes.
 
 
-| Orignal | Next | Risuko v0.3.0 |
+| Original | Next | Risuko v0.3.0 |
 | ------- | ---- | ----------- |
 | ![orignal_mem](./static/readme/Original_Memory.png) | ![0.0.4_mem](./static/readme/v0.0.4_Memory.png) | ![0.3.0_mem](./static/readme/v0.3.0_Memory.png) |
-| ![original_appinfo](./static/readme/Original_AppInfo.png) | ![0.0.4_appinfo](./static/readme/v0.0.4_AppInfo.png) | ![0.3.0_appinfo](./static/readme/v0.3.0_AppInfo.png)
+| ![original_appinfo](./static/readme/Original_AppInfo.png) | ![0.0.4_appinfo](./static/readme/v0.0.4_AppInfo.png) | ![0.3.0_appinfo](./static/readme/v0.3.0_AppInfo.png) |
 
 This is generated with ![psrecord](https://github.com/astrofrog/psrecord)
 

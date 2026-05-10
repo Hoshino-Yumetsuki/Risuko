@@ -620,8 +620,9 @@ export default class Api {
 	}
 
 	addRoutingRule(rule: Omit<TaskRoutingRule, "id"> & { id?: string }) {
-		const payload: TaskRoutingRule = { ...rule, id: rule.id ?? "" };
-		return invoke<TaskRoutingRule>("add_routing_rule", { rule: payload });
+		const { id, ...payload } = rule;
+		const rulePayload = id ? { ...payload, id } : payload;
+		return invoke<TaskRoutingRule>("add_routing_rule", { rule: rulePayload });
 	}
 
 	updateRoutingRule(rule: TaskRoutingRule) {

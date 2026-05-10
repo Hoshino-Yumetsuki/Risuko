@@ -31,15 +31,15 @@
         </div>
         <div class="task-toolbar-right">
           <Select
-            v-if="availableTags.length > 0"
-            :model-value="filterTag"
+            v-if="availableTags.length > 0 || filterTag"
+            :model-value="filterTag || '__all__'"
             @update:model-value="onFilterTagChange"
           >
             <SelectTrigger size="sm" class="task-toolbar-select" style="min-width: 100px">
               <SelectValue placeholder="Tag" />
             </SelectTrigger>
             <SelectContent align="end">
-              <SelectItem value="">{{ $t('task.filter-tag-all') }}</SelectItem>
+              <SelectItem value="__all__">{{ $t('task.filter-tag-all') }}</SelectItem>
               <SelectItem v-for="tag in availableTags" :key="tag" :value="tag">
                 {{ tag }}
               </SelectItem>
@@ -222,7 +222,7 @@ export default {
 			useTaskStore().setFilterText("");
 		},
 		onFilterTagChange(value) {
-			useTaskStore().setFilterTag(value || "");
+			useTaskStore().setFilterTag(value === "__all__" ? "" : value);
 		},
 		onSortByChange(value) {
 			useTaskStore().setSortBy(value);

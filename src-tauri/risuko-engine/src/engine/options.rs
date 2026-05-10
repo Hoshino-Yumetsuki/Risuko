@@ -57,6 +57,8 @@ impl EngineOptions {
             "bt-encryption-policy",
             "bt-listen-v6",
             "bt-enable-lsd",
+            "task-routing-rules",
+            "file-category-dirs",
         ] {
             if let Some(v) = user.get(key) {
                 global.insert(key.into(), v.clone());

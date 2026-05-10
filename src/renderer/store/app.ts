@@ -142,8 +142,8 @@ export const useAppStore = defineStore("app", {
 				}
 				if (changed) {
 					this.stat = stat;
-					useTaskStore().updateTaskCountsFromStat(stat);
 				}
+				useTaskStore().updateTaskCountsFromStat(stat);
 			} catch (err: unknown) {
 				logger.warn("[Risuko] fetchGlobalStat failed:", (err as Error).message);
 			}

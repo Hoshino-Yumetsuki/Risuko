@@ -45,6 +45,7 @@ export default {
 			timer: null,
 			initTimer: null,
 			isPolling: false,
+			pollingInFlight: false,
 			isDestroyed: false,
 			noSleepDesired: false,
 			noSleepApplied: false,
@@ -746,14 +747,14 @@ export default {
 
 			this.timer = setTimeout(loop, this.interval);
 		},
-		// Restart polling if it isn't already running. Called from engine
-		// event handlers so that newly-started or newly-resumed work wakes
-		// the poll loop back up after it self-suspended on idle
+		// Restart polling if it isn't already running or if a poll is in-flight
+		// Called from engine event handlers so that newly-started or newly-resumed
+		// work wakes the poll loop back up after it self-suspended on idle
 		ensurePolling() {
 			if (this.isDestroyed) {
 				return;
 			}
-			if (this.timer !== null) {
+			if (this.timer !== null || this.pollingInFlight) {
 				return;
 			}
 			this.startPolling();
@@ -763,6 +764,7 @@ export default {
 				return;
 			}
 			this.isPolling = true;
+			this.pollingInFlight = true;
 
 			try {
 				const jobs: Array<Promise<unknown>> = [
@@ -811,15 +813,16 @@ export default {
 				}
 			} finally {
 				this.isPolling = false;
+				this.pollingInFlight = false;
 			}
 
 			// Suspend the poll timer when the engine has nothing in flight
 			// `ensurePolling()` will be called from event handlers when work
-			// reappears, so we won't miss state changes. Note the engine
-			// counts Paused tasks as Waiting, so a paused-only session also
-			// suspends the loop here (event handlers will wake it back up)
+			// reappears, so we won't miss state changes. Paused tasks are included
+			// in numWaiting, so exclude them to treat paused-only sessions as idle
 			const stat = useAppStore().stat;
-			if (stat.numActive === 0 && stat.numWaiting === 0) {
+			const nonPausedWaiting = (stat.numWaiting || 0) - (stat.numPaused || 0);
+			if (stat.numActive === 0 && nonPausedWaiting === 0) {
 				this.stopPolling();
 			}
 		},
