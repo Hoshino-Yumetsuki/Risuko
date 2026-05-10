@@ -137,12 +137,10 @@ pub async fn start_engine(config: Option<EngineConfig>) -> Result<()> {
 
 #[napi]
 pub async fn stop_engine() -> Result<()> {
-    let mut engine = {
-        let mut guard = ENGINE.lock().await;
-        guard
-            .take()
-            .ok_or_else(|| Error::from_reason("Engine not running"))?
-    };
+    let mut guard = ENGINE.lock().await;
+    let mut engine = guard
+        .take()
+        .ok_or_else(|| Error::from_reason("Engine not running"))?;
     engine.progress_task.abort();
     engine.auto_save_task.abort();
     if let Some(handle) = engine.event_task.lock().await.take() {

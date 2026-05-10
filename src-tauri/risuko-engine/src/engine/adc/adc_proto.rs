@@ -5,8 +5,8 @@
 //! TTH/<base32> 0 -1`, `BRES file TTH/<base32> SI<size> …`. Each frame is
 //! terminated by `\n`
 //!
-//! TLS support uses `rustls` via `tokio-rustls`, the same stack already used
-//! by `risuko-http`. We negotiate ALPN `adc/1.0` when connecting to `adcs://`
+//! This build supports plain `adc://` hubs only; `connect()` rejects
+//! `adcs://` (TLS)
 
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
@@ -85,7 +85,7 @@ impl AdcClient {
         {
             return Err(AdcError::Protocol("invalid nick".into()));
         }
-        self.write_frame("HSUP ADBASE ADTIGR ADBLOM").await?;
+        self.write_frame("HSUP ADBASE ADTIGR").await?;
         for _ in 0..MAX_HANDSHAKE_FRAMES {
             let frame = self.read_frame().await?;
             if let Some(rest) = frame.strip_prefix("ISID ") {

@@ -89,7 +89,7 @@ pub async fn fetch_by_urn(
     }
     let mut f = tokio::fs::File::create(out_path).await?;
     let mut buf = vec![0u8; 64 * 1024];
-    let mut remaining = file_size;
+    let mut remaining = content_length;
     while remaining > 0 {
         let take = buf.len().min(remaining as usize);
         let n = tokio::select! {

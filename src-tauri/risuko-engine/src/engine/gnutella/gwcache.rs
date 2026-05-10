@@ -2,13 +2,15 @@
 //! line-separated list of `host:port` ultrapeers. We treat the configured
 //! `gnutella-cache` value as a comma-separated list of cache URLs
 
-use std::time::Duration;
+use std::io::ErrorKind;
+use std::time::{Duration, Instant};
 
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 use tokio::time::timeout;
 
 const MAX_LINE_BYTES: usize = 8 * 1024;
+const TOTAL_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Fetch a list of `host:port` ultrapeer addresses from a GWebCache.
 /// Issues `GET <path>?hostfile=1&client=RSKO&version=0.1` and parses the
@@ -41,20 +43,40 @@ pub async fn fetch_peers(cache_url: &str) -> Vec<String> {
     }
     let mut reader = BufReader::new(rd);
     let mut in_body = false;
+    let start = Instant::now();
     let mut line = Vec::new();
-    loop {
+    'read_loop: loop {
+        if start.elapsed() >= TOTAL_TIMEOUT {
+            break;
+        }
         line.clear();
-        let n = match timeout(Duration::from_secs(5), reader.read_until(b'\n', &mut line)).await {
-            Ok(Ok(n)) => n,
-            Ok(Err(_)) => break,
-            Err(_) => break,
-        };
-        if n == 0 {
-            break;
+
+        loop {
+            if start.elapsed() >= TOTAL_TIMEOUT {
+                break 'read_loop;
+            }
+            if line.len() >= MAX_LINE_BYTES {
+                break 'read_loop;
+            }
+
+            let b = match timeout(Duration::from_secs(5), reader.read_u8()).await {
+                Ok(Ok(b)) => b,
+                Ok(Err(e)) if e.kind() == ErrorKind::UnexpectedEof => {
+                    if line.is_empty() {
+                        break 'read_loop;
+                    }
+                    break;
+                }
+                Ok(Err(_)) => break 'read_loop,
+                Err(_) => break 'read_loop,
+            };
+
+            line.push(b);
+            if b == b'\n' {
+                break;
+            }
         }
-        if line.len() > MAX_LINE_BYTES {
-            break;
-        }
+
         let trimmed = String::from_utf8_lossy(&line).trim_end().to_string();
         if !in_body {
             if trimmed.is_empty() {
