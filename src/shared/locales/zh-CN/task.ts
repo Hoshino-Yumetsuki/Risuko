@@ -133,6 +133,7 @@ export default {
 	"batch-delete-task-fail": "批量移除任务失败",
 	"refresh-list": "刷新任务列表",
 	"filter-placeholder": "按名称筛选...",
+	"filter-tag-all": "全部标签",
 	"sort-default": "默认排序",
 	"sort-by-name": "按名称排序",
 	"sort-by-size": "按大小排序",

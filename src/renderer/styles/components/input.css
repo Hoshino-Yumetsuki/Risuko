@@ -43,6 +43,20 @@
 		border-bottom-right-radius: calc(var(--radius) - 2px);
 		cursor: pointer;
 	}
+	.mo-input-append .select-directory.ui-button {
+		transform: translate3d(0, 0, 0);
+		transition:
+			background-color 0.2s ease,
+			border-color 0.2s ease,
+			color 0.2s ease,
+			transform 0.2s ease !important;
+	}
+	.mo-input-append .select-directory.ui-button:hover {
+		transform: translate3d(0, -1px, 0) !important;
+	}
+	.mo-input-append .select-directory.ui-button:active {
+		transform: translate3d(0, 0, 0) !important;
+	}
 	.mo-input-number {
 		display: block;
 		width: 100%;

@@ -222,7 +222,7 @@ pub fn run() {
                     // Must spawn into Tauri's async runtime so the tokio
                     // reactor is available for the inner tokio::spawn call.
                     tauri::async_runtime::spawn(async move {
-                        let _ = RssManager::start_polling(rss);
+                        std::mem::drop(RssManager::start_polling(rss));
                     });
                 }
             }
@@ -240,7 +240,7 @@ pub fn run() {
                     return;
                 }
                 api.prevent_close();
-                let _ = commands::app_cmds::hide_main_window(&window.app_handle());
+                let _ = commands::app_cmds::hide_main_window(window.app_handle());
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -302,6 +302,11 @@ pub fn run() {
             commands::engine_cmds::multicall_engine,
             commands::engine_cmds::infer_out_from_uri,
             commands::engine_cmds::resolve_file_category,
+            commands::engine_cmds::list_routing_rules,
+            commands::engine_cmds::add_routing_rule,
+            commands::engine_cmds::update_routing_rule,
+            commands::engine_cmds::remove_routing_rule,
+            commands::engine_cmds::resolve_routing,
             commands::event_cmds::on_download_status_change,
             commands::event_cmds::set_sleep_inhibit_flag,
             commands::event_cmds::on_speed_change,

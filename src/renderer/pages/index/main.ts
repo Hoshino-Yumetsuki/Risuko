@@ -182,7 +182,24 @@ usePreferenceStore()
 	.then((config) => {
 		logger.info("[Risuko] load preference:", config);
 		init(config);
-		usePreferenceStore().autoSyncTracker();
+		// Defer the tracker auto-sync off the startup critical path. The
+		// fetch+parse of multiple tracker source URLs lands ~15–25s after
+		// launch and produces visible CPU spikes; running it during an idle
+		// callback (or after a delay fallback) keeps the launch smooth
+		const runAutoSyncTracker = () => {
+			usePreferenceStore().autoSyncTracker();
+		};
+		const w = window as Window & {
+			requestIdleCallback?: (
+				cb: () => void,
+				opts?: { timeout: number },
+			) => void;
+		};
+		if (typeof w.requestIdleCallback === "function") {
+			w.requestIdleCallback(runAutoSyncTracker, { timeout: 30_000 });
+		} else {
+			setTimeout(runAutoSyncTracker, 30_000);
+		}
 	})
 	.catch((err: unknown) => {
 		alert(err);

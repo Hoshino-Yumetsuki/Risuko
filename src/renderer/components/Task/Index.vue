@@ -30,6 +30,21 @@
           </div>
         </div>
         <div class="task-toolbar-right">
+          <Select
+            v-if="availableTags.length > 0"
+            :model-value="filterTag"
+            @update:model-value="onFilterTagChange"
+          >
+            <SelectTrigger size="sm" class="task-toolbar-select" style="min-width: 100px">
+              <SelectValue placeholder="Tag" />
+            </SelectTrigger>
+            <SelectContent align="end">
+              <SelectItem value="">{{ $t('task.filter-tag-all') }}</SelectItem>
+              <SelectItem v-for="tag in availableTags" :key="tag" :value="tag">
+                {{ tag }}
+              </SelectItem>
+            </SelectContent>
+          </Select>
           <Select :model-value="sortBy" @update:model-value="onSortByChange">
             <SelectTrigger size="sm" class="task-toolbar-select">
               <SelectValue />
@@ -163,6 +178,18 @@ export default {
 		filterText() {
 			return useTaskStore().filterText;
 		},
+		filterTag() {
+			return useTaskStore().filterTag;
+		},
+		availableTags() {
+			const tags = new Set<string>();
+			for (const task of useTaskStore().taskList) {
+				if (task.tag) {
+					tags.add(task.tag);
+				}
+			}
+			return Array.from(tags).sort();
+		},
 		sortBy() {
 			return useTaskStore().sortBy;
 		},
@@ -193,6 +220,9 @@ export default {
 		},
 		onFilterClear() {
 			useTaskStore().setFilterText("");
+		},
+		onFilterTagChange(value) {
+			useTaskStore().setFilterTag(value || "");
 		},
 		onSortByChange(value) {
 			useTaskStore().setSortBy(value);

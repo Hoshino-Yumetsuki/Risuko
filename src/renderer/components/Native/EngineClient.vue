@@ -535,6 +535,7 @@ export default {
 			const taskStore = useTaskStore();
 			taskStore.fetchList();
 			useAppStore().resetInterval();
+			this.ensurePolling();
 			taskStore.saveSession();
 			const { gid } = payload;
 			this.clearAutoRetryState(gid);
@@ -630,6 +631,7 @@ export default {
 		onDownloadComplete(payload: { gid: string }) {
 			const taskStore = useTaskStore();
 			taskStore.fetchList();
+			this.ensurePolling();
 			const { gid } = payload;
 			this.clearAutoRetryState(gid);
 			taskStore.removeFromSeedingList(gid);
@@ -644,6 +646,7 @@ export default {
 		onBtDownloadComplete(payload: { gid: string }) {
 			const taskStore = useTaskStore();
 			taskStore.fetchList();
+			this.ensurePolling();
 			const { gid } = payload;
 			this.clearAutoRetryState(gid);
 			const { seedingList } = this;
@@ -735,12 +738,25 @@ export default {
 
 			const loop = async () => {
 				await this.polling();
-				if (!this.isDestroyed) {
-					this.timer = setTimeout(loop, this.interval);
+				if (this.isDestroyed || this.timer === null) {
+					return;
 				}
+				this.timer = setTimeout(loop, this.interval);
 			};
 
 			this.timer = setTimeout(loop, this.interval);
+		},
+		// Restart polling if it isn't already running. Called from engine
+		// event handlers so that newly-started or newly-resumed work wakes
+		// the poll loop back up after it self-suspended on idle
+		ensurePolling() {
+			if (this.isDestroyed) {
+				return;
+			}
+			if (this.timer !== null) {
+				return;
+			}
+			this.startPolling();
 		},
 		async polling() {
 			if (this.isPolling) {
@@ -795,6 +811,16 @@ export default {
 				}
 			} finally {
 				this.isPolling = false;
+			}
+
+			// Suspend the poll timer when the engine has nothing in flight
+			// `ensurePolling()` will be called from event handlers when work
+			// reappears, so we won't miss state changes. Note the engine
+			// counts Paused tasks as Waiting, so a paused-only session also
+			// suspends the loop here (event handlers will wake it back up)
+			const stat = useAppStore().stat;
+			if (stat.numActive === 0 && stat.numWaiting === 0) {
+				this.stopPolling();
 			}
 		},
 		stopPolling() {

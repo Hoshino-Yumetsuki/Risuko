@@ -172,6 +172,7 @@ export const useTaskStore = defineStore("task", {
 		} as Record<string, number>,
 		tasksPerPage: loadTasksPerPage(),
 		filterText: "",
+		filterTag: "",
 		sortBy: loadSortBy() as TaskSortBy,
 		sortOrder: loadSortOrder() as TaskSortOrder,
 		currentPageMap: {
@@ -246,13 +247,21 @@ export const useTaskStore = defineStore("task", {
 		},
 		filteredTaskList(state) {
 			const filter = state.filterText.trim().toLowerCase();
-			if (!filter) {
-				return this.displayTaskList;
+			const tagFilter = state.filterTag.trim().toLowerCase();
+			let list = this.displayTaskList;
+			if (filter) {
+				list = list.filter((task: DisplayTask) => {
+					const name = getTaskSortName(task);
+					return name.includes(filter);
+				});
 			}
-			return this.displayTaskList.filter((task: DisplayTask) => {
-				const name = getTaskSortName(task);
-				return name.includes(filter);
-			});
+			if (tagFilter) {
+				list = list.filter((task: DisplayTask) => {
+					const taskTag = (task.tag || "").toLowerCase();
+					return taskTag === tagFilter;
+				});
+			}
+			return list;
 		},
 		sortedTaskList(state) {
 			const list = this.filteredTaskList;
@@ -332,6 +341,7 @@ export const useTaskStore = defineStore("task", {
 			this.currentList = currentList;
 			this.selectedGidList = [];
 			this.filterText = "";
+			this.filterTag = "";
 			this.fetchList();
 		},
 		updateCurrentPage(listType: string, page: number) {
@@ -375,6 +385,10 @@ export const useTaskStore = defineStore("task", {
 		},
 		setFilterText(text: string) {
 			this.filterText = text;
+			this.ensurePageInRange(this.currentList);
+		},
+		setFilterTag(tag: string) {
+			this.filterTag = tag;
 			this.ensurePageInRange(this.currentList);
 		},
 		setSortBy(sortBy: TaskSortBy) {

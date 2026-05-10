@@ -14,6 +14,13 @@ export default {
 	"file-category-dirs": "Category Paths",
 	"file-category-dirs-tips":
 		"Override the default download path for specific file types. Leave empty to use the default path.",
+	"task-routing-rules": "Task Routing Rules",
+	"task-routing-rules-tips":
+		"Routes tasks to directories based on filename patterns. First matching rule wins.",
+	"task-routing-rule-pattern-placeholder": "Pattern (e.g. *.mkv)",
+	"task-routing-rule-label-placeholder": "Tag",
+	"task-routing-rule-dir-placeholder": "Directory",
+	"task-routing-rule-add": "Add Rule",
 	"file-category-music": "Music",
 	"file-category-video": "Video",
 	"file-category-image": "Image",

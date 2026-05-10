@@ -137,10 +137,10 @@ Crash immediately on panic—no unwinding, no cleanup. Smaller binaries, but des
 The small bundle size, cpu and memory performance is also acheived by removing aria2, and replace by native rust codes.
 
 
-| Orignal | Next | Next v0.1.0 |
+| Orignal | Next | Risuko v0.3.0 |
 | ------- | ---- | ----------- |
-| ![orignal_mem](./static/readme/Original_Memory.png) | ![0.4.0_mem](./static/readme/v0.0.4_Memory.png) | ![0.1.0_mem](./static/readme/v0.1.0_Memory.png) |
-| ![original_appinfo](./static/readme/Original_AppInfo.png) | ![0.4.0_appinfo](./static/readme/v0.0.4_AppInfo.png) | ![0.1.0_appinfo](./static/readme/v0.1.0_AppInfo.png)
+| ![orignal_mem](./static/readme/Original_Memory.png) | ![0.0.4_mem](./static/readme/v0.0.4_Memory.png) | ![0.3.0_mem](./static/readme/v0.3.0_Memory.png) |
+| ![original_appinfo](./static/readme/Original_AppInfo.png) | ![0.0.4_appinfo](./static/readme/v0.0.4_AppInfo.png) | ![0.3.0_appinfo](./static/readme/v0.3.0_AppInfo.png)
 
 This is generated with ![psrecord](https://github.com/astrofrog/psrecord)
 

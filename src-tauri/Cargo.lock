@@ -5484,6 +5484,7 @@ dependencies = [
  "feed-rs",
  "filetime",
  "futures-util",
+ "glob",
  "hex",
  "hmac 0.13.0",
  "http-body-util",

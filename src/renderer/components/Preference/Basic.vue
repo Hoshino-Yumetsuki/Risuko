@@ -200,6 +200,77 @@
           </div>
         </div>
 
+        <!-- Task Routing Rules Section -->
+        <div class="settings-section">
+          <div class="settings-section-header">
+            <div class="section-icon"><FolderDown :size="16" /></div>
+            <div class="section-title">
+              <h3>{{ $t('preferences.task-routing-rules') }}</h3>
+            </div>
+          </div>
+          <div class="settings-section-content">
+            <div class="form-info" style="margin-bottom: 8px">
+              {{ $t('preferences.task-routing-rules-tips') }}
+            </div>
+            <div
+              v-for="(rule, index) in form.taskRoutingRules"
+              :key="rule.id || index"
+              class="settings-row"
+              style="margin-bottom: 6px; align-items: flex-start"
+            >
+              <div style="flex: 1; display: flex; gap: 6px; min-width: 0; flex-wrap: wrap">
+                <Input
+                  :placeholder="$t('preferences.task-routing-rule-pattern-placeholder')"
+                  :model-value="form.taskRoutingRules[index].pattern"
+                  @update:model-value="(val) => updateRuleField(index, 'pattern', val)"
+                  class="flex-1 shadow-none border-none"
+                  style="min-width: 100px"
+                />
+                <Input
+                  :placeholder="$t('preferences.task-routing-rule-label-placeholder')"
+                  :model-value="form.taskRoutingRules[index].label"
+                  @update:model-value="(val) => updateRuleField(index, 'label', val)"
+                  class="flex-1 shadow-none border-none"
+                  style="min-width: 80px"
+                />
+                <div class="mo-input-group mo-input-group--bordered" style="flex: 1; min-width: 160px">
+                  <Input
+                    :placeholder="$t('preferences.task-routing-rule-dir-placeholder')"
+                    :model-value="form.taskRoutingRules[index].dir"
+                    @update:model-value="(val) => updateRuleField(index, 'dir', val)"
+                    class="flex-1 shadow-none rounded-none border-none"
+                  />
+                  <span class="mo-input-append" v-if="isRenderer">
+                    <mo-select-directory
+                      class="routing-rule-dir-picker"
+                      @selected="(dir) => handleRoutingRuleDirectorySelected(index, dir)"
+                    />
+                  </span>
+                </div>
+                <div class="settings-row-action" style="flex: 0 0 auto">
+                  <ui-checkbox
+                    :model-value="!!form.taskRoutingRules[index].enabled"
+                    @change="(val) => updateRuleField(index, 'enabled', !!val)"
+                  />
+                </div>
+                <ui-button
+                  size="mini"
+                  variant="text"
+                  @click="removeRoutingRule(index)"
+                  style="padding: 4px 8px"
+                >
+                  ×
+                </ui-button>
+              </div>
+            </div>
+            <div class="settings-row">
+              <ui-button size="mini" variant="primary" @click="addRoutingRule">
+                + {{ $t('preferences.task-routing-rule-add') }}
+              </ui-button>
+            </div>
+          </div>
+        </div>
+
         <!-- Transfer Speed Section -->
         <div class="settings-section">
           <div class="settings-section-header">
@@ -630,6 +701,7 @@ const initForm = (config) => {
 			rss: "",
 			...(fileCategoryDirs || {}),
 		},
+		taskRoutingRules: config.taskRoutingRules || [],
 		followTorrent,
 		hideAppMenu: parseBooleanConfig(hideAppMenu),
 		keepSeeding: parseBooleanConfig(keepSeeding),
@@ -832,6 +904,30 @@ export default {
 				...this.form.fileCategoryDirs,
 				[category]: dir,
 			};
+		},
+		handleRoutingRuleDirectorySelected(index: number, dir: string) {
+			this.updateRuleField(index, "dir", dir);
+		},
+		addRoutingRule() {
+			const rules = [...(this.form.taskRoutingRules || [])];
+			rules.push({
+				id: crypto.randomUUID(),
+				label: "",
+				pattern: "",
+				dir: "",
+				enabled: true,
+			});
+			this.form.taskRoutingRules = rules;
+		},
+		removeRoutingRule(index) {
+			const rules = [...(this.form.taskRoutingRules || [])];
+			rules.splice(index, 1);
+			this.form.taskRoutingRules = rules;
+		},
+		updateRuleField(index: number, field: string, value: unknown) {
+			const rules = [...this.form.taskRoutingRules];
+			rules[index] = { ...rules[index], [field]: value };
+			this.form.taskRoutingRules = rules;
 		},
 		handleThemeChange(theme) {
 			this.form.theme = theme;

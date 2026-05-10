@@ -10,6 +10,13 @@
       <div class="task-header">
         <div class="task-name" :title="taskFullName">
           <span>{{ taskFullName }}</span>
+          <span
+            v-if="task.tag"
+            class="task-tag"
+            :style="tagStyle"
+          >
+            {{ task.tag }}
+          </span>
         </div>
         <mo-task-item-actions mode="LIST" :task="task" />
       </div>
@@ -83,6 +90,19 @@ export default {
 		},
 		isComplete() {
 			return this.taskStatus === TASK_STATUS.COMPLETE;
+		},
+		tagStyle() {
+			const tag = this.task.tag || "";
+			let hash = 0;
+			for (let i = 0; i < tag.length; i++) {
+				hash = tag.charCodeAt(i) + ((hash << 5) - hash);
+			}
+			const hue = Math.abs(hash % 360);
+			return {
+				backgroundColor: `hsl(${hue}, 65%, 90%)`,
+				color: `hsl(${hue}, 70%, 25%)`,
+				border: `1px solid hsl(${hue}, 65%, 80%)`,
+			};
 		},
 	},
 	methods: {

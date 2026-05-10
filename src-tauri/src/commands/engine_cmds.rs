@@ -1163,6 +1163,52 @@ pub async fn multicall_engine(
     Ok(Value::Array(results))
 }
 
+#[tauri::command]
+pub async fn list_routing_rules() -> Result<Value, String> {
+    let manager = engine::get_manager().await.ok_or("Engine not running")?;
+    let rules = manager.list_routing_rules().await;
+    serde_json::to_value(rules).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn add_routing_rule(rule: Value) -> Result<Value, String> {
+    let manager = engine::get_manager().await.ok_or("Engine not running")?;
+    let rule = serde_json::from_value::<engine::routing::TaskRoutingRule>(rule)
+        .map_err(|e| format!("Invalid rule: {e}"))?;
+    let added = manager
+        .add_routing_rule(rule)
+        .await
+        .map_err(|e| e.to_string())?;
+    serde_json::to_value(added).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn update_routing_rule(rule: Value) -> Result<(), String> {
+    let manager = engine::get_manager().await.ok_or("Engine not running")?;
+    let rule = serde_json::from_value::<engine::routing::TaskRoutingRule>(rule)
+        .map_err(|e| format!("Invalid rule: {e}"))?;
+    manager
+        .update_routing_rule(rule)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn remove_routing_rule(id: String) -> Result<(), String> {
+    let manager = engine::get_manager().await.ok_or("Engine not running")?;
+    manager
+        .remove_routing_rule(&id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn resolve_routing(filename: String) -> Result<Value, String> {
+    let manager = engine::get_manager().await.ok_or("Engine not running")?;
+    let decision = manager.preview_routing(&filename).await;
+    serde_json::to_value(decision).map_err(|e| e.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

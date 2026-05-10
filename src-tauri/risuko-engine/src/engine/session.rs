@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 use super::task::{DownloadTask, TaskStatus};
 
@@ -15,12 +17,16 @@ pub struct SessionData {
 
 pub struct SessionManager {
     path: PathBuf,
+    last_hash: Mutex<Option<u64>>,
 }
 
 impl SessionManager {
     pub fn new(config_dir: &Path) -> Self {
         let path = config_dir.join(SESSION_FILENAME);
-        Self { path }
+        Self {
+            path,
+            last_hash: Mutex::new(None),
+        }
     }
 
     /// Load persisted tasks. Returns empty vec on missing/corrupt file
@@ -69,6 +75,19 @@ impl SessionManager {
 
         let data = serde_json::to_string_pretty(&session).map_err(|e| e.to_string())?;
 
+        // Skip the rewrite when the serialized payload is identical to the
+        // last successful save
+        let new_hash = {
+            let mut hasher = DefaultHasher::new();
+            data.as_bytes().hash(&mut hasher);
+            hasher.finish()
+        };
+        if let Ok(guard) = self.last_hash.lock() {
+            if *guard == Some(new_hash) && self.path.exists() {
+                return Ok(());
+            }
+        }
+
         if let Some(parent) = self.path.parent() {
             fs::create_dir_all(parent).map_err(|e| e.to_string())?;
         }
@@ -77,6 +96,10 @@ impl SessionManager {
         let tmp = self.path.with_extension("json.tmp");
         fs::write(&tmp, &data).map_err(|e| format!("Failed to write session: {}", e))?;
         fs::rename(&tmp, &self.path).map_err(|e| format!("Failed to finalize session: {}", e))?;
+
+        if let Ok(mut guard) = self.last_hash.lock() {
+            *guard = Some(new_hash);
+        }
 
         Ok(())
     }
@@ -101,6 +124,7 @@ mod tests {
             gid.into(),
             vec!["http://example.com/file.zip".into()],
             "/dl".into(),
+            None,
             Map::new(),
         );
         task.status = status;

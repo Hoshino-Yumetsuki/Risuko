@@ -1,5 +1,13 @@
 import type { SavedCredential } from "./credential";
 
+export interface TaskRoutingRule {
+	id: string;
+	label: string;
+	pattern: string;
+	dir: string;
+	enabled: boolean;
+}
+
 /**
  * App configuration — merged from system.json and user.json.
  * Keys here are the camelCase form; the backend stores them in kebab-case.
@@ -58,5 +66,6 @@ export interface AppConfig {
 	lowSpeedStrikeThreshold?: number;
 	lowSpeedCooldownMs?: number;
 	appLogPath?: string;
+	taskRoutingRules?: TaskRoutingRule[];
 	[key: string]: unknown;
 }
