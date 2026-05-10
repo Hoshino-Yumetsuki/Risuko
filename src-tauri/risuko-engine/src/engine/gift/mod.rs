@@ -73,7 +73,13 @@ pub async fn run_gift_download(
         return Err("giFT bridge is disabled in preferences".into());
     }
     let host = opts.get_str("gift-host").unwrap_or("127.0.0.1").to_string();
-    let port: u16 = opts.get_u64("gift-port").map(|n| n as u16).unwrap_or(1213);
+    let port: u16 = match opts.get_u64("gift-port") {
+        Some(n) if (1..=u16::MAX as u64).contains(&n) => n as u16,
+        Some(n) => {
+            return Err(format!("invalid gift-port {n}: expected 1..={}", u16::MAX));
+        }
+        None => 1213,
+    };
 
     let stream = timeout(
         Duration::from_secs(5),

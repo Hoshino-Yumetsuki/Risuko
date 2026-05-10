@@ -535,6 +535,7 @@ impl TaskManager {
         let uri = task.uris.first().cloned().unwrap_or_default();
         let dir = task.dir.clone();
         let kind = task.kind;
+        let task_options = task.options.clone();
         let events = self.events.clone();
         let tasks = self.tasks.clone();
         let active = self.active_downloads.clone();
@@ -580,7 +581,11 @@ impl TaskManager {
             };
             active_for_insert.write().await.insert(gid_for_insert, ad);
 
-            let opts_snapshot = options.read().await.clone();
+            let opts_snapshot = {
+                let runtime_opts = options.read().await.clone();
+                let merged = runtime_opts.merge_task_options(&task_options);
+                EngineOptions { global: merged }
+            };
 
             let download_result = match kind {
                 TaskKind::Adc => {
@@ -2103,14 +2108,18 @@ impl TaskManager {
                     .unwrap_or(0);
                 if val == 0 && task.seeder {
                     // Only stop if seed-ratio is also 0 or absent
-                    let ratio_zero = opts
+                    let effective_ratio = opts
                         .get("seed-ratio")
                         .and_then(|r| {
                             r.as_f64()
                                 .or_else(|| r.as_str().and_then(|s| s.parse().ok()))
                         })
-                        .is_none_or(|r| r <= 0.0);
-                    if ratio_zero {
+                        .or_else(|| {
+                            task.options.get("seed-ratio").and_then(|r| {
+                                r.as_f64().or_else(|| r.as_str().and_then(|s| s.parse().ok()))
+                            })
+                        });
+                    if effective_ratio.is_none_or(|r| r <= 0.0) {
                         task.seeder = false;
                         task.seeding_since = 0;
                         task.status = TaskStatus::Complete;

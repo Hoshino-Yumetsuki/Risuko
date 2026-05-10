@@ -101,7 +101,7 @@ export default {
 	"protocols-magnet": "Mıknatıs [ magnet:// ]",
 	"protocols-thunder": "gök gürültüsü [ thunder:// ]",
 	"protocols-adc": "Direct Connect [ adc:// adcs:// dchub:// nmdc:// ]",
-	"protocols-gnutella": "Gnutella [ gnutella:// ]",
+	"protocols-gnutella": "Gnutella [ gnutella://, gnet:// ]",
 	"protocols-g2": "Gnutella2 [ g2:// ]",
 	"gift-integration": "giFT Daemon Entegrasyonu",
 	"gift-enabled": "giFT yetkilendirmesini etkinleştir",

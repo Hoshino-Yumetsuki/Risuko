@@ -13,6 +13,7 @@ use tokio::net::TcpStream;
 
 use super::nmdc::HUB_IO_TIMEOUT;
 use super::types::{AdcError, HubInfo};
+use tiger::{Digest, Tiger};
 
 const MAX_HANDSHAKE_FRAMES: usize = 3;
 
@@ -88,11 +89,15 @@ impl AdcClient {
         for _ in 0..MAX_HANDSHAKE_FRAMES {
             let frame = self.read_frame().await?;
             if let Some(rest) = frame.strip_prefix("ISID ") {
-                let sid = rest.split(' ').next().unwrap_or("AAAA").to_string();
+                let sid = rest.split_whitespace().next().unwrap_or("AAAA").to_string();
                 self.sid = Some(sid.clone());
                 // Send our INF: PD = pid hash, ID = cid (base32 of 24 bytes)
-                let pid = base32_random(24);
-                let cid = base32_random(24);
+                let mut pid_raw = [0u8; 24];
+                let mut rng = rand::rng();
+                use rand::RngExt;
+                rng.fill(&mut pid_raw);
+                let pid = base32_encode(&pid_raw);
+                let cid = base32_encode(Tiger::digest(pid_raw).as_ref());
                 let inf = format!(
                     "BINF {sid} ID{cid} PD{pid} NI{nick} VERisuko/0.1 SS0 SF0 EM- HN0 HR0 HO0 SUADBASE,ADTIGR"
                 );
@@ -114,16 +119,13 @@ impl AdcClient {
     }
 }
 
-/// Random base32 string (RFC 4648 upper-case alphabet) for placeholder IDs
-fn base32_random(n_bytes: usize) -> String {
-    use rand::RngExt;
-    let mut rng = rand::rng();
-    let mut out = String::with_capacity(n_bytes * 8 / 5 + 1);
+/// RFC 4648 upper-case base32 encoding used for ADC PID/CID values
+fn base32_encode(bytes: &[u8]) -> String {
     let alphabet = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
     let mut bits: u32 = 0;
     let mut nbits: u32 = 0;
-    for _ in 0..n_bytes {
-        let b: u8 = rng.random();
+    let mut out = String::with_capacity(bytes.len() * 8 / 5 + 1);
+    for &b in bytes {
         bits = (bits << 8) | b as u32;
         nbits += 8;
         while nbits >= 5 {

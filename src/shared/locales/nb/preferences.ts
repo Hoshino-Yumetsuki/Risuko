@@ -104,7 +104,7 @@ export default {
 	"protocols-magnet": "Magnet [magnet: //]",
 	"protocols-thunder": "Torden [torden: //]",
 	"protocols-adc": "Direct Connect [ adc:// adcs:// dchub:// nmdc:// ]",
-	"protocols-gnutella": "Gnutella [ gnutella:// ]",
+	"protocols-gnutella": "Gnutella [ gnutella://, gnet:// ]",
 	"protocols-g2": "Gnutella2 [ g2:// ]",
 	"gift-integration": "giFT-daemonintegrasjon",
 	"gift-enabled": "Aktiver giFT-delegering",

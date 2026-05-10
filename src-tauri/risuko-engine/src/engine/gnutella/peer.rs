@@ -37,20 +37,24 @@ pub async fn fetch_by_urn(
     wr.write_all(req.as_bytes()).await?;
 
     let mut reader = BufReader::new(rd);
-    // read headers line-by-line until the blank CRLF separator
     let mut header_buf = Vec::new();
-    loop {
-        let n = reader.read_until(b'\n', &mut header_buf).await?;
-        if n == 0 {
-            return Err(GnutellaError::Network("eof in headers".into()));
+    timeout(Duration::from_secs(30), async {
+        loop {
+            let n = reader.read_until(b'\n', &mut header_buf).await?;
+            if n == 0 {
+                return Err(GnutellaError::Network("eof in headers".into()));
+            }
+            if header_buf.len() > 32 * 1024 {
+                return Err(GnutellaError::Network("header too large".into()));
+            }
+            if header_buf.ends_with(b"\r\n\r\n") {
+                break;
+            }
         }
-        if header_buf.len() > 32 * 1024 {
-            return Err(GnutellaError::Network("header too large".into()));
-        }
-        if header_buf.ends_with(b"\r\n\r\n") {
-            break;
-        }
-    }
+        Ok::<(), GnutellaError>(())
+    })
+    .await
+    .map_err(|_| GnutellaError::Network("header read timeout".into()))??;
     let header_str = String::from_utf8_lossy(&header_buf);
     let status_line = header_str.lines().next().unwrap_or("");
     let code: Option<u16> = status_line
@@ -59,6 +63,25 @@ pub async fn fetch_by_urn(
         .and_then(|t| t.parse().ok());
     if !matches!(code, Some(200) | Some(206)) {
         return Err(GnutellaError::Network(format!("HTTP: {status_line}")));
+    }
+
+    const LENGTH_TOLERANCE: u64 = 4096;
+    let content_length = header_str
+        .lines()
+        .skip(1)
+        .find_map(|line| {
+            let (name, value) = line.split_once(':')?;
+            if name.trim().eq_ignore_ascii_case("content-length") {
+                value.trim().parse::<u64>().ok()
+            } else {
+                None
+            }
+        })
+        .ok_or_else(|| GnutellaError::Network("missing content-length".into()))?;
+    if content_length.abs_diff(file_size) > LENGTH_TOLERANCE {
+        return Err(GnutellaError::Network(format!(
+            "content-length mismatch: expected {file_size}, got {content_length}"
+        )));
     }
 
     if let Some(parent) = out_path.parent() {
@@ -89,6 +112,15 @@ pub async fn fetch_by_urn(
         f.write_all(&buf[..n]).await?;
         remaining -= n as u64;
         completed.fetch_add(n as u64, Ordering::Relaxed);
+    }
+    let mut eof_probe = [0u8; 1];
+    let probe = timeout(Duration::from_secs(30), reader.read(&mut eof_probe))
+        .await
+        .map_err(|_| GnutellaError::Network("final read timeout".into()))??;
+    if probe > 0 {
+        return Err(GnutellaError::Network(format!(
+            "unexpected extra bytes after expected content length: {probe}"
+        )));
     }
     f.flush().await?;
     Ok(())

@@ -4,6 +4,7 @@
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 
 use percent_encoding::percent_decode_str;
 use tokio_util::sync::CancellationToken;
@@ -121,7 +122,6 @@ pub async fn run_g2_download(
     connections: Arc<AtomicU32>,
     cancel_token: CancellationToken,
 ) -> Result<PathBuf, G2Error> {
-    let _ = (speed, connections);
     if !is_g2_uri(uri) {
         return Err(G2Error::InvalidUri(format!("not a G2 URI: {uri}")));
     }
@@ -137,13 +137,34 @@ pub async fn run_g2_download(
     if cancel.load(Ordering::Relaxed) || cancel_token.is_cancelled() {
         return Err(G2Error::Network("cancelled".into()));
     }
+    connections.store(1, Ordering::Relaxed);
+    let sampler_cancel = CancellationToken::new();
+    let sampler_cancel_task = sampler_cancel.clone();
+    let cancel_token_sampler = cancel_token.clone();
+    let sampler_speed = speed.clone();
+    let sampler_completed = completed.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_millis(1000));
+        let mut prev = sampler_completed.load(Ordering::Relaxed);
+        loop {
+            tokio::select! {
+                _ = sampler_cancel_task.cancelled() => break,
+                _ = cancel_token_sampler.cancelled() => break,
+                _ = interval.tick() => {
+                    let current = sampler_completed.load(Ordering::Relaxed);
+                    sampler_speed.store(current.saturating_sub(prev), Ordering::Relaxed);
+                    prev = current;
+                }
+            }
+        }
+    });
     let safe = sanitize(if link.file_name.is_empty() {
         urn.trim_start_matches("urn:sha1:")
     } else {
         &link.file_name
     });
     let out_path = PathBuf::from(dir).join(safe);
-    fetch_by_urn(
+    let download_result = fetch_by_urn(
         &link.host,
         link.port,
         "/uri-res/N2R",
@@ -159,7 +180,11 @@ pub async fn run_g2_download(
         GnutellaError::Io(err) => G2Error::Io(err),
         GnutellaError::Network(msg) => G2Error::Network(msg),
         GnutellaError::NoSource => G2Error::NoSource,
-    })?;
+    });
+    sampler_cancel.cancel();
+    connections.store(0, Ordering::Relaxed);
+    speed.store(0, Ordering::Relaxed);
+    download_result?;
     Ok(out_path)
 }
 

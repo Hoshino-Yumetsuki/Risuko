@@ -8,6 +8,8 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 use tokio::time::timeout;
 
+const MAX_LINE_BYTES: usize = 8 * 1024;
+
 /// Fetch a list of `host:port` ultrapeer addresses from a GWebCache.
 /// Issues `GET <path>?hostfile=1&client=RSKO&version=0.1` and parses the
 /// response body line-by-line. Returns at most 32 peers; a network error
@@ -39,10 +41,10 @@ pub async fn fetch_peers(cache_url: &str) -> Vec<String> {
     }
     let mut reader = BufReader::new(rd);
     let mut in_body = false;
-    let mut line = String::new();
+    let mut line = Vec::new();
     loop {
         line.clear();
-        let n = match timeout(Duration::from_secs(5), reader.read_line(&mut line)).await {
+        let n = match timeout(Duration::from_secs(5), reader.read_until(b'\n', &mut line)).await {
             Ok(Ok(n)) => n,
             Ok(Err(_)) => break,
             Err(_) => break,
@@ -50,7 +52,10 @@ pub async fn fetch_peers(cache_url: &str) -> Vec<String> {
         if n == 0 {
             break;
         }
-        let trimmed = line.trim_end().to_string();
+        if line.len() > MAX_LINE_BYTES {
+            break;
+        }
+        let trimmed = String::from_utf8_lossy(&line).trim_end().to_string();
         if !in_body {
             if trimmed.is_empty() {
                 in_body = true;
@@ -73,7 +78,15 @@ fn parse_http_url(url: &str) -> Option<(String, u16, String)> {
     };
     let (host_port, path) = match scheme_stripped.find('/') {
         Some(idx) => (&scheme_stripped[..idx], &scheme_stripped[idx..]),
-        None => (scheme_stripped, "/"),
+        None => match scheme_stripped.find('?') {
+            Some(idx) => (&scheme_stripped[..idx], &scheme_stripped[idx - 0..]),
+            None => (scheme_stripped, "/"),
+        },
+    };
+    let path = if path.starts_with('?') {
+        format!("/{}", path)
+    } else {
+        path.to_string()
     };
     let (host, port) = if let Some(idx) = host_port.find(':') {
         (
@@ -83,5 +96,5 @@ fn parse_http_url(url: &str) -> Option<(String, u16, String)> {
     } else {
         (host_port.to_string(), default_port)
     };
-    Some((host, port, path.to_string()))
+    Some((host, port, path))
 }
