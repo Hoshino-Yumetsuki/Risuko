@@ -148,6 +148,7 @@ export default {
 	"batch-delete-task-fail": "Failed to delete tasks in batch",
 	"refresh-list": "Refresh Task List",
 	"filter-placeholder": "Filter by name...",
+	"filter-tag-all": "All Tags",
 	"sort-default": "Default order",
 	"sort-by-name": "Sort by name",
 	"sort-by-size": "Sort by size",

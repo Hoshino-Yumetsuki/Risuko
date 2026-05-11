@@ -13,7 +13,6 @@ import {
 } from "@shared/utils/curl";
 import { buildOuts } from "@shared/utils/rename";
 import { isEmpty } from "lodash";
-import api from "@/api";
 
 interface TaskFormState {
 	app: { addTaskUrl: string; addTaskOptions: Record<string, unknown> };
@@ -184,19 +183,9 @@ export const buildUriPayload = async (form: TaskForm) => {
 	uriList = buildUrisFromCurl(uriList);
 	const outs = buildOuts(uriList, out);
 
-	let resolvedForm: TaskForm = buildDefaultOptionsFromCurl(form, curlHeaders);
+	const resolvedForm: TaskForm = buildDefaultOptionsFromCurl(form, curlHeaders);
 
-	// Apply category-based directory via backend resolution
-	const fileCategoryDirs = resolvedForm.fileCategoryDirs || {};
-	if (uriList.length > 0) {
-		const firstUri = uriList[0];
-		const outName = outs[0] || (await inferOutFromUri(firstUri));
-		const category = await api.resolveFileCategory(outName || firstUri);
-		if (category && fileCategoryDirs[category]) {
-			resolvedForm = { ...resolvedForm, dir: fileCategoryDirs[category] };
-		}
-	}
-
+	// Routing (category dirs + custom rules) is now resolved backend-side
 	const options = buildOption(ADD_TASK_TYPE.URI, resolvedForm);
 	const result = {
 		uris: uriList,
@@ -219,21 +208,6 @@ export const buildTorrentPayload = (form: TaskForm) => {
 	};
 	return result;
 };
-
-/**
- * Infer output filename from a URI via the Rust backend.
- */
-async function inferOutFromUri(uri: string): Promise<string> {
-	const raw = (uri || "").trim();
-	if (!raw) {
-		return "";
-	}
-	try {
-		return await api.inferOutFromUri(raw);
-	} catch {
-		return "";
-	}
-}
 
 const AUTH_FIELDS: (keyof SavedCredential)[] = [
 	"authorization",

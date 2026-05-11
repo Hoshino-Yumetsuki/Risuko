@@ -1,5 +1,5 @@
 import { startupOnlyKeys } from "@shared/configKeys";
-import type { AppConfig } from "@shared/types/config";
+import type { AppConfig, TaskRoutingRule } from "@shared/types/config";
 import type { HealthReport, RunHealthChecksParams } from "@shared/types/health";
 import type { RssRule } from "@shared/types/rss";
 import type {
@@ -611,6 +611,35 @@ export default class Api {
 
 	resolveFileCategory(filename: string) {
 		return invoke<string>("resolve_file_category", { filename });
+	}
+
+	// -- Task routing rules --
+
+	listRoutingRules() {
+		return invoke<TaskRoutingRule[]>("list_routing_rules");
+	}
+
+	addRoutingRule(rule: Omit<TaskRoutingRule, "id"> & { id?: string }) {
+		// Always include id in payload; backend will generate one if empty
+		const rulePayload = {
+			...rule,
+			id: rule.id || "",
+		};
+		return invoke<TaskRoutingRule>("add_routing_rule", { rule: rulePayload });
+	}
+
+	updateRoutingRule(rule: TaskRoutingRule) {
+		return invoke("update_routing_rule", { rule });
+	}
+
+	removeRoutingRule(id: string) {
+		return invoke("remove_routing_rule", { id });
+	}
+
+	resolveRouting(filename: string) {
+		return invoke<{ tag?: string; dir: string }>("resolve_routing", {
+			filename,
+		});
 	}
 
 	// -- Cloud upload sinks --

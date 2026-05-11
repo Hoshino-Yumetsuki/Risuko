@@ -14,6 +14,13 @@ export default {
 	"file-category-dirs": "分类路径",
 	"file-category-dirs-tips":
 		"为特定文件类型指定不同的下载路径。留空则使用默认路径。",
+	"task-routing-rules": "任务路由规则",
+	"task-routing-rules-tips":
+		"根据文件名模式将任务路由到指定目录。优先匹配第一条规则。",
+	"task-routing-rule-pattern-placeholder": "匹配模式（如 *.mkv）",
+	"task-routing-rule-label-placeholder": "标签",
+	"task-routing-rule-dir-placeholder": "目录",
+	"task-routing-rule-add": "添加规则",
 	"file-category-music": "音乐",
 	"file-category-video": "视频",
 	"file-category-image": "图片",

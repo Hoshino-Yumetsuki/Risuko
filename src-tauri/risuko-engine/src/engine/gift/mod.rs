@@ -173,9 +173,9 @@ pub async fn run_gift_download(
             let now = tokio::time::Instant::now();
             if let Some((prev_time, prev_done)) = last_progress {
                 let elapsed_ms = now.duration_since(prev_time).as_millis() as u64;
-                if elapsed_ms > 0 {
-                    let delta = d.saturating_sub(prev_done);
-                    speed.store(delta * 1000 / elapsed_ms, Ordering::Relaxed);
+                let delta = d.saturating_sub(prev_done);
+                if let Some(rate) = delta.saturating_mul(1000).checked_div(elapsed_ms) {
+                    speed.store(rate, Ordering::Relaxed);
                 }
             }
             last_progress = Some((now, d));

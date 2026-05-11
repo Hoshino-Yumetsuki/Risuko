@@ -1,5 +1,11 @@
 <template>
-  <ui-button variant="ghost" size="sm" class="select-directory" @click.stop="onFolderClick">
+	<ui-button
+		v-bind="$attrs"
+		variant="ghost"
+		size="sm"
+		class="select-directory"
+		@click.stop="onFolderClick"
+	>
     <Folder :size="14" />
   </ui-button>
 </template>
@@ -11,6 +17,7 @@ import UiButton from "@/components/ui/compat/UiButton.vue";
 
 export default {
 	name: "mo-select-directory",
+	inheritAttrs: false,
 	components: {
 		UiButton,
 		Folder,

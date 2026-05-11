@@ -47,6 +47,7 @@ export interface DownloadTask {
 	pieceLength?: string;
 	numPieces?: string;
 	options?: Record<string, string>;
+	tag?: string;
 	chunkProgress?: { completedLength: string; totalLength: string }[];
 }
 

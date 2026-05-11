@@ -112,6 +112,8 @@ pub struct DownloadTask {
     pub error_code: Option<String>,
     pub error_message: Option<String>,
     pub options: Map<String, Value>,
+    #[serde(default)]
+    pub tag: Option<String>,
     // BitTorrent
     pub info_hash: Option<String>,
     /// BEP-52 v2 (SHA-256) info-hash. Set for hybrid and pure-v2 torrents
@@ -154,6 +156,7 @@ impl DownloadTask {
         gid: String,
         uris: Vec<String>,
         dir: String,
+        tag: Option<String>,
         options: Map<String, Value>,
     ) -> Self {
         let out = options
@@ -208,6 +211,7 @@ impl DownloadTask {
             error_code: None,
             error_message: None,
             options,
+            tag,
             info_hash: None,
             info_hash_v2: None,
             meta_version: None,
@@ -226,7 +230,13 @@ impl DownloadTask {
         }
     }
 
-    pub fn new_youtube(gid: String, uri: String, dir: String, options: Map<String, Value>) -> Self {
+    pub fn new_youtube(
+        gid: String,
+        uri: String,
+        dir: String,
+        tag: Option<String>,
+        options: Map<String, Value>,
+    ) -> Self {
         let out = options
             .get("out")
             .and_then(|v| v.as_str())
@@ -268,6 +278,7 @@ impl DownloadTask {
             error_code: None,
             error_message: None,
             options,
+            tag,
             info_hash: None,
             info_hash_v2: None,
             meta_version: None,
@@ -286,7 +297,12 @@ impl DownloadTask {
         }
     }
 
-    pub fn new_torrent(gid: String, dir: String, options: Map<String, Value>) -> Self {
+    pub fn new_torrent(
+        gid: String,
+        dir: String,
+        tag: Option<String>,
+        options: Map<String, Value>,
+    ) -> Self {
         let out = options
             .get("out")
             .and_then(|v| v.as_str())
@@ -310,6 +326,7 @@ impl DownloadTask {
             error_code: None,
             error_message: None,
             options,
+            tag,
             info_hash: None,
             info_hash_v2: None,
             meta_version: None,
@@ -334,6 +351,7 @@ impl DownloadTask {
         file_name: String,
         file_size: u64,
         dir: String,
+        tag: Option<String>,
         options: Map<String, Value>,
     ) -> Self {
         let out = if !file_name.is_empty() {
@@ -381,6 +399,7 @@ impl DownloadTask {
             error_code: None,
             error_message: None,
             options,
+            tag,
             info_hash: None,
             info_hash_v2: None,
             meta_version: None,
@@ -404,6 +423,7 @@ impl DownloadTask {
         uri: String,
         out: String,
         dir: String,
+        tag: Option<String>,
         options: Map<String, Value>,
     ) -> Self {
         let out = if !out.is_empty() {
@@ -451,6 +471,7 @@ impl DownloadTask {
             error_code: None,
             error_message: None,
             options,
+            tag,
             info_hash: None,
             info_hash_v2: None,
             meta_version: None,
@@ -469,7 +490,13 @@ impl DownloadTask {
         }
     }
 
-    pub fn new_ftp(gid: String, uri: String, dir: String, options: Map<String, Value>) -> Self {
+    pub fn new_ftp(
+        gid: String,
+        uri: String,
+        dir: String,
+        tag: Option<String>,
+        options: Map<String, Value>,
+    ) -> Self {
         let out = options
             .get("out")
             .and_then(|v| v.as_str())
@@ -512,6 +539,7 @@ impl DownloadTask {
             error_code: None,
             error_message: None,
             options,
+            tag,
             info_hash: None,
             info_hash_v2: None,
             meta_version: None,
@@ -541,6 +569,7 @@ impl DownloadTask {
         out_hint: String,
         size_hint: u64,
         dir: String,
+        tag: Option<String>,
         options: Map<String, Value>,
     ) -> Self {
         let out = if !out_hint.is_empty() {
@@ -586,6 +615,7 @@ impl DownloadTask {
             error_code: None,
             error_message: None,
             options,
+            tag,
             info_hash: None,
             info_hash_v2: None,
             meta_version: None,
@@ -654,6 +684,9 @@ impl DownloadTask {
             Value::String(self.connections.to_string()),
         );
         m.insert("dir".into(), Value::String(self.dir.clone()));
+        if let Some(ref tag) = self.tag {
+            m.insert("tag".into(), Value::String(tag.clone()));
+        }
 
         if !self.files.is_empty() {
             let files_val: Vec<Value> = self
@@ -853,7 +886,7 @@ mod tests {
     fn new_http_basic() {
         let opts = Map::new();
         let uris = vec!["http://example.com/file.zip".to_string()];
-        let task = DownloadTask::new_http("gid1".into(), uris.clone(), "/tmp".into(), opts);
+        let task = DownloadTask::new_http("gid1".into(), uris.clone(), "/tmp".into(), None, opts);
 
         assert_eq!(task.gid, "gid1");
         assert_eq!(task.status, TaskStatus::Waiting);
@@ -870,7 +903,7 @@ mod tests {
         let mut opts = Map::new();
         opts.insert("out".into(), json!("file.zip.part"));
         let uris = vec!["http://example.com/file.zip".to_string()];
-        let task = DownloadTask::new_http("gid1".into(), uris, "/dl".into(), opts);
+        let task = DownloadTask::new_http("gid1".into(), uris, "/dl".into(), None, opts);
 
         assert_eq!(task.out, "file.zip.part");
         // Display path should have .part stripped
@@ -880,7 +913,7 @@ mod tests {
     #[test]
     fn new_torrent_basic() {
         let opts = Map::new();
-        let task = DownloadTask::new_torrent("gid2".into(), "/dl".into(), opts);
+        let task = DownloadTask::new_torrent("gid2".into(), "/dl".into(), None, opts);
 
         assert_eq!(task.kind, TaskKind::Torrent);
         assert_eq!(task.status, TaskStatus::Waiting);
@@ -897,6 +930,7 @@ mod tests {
             "test.bin".into(),
             1024,
             "/dl".into(),
+            None,
             opts,
         );
 
@@ -915,6 +949,7 @@ mod tests {
             "http://example.com/stream.m3u8".into(),
             "stream.ts".into(),
             "/dl".into(),
+            None,
             opts,
         );
 
@@ -930,6 +965,7 @@ mod tests {
             "gid5".into(),
             "ftp://files.example.com/data.csv".into(),
             "/dl".into(),
+            None,
             opts,
         );
 
@@ -946,6 +982,7 @@ mod tests {
             "test_gid".into(),
             vec!["http://example.com/f.bin".into()],
             "/tmp".into(),
+            None,
             Map::new(),
         );
         let status = task.to_rpc_status(&[]);
@@ -964,6 +1001,7 @@ mod tests {
             "test_gid".into(),
             vec!["http://example.com/f.bin".into()],
             "/tmp".into(),
+            None,
             Map::new(),
         );
         let keys = vec!["gid".to_string(), "status".to_string()];
@@ -977,7 +1015,7 @@ mod tests {
 
     #[test]
     fn rpc_status_torrent_has_bittorrent_field() {
-        let mut task = DownloadTask::new_torrent("tgid".into(), "/dl".into(), Map::new());
+        let mut task = DownloadTask::new_torrent("tgid".into(), "/dl".into(), None, Map::new());
         task.info_hash = Some("abc123".into());
         task.bt_name = Some("My Torrent".into());
 
@@ -992,7 +1030,7 @@ mod tests {
 
     #[test]
     fn test_info_hash_v2_and_meta_version_emitted_both_places() {
-        let mut task = DownloadTask::new_torrent("tgid".into(), "/dl".into(), Map::new());
+        let mut task = DownloadTask::new_torrent("tgid".into(), "/dl".into(), None, Map::new());
         task.info_hash = Some("aabbccdd".into());
         task.info_hash_v2 = Some("deadbeef".into());
         task.meta_version = Some("hybrid".into());
@@ -1034,6 +1072,7 @@ mod tests {
             "test".into(),
             100,
             "/dl".into(),
+            None,
             Map::new(),
         );
         let status = task.to_rpc_status(&[]);
@@ -1048,7 +1087,7 @@ mod tests {
         let mut opts = Map::new();
         opts.insert("out".into(), json!("video.mp4"));
         let uri = "https://www.youtube.com/watch?v=test123".to_string();
-        let task = DownloadTask::new_youtube("ygid1".into(), uri.clone(), "/dl".into(), opts);
+        let task = DownloadTask::new_youtube("ygid1".into(), uri.clone(), "/dl".into(), None, opts);
 
         assert_eq!(task.kind, TaskKind::Youtube);
         assert_eq!(task.status, TaskStatus::Waiting);
@@ -1062,7 +1101,7 @@ mod tests {
     fn new_youtube_without_out() {
         let opts = Map::new();
         let uri = "https://www.youtube.com/watch?v=abc".to_string();
-        let task = DownloadTask::new_youtube("ygid2".into(), uri.clone(), "/dl".into(), opts);
+        let task = DownloadTask::new_youtube("ygid2".into(), uri.clone(), "/dl".into(), None, opts);
 
         assert_eq!(task.kind, TaskKind::Youtube);
         assert_eq!(task.status, TaskStatus::Waiting);

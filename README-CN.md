@@ -101,22 +101,22 @@ pnpm run build
 
 ## 性能
 
-The Next version use half the memory comparing to original, also significantly less CPU usage bursts  
-In Next v0.1.0, there is performance optimization because aria2 is replaced by native Rust  
-All captured while idle, with command `psrecord <PID> --plot memory.png --include-children --duration 60`  
-App info provided by Finder  
-v0.1.0 has a singnificantly less CPU and memory usage, and smaller bundle size comparing to v0.4.0-alpha
-Comparing to original, v0.1.0 has:
-  - ~90% less bundle size (219.3 MB -> 21.1 MB)
-  - ~70% less memory usage (taking nearest tenth, ~400MB -> ~120MB)
-  - ~70% less peak CPU usage (~140% -> ~40%)
+Risuko 相比原始版本使用内存减少一半，CPU 使用率峰值也显著降低  
+在 Next v0.1.0 中，由于 aria2 被替换为原生 Rust 代码，性能得到了优化  
+所有数据都是在空闲状态下使用命令 `psrecord <PID> --plot memory.png --include-children --duration 60` 捕获  
+应用信息由 Finder 提供  
+相比 v0.4.0-alpha，Risuko v0.3.0 的 CPU 和内存使用量显著降低，包体积也更小
+相比原始版本，Risuko v0.3.0 具有：
+  - ~91% 的包体积减少（219.3 MB -> 19.6 MB）
+  - ~70% 的内存使用量减少（四舍五入到最近的十位，~425MB -> ~125MB）
+  - ~90% 的峰值 CPU 使用率降低（~145% -> ~15%）
 
-| Orignal | Next | Next v0.1.0 |
+| 原始版本 | Next | Risuko v0.3.0 |
 | ------- | ---- | ----------- |
-| ![orignal_mem](./static/readme/Original_Memory.png) | ![0.4.0_mem](./static/readme/v0.0.4_Memory.png) | ![0.1.0_mem](./static/readme/v0.1.0_Memory.png) |
-| ![original_appinfo](./static/readme/Original_AppInfo.png) | ![0.4.0_appinfo](./static/readme/v0.0.4_AppInfo.png) | ![0.1.0_appinfo](./static/readme/v0.1.0_AppInfo.png)
+| ![orignal_mem](./static/readme/Original_Memory.png) | ![0.0.4_mem](./static/readme/v0.0.4_Memory.png) | ![0.3.0_mem](./static/readme/v0.3.0_Memory.png) |
+| ![original_appinfo](./static/readme/Original_AppInfo.png) | ![0.0.4_appinfo](./static/readme/v0.0.4_AppInfo.png) | ![0.3.0_appinfo](./static/readme/v0.3.0_AppInfo.png) |
 
-This is generated with ![psrecord](https://github.com/astrofrog/psrecord)
+本数据通过 [psrecord](https://github.com/astrofrog/psrecord) 生成
 
 ## 🤝 参与共建 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg?style=flat)](http://makeapullrequest.com)
 

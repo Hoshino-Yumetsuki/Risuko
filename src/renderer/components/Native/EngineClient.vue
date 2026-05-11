@@ -45,6 +45,7 @@ export default {
 			timer: null,
 			initTimer: null,
 			isPolling: false,
+			pollingInFlight: false,
 			isDestroyed: false,
 			noSleepDesired: false,
 			noSleepApplied: false,
@@ -535,6 +536,7 @@ export default {
 			const taskStore = useTaskStore();
 			taskStore.fetchList();
 			useAppStore().resetInterval();
+			this.ensurePolling();
 			taskStore.saveSession();
 			const { gid } = payload;
 			this.clearAutoRetryState(gid);
@@ -630,6 +632,7 @@ export default {
 		onDownloadComplete(payload: { gid: string }) {
 			const taskStore = useTaskStore();
 			taskStore.fetchList();
+			this.ensurePolling();
 			const { gid } = payload;
 			this.clearAutoRetryState(gid);
 			taskStore.removeFromSeedingList(gid);
@@ -644,6 +647,7 @@ export default {
 		onBtDownloadComplete(payload: { gid: string }) {
 			const taskStore = useTaskStore();
 			taskStore.fetchList();
+			this.ensurePolling();
 			const { gid } = payload;
 			this.clearAutoRetryState(gid);
 			const { seedingList } = this;
@@ -735,18 +739,32 @@ export default {
 
 			const loop = async () => {
 				await this.polling();
-				if (!this.isDestroyed) {
-					this.timer = setTimeout(loop, this.interval);
+				if (this.isDestroyed || this.timer === null) {
+					return;
 				}
+				this.timer = setTimeout(loop, this.interval);
 			};
 
 			this.timer = setTimeout(loop, this.interval);
+		},
+		// Restart polling if it isn't already running or if a poll is in-flight
+		// Called from engine event handlers so that newly-started or newly-resumed
+		// work wakes the poll loop back up after it self-suspended on idle
+		ensurePolling() {
+			if (this.isDestroyed) {
+				return;
+			}
+			if (this.timer !== null || this.pollingInFlight) {
+				return;
+			}
+			this.startPolling();
 		},
 		async polling() {
 			if (this.isPolling) {
 				return;
 			}
 			this.isPolling = true;
+			this.pollingInFlight = true;
 
 			try {
 				const jobs: Array<Promise<unknown>> = [
@@ -795,6 +813,20 @@ export default {
 				}
 			} finally {
 				this.isPolling = false;
+				this.pollingInFlight = false;
+			}
+
+			// Suspend the poll timer when the engine has nothing in flight
+			// `ensurePolling()` will be called from event handlers when work
+			// reappears, so we won't miss state changes. Paused tasks are included
+			// in numWaiting, so exclude them to treat paused-only sessions as idle
+			const stat = useAppStore().stat;
+		const derivedPaused = useTaskStore().taskList.filter(
+			(task) => task.status === "paused",
+		).length;
+		const nonPausedWaiting = (stat.numWaiting || 0) - derivedPaused;
+			if (stat.numActive === 0 && nonPausedWaiting === 0) {
+				this.stopPolling();
 			}
 		},
 		stopPolling() {

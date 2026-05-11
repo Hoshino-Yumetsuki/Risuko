@@ -57,6 +57,8 @@ impl EngineOptions {
             "bt-encryption-policy",
             "bt-listen-v6",
             "bt-enable-lsd",
+            "task-routing-rules",
+            "file-category-dirs",
         ] {
             if let Some(v) = user.get(key) {
                 global.insert(key.into(), v.clone());
@@ -219,6 +221,34 @@ impl EngineOptions {
 
     pub fn ed2k_port(&self) -> u16 {
         self.get_u64("ed2k-port").unwrap_or(4662) as u16
+    }
+
+    /// User-defined task routing rules (pattern -> tag + directory)
+    pub fn task_routing_rules(&self) -> Vec<super::routing::TaskRoutingRule> {
+        self.global
+            .get("task-routing-rules")
+            .and_then(|v| serde_json::from_value(v.clone()).ok())
+            .unwrap_or_default()
+    }
+
+    /// Legacy file-category → directory map (e.g. { music: "/Music" })
+    pub fn file_category_dirs(&self) -> std::collections::HashMap<String, String> {
+        self.global
+            .get("file-category-dirs")
+            .and_then(|v| {
+                if let Value::Object(map) = v {
+                    let mut result = std::collections::HashMap::new();
+                    for (k, val) in map {
+                        if let Some(s) = val.as_str() {
+                            result.insert(k.clone(), s.to_string());
+                        }
+                    }
+                    Some(result)
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_default()
     }
 
     /// Merge per-task options over global defaults, returning a combined map

@@ -805,6 +805,63 @@ fn dispatch_method<'a>(
                 ]
             })),
 
+            "risuko.listRoutingRules" => {
+                let rules = state.manager.list_routing_rules().await;
+                Ok(serde_json::to_value(rules).unwrap_or_default())
+            }
+
+            "risuko.addRoutingRule" => {
+                let rule = params
+                    .first()
+                    .and_then(|v| {
+                        serde_json::from_value::<super::routing::TaskRoutingRule>(v.clone()).ok()
+                    })
+                    .ok_or_else(|| RpcError::from("Invalid routing rule".to_string()))?;
+                let added = state
+                    .manager
+                    .add_routing_rule(rule)
+                    .await
+                    .map_err(RpcError::from)?;
+                Ok(serde_json::to_value(added).unwrap_or_default())
+            }
+
+            "risuko.updateRoutingRule" => {
+                let rule = params
+                    .first()
+                    .and_then(|v| {
+                        serde_json::from_value::<super::routing::TaskRoutingRule>(v.clone()).ok()
+                    })
+                    .ok_or_else(|| RpcError::from("Invalid routing rule".to_string()))?;
+                state
+                    .manager
+                    .update_routing_rule(rule)
+                    .await
+                    .map_err(RpcError::from)?;
+                Ok(Value::String("OK".into()))
+            }
+
+            "risuko.removeRoutingRule" => {
+                let id = params
+                    .first()
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| RpcError::from("Rule ID required".to_string()))?;
+                state
+                    .manager
+                    .remove_routing_rule(id)
+                    .await
+                    .map_err(RpcError::from)?;
+                Ok(Value::String("OK".into()))
+            }
+
+            "risuko.resolveRouting" => {
+                let filename = params
+                    .first()
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| RpcError::from("Filename required".to_string()))?;
+                let decision = state.manager.preview_routing(filename).await;
+                Ok(serde_json::to_value(decision).unwrap_or_default())
+            }
+
             "system.multicall" => {
                 let methods = extract_multicall_methods(&params);
 
@@ -890,6 +947,11 @@ fn list_methods() -> Value {
         "purgeDownloadResult",
         "removeDownloadResult",
         "getVersion",
+        "listRoutingRules",
+        "addRoutingRule",
+        "updateRoutingRule",
+        "removeRoutingRule",
+        "resolveRouting",
     ];
 
     let mut all: Vec<Value> = Vec::new();

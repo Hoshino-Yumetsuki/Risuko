@@ -9,6 +9,7 @@ pub mod m3u8;
 pub mod manager;
 pub mod netrc;
 pub mod options;
+pub mod routing;
 pub mod rpc;
 pub mod rss;
 pub mod session;

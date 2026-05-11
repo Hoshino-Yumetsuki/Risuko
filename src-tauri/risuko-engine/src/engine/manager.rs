@@ -10,6 +10,7 @@ use super::error_code::classify_error;
 use super::events::{EngineEvent, EventBroadcaster};
 use super::http;
 use super::options::EngineOptions;
+use super::routing::{resolve_routing, TaskRoutingRule};
 use super::session::SessionManager;
 use super::speed_limiter::{parse_speed_limit, SpeedLimiter};
 use super::task::{
@@ -40,6 +41,42 @@ pub struct TaskManager {
     session: SessionManager,
     torrent_engine: Arc<RwLock<Option<TorrentEngine>>>,
     global_speed_limiter: Arc<SpeedLimiter>,
+}
+
+/// Extract filename hint from the first HTTP URI by parsing URL path
+fn extract_filename_from_uri(uris: &[String]) -> String {
+    if uris.is_empty() {
+        return String::new();
+    }
+
+    // Try to extract path component from URI
+    let uri = &uris[0];
+
+    // Find the path after the domain (skip scheme and host)
+    if let Some(start) = uri.find("://") {
+        let after_scheme = &uri[start + 3..];
+        // Skip the host part (up to the first / or ? or #)
+        if let Some(path_start) = after_scheme.find('/') {
+            let path = &after_scheme[path_start..];
+            // Extract last path segment, strip query params and fragments
+            if let Some(file_part) = path.split('/').next_back() {
+                if !file_part.is_empty() {
+                    let file_name = file_part
+                        .split('?')
+                        .next()
+                        .unwrap_or("")
+                        .split('#')
+                        .next()
+                        .unwrap_or("");
+                    if !file_name.is_empty() {
+                        return file_name.to_string();
+                    }
+                }
+            }
+        }
+    }
+
+    String::new()
 }
 
 impl TaskManager {
@@ -163,6 +200,28 @@ impl TaskManager {
         }
     }
 
+    /// Resolve download directory and tag for a new task by evaluating routing
+    /// rules against the inferred output filename
+    async fn resolve_routing_for_task(
+        &self,
+        options: &Map<String, Value>,
+        filename_hint: &str,
+    ) -> (String, Option<String>) {
+        let opts_guard = self.options.read().await;
+        let merged = opts_guard.merge_task_options(options);
+        let raw_dir = merged
+            .get("dir")
+            .and_then(|v| v.as_str())
+            .unwrap_or(".")
+            .to_string();
+        let rules = opts_guard.task_routing_rules();
+        let file_category_dirs = opts_guard.file_category_dirs();
+        drop(opts_guard);
+
+        let decision = resolve_routing(&rules, filename_hint, &raw_dir, &file_category_dirs);
+        (decision.dir, decision.tag)
+    }
+
     pub async fn add_http_task(
         &self,
         uris: Vec<String>,
@@ -170,14 +229,22 @@ impl TaskManager {
     ) -> Result<String, String> {
         let gid = generate_gid();
         log::info!("[task:{}] Adding HTTP task, uris={:?}", gid, uris);
-        let dir = {
-            let merged = self.options.read().await.merge_task_options(&options);
-            merged
-                .get("dir")
-                .and_then(|v| v.as_str())
-                .unwrap_or(".")
-                .to_string()
+        let out = options
+            .get("out")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        // Derive filename hint from URI if out is empty
+        let filename_hint = if out.is_empty() {
+            extract_filename_from_uri(&uris)
+        } else {
+            out.clone()
         };
+
+        let (dir, tag) = self
+            .resolve_routing_for_task(&options, &filename_hint)
+            .await;
 
         // Only honor pause if explicitly set in per-task options (not from global defaults)
         let pause = options
@@ -185,7 +252,7 @@ impl TaskManager {
             .and_then(|v| v.as_bool().or_else(|| v.as_str().map(|s| s == "true")))
             .unwrap_or(false);
 
-        let task = DownloadTask::new_http(gid.clone(), uris, dir, options);
+        let task = DownloadTask::new_http(gid.clone(), uris, dir, tag, options);
         self.tasks.write().await.push(task);
 
         if !pause {
@@ -205,21 +272,29 @@ impl TaskManager {
     ) -> Result<String, String> {
         let gid = generate_gid();
         log::info!("[task:{}] Adding YouTube task, uri={}", gid, uri);
-        let dir = {
-            let merged = self.options.read().await.merge_task_options(&options);
-            merged
-                .get("dir")
-                .and_then(|v| v.as_str())
-                .unwrap_or(".")
-                .to_string()
+        let out = options
+            .get("out")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        // Use YouTube extension as hint if out is empty
+        let filename_hint = if out.is_empty() {
+            "video.mp4".to_string()
+        } else {
+            out.clone()
         };
+
+        let (dir, tag) = self
+            .resolve_routing_for_task(&options, &filename_hint)
+            .await;
 
         let pause = options
             .get("pause")
             .and_then(|v| v.as_bool().or_else(|| v.as_str().map(|s| s == "true")))
             .unwrap_or(false);
 
-        let task = DownloadTask::new_youtube(gid.clone(), uri.to_string(), dir, options);
+        let task = DownloadTask::new_youtube(gid.clone(), uri.to_string(), dir, tag, options);
         self.tasks.write().await.push(task);
 
         if !pause {
@@ -239,13 +314,24 @@ impl TaskManager {
     ) -> Result<String, String> {
         let gid = generate_gid();
         let merged = self.options.read().await.merge_task_options(&options);
-        let dir = merged
-            .get("dir")
+        let out = options
+            .get("out")
             .and_then(|v| v.as_str())
-            .unwrap_or(".")
+            .unwrap_or("")
             .to_string();
 
-        let mut task = DownloadTask::new_torrent(gid.clone(), dir.clone(), options.clone());
+        // Use .torrent extension as hint if out is empty
+        let filename_hint = if out.is_empty() {
+            "download.torrent".to_string()
+        } else {
+            out.clone()
+        };
+
+        let (dir, tag) = self
+            .resolve_routing_for_task(&options, &filename_hint)
+            .await;
+
+        let mut task = DownloadTask::new_torrent(gid.clone(), dir.clone(), tag, options.clone());
 
         // Add to torrent engine
         let te_guard = self.torrent_engine.read().await;
@@ -296,13 +382,24 @@ impl TaskManager {
     ) -> Result<String, String> {
         let gid = generate_gid();
         let merged = self.options.read().await.merge_task_options(&options);
-        let dir = merged
-            .get("dir")
+        let out = options
+            .get("out")
             .and_then(|v| v.as_str())
-            .unwrap_or(".")
+            .unwrap_or("")
             .to_string();
 
-        let mut task = DownloadTask::new_torrent(gid.clone(), dir.clone(), options.clone());
+        // Use magnet extension as hint if out is empty
+        let filename_hint = if out.is_empty() {
+            "download.magnet".to_string()
+        } else {
+            out.clone()
+        };
+
+        let (dir, tag) = self
+            .resolve_routing_for_task(&options, &filename_hint)
+            .await;
+
+        let mut task = DownloadTask::new_torrent(gid.clone(), dir.clone(), tag, options.clone());
         task.uris = vec![magnet_uri.to_string()];
 
         let te_guard = self.torrent_engine.read().await;
@@ -360,15 +457,9 @@ impl TaskManager {
     ) -> Result<String, String> {
         let link = super::ed2k::parse_ed2k_link(uri)?;
         let gid = generate_gid();
-        let merged = self.options.read().await.merge_task_options(&options);
-        let dir = merged
-            .get("dir")
-            .and_then(|v| v.as_str())
-            .unwrap_or(".")
-            .to_string();
-
         let file_name = link.file_name.clone();
         let file_size = link.file_size;
+        let (dir, tag) = self.resolve_routing_for_task(&options, &file_name).await;
 
         // Only honor pause if explicitly set in per-task options
         let pause = options
@@ -382,6 +473,7 @@ impl TaskManager {
             file_name,
             file_size,
             dir,
+            tag,
             options,
         );
 
@@ -403,12 +495,6 @@ impl TaskManager {
         options: Map<String, Value>,
     ) -> Result<String, String> {
         let gid = generate_gid();
-        let merged = self.options.read().await.merge_task_options(&options);
-        let dir = merged
-            .get("dir")
-            .and_then(|v| v.as_str())
-            .unwrap_or(".")
-            .to_string();
 
         // Infer output filename: strip .m3u8 → .ts
         let out = options
@@ -417,13 +503,14 @@ impl TaskManager {
             .filter(|s| !s.is_empty())
             .map(|s| s.to_string())
             .unwrap_or_else(|| infer_m3u8_output_name(uri));
+        let (dir, tag) = self.resolve_routing_for_task(&options, &out).await;
 
         let pause = options
             .get("pause")
             .and_then(|v| v.as_bool().or_else(|| v.as_str().map(|s| s == "true")))
             .unwrap_or(false);
 
-        let task = DownloadTask::new_m3u8(gid.clone(), uri.to_string(), out, dir, options);
+        let task = DownloadTask::new_m3u8(gid.clone(), uri.to_string(), out, dir, tag, options);
         self.tasks.write().await.push(task);
 
         if !pause {
@@ -442,19 +529,27 @@ impl TaskManager {
         options: Map<String, Value>,
     ) -> Result<String, String> {
         let gid = generate_gid();
-        let merged = self.options.read().await.merge_task_options(&options);
-        let dir = merged
-            .get("dir")
+        let out = options
+            .get("out")
             .and_then(|v| v.as_str())
-            .unwrap_or(".")
+            .unwrap_or("")
             .to_string();
+
+        // Derive filename hint from FTP URI if out is empty
+        let filename_hint = if out.is_empty() {
+            extract_filename_from_uri(&[uri.to_string()])
+        } else {
+            out.clone()
+        };
+
+        let (dir, tag) = self.resolve_routing_for_task(&options, &filename_hint).await;
 
         let pause = options
             .get("pause")
             .and_then(|v| v.as_bool().or_else(|| v.as_str().map(|s| s == "true")))
             .unwrap_or(false);
 
-        let task = DownloadTask::new_ftp(gid.clone(), uri.to_string(), dir, options);
+        let task = DownloadTask::new_ftp(gid.clone(), uri.to_string(), dir, tag, options);
         self.tasks.write().await.push(task);
 
         if !pause {
@@ -494,12 +589,7 @@ impl TaskManager {
         };
 
         let gid = generate_gid();
-        let merged = self.options.read().await.merge_task_options(&options);
-        let dir = merged
-            .get("dir")
-            .and_then(|v| v.as_str())
-            .unwrap_or(".")
-            .to_string();
+        let (dir, tag) = self.resolve_routing_for_task(&options, &out_hint).await;
 
         let pause = options
             .get("pause")
@@ -513,6 +603,7 @@ impl TaskManager {
             out_hint,
             size_hint,
             dir,
+            tag,
             options,
         );
         self.tasks.write().await.push(task);
@@ -525,6 +616,73 @@ impl TaskManager {
             .send(EngineEvent::DownloadStart { gid: gid.clone() });
 
         Ok(gid)
+    }
+
+    // -- Routing rule management --
+
+    pub async fn list_routing_rules(&self) -> Vec<TaskRoutingRule> {
+        self.options.read().await.task_routing_rules()
+    }
+
+    pub async fn add_routing_rule(
+        &self,
+        mut rule: TaskRoutingRule,
+    ) -> Result<TaskRoutingRule, String> {
+        if rule.id.is_empty() {
+            rule.id = uuid::Uuid::new_v4().to_string();
+        }
+        let mut opts = self.options.write().await;
+        let mut rules = opts.task_routing_rules();
+        rules.push(rule.clone());
+        opts.set(
+            "task-routing-rules".to_string(),
+            serde_json::to_value(rules).unwrap_or_default(),
+        );
+        Ok(rule)
+    }
+
+    pub async fn update_routing_rule(&self, rule: TaskRoutingRule) -> Result<(), String> {
+        let mut opts = self.options.write().await;
+        let mut rules = opts.task_routing_rules();
+        let pos = rules.iter().position(|r| r.id == rule.id);
+        match pos {
+            Some(idx) => {
+                rules[idx] = rule;
+                opts.set(
+                    "task-routing-rules".to_string(),
+                    serde_json::to_value(rules).unwrap_or_default(),
+                );
+                Ok(())
+            }
+            None => Err("Rule not found".to_string()),
+        }
+    }
+
+    pub async fn remove_routing_rule(&self, id: &str) -> Result<(), String> {
+        let mut opts = self.options.write().await;
+        let mut rules = opts.task_routing_rules();
+        let pos = rules.iter().position(|r| r.id == id);
+        match pos {
+            Some(idx) => {
+                rules.remove(idx);
+                opts.set(
+                    "task-routing-rules".to_string(),
+                    serde_json::to_value(rules).unwrap_or_default(),
+                );
+                Ok(())
+            }
+            None => Err("Rule not found".to_string()),
+        }
+    }
+
+    /// Preview routing decision for a filename using current global config
+    pub async fn preview_routing(&self, filename: &str) -> super::routing::RoutingDecision {
+        let opts = self.options.read().await;
+        let raw_dir = opts.dir();
+        let rules = opts.task_routing_rules();
+        let file_category_dirs = opts.file_category_dirs();
+        drop(opts);
+        resolve_routing(&rules, filename, &raw_dir, &file_category_dirs)
     }
 
     /// Common spawn machinery for ADC / Gnutella / G2 / giFT. Each protocol's `run_*_download` shares the same
@@ -1488,6 +1646,19 @@ impl TaskManager {
     /// Update progress for all active downloads
     /// Also starts waiting tasks if slots are available
     pub async fn update_progress(&self) {
+        // If there are no Active or Waiting tasks, skip the
+        // expensive write-lock + per-task scan + try_start_next entirely
+        // This reduces per-second CPU wake-ups when the engine is idle
+        {
+            let tasks_ro = self.tasks.read().await;
+            let any_work = tasks_ro
+                .iter()
+                .any(|t| matches!(t.status, TaskStatus::Active | TaskStatus::Waiting));
+            if !any_work {
+                return;
+            }
+        }
+
         {
             let active = self.active_downloads.read().await;
             let mut tasks = self.tasks.write().await;
@@ -2116,7 +2287,8 @@ impl TaskManager {
                         })
                         .or_else(|| {
                             task.options.get("seed-ratio").and_then(|r| {
-                                r.as_f64().or_else(|| r.as_str().and_then(|s| s.parse().ok()))
+                                r.as_f64()
+                                    .or_else(|| r.as_str().and_then(|s| s.parse().ok()))
                             })
                         });
                     if effective_ratio.is_none_or(|r| r <= 0.0) {
@@ -2642,6 +2814,7 @@ mod tests {
             gid.into(),
             vec!["http://example.com/f.bin".into()],
             "/dl".into(),
+            None,
             Map::new(),
         );
         task.status = status;

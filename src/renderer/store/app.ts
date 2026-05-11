@@ -127,7 +127,22 @@ export const useAppStore = defineStore("app", {
 					stat.downloadSpeed = 0;
 					this.increaseInterval();
 				}
-				this.stat = stat;
+				// Only commit when at least one tracked field actually
+				// changed. Idle ticks otherwise produce identical stats
+				// every poll, and unconditional assignment churns Vue
+				// reactive observers all over the renderer (subnav badges,
+				// speedometer, tray, header) for no real change
+				const prev = this.stat as Record<string, number>;
+				let changed = false;
+				for (const k of Object.keys(stat)) {
+					if (prev[k] !== stat[k]) {
+						changed = true;
+						break;
+					}
+				}
+				if (changed) {
+					this.stat = stat;
+				}
 				useTaskStore().updateTaskCountsFromStat(stat);
 			} catch (err: unknown) {
 				logger.warn("[Risuko] fetchGlobalStat failed:", (err as Error).message);

@@ -101,7 +101,7 @@ fn parse_http_url(url: &str) -> Option<(String, u16, String)> {
     let (host_port, path) = match scheme_stripped.find('/') {
         Some(idx) => (&scheme_stripped[..idx], &scheme_stripped[idx..]),
         None => match scheme_stripped.find('?') {
-            Some(idx) => (&scheme_stripped[..idx], &scheme_stripped[idx - 0..]),
+            Some(idx) => (&scheme_stripped[..idx], &scheme_stripped[idx..]),
             None => (scheme_stripped, "/"),
         },
     };
