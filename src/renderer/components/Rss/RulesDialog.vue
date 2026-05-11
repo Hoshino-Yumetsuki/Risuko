@@ -389,10 +389,11 @@ export default {
 			}
 		},
 		onRuleRowKeydown(event: KeyboardEvent, id: string) {
-			if (event.key === "Enter" || event.key === " ") {
-				event.preventDefault();
-				this.selectRule(id);
-			}
+      // Only handle key events originating from the row itself
+      if (event.target === event.currentTarget && (event.key === "Enter" || event.key === " ")) {
+        event.preventDefault();
+        this.selectRule(id);
+      }
 		},
 		toggleFeed(feedId: string, value: boolean) {
 			if (!this.form) {
