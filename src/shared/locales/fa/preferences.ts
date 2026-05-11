@@ -123,7 +123,7 @@ export default {
 		"با tauri-plugin-shell در محیط ایزوله اجرا می‌شود. برای پایان هر وظیفه (موفقیت یا خطا) یک‌بار اجرا می‌شود.",
 	"completion-script-command": "دستور",
 	"completion-script-command-placeholder":
-		"مثال: /usr/local/bin/notify.sh یا C:\\\\Tools\\\\notify.exe",
+		"مثال: /usr/local/bin/notify.sh یا C:\\Tools\\notify.exe",
 	"completion-script-args": "آرگومان‌ها",
 	"completion-script-args-placeholder":
 		"--path {path} --hash {hash} --status {status}",

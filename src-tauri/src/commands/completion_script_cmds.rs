@@ -53,17 +53,37 @@ fn read_script_config(state: &AppState) -> Result<ScriptConfig, String> {
 }
 
 /// Tokenize an args template by whitespace (no shell interpretation), then
-/// substitute `{path}`, `{hash}`, `{status}` placeholders. Empty tokens after
-/// substitution are preserved as empty arguments so positional scripts still
-/// receive the expected number of args
+/// substitute `{path}`, `{hash}`, `{status}` placeholders.
+///
+/// Note: whitespace tokenization collapses consecutive spaces and does not
+/// preserve empty arguments
+fn replace_placeholders(token: &str, path: &str, hash: &str, status: &str) -> String {
+    let mut out = String::with_capacity(token.len());
+    let mut i = 0;
+    while i < token.len() {
+        let rest = &token[i..];
+        if rest.starts_with("{path}") {
+            out.push_str(path);
+            i += "{path}".len();
+        } else if rest.starts_with("{hash}") {
+            out.push_str(hash);
+            i += "{hash}".len();
+        } else if rest.starts_with("{status}") {
+            out.push_str(status);
+            i += "{status}".len();
+        } else {
+            let ch = rest.chars().next().expect("non-empty slice");
+            out.push(ch);
+            i += ch.len_utf8();
+        }
+    }
+    out
+}
+
 fn build_args(template: &str, path: &str, hash: &str, status: &str) -> Vec<String> {
     template
         .split_whitespace()
-        .map(|tok| {
-            tok.replace("{path}", path)
-                .replace("{hash}", hash)
-                .replace("{status}", status)
-        })
+        .map(|tok| replace_placeholders(tok, path, hash, status))
         .collect()
 }
 
@@ -80,7 +100,11 @@ pub struct ScriptRunResult {
 
 fn truncate(mut s: String) -> String {
     if s.len() > MAX_OUTPUT_BYTES {
-        s.truncate(MAX_OUTPUT_BYTES);
+        let mut cut = MAX_OUTPUT_BYTES;
+        while cut > 0 && !s.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        s.truncate(cut);
         s.push_str("\n...[truncated]");
     }
     s

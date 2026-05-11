@@ -127,7 +127,7 @@ export default {
 		"Εκτελείται σε sandbox μέσω tauri-plugin-shell. Εκτελείται μία φορά στο τέλος κάθε εργασίας (επιτυχία ή σφάλμα).",
 	"completion-script-command": "Εντολή",
 	"completion-script-command-placeholder":
-		"π.χ. /usr/local/bin/notify.sh ή C:\\\\Tools\\\\notify.exe",
+		"π.χ. /usr/local/bin/notify.sh ή C:\\Tools\\notify.exe",
 	"completion-script-args": "Ορίσματα",
 	"completion-script-args-placeholder":
 		"--path {path} --hash {hash} --status {status}",

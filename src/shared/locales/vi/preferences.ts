@@ -122,7 +122,7 @@ export default {
 		"Chạy trong sandbox qua tauri-plugin-shell. Chạy một lần khi mỗi tác vụ kết thúc (thành công hoặc lỗi).",
 	"completion-script-command": "Lệnh",
 	"completion-script-command-placeholder":
-		"ví dụ /usr/local/bin/notify.sh hoặc C:\\\\Tools\\\\notify.exe",
+		"ví dụ /usr/local/bin/notify.sh hoặc C:\\Tools\\notify.exe",
 	"completion-script-args": "Tham số",
 	"completion-script-args-placeholder":
 		"--path {path} --hash {hash} --status {status}",

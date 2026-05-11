@@ -235,7 +235,7 @@ export default {
 		"透過 tauri-plugin-shell 在沙盒中執行。每個任務結束時（成功或失敗）執行一次。",
 	"completion-script-command": "命令",
 	"completion-script-command-placeholder":
-		"例如：/usr/local/bin/notify.sh 或 C:\\\\Tools\\\\notify.exe",
+		"例如：/usr/local/bin/notify.sh 或 C:\\Tools\\notify.exe",
 	"completion-script-args": "參數",
 	"completion-script-args-placeholder":
 		"--path {path} --hash {hash} --status {status}",

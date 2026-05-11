@@ -128,7 +128,7 @@ export default {
 		"Kjøres i sandbox via tauri-plugin-shell. Kjøres én gang når hver oppgave avsluttes (suksess eller feil).",
 	"completion-script-command": "Kommando",
 	"completion-script-command-placeholder":
-		"f.eks. /usr/local/bin/notify.sh eller C:\\\\Tools\\\\notify.exe",
+		"f.eks. /usr/local/bin/notify.sh eller C:\\Tools\\notify.exe",
 	"completion-script-args": "Argumenter",
 	"completion-script-args-placeholder":
 		"--path {path} --hash {hash} --status {status}",

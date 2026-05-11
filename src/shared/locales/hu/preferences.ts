@@ -122,7 +122,7 @@ export default {
 		"A tauri-plugin-shell sandboxában fut. Feladatonként egyszer fut le a végén (siker vagy hiba).",
 	"completion-script-command": "Parancs",
 	"completion-script-command-placeholder":
-		"pl. /usr/local/bin/notify.sh vagy C:\\\\Tools\\\\notify.exe",
+		"pl. /usr/local/bin/notify.sh vagy C:\\Tools\\notify.exe",
 	"completion-script-args": "Argumentumok",
 	"completion-script-args-placeholder":
 		"--path {path} --hash {hash} --status {status}",

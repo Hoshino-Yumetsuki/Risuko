@@ -128,7 +128,7 @@ export default {
 		"Se rulează în sandbox prin tauri-plugin-shell. Rulează o dată la finalul fiecărei sarcini (succes sau eroare).",
 	"completion-script-command": "Comandă",
 	"completion-script-command-placeholder":
-		"ex. /usr/local/bin/notify.sh sau C:\\\\Tools\\\\notify.exe",
+		"ex. /usr/local/bin/notify.sh sau C:\\Tools\\notify.exe",
 	"completion-script-args": "Argumente",
 	"completion-script-args-placeholder":
 		"--path {path} --hash {hash} --status {status}",

@@ -128,7 +128,7 @@ export default {
 		"Изпълнява се в изолирана среда чрез tauri-plugin-shell. Стартира веднъж при край на всяка задача (успех или грешка).",
 	"completion-script-command": "Команда",
 	"completion-script-command-placeholder":
-		"напр. /usr/local/bin/notify.sh или C:\\\\Tools\\\\notify.exe",
+		"напр. /usr/local/bin/notify.sh или C:\\Tools\\notify.exe",
 	"completion-script-args": "Аргументи",
 	"completion-script-args-placeholder":
 		"--path {path} --hash {hash} --status {status}",

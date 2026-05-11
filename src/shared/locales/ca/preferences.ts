@@ -129,7 +129,7 @@ export default {
 		"S’executa en entorn aïllat amb tauri-plugin-shell. S’executa un cop al final de cada tasca (èxit o error).",
 	"completion-script-command": "Ordre",
 	"completion-script-command-placeholder":
-		"p. ex. /usr/local/bin/notify.sh o C:\\\\Tools\\\\notify.exe",
+		"p. ex. /usr/local/bin/notify.sh o C:\\Tools\\notify.exe",
 	"completion-script-args": "Paràmetres",
 	"completion-script-args-placeholder":
 		"--path {path} --hash {hash} --status {status}",

@@ -122,7 +122,7 @@ export default {
 		"tauri-plugin-shell のサンドボックス内で実行されます。各タスク終了時（成功またはエラー）に1回実行されます。",
 	"completion-script-command": "コマンド",
 	"completion-script-command-placeholder":
-		"例: /usr/local/bin/notify.sh または C:\\\\Tools\\\\notify.exe",
+		"例: /usr/local/bin/notify.sh または C:\\Tools\\notify.exe",
 	"completion-script-args": "引数",
 	"completion-script-args-placeholder":
 		"--path {path} --hash {hash} --status {status}",

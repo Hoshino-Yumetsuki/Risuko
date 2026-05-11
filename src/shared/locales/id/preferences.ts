@@ -126,7 +126,7 @@ export default {
 		"Dijalankan dalam sandbox melalui tauri-plugin-shell. Dijalankan sekali ketika tiap tugas berakhir (berhasil atau gagal).",
 	"completion-script-command": "Perintah",
 	"completion-script-command-placeholder":
-		"mis. /usr/local/bin/notify.sh atau C:\\\\Tools\\\\notify.exe",
+		"mis. /usr/local/bin/notify.sh atau C:\\Tools\\notify.exe",
 	"completion-script-args": "Argumen",
 	"completion-script-args-placeholder":
 		"--path {path} --hash {hash} --status {status}",

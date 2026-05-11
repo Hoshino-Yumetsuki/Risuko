@@ -125,7 +125,7 @@ export default {
 		"tauri-plugin-shell ile sandbox içinde çalışır. Her görev sonunda (başarılı veya hatalı) bir kez çalışır.",
 	"completion-script-command": "Komut",
 	"completion-script-command-placeholder":
-		"örn. /usr/local/bin/notify.sh veya C:\\\\Tools\\\\notify.exe",
+		"örn. /usr/local/bin/notify.sh veya C:\\Tools\\notify.exe",
 	"completion-script-args": "Argümanlar",
 	"completion-script-args-placeholder":
 		"--path {path} --hash {hash} --status {status}",

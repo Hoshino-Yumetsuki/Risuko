@@ -128,7 +128,7 @@ export default {
 		"Executado em sandbox via tauri-plugin-shell. Executa uma vez ao fim de cada tarefa (sucesso ou erro).",
 	"completion-script-command": "Comando",
 	"completion-script-command-placeholder":
-		"ex.: /usr/local/bin/notify.sh ou C:\\\\Tools\\\\notify.exe",
+		"ex.: /usr/local/bin/notify.sh ou C:\\Tools\\notify.exe",
 	"completion-script-args": "Argumentos",
 	"completion-script-args-placeholder":
 		"--path {path} --hash {hash} --status {status}",

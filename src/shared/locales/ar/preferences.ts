@@ -120,7 +120,7 @@ export default {
 		"يعمل ضمن صندوق حماية tauri-plugin-shell. يُشغَّل مرة واحدة عند انتهاء كل مهمة (نجاح أو خطأ).",
 	"completion-script-command": "الأمر",
 	"completion-script-command-placeholder":
-		"مثال: /usr/local/bin/notify.sh أو C:\\\\Tools\\\\notify.exe",
+		"مثال: /usr/local/bin/notify.sh أو C:\\Tools\\notify.exe",
 	"completion-script-args": "الوسائط",
 	"completion-script-args-placeholder":
 		"--path {path} --hash {hash} --status {status}",

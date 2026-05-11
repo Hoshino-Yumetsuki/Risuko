@@ -117,7 +117,7 @@ export default {
 		"ทำงานใน sandbox ผ่าน tauri-plugin-shell และจะรันหนึ่งครั้งเมื่อแต่ละงานสิ้นสุด (สำเร็จหรือผิดพลาด)",
 	"completion-script-command": "คำสั่ง",
 	"completion-script-command-placeholder":
-		"เช่น /usr/local/bin/notify.sh หรือ C:\\\\Tools\\\\notify.exe",
+		"เช่น /usr/local/bin/notify.sh หรือ C:\\Tools\\notify.exe",
 	"completion-script-args": "อาร์กิวเมนต์",
 	"completion-script-args-placeholder":
 		"--path {path} --hash {hash} --status {status}",

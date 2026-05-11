@@ -128,7 +128,7 @@ export default {
 		"Виконується в пісочниці через tauri-plugin-shell. Запускається один раз наприкінці кожного завдання (успіх або помилка).",
 	"completion-script-command": "Команда",
 	"completion-script-command-placeholder":
-		"напр. /usr/local/bin/notify.sh або C:\\\\Tools\\\\notify.exe",
+		"напр. /usr/local/bin/notify.sh або C:\\Tools\\notify.exe",
 	"completion-script-args": "Аргументи",
 	"completion-script-args-placeholder":
 		"--path {path} --hash {hash} --status {status}",
