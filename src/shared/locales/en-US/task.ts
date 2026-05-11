@@ -86,6 +86,7 @@ export default {
 	"task-peer-ip": "IP",
 	"task-peer-client": "Client",
 	"navigate-to-downloading": "Navigate to Downloading",
+	"completion-script-override": "Override on-completion script for this task",
 	"show-advanced-options": "Advanced Options",
 	"loading-add-task": "Adding task...",
 	"loading-resolve-torrent": "Resolving torrent metadata...",

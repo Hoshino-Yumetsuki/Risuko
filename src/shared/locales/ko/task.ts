@@ -127,4 +127,5 @@ export default {
 		"배포를 중지하면 연결을 끊는 데 시간이 걸립니다. 잠시 기다려 주십시오...",
 	"download-fail-message": "{{taskName}} 다운로드 실패",
 	"download-fail-notify": "다운로드 실패",
+	"completion-script-override": "이 작업의 완료 스크립트 재정의",
 };

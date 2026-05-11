@@ -130,4 +130,5 @@ export default {
 		"Ngừng seed, sẽ mất một thời gian để ngắt kết nối, vui lòng đợi...",
 	"download-fail-message": "Không thể tải xuống {{taskName}}",
 	"download-fail-notify": "Tải xuống thất bại",
+	"completion-script-override": "Ghi đè script hoàn tất cho tác vụ này",
 };

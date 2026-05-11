@@ -132,4 +132,6 @@ export default {
 		"Parando a propagação, levará algum tempo para desconectar, aguarde ...",
 	"download-fail-message": "{{taskName}} falha no download",
 	"download-fail-notify": "Falha no Download",
+	"completion-script-override":
+		"Sobrescrever script de conclusão para esta tarefa",
 };

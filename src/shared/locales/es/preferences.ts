@@ -123,4 +123,21 @@ export default {
 	"not-saved": "Preferencias no guardadas",
 	"not-saved-confirm":
 		"Las preferencias cambiadas se perderán, ¿está seguro de irse?",
+	"completion-script": "Script al completar",
+	"completion-script-enabled": "Ejecutar un script al completar la descarga",
+	"completion-script-tips":
+		"Se ejecuta en sandbox mediante tauri-plugin-shell. Se ejecuta una vez al finalizar cada tarea (éxito o error).",
+	"completion-script-command": "Comando",
+	"completion-script-command-placeholder":
+		"p. ej. /usr/local/bin/notify.sh o C:\\Tools\\notify.exe",
+	"completion-script-args": "Argumentos",
+	"completion-script-args-placeholder":
+		"--path {path} --hash {hash} --status {status}",
+	"completion-script-args-tips":
+		"Marcadores: {path}, {hash}, {status}. También disponibles como variables de entorno RISUKO_PATH, RISUKO_HASH, RISUKO_STATUS.",
+	"completion-script-timeout": "Tiempo de espera (ms)",
+	"completion-script-test": "Probar script",
+	"completion-script-test-ok": "La prueba del script fue correcta",
+	"completion-script-test-fail": "La prueba del script falló",
+	"completion-script-empty": "Especifica primero un comando",
 };

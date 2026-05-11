@@ -120,4 +120,21 @@ export default {
 	"not-saved": "Preferencje nie zostały zapisane",
 	"not-saved-confirm":
 		"Zmienione preferencje zostaną utracone, czy na pewno chcesz wyjść?",
+	"completion-script": "Skrypt po zakończeniu",
+	"completion-script-enabled": "Uruchom skrypt po zakończeniu pobierania",
+	"completion-script-tips":
+		"Uruchamiany w sandboxie przez tauri-plugin-shell. Wykonywany raz po zakończeniu każdego zadania (sukces lub błąd).",
+	"completion-script-command": "Polecenie",
+	"completion-script-command-placeholder":
+		"np. /usr/local/bin/notify.sh lub C:\\Tools\\notify.exe",
+	"completion-script-args": "Argumenty",
+	"completion-script-args-placeholder":
+		"--path {path} --hash {hash} --status {status}",
+	"completion-script-args-tips":
+		"Symbole zastępcze: {path}, {hash}, {status}. Dostępne także jako zmienne środowiskowe RISUKO_PATH, RISUKO_HASH, RISUKO_STATUS.",
+	"completion-script-timeout": "Limit czasu (ms)",
+	"completion-script-test": "Testuj skrypt",
+	"completion-script-test-ok": "Test skryptu zakończony powodzeniem",
+	"completion-script-test-fail": "Test skryptu nie powiódł się",
+	"completion-script-empty": "Najpierw podaj polecenie",
 };

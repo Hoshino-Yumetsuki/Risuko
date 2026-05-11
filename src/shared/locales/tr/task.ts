@@ -130,4 +130,6 @@ export default {
 		"Ekim işlemini durdurmak, bağlantıyı kesmek biraz zaman alacak, lütfen bekleyin...",
 	"download-fail-message": "{{taskName}} görevi indirilemedi",
 	"download-fail-notify": "İndirme başarısız",
+	"completion-script-override":
+		"Bu görev için tamamlanma betiğini geçersiz kıl",
 };

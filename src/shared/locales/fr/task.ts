@@ -129,4 +129,5 @@ export default {
 		"Arrêt de l'ensemencement, la déconnexion prendra un certain temps, veuillez patienter ...",
 	"download-fail-message": "{{taskName}} téléchargement échoué",
 	"download-fail-notify": "Téléchargement Échoué",
+	"completion-script-override": "Remplacer le script de fin pour cette tâche",
 };

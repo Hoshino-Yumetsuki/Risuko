@@ -122,4 +122,21 @@ export default {
 	"not-saved": "Preferințele nu au fost salvate",
 	"not-saved-confirm":
 		"Preferințele modificate se vor pierde, sunteți sigur că plecați?",
+	"completion-script": "Script la finalizare",
+	"completion-script-enabled": "Rulează un script la finalizarea descărcării",
+	"completion-script-tips":
+		"Se rulează în sandbox prin tauri-plugin-shell. Rulează o dată la finalul fiecărei sarcini (succes sau eroare).",
+	"completion-script-command": "Comandă",
+	"completion-script-command-placeholder":
+		"ex. /usr/local/bin/notify.sh sau C:\\Tools\\notify.exe",
+	"completion-script-args": "Argumente",
+	"completion-script-args-placeholder":
+		"--path {path} --hash {hash} --status {status}",
+	"completion-script-args-tips":
+		"Substituenți: {path}, {hash}, {status}. Disponibili și ca variabile de mediu RISUKO_PATH, RISUKO_HASH, RISUKO_STATUS.",
+	"completion-script-timeout": "Limită de timp (ms)",
+	"completion-script-test": "Testează scriptul",
+	"completion-script-test-ok": "Testul scriptului a reușit",
+	"completion-script-test-fail": "Testul scriptului a eșuat",
+	"completion-script-empty": "Specifică mai întâi o comandă",
 };

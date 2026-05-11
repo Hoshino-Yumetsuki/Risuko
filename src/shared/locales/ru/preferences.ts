@@ -119,4 +119,21 @@ export default {
 	"not-saved": "Настройки не сохранены",
 	"not-saved-confirm":
 		"Измененные настройки будут потеряны, вы обязательно уйдете?",
+	"completion-script": "Скрипт после завершения",
+	"completion-script-enabled": "Запускать скрипт после завершения загрузки",
+	"completion-script-tips":
+		"Выполняется в песочнице через tauri-plugin-shell. Запускается один раз при завершении каждой задачи (успех или ошибка).",
+	"completion-script-command": "Команда",
+	"completion-script-command-placeholder":
+		"напр. /usr/local/bin/notify.sh или C:\\Tools\\notify.exe",
+	"completion-script-args": "Аргументы",
+	"completion-script-args-placeholder":
+		"--path {path} --hash {hash} --status {status}",
+	"completion-script-args-tips":
+		"Плейсхолдеры: {path}, {hash}, {status}. Также доступны как переменные окружения RISUKO_PATH, RISUKO_HASH, RISUKO_STATUS.",
+	"completion-script-timeout": "Таймаут (мс)",
+	"completion-script-test": "Проверить скрипт",
+	"completion-script-test-ok": "Проверка скрипта успешна",
+	"completion-script-test-fail": "Проверка скрипта не удалась",
+	"completion-script-empty": "Сначала укажите команду",
 };

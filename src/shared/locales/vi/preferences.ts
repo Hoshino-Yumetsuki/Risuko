@@ -116,4 +116,21 @@ export default {
 	"not-saved": "Tùy chọn chưa được lưu",
 	"not-saved-confirm":
 		"Các tùy chọn đã sửa đổi sẽ bị mất, bạn có chắc chắn thoát không?",
+	"completion-script": "Script khi hoàn tất",
+	"completion-script-enabled": "Chạy script khi tải xuống hoàn tất",
+	"completion-script-tips":
+		"Chạy trong sandbox qua tauri-plugin-shell. Chạy một lần khi mỗi tác vụ kết thúc (thành công hoặc lỗi).",
+	"completion-script-command": "Lệnh",
+	"completion-script-command-placeholder":
+		"ví dụ /usr/local/bin/notify.sh hoặc C:\\Tools\\notify.exe",
+	"completion-script-args": "Tham số",
+	"completion-script-args-placeholder":
+		"--path {path} --hash {hash} --status {status}",
+	"completion-script-args-tips":
+		"Giá trị thay thế: {path}, {hash}, {status}. Cũng có sẵn dưới dạng biến môi trường RISUKO_PATH, RISUKO_HASH, RISUKO_STATUS.",
+	"completion-script-timeout": "Thời gian chờ (ms)",
+	"completion-script-test": "Kiểm tra script",
+	"completion-script-test-ok": "Kiểm tra script thành công",
+	"completion-script-test-fail": "Kiểm tra script thất bại",
+	"completion-script-empty": "Vui lòng chỉ định lệnh trước",
 };

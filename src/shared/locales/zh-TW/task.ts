@@ -218,4 +218,5 @@ export default {
 	"batch-all-success": "已新增 {{count}} 個任務",
 	"batch-torrent-too-large": "種子檔案過大，無法預覽",
 	"batch-uri-body": "該 URL 將使用下方的共用選項進行下載。",
+	"completion-script-override": "為此任務覆寫完成後腳本",
 };

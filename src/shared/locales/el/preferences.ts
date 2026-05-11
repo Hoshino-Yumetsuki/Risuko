@@ -121,4 +121,21 @@ export default {
 	"not-saved": "Οι προτιμήσεις δεν αποθηκεύτηκαν",
 	"not-saved-confirm":
 		"Οι αλλαγμένες προτιμήσεις θα χαθούν, είστε σίγουροι ότι θα φύγετε;",
+	"completion-script": "Σενάριο ολοκλήρωσης",
+	"completion-script-enabled": "Εκτέλεση σεναρίου όταν ολοκληρώνεται η λήψη",
+	"completion-script-tips":
+		"Εκτελείται σε sandbox μέσω tauri-plugin-shell. Εκτελείται μία φορά στο τέλος κάθε εργασίας (επιτυχία ή σφάλμα).",
+	"completion-script-command": "Εντολή",
+	"completion-script-command-placeholder":
+		"π.χ. /usr/local/bin/notify.sh ή C:\\Tools\\notify.exe",
+	"completion-script-args": "Ορίσματα",
+	"completion-script-args-placeholder":
+		"--path {path} --hash {hash} --status {status}",
+	"completion-script-args-tips":
+		"Μεταβλητές: {path}, {hash}, {status}. Διατίθενται επίσης ως μεταβλητές περιβάλλοντος RISUKO_PATH, RISUKO_HASH, RISUKO_STATUS.",
+	"completion-script-timeout": "Χρονικό όριο (ms)",
+	"completion-script-test": "Δοκιμή σεναρίου",
+	"completion-script-test-ok": "Η δοκιμή σεναρίου πέτυχε",
+	"completion-script-test-fail": "Η δοκιμή σεναρίου απέτυχε",
+	"completion-script-empty": "Ορίστε πρώτα μια εντολή",
 };

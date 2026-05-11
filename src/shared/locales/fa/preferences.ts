@@ -117,4 +117,21 @@ export default {
 	"not-saved": "تنظیمات برگزیده ذخیره نشد",
 	"not-saved-confirm":
 		"تنظیمات برگزیده تغییر یافته از بین خواهند رفت، آیا مطمئن هستید که می روید؟",
+	"completion-script": "اسکریپت پس از اتمام",
+	"completion-script-enabled": "اجرای اسکریپت پس از اتمام دانلود",
+	"completion-script-tips":
+		"با tauri-plugin-shell در محیط ایزوله اجرا می‌شود. برای پایان هر وظیفه (موفقیت یا خطا) یک‌بار اجرا می‌شود.",
+	"completion-script-command": "دستور",
+	"completion-script-command-placeholder":
+		"مثال: /usr/local/bin/notify.sh یا C:\\Tools\\notify.exe",
+	"completion-script-args": "آرگومان‌ها",
+	"completion-script-args-placeholder":
+		"--path {path} --hash {hash} --status {status}",
+	"completion-script-args-tips":
+		"جای‌نگهدارها: {path}، {hash}، {status}. همچنین به‌صورت متغیر محیطی RISUKO_PATH، RISUKO_HASH، RISUKO_STATUS در دسترس‌اند.",
+	"completion-script-timeout": "مهلت زمانی (میلی‌ثانیه)",
+	"completion-script-test": "تست اسکریپت",
+	"completion-script-test-ok": "تست اسکریپت موفق بود",
+	"completion-script-test-fail": "تست اسکریپت ناموفق بود",
+	"completion-script-empty": "لطفاً ابتدا یک دستور مشخص کنید",
 };

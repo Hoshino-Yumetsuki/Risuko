@@ -125,4 +125,6 @@ export default {
 		"جاري إيقاف عملية البَذر، سيستغرق قطع الاتصال بعض الوقت، الرجاء الانتظار...",
 	"download-fail-message": "فشل تحميل {{taskName}}",
 	"download-fail-notify": "فشل التحميل",
+	"completion-script-override":
+		"تجاوز إعداد البرنامج النصي عند الاكتمال لهذه المهمة",
 };

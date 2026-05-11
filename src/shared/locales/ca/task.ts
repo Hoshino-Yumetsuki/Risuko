@@ -134,4 +134,6 @@ export default {
 		"Aturar la sembra, es necessitarà un temps per desconnectar-se, espereu...",
 	"download-fail-message": "No s'ha pogut descarregar {{taskName}}",
 	"download-fail-notify": "Descàrrega fallida",
+	"completion-script-override":
+		"Substitueix l’script de finalització per a aquesta tasca",
 };

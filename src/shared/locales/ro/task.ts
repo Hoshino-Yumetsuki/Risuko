@@ -133,4 +133,6 @@ export default {
 		"Se oprește statul la seed, va dura ceva timp pentru a vă deconecta, vă rugăm să așteptați ...",
 	"download-fail-message": "Descărcarea nu a reușit {{taskName}}",
 	"download-fail-notify": "Descărcarea nu a reușit",
+	"completion-script-override":
+		"Suprascrie scriptul de finalizare pentru această sarcină",
 };

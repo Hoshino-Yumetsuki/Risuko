@@ -133,4 +133,6 @@ export default {
 		"Seeden stoppen. Het duurt even voor de verbindingen zijn verbroken, even geduld...",
 	"download-fail-message": "Download van {{taskName}} mislukt",
 	"download-fail-notify": "Download mislukt",
+	"completion-script-override":
+		"Voltooiingsscript voor deze taak overschrijven",
 };

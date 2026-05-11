@@ -116,4 +116,21 @@ export default {
 	"last-check-update-time": "Legutolsó frissités:",
 	"not-saved": "A beállítások nincsenek mentve",
 	"not-saved-confirm": "A megváltozott beállítások elvesznek. Biztosan kilép?",
+	"completion-script": "Befejezési szkript",
+	"completion-script-enabled": "Szkript futtatása a letöltés befejezésekor",
+	"completion-script-tips":
+		"A tauri-plugin-shell sandboxában fut. Feladatonként egyszer fut le a végén (siker vagy hiba).",
+	"completion-script-command": "Parancs",
+	"completion-script-command-placeholder":
+		"pl. /usr/local/bin/notify.sh vagy C:\\Tools\\notify.exe",
+	"completion-script-args": "Argumentumok",
+	"completion-script-args-placeholder":
+		"--path {path} --hash {hash} --status {status}",
+	"completion-script-args-tips":
+		"Helyőrzők: {path}, {hash}, {status}. RISUKO_PATH, RISUKO_HASH, RISUKO_STATUS környezeti változóként is elérhetők.",
+	"completion-script-timeout": "Időtúllépés (ms)",
+	"completion-script-test": "Szkript tesztelése",
+	"completion-script-test-ok": "A szkript tesztje sikeres",
+	"completion-script-test-fail": "A szkript tesztje sikertelen",
+	"completion-script-empty": "Előbb adj meg egy parancsot",
 };

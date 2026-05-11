@@ -39,6 +39,10 @@ export interface TaskForm {
 	sftpPrivateKey: string;
 	sftpPrivateKeyContent: string;
 	sftpKeyPassphrase: string;
+	completionScriptOverride: boolean;
+	completionScriptCommand: string;
+	completionScriptArgs: string;
+	completionScriptTimeoutMs: number;
 	[key: string]: unknown;
 }
 
@@ -82,6 +86,10 @@ export const initTaskForm = (state: TaskFormState) => {
 		sftpPrivateKeyContent: "",
 		sftpKeyPassphrase:
 			state.preference.config["sftp-private-key-passphrase"] || "",
+		completionScriptOverride: false,
+		completionScriptCommand: "",
+		completionScriptArgs: "",
+		completionScriptTimeoutMs: 30000,
 		...addTaskOptions,
 	};
 	return result;
@@ -167,6 +175,24 @@ export const buildOption = (type: string, form: TaskForm) => {
 	}
 	if (!isEmpty(sftpKeyPassphrase)) {
 		result["sftp-private-key-passphrase"] = sftpKeyPassphrase;
+	}
+
+	// Per-task completion-script overrides. Stored under risuko-prefixed
+	// option keys; the engine preserves unknown options as-is and the
+	// renderer reads them back at completion time to pass to the script
+	// runner. `override = true` is required to opt in; without it, the
+	// global preference is used
+	if (form.completionScriptOverride) {
+		const command = `${form.completionScriptCommand || ""}`.trim();
+		if (!isEmpty(command)) {
+			result["risuko-completion-script-command"] = command;
+			result["risuko-completion-script-args"] = form.completionScriptArgs || "";
+			result["risuko-completion-script-timeout-ms"] =
+				Number(form.completionScriptTimeoutMs) || 30000;
+		} else {
+			// Override toggled on but no command — explicitly disable per task
+			result["risuko-completion-script-enabled"] = false;
+		}
 	}
 
 	return result;
