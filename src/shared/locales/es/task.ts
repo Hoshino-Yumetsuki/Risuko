@@ -133,4 +133,5 @@ export default {
 		"Deteniendo la siembra, tomará un tiempo desconectarse, por favor espere...",
 	"download-fail-message": "No se pudo descargar {{taskName}}",
 	"download-fail-notify": "Descarga fallida",
+	"completion-script-override": "Anular script de finalización para esta tarea",
 };

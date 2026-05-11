@@ -119,4 +119,21 @@ export default {
 	"not-saved": "Tercihler kaydedilmedi",
 	"not-saved-confirm":
 		"Değiştirilen tercihler kaybolacak, ayrılacağınızdan emin misiniz?",
+	"completion-script": "Tamamlanma sonrası betik",
+	"completion-script-enabled": "İndirme tamamlandığında bir betik çalıştır",
+	"completion-script-tips":
+		"tauri-plugin-shell ile sandbox içinde çalışır. Her görev sonunda (başarılı veya hatalı) bir kez çalışır.",
+	"completion-script-command": "Komut",
+	"completion-script-command-placeholder":
+		"örn. /usr/local/bin/notify.sh veya C:\\\\Tools\\\\notify.exe",
+	"completion-script-args": "Argümanlar",
+	"completion-script-args-placeholder":
+		"--path {path} --hash {hash} --status {status}",
+	"completion-script-args-tips":
+		"Yer tutucular: {path}, {hash}, {status}. RISUKO_PATH, RISUKO_HASH, RISUKO_STATUS ortam değişkenleri olarak da sunulur.",
+	"completion-script-timeout": "Zaman aşımı (ms)",
+	"completion-script-test": "Betiği test et",
+	"completion-script-test-ok": "Betik testi başarılı",
+	"completion-script-test-fail": "Betik testi başarısız",
+	"completion-script-empty": "Önce bir komut belirtin",
 };

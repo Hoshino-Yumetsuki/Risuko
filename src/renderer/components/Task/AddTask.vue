@@ -196,6 +196,49 @@
                 {{ $t('task.navigate-to-downloading') }}
               </ui-checkbox>
             </div>
+            <div class="col-span-2">
+              <ui-checkbox
+                :model-value="!!form.completionScriptOverride"
+                @change="(v) => (form.completionScriptOverride = !!v)"
+              >
+                {{ $t('task.completion-script-override') }}
+              </ui-checkbox>
+            </div>
+            <template v-if="form.completionScriptOverride">
+              <div class="col-span-2">
+                <label class="mb-1 block text-[11px] text-muted-foreground">{{
+                  $t('preferences.completion-script-command')
+                }}</label>
+                <Input
+                  v-model="form.completionScriptCommand"
+                  :placeholder="
+                    $t('preferences.completion-script-command-placeholder')
+                  "
+                />
+              </div>
+              <div class="col-span-2">
+                <label class="mb-1 block text-[11px] text-muted-foreground">{{
+                  $t('preferences.completion-script-args')
+                }}</label>
+                <Input
+                  v-model="form.completionScriptArgs"
+                  :placeholder="
+                    $t('preferences.completion-script-args-placeholder')
+                  "
+                />
+              </div>
+              <div>
+                <label class="mb-1 block text-[11px] text-muted-foreground">{{
+                  $t('preferences.completion-script-timeout')
+                }}</label>
+                <NumberInput
+                  v-model="form.completionScriptTimeoutMs"
+                  :min="1000"
+                  :max="300000"
+                  :step="1000"
+                />
+              </div>
+            </template>
             </div>
           </Motion>
         </AnimatePresence>

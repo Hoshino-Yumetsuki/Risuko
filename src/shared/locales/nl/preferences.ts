@@ -119,4 +119,22 @@ export default {
 	"auto-update": "Auto-Update",
 	"auto-check-update": "Automatische naar updates zoeken",
 	"last-check-update-time": "Laatste keer gecontroleerd op updates",
+	"completion-script": "Script bij voltooiing",
+	"completion-script-enabled":
+		"Script uitvoeren bij voltooiing van de download",
+	"completion-script-tips":
+		"Wordt in sandbox uitgevoerd via tauri-plugin-shell. Draait eenmaal bij het einde van elke taak (succes of fout).",
+	"completion-script-command": "Commando",
+	"completion-script-command-placeholder":
+		"bijv. /usr/local/bin/notify.sh of C:\\\\Tools\\\\notify.exe",
+	"completion-script-args": "Argumenten",
+	"completion-script-args-placeholder":
+		"--path {path} --hash {hash} --status {status}",
+	"completion-script-args-tips":
+		"Placeholders: {path}, {hash}, {status}. Ook beschikbaar als omgevingsvariabelen RISUKO_PATH, RISUKO_HASH, RISUKO_STATUS.",
+	"completion-script-timeout": "Time-out (ms)",
+	"completion-script-test": "Script testen",
+	"completion-script-test-ok": "Scripttest geslaagd",
+	"completion-script-test-fail": "Scripttest mislukt",
+	"completion-script-empty": "Geef eerst een commando op",
 };

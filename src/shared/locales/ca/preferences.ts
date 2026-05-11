@@ -123,4 +123,21 @@ export default {
 	"not-saved": "Preferències no desades",
 	"not-saved-confirm":
 		"Les preferències modificades es perdran, esteu segur que marxareu?",
+	"completion-script": "Script en finalitzar",
+	"completion-script-enabled": "Executa un script en completar la baixada",
+	"completion-script-tips":
+		"S’executa en entorn aïllat amb tauri-plugin-shell. S’executa un cop al final de cada tasca (èxit o error).",
+	"completion-script-command": "Ordre",
+	"completion-script-command-placeholder":
+		"p. ex. /usr/local/bin/notify.sh o C:\\\\Tools\\\\notify.exe",
+	"completion-script-args": "Paràmetres",
+	"completion-script-args-placeholder":
+		"--path {path} --hash {hash} --status {status}",
+	"completion-script-args-tips":
+		"Marcadors: {path}, {hash}, {status}. També disponibles com a variables d’entorn RISUKO_PATH, RISUKO_HASH i RISUKO_STATUS.",
+	"completion-script-timeout": "Temps d’espera (ms)",
+	"completion-script-test": "Provar script",
+	"completion-script-test-ok": "La prova del script ha anat bé",
+	"completion-script-test-fail": "La prova del script ha fallat",
+	"completion-script-empty": "Indica una ordre primer",
 };

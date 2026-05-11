@@ -132,4 +132,5 @@ export default {
 		"Når du stopper seedingen, vil det ta litt tid å koble fra, vent...",
 	"download-fail-message": "Kunne ikke laste ned {{taskName}}",
 	"download-fail-notify": "Nedlasting feilet",
+	"completion-script-override": "Overstyr fullføringsskript for denne oppgaven",
 };

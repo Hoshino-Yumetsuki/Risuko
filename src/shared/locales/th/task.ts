@@ -123,4 +123,5 @@ export default {
 		"กำลังหยุดการ seed จะใช้เวลาสักพักในการตัดการเชื่อมต่อ โปรดรอสักครู่...",
 	"download-fail-message": "ไม่สามารถดาวน์โหลด {{taskName}}",
 	"download-fail-notify": "ดาวน์โหลดล้มเหลว",
+	"completion-script-override": "แทนที่สคริปต์เมื่อเสร็จสิ้นสำหรับงานนี้",
 };

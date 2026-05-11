@@ -129,4 +129,5 @@ export default {
 		"Menghentikan penyemaian, perlu beberapa saat untuk memutuskan, harap tunggu...",
 	"download-fail-message": "Gagal mengunduh {{taskName}}",
 	"download-fail-notify": "Unduhan Gagal",
+	"completion-script-override": "Timpa skrip selesai untuk tugas ini",
 };

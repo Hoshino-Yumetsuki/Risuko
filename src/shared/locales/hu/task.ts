@@ -124,4 +124,6 @@ export default {
 		"tovvábadás befejezése, Ez eltarthat par percig...",
 	"download-fail-message": "Letöltés sikertelen volt {{taskName}}",
 	"download-fail-notify": "Letöltés sikertelen volt",
+	"completion-script-override":
+		"Befejezési szkript felülírása ennél a feladatnál",
 };

@@ -133,4 +133,6 @@ export default {
 		"Wenn Sie die Aussaat beenden, dauert es einige Zeit, bis die Verbindung getrennt ist. Bitte warten Sie ...",
 	"download-fail-message": "Download von {{taskName}} fehlgeschlagen",
 	"download-fail-notify": "Download fehlgeschlagen",
+	"completion-script-override":
+		"Abschluss-Skript für diese Aufgabe überschreiben",
 };

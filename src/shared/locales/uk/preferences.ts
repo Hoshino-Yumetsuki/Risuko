@@ -122,4 +122,21 @@ export default {
 	"not-saved": "Налаштування не збережено",
 	"not-saved-confirm":
 		"Змінені параметри буде втрачено. Ви впевнені, що залишите?",
+	"completion-script": "Скрипт після завершення",
+	"completion-script-enabled": "Запускати скрипт після завершення завантаження",
+	"completion-script-tips":
+		"Виконується в пісочниці через tauri-plugin-shell. Запускається один раз наприкінці кожного завдання (успіх або помилка).",
+	"completion-script-command": "Команда",
+	"completion-script-command-placeholder":
+		"напр. /usr/local/bin/notify.sh або C:\\\\Tools\\\\notify.exe",
+	"completion-script-args": "Аргументи",
+	"completion-script-args-placeholder":
+		"--path {path} --hash {hash} --status {status}",
+	"completion-script-args-tips":
+		"Заповнювачі: {path}, {hash}, {status}. Також доступні як змінні середовища RISUKO_PATH, RISUKO_HASH, RISUKO_STATUS.",
+	"completion-script-timeout": "Таймаут (мс)",
+	"completion-script-test": "Перевірити скрипт",
+	"completion-script-test-ok": "Перевірку скрипта завершено успішно",
+	"completion-script-test-fail": "Перевірка скрипта не вдалася",
+	"completion-script-empty": "Спочатку вкажіть команду",
 };

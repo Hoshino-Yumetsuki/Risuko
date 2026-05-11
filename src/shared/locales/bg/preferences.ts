@@ -122,4 +122,21 @@ export default {
 	"not-saved": "Предпочитанията не са запазени",
 	"not-saved-confirm":
 		"Променените предпочитания ще бъдат загубени, сигурни ли сте, че ще напуснете?",
+	"completion-script": "Скрипт при завършване",
+	"completion-script-enabled": "Изпълни скрипт при завършване на изтеглянето",
+	"completion-script-tips":
+		"Изпълнява се в изолирана среда чрез tauri-plugin-shell. Стартира веднъж при край на всяка задача (успех или грешка).",
+	"completion-script-command": "Команда",
+	"completion-script-command-placeholder":
+		"напр. /usr/local/bin/notify.sh или C:\\\\Tools\\\\notify.exe",
+	"completion-script-args": "Аргументи",
+	"completion-script-args-placeholder":
+		"--path {path} --hash {hash} --status {status}",
+	"completion-script-args-tips":
+		"Плейсхолдери: {path}, {hash}, {status}. Достъпни са и като променливи на средата RISUKO_PATH, RISUKO_HASH, RISUKO_STATUS.",
+	"completion-script-timeout": "Таймаут (ms)",
+	"completion-script-test": "Тест на скрипта",
+	"completion-script-test-ok": "Тестът на скрипта е успешен",
+	"completion-script-test-fail": "Тестът на скрипта е неуспешен",
+	"completion-script-empty": "Моля, задайте команда първо",
 };

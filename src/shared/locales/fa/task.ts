@@ -127,4 +127,5 @@ export default {
 		"متوقف کردن بذرپاشی، قطع ارتباط مدتی طول خواهد کشید، لطفاً صبر کنید ...",
 	"download-fail-message": "بارگیری {{taskName}} شکست خورد",
 	"download-fail-notify": "بارگیری شکست خورد",
+	"completion-script-override": "لغو تنظیم اسکریپت اتمام برای این وظیفه",
 };

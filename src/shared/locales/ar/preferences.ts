@@ -114,4 +114,21 @@ export default {
 	"not-saved": "التفضيلات غير محفوظة",
 	"not-saved-confirm":
 		"ستفقد التفضيلات التي تم تغييرها ، هل أنت متأكد من المغادرة؟",
+	"completion-script": "برنامج نصي عند الاكتمال",
+	"completion-script-enabled": "تشغيل برنامج نصي عند اكتمال التنزيل",
+	"completion-script-tips":
+		"يعمل ضمن صندوق حماية tauri-plugin-shell. يُشغَّل مرة واحدة عند انتهاء كل مهمة (نجاح أو خطأ).",
+	"completion-script-command": "الأمر",
+	"completion-script-command-placeholder":
+		"مثال: /usr/local/bin/notify.sh أو C:\\\\Tools\\\\notify.exe",
+	"completion-script-args": "الوسائط",
+	"completion-script-args-placeholder":
+		"--path {path} --hash {hash} --status {status}",
+	"completion-script-args-tips":
+		"العناصر النائبة: {path}, {hash}, {status}. متاحة أيضاً كمتغيرات بيئة RISUKO_PATH وRISUKO_HASH وRISUKO_STATUS.",
+	"completion-script-timeout": "المهلة (مللي ثانية)",
+	"completion-script-test": "اختبار البرنامج النصي",
+	"completion-script-test-ok": "نجح اختبار البرنامج النصي",
+	"completion-script-test-fail": "فشل اختبار البرنامج النصي",
+	"completion-script-empty": "يرجى تحديد أمر أولاً",
 };

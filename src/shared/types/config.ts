@@ -67,5 +67,9 @@ export interface AppConfig {
 	lowSpeedCooldownMs?: number;
 	appLogPath?: string;
 	taskRoutingRules?: TaskRoutingRule[];
+	completionScriptEnabled?: boolean;
+	completionScriptCommand?: string;
+	completionScriptArgs?: string;
+	completionScriptTimeoutMs?: number;
 	[key: string]: unknown;
 }

@@ -130,4 +130,5 @@ export default {
 		"シードを停止しています。切断するにはしばらく時間がかかります。お待ちください...",
 	"download-fail-message": "{{taskName}} のダウンロードに失敗",
 	"download-fail-notify": "ダウンロード失敗",
+	"completion-script-override": "このタスクの完了時スクリプトを上書き",
 };

@@ -133,4 +133,5 @@ export default {
 		"Zatrzymywane seedowania, zajmie chwilę rozłączanie się od klientów, proszę czekać...",
 	"download-fail-message": "Nie udało się pobrać {{taskName}}",
 	"download-fail-notify": "Nie udało się pobrać",
+	"completion-script-override": "Nadpisz skrypt końcowy dla tego zadania",
 };

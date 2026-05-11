@@ -402,7 +402,7 @@ pub async fn remove_download_result(gid: String) -> Result<()> {
 pub async fn on_event(
     callback: napi::threadsafe_function::ThreadsafeFunction<(String, String)>,
 ) -> Result<()> {
-    let (event_task, mut rx) = {
+    let (event_task, rx) = {
         let guard = ENGINE.lock().await;
         let engine = guard
             .as_ref()

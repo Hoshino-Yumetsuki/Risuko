@@ -240,6 +240,23 @@ export default {
 	"auto-update": "Auto Update",
 	"auto-check-update": "Automatically check for updates",
 	"last-check-update-time": "Last checked for an update",
+	"completion-script": "On-Completion Script",
+	"completion-script-enabled": "Run a script on download completion",
+	"completion-script-tips":
+		"Sandboxed via tauri-plugin-shell. Runs once per task end (success or error).",
+	"completion-script-command": "Command",
+	"completion-script-command-placeholder":
+		"e.g. /usr/local/bin/notify.sh or C:\\\\Tools\\\\notify.exe",
+	"completion-script-args": "Arguments",
+	"completion-script-args-placeholder":
+		"--path {path} --hash {hash} --status {status}",
+	"completion-script-args-tips":
+		"Placeholders: {path}, {hash}, {status}. Also exposed as env vars RISUKO_PATH, RISUKO_HASH, RISUKO_STATUS.",
+	"completion-script-timeout": "Timeout (ms)",
+	"completion-script-test": "Test Script",
+	"completion-script-test-ok": "Script test succeeded",
+	"completion-script-test-fail": "Script test failed",
+	"completion-script-empty": "Please specify a command first",
 	"not-saved": "Preferences not saved",
 	"not-saved-confirm":
 		"The modified preferences will be lost, are you sure you want to leave?",

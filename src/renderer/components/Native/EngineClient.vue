@@ -15,6 +15,7 @@ import { usePreferenceStore } from "@/store/preference";
 import { useTaskStore } from "@/store/task";
 import {
 	finalizeCompletedDownloadPath,
+	getTaskFullPath,
 	showItemInFolder,
 } from "@/utils/native";
 
@@ -627,6 +628,16 @@ export default {
 					duration: isMissingYtDlp ? 9000 : 5000,
 					message: `${message} (${errorCode}) ${link}`,
 				});
+				this.readCompletionScriptOverrides(gid).then((overrides) => {
+					invoke("run_completion_script", {
+						path: getTaskFullPath(task) || "",
+						hash: task?.infoHash || null,
+						status: "error",
+						overrides,
+					}).catch(() => {
+						/* noop */
+					});
+				});
 			});
 		},
 		onDownloadComplete(payload: { gid: string }) {
@@ -664,12 +675,63 @@ export default {
 				this.handleDownloadComplete(task, true);
 			});
 		},
+		async readCompletionScriptOverrides(gid: string) {
+			try {
+				const opts = (await api.getOption({ gid })) as
+					| Record<string, unknown>
+					| undefined;
+				if (!opts) {
+					return null;
+				}
+				const command = opts.risukoCompletionScriptCommand;
+				const args = opts.risukoCompletionScriptArgs;
+				const enabled = opts.risukoCompletionScriptEnabled;
+				const timeoutMs = opts.risukoCompletionScriptTimeoutMs;
+				if (
+					command === undefined &&
+					args === undefined &&
+					enabled === undefined &&
+					timeoutMs === undefined
+				) {
+					return null;
+				}
+				const overrides: Record<string, unknown> = {};
+				if (typeof command === "string") {
+					overrides.command = command;
+				}
+				if (typeof args === "string") {
+					overrides.args = args;
+				}
+				if (enabled !== undefined) {
+					overrides.enabled =
+						enabled === true || enabled === "true" || enabled === 1;
+				}
+				if (timeoutMs !== undefined) {
+					const n = Number(timeoutMs);
+					if (Number.isFinite(n) && n > 0) {
+						overrides.timeoutMs = n;
+					}
+				}
+				return overrides;
+			} catch {
+				return null;
+			}
+		},
 		async handleDownloadComplete(task, isBT) {
 			useTaskStore().saveSession();
 
 			const path = await finalizeCompletedDownloadPath(task);
 			this.showTaskCompleteNotify(task, isBT, path);
 			invoke("on_task_download_complete", { path }).catch(() => {
+				/* noop */
+			});
+			const overrides = await this.readCompletionScriptOverrides(task.gid);
+			invoke("run_completion_script", {
+				path,
+				hash: task?.infoHash || null,
+				status: "complete",
+				overrides,
+			}).catch(() => {
 				/* noop */
 			});
 		},
@@ -821,10 +883,10 @@ export default {
 			// reappears, so we won't miss state changes. Paused tasks are included
 			// in numWaiting, so exclude them to treat paused-only sessions as idle
 			const stat = useAppStore().stat;
-		const derivedPaused = useTaskStore().taskList.filter(
-			(task) => task.status === "paused",
-		).length;
-		const nonPausedWaiting = (stat.numWaiting || 0) - derivedPaused;
+			const derivedPaused = useTaskStore().taskList.filter(
+				(task) => task.status === "paused",
+			).length;
+			const nonPausedWaiting = (stat.numWaiting || 0) - derivedPaused;
 			if (stat.numActive === 0 && nonPausedWaiting === 0) {
 				this.stopPolling();
 			}

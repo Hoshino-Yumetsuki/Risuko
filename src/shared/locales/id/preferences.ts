@@ -120,4 +120,21 @@ export default {
 	"not-saved": "Preferensi tidak disimpan",
 	"not-saved-confirm":
 		"Preferensi yang dimodifikasi akan hilang, apakah Anda yakin untuk keluar?",
+	"completion-script": "Skrip saat selesai",
+	"completion-script-enabled": "Jalankan skrip saat unduhan selesai",
+	"completion-script-tips":
+		"Dijalankan dalam sandbox melalui tauri-plugin-shell. Dijalankan sekali ketika tiap tugas berakhir (berhasil atau gagal).",
+	"completion-script-command": "Perintah",
+	"completion-script-command-placeholder":
+		"mis. /usr/local/bin/notify.sh atau C:\\\\Tools\\\\notify.exe",
+	"completion-script-args": "Argumen",
+	"completion-script-args-placeholder":
+		"--path {path} --hash {hash} --status {status}",
+	"completion-script-args-tips":
+		"Placeholder: {path}, {hash}, {status}. Juga tersedia sebagai variabel lingkungan RISUKO_PATH, RISUKO_HASH, RISUKO_STATUS.",
+	"completion-script-timeout": "Batas waktu (ms)",
+	"completion-script-test": "Uji skrip",
+	"completion-script-test-ok": "Uji skrip berhasil",
+	"completion-script-test-fail": "Uji skrip gagal",
+	"completion-script-empty": "Tentukan perintah terlebih dahulu",
 };

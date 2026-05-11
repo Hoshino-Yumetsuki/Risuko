@@ -219,4 +219,5 @@ export default {
 	"batch-all-success": "已添加 {{count}} 个任务",
 	"batch-torrent-too-large": "种子文件过大，无法预览",
 	"batch-uri-body": "该 URL 将使用下方的共享选项进行下载。",
+	"completion-script-override": "为此任务覆盖完成后脚本",
 };

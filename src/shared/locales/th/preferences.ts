@@ -111,4 +111,21 @@ export default {
 	"auto-update": "อัพเดทอัตโนมัติ",
 	"auto-check-update": "ตรวจสอบการอัพเดทอัตโนมัติ",
 	"last-check-update-time": "ตรวจสอบการอัพเดทครั้งล่าสุด",
+	"completion-script": "สคริปต์เมื่อเสร็จสิ้น",
+	"completion-script-enabled": "รันสคริปต์เมื่อดาวน์โหลดเสร็จ",
+	"completion-script-tips":
+		"ทำงานใน sandbox ผ่าน tauri-plugin-shell และจะรันหนึ่งครั้งเมื่อแต่ละงานสิ้นสุด (สำเร็จหรือผิดพลาด)",
+	"completion-script-command": "คำสั่ง",
+	"completion-script-command-placeholder":
+		"เช่น /usr/local/bin/notify.sh หรือ C:\\\\Tools\\\\notify.exe",
+	"completion-script-args": "อาร์กิวเมนต์",
+	"completion-script-args-placeholder":
+		"--path {path} --hash {hash} --status {status}",
+	"completion-script-args-tips":
+		"ตัวแทนค่า: {path}, {hash}, {status} และมีเป็นตัวแปรสภาพแวดล้อม RISUKO_PATH, RISUKO_HASH, RISUKO_STATUS ด้วย",
+	"completion-script-timeout": "หมดเวลา (มิลลิวินาที)",
+	"completion-script-test": "ทดสอบสคริปต์",
+	"completion-script-test-ok": "ทดสอบสคริปต์สำเร็จ",
+	"completion-script-test-fail": "ทดสอบสคริปต์ล้มเหลว",
+	"completion-script-empty": "โปรดระบุคำสั่งก่อน",
 };

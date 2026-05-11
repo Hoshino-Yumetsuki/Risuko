@@ -42,6 +42,89 @@
           </div>
         </div>
 
+        <!-- Completion Script Section -->
+        <div class="settings-section">
+          <div class="settings-section-header">
+            <div class="section-icon"><Terminal :size="16" /></div>
+            <div class="section-title">
+              <h3>{{ $t('preferences.completion-script') }}</h3>
+            </div>
+          </div>
+          <div class="settings-section-content">
+            <div class="settings-row">
+              <div class="settings-row-content">
+                <div class="settings-row-title">
+                  {{ $t('preferences.completion-script-enabled') }}
+                </div>
+                <div class="settings-row-description">
+                  {{ $t('preferences.completion-script-tips') }}
+                </div>
+              </div>
+              <div class="settings-row-action">
+                <ui-checkbox
+                  :model-value="!!form.completionScriptEnabled"
+                  @change="(val) => setAdvancedBoolean('completionScriptEnabled', val)"
+                />
+              </div>
+            </div>
+            <div v-if="form.completionScriptEnabled" style="margin-top: 14px">
+              <div class="form-item-sub" style="margin-bottom: 10px">
+                <label class="settings-select-item-label">{{
+                  $t('preferences.completion-script-command')
+                }}</label>
+                <Input
+                  v-model="form.completionScriptCommand"
+                  :placeholder="
+                    $t('preferences.completion-script-command-placeholder')
+                  "
+                />
+              </div>
+              <div class="form-item-sub" style="margin-bottom: 10px">
+                <label class="settings-select-item-label">{{
+                  $t('preferences.completion-script-args')
+                }}</label>
+                <Input
+                  v-model="form.completionScriptArgs"
+                  :placeholder="
+                    $t('preferences.completion-script-args-placeholder')
+                  "
+                />
+                <div class="form-info" style="margin-top: 6px">
+                  {{ $t('preferences.completion-script-args-tips') }}
+                </div>
+              </div>
+              <div class="form-item-sub" style="margin-bottom: 10px">
+                <label class="settings-select-item-label">{{
+                  $t('preferences.completion-script-timeout')
+                }}</label>
+                <NumberInput
+                  v-model="form.completionScriptTimeoutMs"
+                  :min="1000"
+                  :max="300000"
+                  :step="1000"
+                />
+              </div>
+              <div class="form-item-sub">
+                <ui-button
+                  variant="outline"
+                  size="sm"
+                  :disabled="completionScriptTesting"
+                  @click="onTestCompletionScript"
+                >
+                  {{ $t('preferences.completion-script-test') }}
+                </ui-button>
+                <div
+                  v-if="completionScriptTestResult"
+                  class="form-info"
+                  style="margin-top: 8px; white-space: pre-wrap"
+                >
+                  {{ completionScriptTestResult }}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <!-- Proxy Section -->
         <div class="settings-section">
           <div class="settings-section-header">
@@ -1075,6 +1158,7 @@ import {
 	ScrollText,
 	Server,
 	Settings,
+	Terminal,
 	UserCircle,
 	Video,
 	X,
@@ -1145,6 +1229,10 @@ const initForm = (config) => {
 		rpcSecret,
 		trackerSource,
 		userAgent,
+		completionScriptEnabled,
+		completionScriptCommand,
+		completionScriptArgs,
+		completionScriptTimeoutMs,
 	} = config;
 	// Accept both lodash camelCase key (m3U8OutputFormat from backend)
 	// and form key (m3u8OutputFormat from initForm output fed back via extend)
@@ -1215,6 +1303,10 @@ const initForm = (config) => {
 		rpcSecret,
 		trackerSource,
 		userAgent,
+		completionScriptEnabled: parseBooleanConfig(completionScriptEnabled, false),
+		completionScriptCommand: completionScriptCommand || "",
+		completionScriptArgs: completionScriptArgs || "",
+		completionScriptTimeoutMs: completionScriptTimeoutMs ?? 30000,
 	};
 	return result;
 };
@@ -1292,6 +1384,7 @@ export default {
 		AlertTriangle,
 		Settings,
 		Server,
+		Terminal,
 		X,
 		ChevronDown,
 		Check,
@@ -1315,6 +1408,8 @@ export default {
 			trackerSourceOptions: TRACKER_SOURCE_OPTIONS,
 			trackerSourceOpen: false,
 			trackerSyncing: false,
+			completionScriptTesting: false,
+			completionScriptTestResult: "",
 		};
 	},
 	computed: {
@@ -1415,6 +1510,53 @@ export default {
 					const { lastCheckUpdateTime } = config;
 					this.form.lastCheckUpdateTime = lastCheckUpdateTime;
 				});
+		},
+		async onTestCompletionScript() {
+			const command = `${this.form.completionScriptCommand || ""}`.trim();
+			if (!command) {
+				this.$msg.error(this.$t("preferences.completion-script-empty"));
+				return;
+			}
+			this.completionScriptTesting = true;
+			this.completionScriptTestResult = "";
+			try {
+				const result = await invoke<{
+					success: boolean;
+					exit_code: number | null;
+					stdout: string;
+					stderr: string;
+					duration_ms: number;
+					timed_out: boolean;
+					message: string | null;
+				}>("test_completion_script", {
+					command,
+					args: this.form.completionScriptArgs || "",
+					timeoutMs: Number(this.form.completionScriptTimeoutMs) || 30000,
+				});
+				const lines = [
+					`exit=${result.exit_code ?? "n/a"} duration=${result.duration_ms}ms timed_out=${result.timed_out}`,
+				];
+				if (result.message) {
+					lines.push(`message: ${result.message}`);
+				}
+				if (result.stdout) {
+					lines.push(`stdout:\n${result.stdout}`);
+				}
+				if (result.stderr) {
+					lines.push(`stderr:\n${result.stderr}`);
+				}
+				this.completionScriptTestResult = lines.join("\n");
+				if (result.success) {
+					this.$msg.success(this.$t("preferences.completion-script-test-ok"));
+				} else {
+					this.$msg.error(this.$t("preferences.completion-script-test-fail"));
+				}
+			} catch (err: unknown) {
+				this.completionScriptTestResult = `${(err as Error)?.message || err}`;
+				this.$msg.error(this.$t("preferences.completion-script-test-fail"));
+			} finally {
+				this.completionScriptTesting = false;
+			}
 		},
 		syncTrackerFromSource() {
 			this.trackerSyncing = true;
@@ -1597,6 +1739,7 @@ export default {
 				"autoCheckUpdate",
 				"autoSyncTracker",
 				"externalEngineEnabled",
+				"completionScriptEnabled",
 			];
 			for (const key of booleanKeys) {
 				if (key in data) {

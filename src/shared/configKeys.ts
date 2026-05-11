@@ -43,6 +43,10 @@ const userKeys = [
 	"saved-credentials",
 	"youtube-format",
 	"task-routing-rules",
+	"completion-script-enabled",
+	"completion-script-command",
+	"completion-script-args",
+	"completion-script-timeout-ms",
 ];
 
 const systemKeys = [

@@ -542,7 +542,9 @@ impl TaskManager {
             out.clone()
         };
 
-        let (dir, tag) = self.resolve_routing_for_task(&options, &filename_hint).await;
+        let (dir, tag) = self
+            .resolve_routing_for_task(&options, &filename_hint)
+            .await;
 
         let pause = options
             .get("pause")

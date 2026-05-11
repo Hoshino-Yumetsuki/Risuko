@@ -132,4 +132,6 @@ export default {
 		"Seeding fermato, ci vorrà un po' di tempo per disconnettersi, per favore, aspetta...",
 	"download-fail-message": "Impossibile scaricare {{taskName}}",
 	"download-fail-notify": "Download Fallito",
+	"completion-script-override":
+		"Sovrascrivi script di completamento per questa attività",
 };

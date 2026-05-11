@@ -116,4 +116,21 @@ export default {
 	"last-check-update-time": "前回更新確認時間",
 	"not-saved": "設定が保存されていません",
 	"not-saved-confirm": "変更された設定は失われます、よろしいですか？",
+	"completion-script": "完了時スクリプト",
+	"completion-script-enabled": "ダウンロード完了時にスクリプトを実行",
+	"completion-script-tips":
+		"tauri-plugin-shell のサンドボックス内で実行されます。各タスク終了時（成功またはエラー）に1回実行されます。",
+	"completion-script-command": "コマンド",
+	"completion-script-command-placeholder":
+		"例: /usr/local/bin/notify.sh または C:\\\\Tools\\\\notify.exe",
+	"completion-script-args": "引数",
+	"completion-script-args-placeholder":
+		"--path {path} --hash {hash} --status {status}",
+	"completion-script-args-tips":
+		"プレースホルダー: {path}, {hash}, {status}。環境変数 RISUKO_PATH、RISUKO_HASH、RISUKO_STATUS としても利用できます。",
+	"completion-script-timeout": "タイムアウト (ms)",
+	"completion-script-test": "スクリプトをテスト",
+	"completion-script-test-ok": "スクリプトテストに成功しました",
+	"completion-script-test-fail": "スクリプトテストに失敗しました",
+	"completion-script-empty": "先にコマンドを指定してください",
 };

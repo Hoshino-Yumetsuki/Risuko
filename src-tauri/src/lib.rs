@@ -312,6 +312,8 @@ pub fn run() {
             commands::event_cmds::on_speed_change,
             commands::event_cmds::on_progress_change,
             commands::event_cmds::on_task_download_complete,
+            commands::completion_script_cmds::run_completion_script,
+            commands::completion_script_cmds::test_completion_script,
             commands::event_cmds::update_tray,
             commands::event_cmds::update_tray_menu_labels,
             commands::event_cmds::update_app_menu_labels,

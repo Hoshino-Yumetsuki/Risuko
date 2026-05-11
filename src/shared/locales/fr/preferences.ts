@@ -124,4 +124,21 @@ export default {
 	"not-saved": "Préférences non enregistrées",
 	"not-saved-confirm":
 		"Les préférences modifiées seront perdues, êtes-vous sûr de partir ?",
+	"completion-script": "Script à la fin",
+	"completion-script-enabled": "Exécuter un script à la fin du téléchargement",
+	"completion-script-tips":
+		"Exécuté en sandbox via tauri-plugin-shell. S’exécute une fois à la fin de chaque tâche (succès ou erreur).",
+	"completion-script-command": "Commande",
+	"completion-script-command-placeholder":
+		"ex. /usr/local/bin/notify.sh ou C:\\\\Tools\\\\notify.exe",
+	"completion-script-args": "Paramètres",
+	"completion-script-args-placeholder":
+		"--path {path} --hash {hash} --status {status}",
+	"completion-script-args-tips":
+		"Variables: {path}, {hash}, {status}. Également exposées via les variables d’environnement RISUKO_PATH, RISUKO_HASH, RISUKO_STATUS.",
+	"completion-script-timeout": "Délai d’attente (ms)",
+	"completion-script-test": "Tester le script",
+	"completion-script-test-ok": "Test du script réussi",
+	"completion-script-test-fail": "Échec du test du script",
+	"completion-script-empty": "Veuillez d’abord définir une commande",
 };

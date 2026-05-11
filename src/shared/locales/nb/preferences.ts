@@ -122,4 +122,21 @@ export default {
 	"not-saved": "Preferansene er ikke lagret",
 	"not-saved-confirm":
 		"De endrede preferansene vil gå tapt, er du sikker på at du vil forlate?",
+	"completion-script": "Skript ved fullføring",
+	"completion-script-enabled": "Kjør et skript når nedlastingen er fullført",
+	"completion-script-tips":
+		"Kjøres i sandbox via tauri-plugin-shell. Kjøres én gang når hver oppgave avsluttes (suksess eller feil).",
+	"completion-script-command": "Kommando",
+	"completion-script-command-placeholder":
+		"f.eks. /usr/local/bin/notify.sh eller C:\\\\Tools\\\\notify.exe",
+	"completion-script-args": "Argumenter",
+	"completion-script-args-placeholder":
+		"--path {path} --hash {hash} --status {status}",
+	"completion-script-args-tips":
+		"Plassholdere: {path}, {hash}, {status}. Også tilgjengelig som miljøvariablene RISUKO_PATH, RISUKO_HASH, RISUKO_STATUS.",
+	"completion-script-timeout": "Tidsavbrudd (ms)",
+	"completion-script-test": "Test skript",
+	"completion-script-test-ok": "Skripttest vellykket",
+	"completion-script-test-fail": "Skripttest mislyktes",
+	"completion-script-empty": "Angi en kommando først",
 };

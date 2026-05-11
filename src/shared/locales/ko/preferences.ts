@@ -113,4 +113,21 @@ export default {
 	"last-check-update-time": "마지막 업데이트 확인 시간",
 	"not-saved": "설정이 저장되지 않았습니다",
 	"not-saved-confirm": "수정된 설정이 손실됩니다. 나가시겠습니까?",
+	"completion-script": "완료 후 스크립트",
+	"completion-script-enabled": "다운로드 완료 시 스크립트 실행",
+	"completion-script-tips":
+		"tauri-plugin-shell 샌드박스에서 실행됩니다. 각 작업 종료 시(성공/오류) 한 번 실행됩니다.",
+	"completion-script-command": "명령어",
+	"completion-script-command-placeholder":
+		"예: /usr/local/bin/notify.sh 또는 C:\\\\Tools\\\\notify.exe",
+	"completion-script-args": "인수",
+	"completion-script-args-placeholder":
+		"--path {path} --hash {hash} --status {status}",
+	"completion-script-args-tips":
+		"플레이스홀더: {path}, {hash}, {status}. 환경 변수 RISUKO_PATH, RISUKO_HASH, RISUKO_STATUS 로도 제공됩니다.",
+	"completion-script-timeout": "시간 제한 (ms)",
+	"completion-script-test": "스크립트 테스트",
+	"completion-script-test-ok": "스크립트 테스트 성공",
+	"completion-script-test-fail": "스크립트 테스트 실패",
+	"completion-script-empty": "먼저 명령어를 지정하세요",
 };

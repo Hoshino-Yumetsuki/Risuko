@@ -236,4 +236,21 @@ export default {
 	"vault-disabled": "系统钥匙串不可用，凭据将以明文存储",
 	"credential-encrypted-badge": "已存储在系统钥匙串中",
 	"credential-vault-unavailable": "系统钥匙串不可用；新凭据将以明文保存",
+	"completion-script": "完成后脚本",
+	"completion-script-enabled": "下载完成后运行脚本",
+	"completion-script-tips":
+		"通过 tauri-plugin-shell 在沙盒中执行。每个任务结束时（成功或失败）执行一次。",
+	"completion-script-command": "命令",
+	"completion-script-command-placeholder":
+		"例如：/usr/local/bin/notify.sh 或 C:\\\\Tools\\\\notify.exe",
+	"completion-script-args": "参数",
+	"completion-script-args-placeholder":
+		"--path {path} --hash {hash} --status {status}",
+	"completion-script-args-tips":
+		"占位符：{path}、{hash}、{status}。同时会注入环境变量 RISUKO_PATH、RISUKO_HASH、RISUKO_STATUS。",
+	"completion-script-timeout": "超时（毫秒）",
+	"completion-script-test": "测试脚本",
+	"completion-script-test-ok": "脚本测试成功",
+	"completion-script-test-fail": "脚本测试失败",
+	"completion-script-empty": "请先指定命令",
 };
