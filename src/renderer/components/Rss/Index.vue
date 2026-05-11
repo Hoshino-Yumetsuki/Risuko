@@ -82,12 +82,17 @@
             :class="['rss-chip', { active: matchedOnly }]"
             @click="toggleMatchedOnly"
           >{{ $t('rss.filter-matched') }}</button>
-          <select :value="sortMode" class="rss-sort" @change="onSortChange">
-            <option value="newest">{{ $t('rss.sort-newest') }}</option>
-            <option value="oldest">{{ $t('rss.sort-oldest') }}</option>
-            <option value="size-desc">{{ $t('rss.sort-size-desc') }}</option>
-            <option value="rule-match">{{ $t('rss.sort-rule-match') }}</option>
-          </select>
+          <Select :model-value="sortMode" @update:model-value="onSortChange">
+            <SelectTrigger size="sm" class="rss-sort-trigger">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent align="end">
+              <SelectItem value="newest">{{ $t('rss.sort-newest') }}</SelectItem>
+              <SelectItem value="oldest">{{ $t('rss.sort-oldest') }}</SelectItem>
+              <SelectItem value="size-desc">{{ $t('rss.sort-size-desc') }}</SelectItem>
+              <SelectItem value="rule-match">{{ $t('rss.sort-rule-match') }}</SelectItem>
+            </SelectContent>
+          </Select>
           <button
             type="button"
             class="rss-chip"
@@ -318,13 +323,10 @@ export default {
 			const store = useRssStore();
 			store.setMatchedOnly(!store.matchedOnly);
 		},
-		onSortChange(event: Event) {
-			const value = (event.target as HTMLSelectElement).value as
-				| "newest"
-				| "oldest"
-				| "size-desc"
-				| "rule-match";
-			useRssStore().setSortMode(value);
+		onSortChange(value: string) {
+			useRssStore().setSortMode(
+				value as "newest" | "oldest" | "size-desc" | "rule-match",
+			);
 		},
 		toggleDensity() {
 			const store = useRssStore();
@@ -396,15 +398,9 @@ export default {
   color: hsl(var(--primary));
 }
 
-.rss-sort {
+.rss-sort-trigger {
   height: 22px;
   margin-left: 4px;
-  padding: 0 6px;
   font-size: 11px;
-  border: 1px solid hsl(var(--border));
-  border-radius: 4px;
-  background: transparent;
-  color: var(--mo-task-action-color);
-  cursor: pointer;
 }
 </style>

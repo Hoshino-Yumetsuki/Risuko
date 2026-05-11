@@ -94,9 +94,11 @@ export default {
 		},
 		updateSpecific(text: string) {
 			const values = text
-				.split(/[,\s]+/)
-				.map((s) => Number.parseInt(s.trim(), 10))
-				.filter((n) => Number.isFinite(n) && n > 0);
+				.split(/\s*,\s*|\s+/)
+				.map((s) => s.trim())
+				.filter((tok) => /^\d+$/.test(tok))
+				.map((tok) => Number(tok))
+				.filter((n) => Number.isInteger(n) && n > 0);
 			this.emitSelector({ type: "specific", values });
 		},
 	},

@@ -29,7 +29,9 @@ pub struct ParsedMeta {
     pub episode_end: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub absolute_episode: Option<u32>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    /// Always serialized (as `[]` when empty) so the renderer can rely on the
+    /// key being present in JSON payloads
+    #[serde(default)]
     pub quality_tags: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub group: Option<String>,
@@ -267,14 +269,21 @@ pub struct RssStore {
     pub episode_history: HashMap<String, EpisodeRecord>,
 }
 
-/// Lossy deserializer: if the rules field cannot be parsed (e.g. v1 schema
-/// from an existing store), drop the field silently rather than failing the
-/// whole store load. Acceptable in dev-stage where v1 rules are dropped
+/// Lossy deserializer: when `rules` is an array, drop only the elements that
+/// fail to parse (e.g. a single legacy/v1 rule entry) instead of discarding
+/// the whole list. Anything else falls back to a best-effort whole-value
+/// decode and finally an empty list
 fn deserialize_rules_lossy<'de, D>(deserializer: D) -> Result<Vec<RssRule>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
     let value = serde_json::Value::deserialize(deserializer)?;
+    if let serde_json::Value::Array(arr) = value {
+        return Ok(arr
+            .into_iter()
+            .filter_map(|elem| serde_json::from_value::<RssRule>(elem).ok())
+            .collect());
+    }
     Ok(serde_json::from_value(value).unwrap_or_default())
 }
 

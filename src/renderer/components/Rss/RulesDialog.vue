@@ -17,12 +17,16 @@
           <div v-if="rules.length === 0" class="rss-rules-empty">
             {{ $t('rss.no-rules') }}
           </div>
-          <ul v-else class="rss-rules-list">
+          <ul v-else class="rss-rules-list" role="listbox">
             <li
               v-for="(rule, idx) in rules"
               :key="rule.id || `draft-${idx}`"
               :class="['rss-rule-row', { active: selectedId === (rule.id || `draft-${idx}`) }]"
+              role="option"
+              tabindex="0"
+              :aria-selected="selectedId === (rule.id || `draft-${idx}`)"
               @click="selectRule(rule.id || `draft-${idx}`)"
+              @keydown="(e: KeyboardEvent) => onRuleRowKeydown(e, rule.id || `draft-${idx}`)"
             >
               <div class="rss-rule-row-main">
                 <span class="rss-rule-row-name">{{ rule.name || $t('rss.add-rule') }}</span>
@@ -109,12 +113,12 @@
               <PatternList
                 :title="$t('rss.rule-must')"
                 :patterns="form.title_must"
-                @update="(v: PatternT[]) => (form.title_must = v)"
+                @update="(v: Pattern[]) => (form.title_must = v)"
               />
               <PatternList
                 :title="$t('rss.rule-must-not')"
                 :patterns="form.title_must_not"
-                @update="(v: PatternT[]) => (form.title_must_not = v)"
+                @update="(v: Pattern[]) => (form.title_must_not = v)"
               />
               <div class="rss-field-row">
                 <div class="rss-field flex-1">
@@ -164,7 +168,7 @@
                 <label>{{ $t('rss.rule-episode-selector') }}</label>
                 <EpisodeSelectorEditor
                   :selector="form.episodes"
-                  @update="(v: EpisodeSelectorT | null) => (form.episodes = v)"
+                  @update="(v: EpisodeSelector | null) => (form.episodes = v)"
                 />
               </div>
             </TabsContent>
@@ -257,7 +261,13 @@
 </template>
 
 <script lang="ts">
-import type { DryRunMatch, RssRule } from "@shared/types/rss";
+// biome-ignore-all lint/correctness/noUnusedImports: Pattern/EpisodeSelector are referenced in <template> type annotations
+import type {
+	DryRunMatch,
+	EpisodeSelector,
+	Pattern,
+	RssRule,
+} from "@shared/types/rss";
 import { emptyRule } from "@shared/types/rss";
 import { Plus, Trash2 } from "lucide-vue-next";
 import { Button } from "@/components/ui/button";
@@ -371,6 +381,18 @@ export default {
 		},
 		async toggleActive(rule: RssRule, value: boolean) {
 			await useRssStore().updateRule({ ...rule, is_active: value });
+			// Keep the open detail form in sync when the toggled row matches the
+			// rule currently being edited; otherwise a subsequent save would
+			// clobber the new active state with the stale form copy
+			if (this.form && rule.id && this.form.id === rule.id) {
+				this.form.is_active = value;
+			}
+		},
+		onRuleRowKeydown(event: KeyboardEvent, id: string) {
+			if (event.key === "Enter" || event.key === " ") {
+				event.preventDefault();
+				this.selectRule(id);
+			}
 		},
 		toggleFeed(feedId: string, value: boolean) {
 			if (!this.form) {

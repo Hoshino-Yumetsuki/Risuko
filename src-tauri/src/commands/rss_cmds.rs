@@ -25,6 +25,59 @@ fn strip_explicit_filename(opts: &Map<String, Value>) -> Map<String, Value> {
     cloned
 }
 
+/// Write an Article-kind RSS item's body as a self-contained HTML file under
+/// `dir`, mark it downloaded, then queue every inline media URL (the primary
+/// enclosure plus scraped `media_urls`) as separate http tasks alongside it.
+/// Returns the saved file path and the list of fanned-out media gids.
+///
+/// Used by both the one-shot and tracked download paths so they stay in lockstep
+async fn write_article_and_fan_media(
+    mgr: &Arc<RssManager>,
+    manager: &Arc<crate::engine::manager::TaskManager>,
+    item: &crate::engine::rss::types::RssItem,
+    feed_id: &str,
+    item_id: &str,
+    dir: &str,
+    opts: &Map<String, Value>,
+) -> Result<(String, Vec<String>), String> {
+    let filename = crate::engine::rss::article_filename(item);
+    let html = crate::engine::rss::build_article_html(item);
+    let dir_path = std::path::Path::new(dir);
+    tokio::fs::create_dir_all(dir_path)
+        .await
+        .map_err(|e| format!("Failed to create dir {}: {}", dir, e))?;
+    let file_path = dir_path.join(&filename);
+    let path_str = file_path.to_string_lossy().to_string();
+    tokio::fs::write(&file_path, html.as_bytes())
+        .await
+        .map_err(|e| format!("Failed to write article html: {}", e))?;
+
+    mgr.mark_item_downloaded(feed_id, item_id, Some(path_str.clone()))
+        .await?;
+
+    let media_opts = strip_explicit_filename(opts);
+    let mut extra_gids: Vec<String> = Vec::new();
+    let mut queued: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for url in item
+        .enclosure_url
+        .iter()
+        .cloned()
+        .chain(item.media_urls.iter().cloned())
+    {
+        if !queued.insert(url.clone()) {
+            continue;
+        }
+        match manager
+            .add_http_task(vec![url.clone()], media_opts.clone())
+            .await
+        {
+            Ok(g) => extra_gids.push(g),
+            Err(e) => log::warn!("Failed to queue inline media {}: {}", url, e),
+        }
+    }
+    Ok((path_str, extra_gids))
+}
+
 #[tauri::command]
 pub async fn add_rss_feed(state: State<'_, AppState>, url: String) -> Result<Value, String> {
     let mgr = get_rss(&state)?;
@@ -130,46 +183,9 @@ pub async fn download_rss_item(
         // URL (images, etc.) as separate http tasks alongside it. This is the
         // right behaviour for blog/news feeds (e.g. Hacker News) where the
         // "enclosure" is a thumbnail and the real value is the body + images
-        let filename = crate::engine::rss::article_filename(&item);
-        let html = crate::engine::rss::build_article_html(&item);
-        let dir_path = std::path::Path::new(&dir);
-        if let Err(e) = tokio::fs::create_dir_all(dir_path).await {
-            return Err(format!("Failed to create dir {}: {}", dir, e));
-        }
-        let file_path = dir_path.join(&filename);
-        let path_str = file_path.to_string_lossy().to_string();
-        tokio::fs::write(&file_path, html.as_bytes())
-            .await
-            .map_err(|e| format!("Failed to write article html: {}", e))?;
-
-        // Mark the item as downloaded pointing at the html file
-        mgr.mark_item_downloaded(&feed_id, &item_id, Some(path_str.clone()))
-            .await?;
-
-        // Fan out inline media. Skip the primary enclosure if it's a
-        // thumbnail-style image; the user mainly wants the article + body
-        // images. Drop the explicit `out` filename hint so each url lands at
-        // its own filename
-        let media_opts = strip_explicit_filename(&opts);
-        let mut extra_gids: Vec<String> = Vec::new();
-        let mut queued: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-        for url in item
-            .enclosure_url
-            .iter()
-            .cloned()
-            .chain(item.media_urls.iter().cloned())
-        {
-            if !queued.insert(url.clone()) {
-                continue;
-            }
-            match manager
-                .add_http_task(vec![url.clone()], media_opts.clone())
-                .await
-            {
-                Ok(g) => extra_gids.push(g),
-                Err(e) => log::warn!("Failed to queue inline media {}: {}", url, e),
-            }
-        }
+        let (path_str, extra_gids) =
+            write_article_and_fan_media(&mgr, &manager, &item, &feed_id, &item_id, &dir, &opts)
+                .await?;
 
         return Ok(serde_json::json!({
             "gid": Value::Null,
@@ -195,7 +211,7 @@ pub async fn download_rss_item(
     let mut iter = urls.into_iter();
     let primary_url = iter
         .next()
-        .expect("get_item_download_urls returns non-empty");
+        .ok_or_else(|| "No downloadable URL found for this item".to_string())?;
     let gid = manager
         .add_http_task(vec![primary_url], opts.clone())
         .await?;
@@ -329,40 +345,9 @@ pub async fn download_rss_item_tracked(
         // completion event immediately. There is no engine gid for the html
         // file itself, but the inline media tasks behave like normal http
         // downloads
-        let filename = crate::engine::rss::article_filename(&item);
-        let html = crate::engine::rss::build_article_html(&item);
-        let dir_path = std::path::Path::new(&dir);
-        if let Err(e) = tokio::fs::create_dir_all(dir_path).await {
-            return Err(format!("Failed to create dir {}: {}", dir, e));
-        }
-        let file_path = dir_path.join(&filename);
-        let path_str = file_path.to_string_lossy().to_string();
-        tokio::fs::write(&file_path, html.as_bytes())
-            .await
-            .map_err(|e| format!("Failed to write article html: {}", e))?;
-        mgr.mark_item_downloaded(&feed_id, &item_id, Some(path_str.clone()))
-            .await?;
-
-        let media_opts = strip_explicit_filename(&opts);
-        let mut extra_gids: Vec<String> = Vec::new();
-        let mut queued: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-        for url in item
-            .enclosure_url
-            .iter()
-            .cloned()
-            .chain(item.media_urls.iter().cloned())
-        {
-            if !queued.insert(url.clone()) {
-                continue;
-            }
-            match manager
-                .add_http_task(vec![url.clone()], media_opts.clone())
-                .await
-            {
-                Ok(g) => extra_gids.push(g),
-                Err(e) => log::warn!("Failed to queue inline media {}: {}", url, e),
-            }
-        }
+        let (path_str, extra_gids) =
+            write_article_and_fan_media(&mgr, &manager, &item, &feed_id, &item_id, &dir, &opts)
+                .await?;
 
         let _ = handle.emit(
             "rss:download-complete",
@@ -395,7 +380,7 @@ pub async fn download_rss_item_tracked(
     let mut iter = urls.into_iter();
     let primary_url = iter
         .next()
-        .expect("get_item_download_urls returns non-empty");
+        .ok_or_else(|| "No downloadable URL found for this item".to_string())?;
     let gid = manager
         .add_http_task(vec![primary_url], opts.clone())
         .await?;

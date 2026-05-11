@@ -136,12 +136,13 @@ impl RssManager {
         let mut s = self.store.lock().await;
         s.feeds.retain(|f| f.id != feed_id);
         s.items.remove(feed_id);
-        s.rules
-            .retain(|r| !r.feed_ids.iter().any(|f| f == feed_id) || r.feed_ids.len() > 1);
-        // Strip the removed feed id from any rule still scoped to it.
+        // Strip the removed feed id from every rule, then drop any rule that
+        // ends up with no scoped feeds at all (an empty list means "all feeds"
+        // — preserving such rules would silently re-broaden their scope)
         for rule in s.rules.iter_mut() {
             rule.feed_ids.retain(|f| f != feed_id);
         }
+        s.rules.retain(|r| !r.feed_ids.is_empty());
         drop(s);
         self.save().await
     }
@@ -545,7 +546,15 @@ impl RssManager {
             }
             match rule.mode {
                 RuleMode::AnyMatch => {
-                    // Already sorted by priority desc, first match wins
+                    // Rules are pre-sorted by priority desc. "AnyMatch" wins
+                    // immediately *unless* a higher-priority BestMatch rule
+                    // already produced a strictly better score, in which case
+                    // we keep that one to avoid lower-priority preemption
+                    if let Some((_, bs)) = &best {
+                        if eval.score < *bs {
+                            continue;
+                        }
+                    }
                     return Some((rule.clone(), eval.score));
                 }
                 RuleMode::BestMatch => {
@@ -684,14 +693,6 @@ impl RssManager {
             DedupeDecision::Download | DedupeDecision::Upgrade => {}
         }
 
-        let url = match self.get_item_download_url(&item.feed_id, &item.id).await {
-            Ok(u) => u,
-            Err(e) => {
-                log::warn!("RSS auto-download: no URL for '{}': {}", item.title, e);
-                return;
-            }
-        };
-
         let mut opts = serde_json::Map::new();
         if let Some(ref dir) = rule.download_dir {
             opts.insert("dir".to_string(), Value::String(dir.clone()));
@@ -701,27 +702,92 @@ impl RssManager {
             log::warn!("RSS auto-download: engine not available");
             return;
         };
-        if let Err(e) = manager.add_http_task(vec![url.clone()], opts.clone()).await {
-            log::warn!("Auto-download failed for '{}': {}", item.title, e);
-            return;
-        }
 
-        // Fan inline media (images / extra enclosures) out as separate tasks
-        // so feeds whose primary enclosure is a thumbnail still capture the
-        // full payload set
-        for extra in &item.media_urls {
-            if extra == &url {
-                continue;
+        // Branch by item kind: articles get an HTML body written to disk and
+        // their inline media fanned out, mirroring the manual download path in
+        // the rss_cmds layer. Treating an article like an enclosure would only
+        // queue the page URL and lose the body content
+        let kind = classify_item_kind(item);
+        let download_path: Option<String> = if kind == ItemKind::Article {
+            let dir = match opts.get("dir").and_then(|v| v.as_str()) {
+                Some(d) => d.to_string(),
+                None => manager
+                    .get_global_option()
+                    .await
+                    .get("dir")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(".")
+                    .to_string(),
+            };
+            let filename = article_filename(item);
+            let html = build_article_html(item);
+            let dir_path = std::path::Path::new(&dir);
+            if let Err(e) = tokio::fs::create_dir_all(dir_path).await {
+                log::warn!("Auto-download: failed to create dir {}: {}", dir, e);
+                return;
             }
-            if let Err(e) = manager
-                .add_http_task(vec![extra.clone()], opts.clone())
-                .await
+            let file_path = dir_path.join(&filename);
+            let path_str = file_path.to_string_lossy().to_string();
+            if let Err(e) = tokio::fs::write(&file_path, html.as_bytes()).await {
+                log::warn!("Auto-download: failed to write article html: {}", e);
+                return;
+            }
+            // Fan out inline media + the (thumbnail) enclosure as siblings
+            let mut media_opts = opts.clone();
+            media_opts.remove("out");
+            let mut queued: std::collections::BTreeSet<String> =
+                std::collections::BTreeSet::new();
+            for extra in item
+                .enclosure_url
+                .iter()
+                .cloned()
+                .chain(item.media_urls.iter().cloned())
             {
-                log::warn!("Auto-download extra media failed for '{}': {}", extra, e);
+                if !queued.insert(extra.clone()) {
+                    continue;
+                }
+                if let Err(e) = manager
+                    .add_http_task(vec![extra.clone()], media_opts.clone())
+                    .await
+                {
+                    log::warn!("Auto-download extra media failed for '{}': {}", extra, e);
+                }
             }
-        }
+            Some(path_str)
+        } else {
+            let url = match self.get_item_download_url(&item.feed_id, &item.id).await {
+                Ok(u) => u,
+                Err(e) => {
+                    log::warn!("RSS auto-download: no URL for '{}': {}", item.title, e);
+                    return;
+                }
+            };
+            if let Err(e) = manager.add_http_task(vec![url.clone()], opts.clone()).await {
+                log::warn!("Auto-download failed for '{}': {}", item.title, e);
+                return;
+            }
+            // Fan inline media (images / extra enclosures) out as separate
+            // tasks so feeds whose primary enclosure is a thumbnail still
+            // capture the full payload set
+            let mut media_opts = opts.clone();
+            media_opts.remove("out");
+            for extra in &item.media_urls {
+                if extra == &url {
+                    continue;
+                }
+                if let Err(e) = manager
+                    .add_http_task(vec![extra.clone()], media_opts.clone())
+                    .await
+                {
+                    log::warn!("Auto-download extra media failed for '{}': {}", extra, e);
+                }
+            }
+            None
+        };
 
-        let _ = self.mark_item_downloaded(feed_id, &item.id, None).await;
+        let _ = self
+            .mark_item_downloaded(feed_id, &item.id, download_path)
+            .await;
 
         // Update episode-history and rule stats
         let mut s = self.store.lock().await;
@@ -1165,26 +1231,40 @@ pub fn build_article_html(item: &RssItem) -> String {
     let body = if item.description.is_empty() {
         "<p><em>(No content provided by the feed.)</em></p>".to_string()
     } else {
-        item.description.clone()
+        sanitize_article_html(&item.description)
     };
-    let base_tag = if item.link.is_empty() {
-        String::new()
-    } else {
+    // Only emit a <base> when the source link is an http(s) URL we can fully
+    // escape. Non-http schemes (javascript:, data:, file:) would let the feed
+    // smuggle script execution into the rendered page
+    let base_tag = if is_safe_http_url(&item.link) {
         format!(r#"<base href="{}" />"#, html_escape(&item.link))
-    };
-    let source_link = if item.link.is_empty() {
-        String::new()
     } else {
+        String::new()
+    };
+    let source_link = if is_safe_http_url(&item.link) {
         format!(
             r#"<p class="rss-source"><a href="{href}" target="_blank" rel="noopener">{href}</a></p>"#,
             href = html_escape(&item.link)
         )
+    } else {
+        String::new()
     };
+    // Strict CSP: no scripts (inline or external), no plugins, no framing.
+    // Images / media / styles still load over http(s) so the article renders
+    let csp = "default-src 'none'; \
+               img-src http: https: data:; \
+               media-src http: https:; \
+               style-src 'unsafe-inline'; \
+               font-src http: https: data:; \
+               script-src 'none'; object-src 'none'; \
+               frame-src 'none'; frame-ancestors 'none'; \
+               base-uri 'self'; form-action 'none'";
     format!(
         r#"<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8" />
+<meta http-equiv="Content-Security-Policy" content="{csp}" />
 {base_tag}
 <title>{title}</title>
 <style>
@@ -1244,6 +1324,75 @@ fn html_escape(s: &str) -> String {
         .replace('<', "&lt;")
         .replace('>', "&gt;")
         .replace('"', "&quot;")
+}
+
+fn is_safe_http_url(s: &str) -> bool {
+    let lower = s.trim().to_ascii_lowercase();
+    lower.starts_with("http://") || lower.starts_with("https://")
+}
+
+/// Strip script-bearing tags and inline event-handler / `javascript:` URL
+/// attributes from feed-supplied HTML before embedding it in a generated
+/// article page. This is best-effort defence-in-depth; the strict CSP emitted
+/// in `build_article_html` is the primary control against script execution
+fn sanitize_article_html(html: &str) -> String {
+    use std::sync::OnceLock;
+    static BLOCK_RES: OnceLock<Vec<regex::Regex>> = OnceLock::new();
+    static SELF_CLOSE_RE: OnceLock<regex::Regex> = OnceLock::new();
+    static ON_ATTR_RE: OnceLock<regex::Regex> = OnceLock::new();
+    static JS_HREF_RE: OnceLock<regex::Regex> = OnceLock::new();
+
+    // Drop script/style/iframe/object/embed/frame elements entirely (incl.
+    // body). The `regex` crate has no backreferences, so emit one regex per
+    // tag instead of a single `</\1>` pattern
+    let block_res = BLOCK_RES.get_or_init(|| {
+        const TAGS: &[&str] = &[
+            "script",
+            "style",
+            "iframe",
+            "object",
+            "embed",
+            "frame",
+            "frameset",
+            "noscript",
+            "template",
+        ];
+        TAGS.iter()
+            .map(|t| {
+                regex::Regex::new(&format!(r"(?is)<{t}\b[^>]*>.*?</{t}\s*>"))
+                    .expect("block tag regex")
+            })
+            .collect()
+    });
+    // Drop self-closing variants of the same dangerous tags + meta/link
+    let self_close_re = SELF_CLOSE_RE.get_or_init(|| {
+        regex::Regex::new(
+            r"(?is)<(?:script|style|iframe|object|embed|frame|frameset|noscript|template|meta|link)\b[^>]*/?>",
+        )
+        .expect("self-close regex")
+    });
+    // Strip on*="..." / on*='...' / on*=value event handlers
+    let on_attr_re = ON_ATTR_RE.get_or_init(|| {
+        regex::Regex::new(r#"(?i)\son[a-z]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)"#)
+            .expect("on-attr regex")
+    });
+    // Neutralise javascript:/vbscript:/data: URLs in href/src/xlink:href
+    // attributes. Emit two patterns to avoid a backreference between quotes
+    let js_href_re = JS_HREF_RE.get_or_init(|| {
+        regex::Regex::new(
+            r#"(?i)\b(?:href|src|xlink:href)\s*=\s*(?:"\s*(?:javascript|vbscript|data)\s*:[^"]*"|'\s*(?:javascript|vbscript|data)\s*:[^']*'|(?:javascript|vbscript|data):[^\s>]*)"#,
+        )
+        .expect("js-href regex")
+    });
+
+    let mut s = std::borrow::Cow::Borrowed(html);
+    for re in block_res {
+        s = std::borrow::Cow::Owned(re.replace_all(&s, "").into_owned());
+    }
+    let s = self_close_re.replace_all(&s, "").into_owned();
+    let s = on_attr_re.replace_all(&s, "").into_owned();
+    let s = js_href_re.replace_all(&s, "href=\"#\"").into_owned();
+    s
 }
 
 #[cfg(test)]

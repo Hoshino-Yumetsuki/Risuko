@@ -437,6 +437,11 @@ export const useRssStore = defineStore("rss", {
 			const item = feedItems.find((i) => i.id === itemId);
 			if (item && !item.is_read) {
 				item.is_read = true;
+				// When unread filtering is on, flipping an item to read may
+				// shrink the visible list past the current page boundary
+				if (this.unreadOnly) {
+					this.ensurePageInRange();
+				}
 			}
 		},
 
@@ -450,6 +455,9 @@ export const useRssStore = defineStore("rss", {
 				for (const item of feedItems) {
 					item.is_read = true;
 				}
+			}
+			if (this.unreadOnly) {
+				this.ensurePageInRange();
 			}
 		},
 

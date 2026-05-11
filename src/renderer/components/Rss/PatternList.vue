@@ -2,12 +2,12 @@
   <div class="pattern-list">
     <div class="pattern-list-header">
       <label class="pattern-list-title">{{ title }}</label>
-      <Button size="sm" variant="ghost" @click="addPattern">
+      <Button size="sm" variant="ghost" :aria-label="`Add ${title} pattern`" @click="addPattern">
         <Plus :size="14" />
       </Button>
     </div>
     <div v-if="patterns.length === 0" class="pattern-list-empty">—</div>
-    <div v-for="(p, idx) in patterns" :key="idx" class="pattern-row">
+    <div v-for="(p, idx) in patterns" :key="keyFor(p, idx)" class="pattern-row">
       <select
         :value="p.kind"
         class="pattern-select"
@@ -29,7 +29,12 @@
         />
         <span>Aa</span>
       </label>
-      <Button size="icon-sm" variant="ghost" @click="removePattern(idx)">
+      <Button
+        size="icon-sm"
+        variant="ghost"
+        :aria-label="`Remove ${title} pattern ${p.value || idx + 1}`"
+        @click="removePattern(idx)"
+      >
         <X :size="14" />
       </Button>
     </div>
@@ -52,6 +57,11 @@ export default {
 	},
 	emits: ["update"],
 	methods: {
+		keyFor(p: Pattern, idx: number): string {
+			// Compose a stable per-pattern identifier so add/remove doesn't reuse
+			// child state from a sibling row that shifted into the same index
+			return `${p.kind}::${p.value}::${idx}`;
+		},
 		emit(next: Pattern[]) {
 			this.$emit("update", next);
 		},

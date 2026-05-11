@@ -146,13 +146,44 @@ pub fn parse_title(raw: &str) -> ParsedMeta {
     if meta.group.is_none() {
         if let Some(c) = r.group.captures(title) {
             let candidate = c.get(1).unwrap().as_str();
-            // Heuristic: avoid matching things like "1080p" or codec tokens
+            // Heuristic: avoid matching quality / codec / source-suffix tokens
+            // (e.g. the trailing "DL" of "WEB-DL", "RIP" of "BD-RIP").
             let lower = candidate.to_lowercase();
             let is_known_token = matches!(
                 lower.as_str(),
-                "1080p" | "720p" | "2160p" | "480p" | "1440p" | "x264" | "x265" | "hevc" | "av1"
+                "1080p"
+                    | "720p"
+                    | "2160p"
+                    | "480p"
+                    | "1440p"
+                    | "x264"
+                    | "x265"
+                    | "hevc"
+                    | "av1"
+                    | "dl"
+                    | "rip"
+                    | "ray"
             );
-            if !is_known_token && candidate.chars().any(|c| c.is_alphabetic()) {
+            // Reject if the token looks like the tail of a hyphenated source
+            // tag (WEB-DL, BLU-RAY, BD-RIP, HD-RIP, DVD-RIP, etc.). The group
+            // regex matches `-([A-Za-z0-9_]+?)`, so for "WEB-DL" candidate is
+            // "DL" preceded by "WEB" \u2014 inspect what's directly before the
+            // capture
+            let cap0 = c.get(0).unwrap();
+            let preceding_is_source_prefix = title[..cap0.start()]
+                .rsplit(|c: char| !c.is_ascii_alphanumeric())
+                .next()
+                .map(|tok| {
+                    matches!(
+                        tok.to_ascii_uppercase().as_str(),
+                        "WEB" | "BLU" | "BD" | "HD" | "DVD" | "BR" | "WEBR"
+                    )
+                })
+                .unwrap_or(false);
+            if !is_known_token
+                && !preceding_is_source_prefix
+                && candidate.chars().any(|c| c.is_alphabetic())
+            {
                 meta.group = Some(candidate.to_string());
             }
         }

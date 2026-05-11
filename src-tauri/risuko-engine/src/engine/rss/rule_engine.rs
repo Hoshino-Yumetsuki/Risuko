@@ -13,7 +13,17 @@ const QUALITY_BASE_SCORE: i32 = 1000;
 const QUALITY_STEP: i32 = 100;
 
 /// Evaluate a rule against an item. Pure: returns whether the rule matches
-/// and a score used for best-match / upgrade decisions
+/// and a score used for best-match / upgrade decisions.
+///
+/// Rule-set evaluation semantics (see `RssManager::best_matching_rule`):
+/// rules are pre-sorted by `priority` descending. `RuleMode::AnyMatch`
+/// short-circuits on the first match — i.e. it preempts any subsequent rule
+/// regardless of mode — *unless* a higher-priority `RuleMode::BestMatch`
+/// has already accumulated a strictly better score, in which case the
+/// running best is preferred. `RuleMode::BestMatch` keeps scanning and wins
+/// by score across the full active set. UI/help should mirror this:
+/// AnyMatch is "first hit wins (within its priority tier)", BestMatch is
+/// "highest-score hit wins overall"
 pub fn evaluate_rule(rule: &RssRule, item: &RssItem, parsed: &ParsedMeta) -> RuleEvaluation {
     if !rule.is_active {
         return reject("rule disabled");
@@ -215,12 +225,24 @@ fn reject(reason: impl Into<String>) -> RuleEvaluation {
     }
 }
 
-/// Check whether the schedule allows a download at `ts_secs` (unix seconds)
+/// Check whether the schedule allows a download at `ts_secs` (unix seconds).
+///
+/// For overnight windows (e.g. `start_hour=22`, `end_hour=06`), `sched.days`
+/// gates the *start* day of the window: a 22–06 schedule for Monday matches
+/// Mon 22:00–23:59 *and* Tue 00:00–05:59. Without this adjustment, the early
+/// morning hours of a valid window would be rejected because the local
+/// weekday has already rolled over
 pub fn schedule_allows(sched: &Schedule, ts_secs: u64) -> bool {
     let local = ts_secs as i64 + sched.tz_offset_min as i64 * 60;
     let day_secs = local.rem_euclid(86_400);
     let hour = (day_secs / 3600) as u8;
-    let weekday = unix_weekday(local.div_euclid(86_400));
+    let mut day_index = local.div_euclid(86_400);
+    // Overnight window: hours after midnight belong to the *previous* day's
+    // schedule entry, so step back a day before resolving the weekday
+    if sched.start_hour > sched.end_hour && hour < sched.end_hour {
+        day_index -= 1;
+    }
+    let weekday = unix_weekday(day_index);
 
     if !sched.days.is_empty() && !sched.days.contains(&weekday) {
         return false;

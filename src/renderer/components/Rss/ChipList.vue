@@ -151,5 +151,12 @@ export default {
   background: transparent;
   font-size: 13px;
   color: inherit;
+  border-radius: 4px;
+}
+
+.chip-input:focus-visible {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 2px;
+  box-shadow: 0 0 0 2px hsl(var(--background));
 }
 </style>
