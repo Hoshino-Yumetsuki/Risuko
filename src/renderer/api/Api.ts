@@ -565,6 +565,22 @@ export default class Api {
 		return invoke("add_rss_rule", { rule });
 	}
 
+	updateRssRule(rule: RssRule) {
+		return invoke("update_rss_rule", { rule });
+	}
+
+	reorderRssRules(orderedIds: string[]) {
+		return invoke("reorder_rss_rules", { orderedIds });
+	}
+
+	dryRunRssRule(rule: RssRule, sampleSize?: number) {
+		return invoke("dry_run_rss_rule", { rule, sampleSize });
+	}
+
+	parseRssItemTitle(title: string) {
+		return invoke("parse_rss_item_title", { title });
+	}
+
 	removeRssRule(ruleId: string) {
 		return invoke("remove_rss_rule", { ruleId });
 	}

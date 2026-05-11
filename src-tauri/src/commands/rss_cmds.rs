@@ -16,6 +16,15 @@ fn get_rss(state: &State<'_, AppState>) -> Result<Arc<RssManager>, String> {
         .ok_or_else(|| "RSS manager not initialized".to_string())
 }
 
+/// Strip the explicit `out` filename hint when fanning extra inline media URLs
+/// out as separate http tasks — otherwise every queued image would land at the
+/// same path and clobber each other. The `dir` and other routing options stay
+fn strip_explicit_filename(opts: &Map<String, Value>) -> Map<String, Value> {
+    let mut cloned = opts.clone();
+    cloned.remove("out");
+    cloned
+}
+
 #[tauri::command]
 pub async fn add_rss_feed(state: State<'_, AppState>, url: String) -> Result<Value, String> {
     let mgr = get_rss(&state)?;
@@ -100,7 +109,7 @@ pub async fn download_rss_item(
     options: Option<Value>,
 ) -> Result<Value, String> {
     let mgr = get_rss(&state)?;
-    let url = mgr.get_item_download_url(&feed_id, &item_id).await?;
+    let item = mgr.get_item(&feed_id, &item_id).await?;
 
     let opts = match options {
         Some(Value::Object(map)) => map,
@@ -111,30 +120,121 @@ pub async fn download_rss_item(
         .await
         .ok_or("Engine not running")?;
 
-    // Compute the download path for tracking
-    let download_path = if let Some(out) = opts.get("out").and_then(|v| v.as_str()) {
-        let dir = if let Some(d) = opts.get("dir").and_then(|v| v.as_str()) {
-            d.to_string()
-        } else {
-            let global = manager.get_global_option().await;
-            global
-                .get("dir")
-                .and_then(|v| v.as_str())
-                .unwrap_or(".")
-                .to_string()
-        };
-        let p = std::path::Path::new(&dir).join(out);
-        Some(p.to_string_lossy().to_string())
-    } else {
-        None
-    };
+    // Resolve the destination directory once; both modes need it
+    let dir = resolve_dir(&opts, &manager).await;
 
-    let gid = manager.add_http_task(vec![url], opts).await?;
+    let kind = crate::engine::rss::classify_item_kind(&item);
+
+    if kind == crate::engine::rss::ItemKind::Article {
+        // Save the article HTML directly to disk and queue every inline media
+        // URL (images, etc.) as separate http tasks alongside it. This is the
+        // right behaviour for blog/news feeds (e.g. Hacker News) where the
+        // "enclosure" is a thumbnail and the real value is the body + images
+        let filename = crate::engine::rss::article_filename(&item);
+        let html = crate::engine::rss::build_article_html(&item);
+        let dir_path = std::path::Path::new(&dir);
+        if let Err(e) = tokio::fs::create_dir_all(dir_path).await {
+            return Err(format!("Failed to create dir {}: {}", dir, e));
+        }
+        let file_path = dir_path.join(&filename);
+        let path_str = file_path.to_string_lossy().to_string();
+        tokio::fs::write(&file_path, html.as_bytes())
+            .await
+            .map_err(|e| format!("Failed to write article html: {}", e))?;
+
+        // Mark the item as downloaded pointing at the html file
+        mgr.mark_item_downloaded(&feed_id, &item_id, Some(path_str.clone()))
+            .await?;
+
+        // Fan out inline media. Skip the primary enclosure if it's a
+        // thumbnail-style image; the user mainly wants the article + body
+        // images. Drop the explicit `out` filename hint so each url lands at
+        // its own filename
+        let media_opts = strip_explicit_filename(&opts);
+        let mut extra_gids: Vec<String> = Vec::new();
+        let mut queued: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        for url in item
+            .enclosure_url
+            .iter()
+            .cloned()
+            .chain(item.media_urls.iter().cloned())
+        {
+            if !queued.insert(url.clone()) {
+                continue;
+            }
+            match manager
+                .add_http_task(vec![url.clone()], media_opts.clone())
+                .await
+            {
+                Ok(g) => extra_gids.push(g),
+                Err(e) => log::warn!("Failed to queue inline media {}: {}", url, e),
+            }
+        }
+
+        return Ok(serde_json::json!({
+            "gid": Value::Null,
+            "extraGids": extra_gids,
+            "downloadPath": path_str,
+            "kind": "article",
+        }));
+    }
+
+    // Media mode: queue the primary enclosure and any extras
+    let urls = mgr.get_item_download_urls(&feed_id, &item_id).await?;
+
+    // Compute the download path for tracking the *primary* enclosure only.
+    // Extra inline media URLs queue separately and inherit the same `dir` but
+    // not the explicit `out` filename hint
+    let download_path = opts.get("out").and_then(|v| v.as_str()).map(|out| {
+        std::path::Path::new(&dir)
+            .join(out)
+            .to_string_lossy()
+            .to_string()
+    });
+
+    let mut iter = urls.into_iter();
+    let primary_url = iter
+        .next()
+        .expect("get_item_download_urls returns non-empty");
+    let gid = manager
+        .add_http_task(vec![primary_url], opts.clone())
+        .await?;
+
+    let mut extra_gids: Vec<String> = Vec::new();
+    let extra_opts = strip_explicit_filename(&opts);
+    for url in iter {
+        match manager
+            .add_http_task(vec![url.clone()], extra_opts.clone())
+            .await
+        {
+            Ok(g) => extra_gids.push(g),
+            Err(e) => log::warn!("Failed to queue inline media {}: {}", url, e),
+        }
+    }
 
     Ok(serde_json::json!({
         "gid": gid,
-        "downloadPath": download_path
+        "extraGids": extra_gids,
+        "downloadPath": download_path,
+        "kind": "media",
     }))
+}
+
+/// Resolve the destination directory from per-task options, falling back to
+/// the engine's global default
+async fn resolve_dir(
+    opts: &Map<String, Value>,
+    manager: &std::sync::Arc<crate::engine::manager::TaskManager>,
+) -> String {
+    if let Some(d) = opts.get("dir").and_then(|v| v.as_str()) {
+        return d.to_string();
+    }
+    let global = manager.get_global_option().await;
+    global
+        .get("dir")
+        .and_then(|v| v.as_str())
+        .unwrap_or(".")
+        .to_string()
 }
 
 #[tauri::command]
@@ -210,7 +310,7 @@ pub async fn download_rss_item_tracked(
     options: Option<Value>,
 ) -> Result<Value, String> {
     let mgr = get_rss(&state)?;
-    let url = mgr.get_item_download_url(&feed_id, &item_id).await?;
+    let item = mgr.get_item(&feed_id, &item_id).await?;
 
     let opts = match options {
         Some(Value::Object(map)) => map,
@@ -221,24 +321,96 @@ pub async fn download_rss_item_tracked(
         .await
         .ok_or("Engine not running")?;
 
-    let download_path = if let Some(out) = opts.get("out").and_then(|v| v.as_str()) {
-        let dir = if let Some(d) = opts.get("dir").and_then(|v| v.as_str()) {
-            d.to_string()
-        } else {
-            let global = manager.get_global_option().await;
-            global
-                .get("dir")
-                .and_then(|v| v.as_str())
-                .unwrap_or(".")
-                .to_string()
-        };
-        let p = std::path::Path::new(&dir).join(out);
-        Some(p.to_string_lossy().to_string())
-    } else {
-        None
-    };
+    let dir = resolve_dir(&opts, &manager).await;
+    let kind = crate::engine::rss::classify_item_kind(&item);
 
-    let gid = manager.add_http_task(vec![url], opts).await?;
+    if kind == crate::engine::rss::ItemKind::Article {
+        // Article: write the HTML synchronously, queue inline media, fire the
+        // completion event immediately. There is no engine gid for the html
+        // file itself, but the inline media tasks behave like normal http
+        // downloads
+        let filename = crate::engine::rss::article_filename(&item);
+        let html = crate::engine::rss::build_article_html(&item);
+        let dir_path = std::path::Path::new(&dir);
+        if let Err(e) = tokio::fs::create_dir_all(dir_path).await {
+            return Err(format!("Failed to create dir {}: {}", dir, e));
+        }
+        let file_path = dir_path.join(&filename);
+        let path_str = file_path.to_string_lossy().to_string();
+        tokio::fs::write(&file_path, html.as_bytes())
+            .await
+            .map_err(|e| format!("Failed to write article html: {}", e))?;
+        mgr.mark_item_downloaded(&feed_id, &item_id, Some(path_str.clone()))
+            .await?;
+
+        let media_opts = strip_explicit_filename(&opts);
+        let mut extra_gids: Vec<String> = Vec::new();
+        let mut queued: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        for url in item
+            .enclosure_url
+            .iter()
+            .cloned()
+            .chain(item.media_urls.iter().cloned())
+        {
+            if !queued.insert(url.clone()) {
+                continue;
+            }
+            match manager
+                .add_http_task(vec![url.clone()], media_opts.clone())
+                .await
+            {
+                Ok(g) => extra_gids.push(g),
+                Err(e) => log::warn!("Failed to queue inline media {}: {}", url, e),
+            }
+        }
+
+        let _ = handle.emit(
+            "rss:download-complete",
+            serde_json::json!({
+                "feedId": feed_id,
+                "itemId": item_id,
+                "gid": Value::Null,
+                "downloadPath": path_str,
+                "kind": "article",
+            }),
+        );
+
+        return Ok(serde_json::json!({
+            "gid": Value::Null,
+            "extraGids": extra_gids,
+            "downloadPath": path_str,
+            "kind": "article",
+        }));
+    }
+
+    let urls = mgr.get_item_download_urls(&feed_id, &item_id).await?;
+
+    let download_path = opts.get("out").and_then(|v| v.as_str()).map(|out| {
+        std::path::Path::new(&dir)
+            .join(out)
+            .to_string_lossy()
+            .to_string()
+    });
+
+    let mut iter = urls.into_iter();
+    let primary_url = iter
+        .next()
+        .expect("get_item_download_urls returns non-empty");
+    let gid = manager
+        .add_http_task(vec![primary_url], opts.clone())
+        .await?;
+
+    let mut extra_gids: Vec<String> = Vec::new();
+    let extra_opts = strip_explicit_filename(&opts);
+    for url in iter {
+        match manager
+            .add_http_task(vec![url.clone()], extra_opts.clone())
+            .await
+        {
+            Ok(g) => extra_gids.push(g),
+            Err(e) => log::warn!("Failed to queue inline media {}: {}", url, e),
+        }
+    }
 
     // Spawn a background task to monitor download completion
     let monitor_gid = gid.clone();
@@ -317,6 +489,40 @@ pub async fn download_rss_item_tracked(
 
     Ok(serde_json::json!({
         "gid": gid,
+        "extraGids": extra_gids,
         "downloadPath": download_path,
     }))
+}
+
+#[tauri::command]
+pub async fn update_rss_rule(state: State<'_, AppState>, rule: RssRule) -> Result<Value, String> {
+    let mgr = get_rss(&state)?;
+    let updated = mgr.update_rule(rule).await?;
+    serde_json::to_value(updated).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn reorder_rss_rules(
+    state: State<'_, AppState>,
+    ordered_ids: Vec<String>,
+) -> Result<(), String> {
+    let mgr = get_rss(&state)?;
+    mgr.reorder_rules(ordered_ids).await
+}
+
+#[tauri::command]
+pub async fn dry_run_rss_rule(
+    state: State<'_, AppState>,
+    rule: RssRule,
+    sample_size: Option<usize>,
+) -> Result<Value, String> {
+    let mgr = get_rss(&state)?;
+    let results = mgr.dry_run_rule(rule, sample_size.unwrap_or(50)).await;
+    serde_json::to_value(results).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn parse_rss_item_title(title: String) -> Result<Value, String> {
+    let parsed = crate::engine::rss::parser::parse_title(&title);
+    serde_json::to_value(parsed).map_err(|e| e.to_string())
 }

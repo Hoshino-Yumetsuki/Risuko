@@ -72,6 +72,38 @@
               <X :size="12" />
             </button>
           </div>
+          <button
+            type="button"
+            :class="['rss-chip', { active: unreadOnly }]"
+            @click="toggleUnreadOnly"
+          >{{ $t('rss.filter-unread') }}</button>
+          <button
+            type="button"
+            :class="['rss-chip', { active: matchedOnly }]"
+            @click="toggleMatchedOnly"
+          >{{ $t('rss.filter-matched') }}</button>
+          <select :value="sortMode" class="rss-sort" @change="onSortChange">
+            <option value="newest">{{ $t('rss.sort-newest') }}</option>
+            <option value="oldest">{{ $t('rss.sort-oldest') }}</option>
+            <option value="size-desc">{{ $t('rss.sort-size-desc') }}</option>
+            <option value="rule-match">{{ $t('rss.sort-rule-match') }}</option>
+          </select>
+          <button
+            type="button"
+            class="rss-chip"
+            :title="$t('rss.mark-all-read')"
+            @click="handleMarkAllRead"
+          >
+            <CheckCheck :size="12" />
+          </button>
+          <button
+            type="button"
+            :class="['rss-chip', { active: densityMode === 'compact' }]"
+            :title="densityMode === 'compact' ? $t('rss.density-comfortable') : $t('rss.density-compact')"
+            @click="toggleDensity"
+          >
+            <Rows3 :size="12" />
+          </button>
         </div>
         <div class="task-toolbar-right">
           <div class="rss-select-all" @click="toggleSelectAll">
@@ -114,9 +146,11 @@
 
 <script lang="ts">
 import {
+	CheckCheck,
 	Download,
 	Plus,
 	RefreshCw,
+	Rows3,
 	Rss,
 	Search,
 	Trash2,
@@ -141,10 +175,12 @@ export default {
 	name: "mo-rss-index",
 	components: {
 		Button,
+		CheckCheck,
 		Checkbox,
 		Download,
 		Plus,
 		RefreshCw,
+		Rows3,
 		Rss,
 		Search,
 		Select,
@@ -216,6 +252,18 @@ export default {
 					selected.has(i.id) && !i.is_downloaded && (i.enclosure_url || i.link),
 			).length;
 		},
+		unreadOnly() {
+			return useRssStore().unreadOnly;
+		},
+		matchedOnly() {
+			return useRssStore().matchedOnly;
+		},
+		sortMode() {
+			return useRssStore().sortMode;
+		},
+		densityMode() {
+			return useRssStore().densityMode;
+		},
 	},
 	async created() {
 		const store = useRssStore();
@@ -224,6 +272,7 @@ export default {
 		for (const feed of store.feeds) {
 			await store.fetchItems(feed.id);
 		}
+		await store.fetchRules();
 	},
 	beforeUnmount() {
 		useRssStore().cleanupEventListeners();
@@ -261,6 +310,36 @@ export default {
 			}
 			await useRssStore().batchDelete();
 		},
+		toggleUnreadOnly() {
+			const store = useRssStore();
+			store.setUnreadOnly(!store.unreadOnly);
+		},
+		toggleMatchedOnly() {
+			const store = useRssStore();
+			store.setMatchedOnly(!store.matchedOnly);
+		},
+		onSortChange(event: Event) {
+			const value = (event.target as HTMLSelectElement).value as
+				| "newest"
+				| "oldest"
+				| "size-desc"
+				| "rule-match";
+			useRssStore().setSortMode(value);
+		},
+		toggleDensity() {
+			const store = useRssStore();
+			store.setDensityMode(
+				store.densityMode === "compact" ? "comfortable" : "compact",
+			);
+		},
+		async handleMarkAllRead() {
+			const store = useRssStore();
+			await store.markAllRead(
+				store.currentFeedId && store.currentFeedId !== "__downloaded__"
+					? store.currentFeedId
+					: undefined,
+			);
+		},
 	},
 };
 </script>
@@ -289,5 +368,43 @@ export default {
 .rss-select-label {
   font-size: 0.6875rem;
   color: var(--mo-task-action-color);
+}
+
+.rss-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  margin-left: 4px;
+  font-size: 11px;
+  border-radius: 999px;
+  border: 1px solid hsl(var(--border));
+  background: transparent;
+  color: var(--mo-task-action-color);
+  cursor: pointer;
+  user-select: none;
+  height: 22px;
+}
+
+.rss-chip:hover {
+  background: hsl(var(--muted) / 0.5);
+}
+
+.rss-chip.active {
+  background: hsl(var(--primary) / 0.15);
+  border-color: hsl(var(--primary) / 0.4);
+  color: hsl(var(--primary));
+}
+
+.rss-sort {
+  height: 22px;
+  margin-left: 4px;
+  padding: 0 6px;
+  font-size: 11px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 4px;
+  background: transparent;
+  color: var(--mo-task-action-color);
+  cursor: pointer;
 }
 </style>

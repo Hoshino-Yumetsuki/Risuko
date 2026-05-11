@@ -1,4 +1,4 @@
-import type { RssFeed, RssItem, RssRule } from "@shared/types/rss";
+import type { DryRunMatch, RssFeed, RssItem, RssRule } from "@shared/types/rss";
 import logger from "@shared/utils/logger";
 import { defineStore } from "pinia";
 import api from "@/api";
@@ -7,6 +7,31 @@ import { usePreferenceStore } from "@/store/preference";
 const DEFAULT_ITEMS_PER_PAGE = 20;
 const ITEMS_PER_PAGE_OPTIONS = [10, 20, 30, 50, 100];
 const STORAGE_KEY = "risuko.rss-items-per-page";
+const PREFS_STORAGE_KEY = "risuko.rss-reader-prefs";
+
+export type DensityMode = "compact" | "comfortable";
+export type ReaderMode = "split" | "list";
+export type SortMode = "newest" | "oldest" | "size-desc" | "rule-match";
+
+interface ReaderPrefs {
+	densityMode: DensityMode;
+	readerMode: ReaderMode;
+	unreadOnly: boolean;
+	matchedOnly: boolean;
+	sortMode: SortMode;
+	groupByEpisode: boolean;
+	markReadOnScroll: boolean;
+}
+
+const DEFAULT_PREFS: ReaderPrefs = {
+	densityMode: "comfortable",
+	readerMode: "list",
+	unreadOnly: false,
+	matchedOnly: false,
+	sortMode: "newest",
+	groupByEpisode: false,
+	markReadOnScroll: false,
+};
 
 function loadItemsPerPage(): number {
 	try {
@@ -21,19 +46,50 @@ function loadItemsPerPage(): number {
 	return DEFAULT_ITEMS_PER_PAGE;
 }
 
+function loadPrefs(): ReaderPrefs {
+	try {
+		const raw = localStorage.getItem(PREFS_STORAGE_KEY);
+		if (raw) {
+			return { ...DEFAULT_PREFS, ...JSON.parse(raw) };
+		}
+	} catch {
+		// ignore
+	}
+	return { ...DEFAULT_PREFS };
+}
+
+function savePrefs(prefs: ReaderPrefs) {
+	try {
+		localStorage.setItem(PREFS_STORAGE_KEY, JSON.stringify(prefs));
+	} catch {
+		// ignore
+	}
+}
+
 export const useRssStore = defineStore("rss", {
-	state: () => ({
-		feeds: [] as RssFeed[],
-		currentFeedId: null as string | null,
-		items: {} as Record<string, RssItem[]>,
-		rules: [] as RssRule[],
-		loading: false,
-		selectedItemIds: [] as string[],
-		filterText: "",
-		itemsPerPage: loadItemsPerPage(),
-		currentPage: 1,
-		_eventUnlisteners: [] as (() => void)[],
-	}),
+	state: () => {
+		const prefs = loadPrefs();
+		return {
+			feeds: [] as RssFeed[],
+			currentFeedId: null as string | null,
+			items: {} as Record<string, RssItem[]>,
+			rules: [] as RssRule[],
+			loading: false,
+			selectedItemIds: [] as string[],
+			selectedItemId: null as string | null,
+			filterText: "",
+			itemsPerPage: loadItemsPerPage(),
+			currentPage: 1,
+			densityMode: prefs.densityMode,
+			readerMode: prefs.readerMode,
+			unreadOnly: prefs.unreadOnly,
+			matchedOnly: prefs.matchedOnly,
+			sortMode: prefs.sortMode,
+			groupByEpisode: prefs.groupByEpisode,
+			markReadOnScroll: prefs.markReadOnScroll,
+			_eventUnlisteners: [] as (() => void)[],
+		};
+	},
 
 	getters: {
 		currentFeed(): RssFeed | undefined {
@@ -57,13 +113,41 @@ export const useRssStore = defineStore("rss", {
 						}
 					}
 				}
-				items = allItems.sort((a, b) => (b.pub_date ?? 0) - (a.pub_date ?? 0));
+				items = allItems;
 			} else {
-				items = this.items[this.currentFeedId] ?? [];
+				items = (this.items[this.currentFeedId] ?? []).slice();
+			}
+			if (this.unreadOnly) {
+				items = items.filter((i) => !i.is_read);
+			}
+			if (this.matchedOnly) {
+				items = items.filter((i) => i.matched_rule_id);
 			}
 			const q = this.filterText.trim().toLowerCase();
 			if (q) {
-				return items.filter((i) => i.title.toLowerCase().includes(q));
+				items = items.filter((i) => i.title.toLowerCase().includes(q));
+			}
+			switch (this.sortMode) {
+				case "oldest":
+					items.sort((a, b) => (a.pub_date ?? 0) - (b.pub_date ?? 0));
+					break;
+				case "size-desc":
+					items.sort(
+						(a, b) => (b.enclosure_length ?? 0) - (a.enclosure_length ?? 0),
+					);
+					break;
+				case "rule-match":
+					items.sort((a, b) => {
+						const am = a.matched_rule_id ? 1 : 0;
+						const bm = b.matched_rule_id ? 1 : 0;
+						if (am !== bm) {
+							return bm - am;
+						}
+						return (b.pub_date ?? 0) - (a.pub_date ?? 0);
+					});
+					break;
+				default:
+					items.sort((a, b) => (b.pub_date ?? 0) - (a.pub_date ?? 0));
 			}
 			return items;
 		},
@@ -272,9 +356,101 @@ export const useRssStore = defineStore("rss", {
 			return created;
 		},
 
+		async updateRule(rule: RssRule) {
+			const updated = (await api.updateRssRule(rule)) as RssRule;
+			const idx = this.rules.findIndex((r) => r.id === updated.id);
+			if (idx >= 0) {
+				this.rules[idx] = updated;
+			} else {
+				this.rules.push(updated);
+			}
+			return updated;
+		},
+
+		async reorderRules(orderedIds: string[]) {
+			await api.reorderRssRules(orderedIds);
+			await this.fetchRules();
+		},
+
+		async dryRunRule(rule: RssRule, sampleSize?: number) {
+			return (await api.dryRunRssRule(rule, sampleSize)) as DryRunMatch[];
+		},
+
 		async removeRule(ruleId: string) {
 			await api.removeRssRule(ruleId);
 			this.rules = this.rules.filter((r) => r.id !== ruleId);
+		},
+
+		selectItem(itemId: string | null) {
+			this.selectedItemId = itemId;
+		},
+
+		_persistPrefs() {
+			savePrefs({
+				densityMode: this.densityMode,
+				readerMode: this.readerMode,
+				unreadOnly: this.unreadOnly,
+				matchedOnly: this.matchedOnly,
+				sortMode: this.sortMode,
+				groupByEpisode: this.groupByEpisode,
+				markReadOnScroll: this.markReadOnScroll,
+			});
+		},
+
+		setDensityMode(mode: DensityMode) {
+			this.densityMode = mode;
+			this._persistPrefs();
+		},
+		setReaderMode(mode: ReaderMode) {
+			this.readerMode = mode;
+			this._persistPrefs();
+		},
+		setUnreadOnly(value: boolean) {
+			this.unreadOnly = value;
+			this.currentPage = 1;
+			this._persistPrefs();
+		},
+		setMatchedOnly(value: boolean) {
+			this.matchedOnly = value;
+			this.currentPage = 1;
+			this._persistPrefs();
+		},
+		setSortMode(mode: SortMode) {
+			this.sortMode = mode;
+			this.currentPage = 1;
+			this._persistPrefs();
+		},
+		setGroupByEpisode(value: boolean) {
+			this.groupByEpisode = value;
+			this._persistPrefs();
+		},
+		setMarkReadOnScroll(value: boolean) {
+			this.markReadOnScroll = value;
+			this._persistPrefs();
+		},
+
+		async markItemRead(feedId: string, itemId: string) {
+			const feedItems = this.items[feedId];
+			if (!feedItems) {
+				return;
+			}
+			const item = feedItems.find((i) => i.id === itemId);
+			if (item && !item.is_read) {
+				item.is_read = true;
+			}
+		},
+
+		async markAllRead(feedId?: string) {
+			const feedIds = feedId ? [feedId] : Object.keys(this.items);
+			for (const fid of feedIds) {
+				const feedItems = this.items[fid];
+				if (!feedItems) {
+					continue;
+				}
+				for (const item of feedItems) {
+					item.is_read = true;
+				}
+			}
 		},
 
 		async updateFeedSettings(

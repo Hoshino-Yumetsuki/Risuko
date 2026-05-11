@@ -5,7 +5,7 @@
     </div>
     <template v-else>
       <div class="rss-item-list">
-        <ul class="rss-items">
+        <ul :class="['rss-items', densityMode === 'compact' ? 'rss-items--compact' : 'rss-items--comfortable']">
           <mo-enter
             v-for="(item, index) in items"
             :key="item.id"
@@ -41,6 +41,16 @@
                   <span v-if="item.enclosure_length" class="rss-item-size">
                     {{ formatSize(item.enclosure_length) }}
                   </span>
+                  <span
+                    v-for="tag in qualityTagsFor(item)"
+                    :key="`q-${item.id}-${tag}`"
+                    class="rss-item-quality"
+                  >{{ tag }}</span>
+                  <span
+                    v-if="item.matched_rule_id"
+                    class="rss-item-rule"
+                    :title="ruleNameFor(item.matched_rule_id)"
+                  >{{ ruleNameFor(item.matched_rule_id) }}</span>
                 </span>
               </div>
               <div class="rss-item-actions">
@@ -163,6 +173,13 @@
           <div v-else-if="viewerError" class="rss-viewer-error">
             {{ viewerError }}
           </div>
+          <div v-else-if="viewerExternalPath" class="rss-viewer-external">
+            <p>{{ $t('rss.binary-file') }}</p>
+            <p class="rss-viewer-path">{{ viewerExternalPath }}</p>
+            <Button @click="openLink(viewerExternalPath)">
+              {{ $t('rss.open-externally') }}
+            </Button>
+          </div>
           <iframe
             v-else
             ref="viewerFrame"
@@ -197,6 +214,15 @@ import {
 	DialogTitle,
 } from "@/components/ui/dialog";
 import { useRssStore } from "@/store/rss";
+
+function isHtmlPath(path: string): boolean {
+	const lower = path.toLowerCase();
+	return (
+		lower.endsWith(".html") ||
+		lower.endsWith(".htm") ||
+		lower.endsWith(".xhtml")
+	);
+}
 
 function injectBaseTag(html: string, baseUrl: string, isDark: boolean): string {
 	const bg = isDark ? "#343434" : "#ffffff";
@@ -359,6 +385,7 @@ export default {
 			viewerContent: "",
 			viewerLoading: false,
 			viewerError: "",
+			viewerExternalPath: "",
 		};
 	},
 	computed: {
@@ -374,6 +401,16 @@ export default {
 		totalPages(): number {
 			return useRssStore().totalPages;
 		},
+		densityMode(): "compact" | "comfortable" {
+			return useRssStore().densityMode;
+		},
+		ruleMap(): Record<string, string> {
+			const map: Record<string, string> = {};
+			for (const rule of useRssStore().rules) {
+				map[rule.id] = rule.name;
+			}
+			return map;
+		},
 	},
 	methods: {
 		itemDelay(index: number): number {
@@ -382,6 +419,15 @@ export default {
 		},
 		isSelected(itemId: string): boolean {
 			return this.selectedIdSet.has(itemId);
+		},
+		qualityTagsFor(item: RssItem): string[] {
+			return item.parsed_meta?.quality_tags?.slice(0, 3) ?? [];
+		},
+		ruleNameFor(ruleId: string | null | undefined): string {
+			if (!ruleId) {
+				return "";
+			}
+			return this.ruleMap[ruleId] ?? "";
 		},
 		toggleSelect(itemId: string) {
 			useRssStore().toggleItemSelection(itemId);
@@ -411,8 +457,16 @@ export default {
 			this.viewerItem = item;
 			this.viewerContent = "";
 			this.viewerError = "";
+			this.viewerExternalPath = "";
 			this.viewerLoading = true;
 			try {
+				const path = item.download_path ?? "";
+				if (path && !isHtmlPath(path)) {
+					// Binary or non-HTML payload (image, video, torrent, etc.).
+					// Don't try to render — let the user open it externally.
+					this.viewerExternalPath = path;
+					return;
+				}
 				const raw = await api.readRssDownload(item.feed_id, item.id);
 				const baseUrl = item.link || item.enclosure_url || "";
 				const isDark = document.documentElement.classList.contains("dark");
@@ -435,6 +489,7 @@ export default {
 			this.viewerItem = null;
 			this.viewerContent = "";
 			this.viewerError = "";
+			this.viewerExternalPath = "";
 		},
 		openLink(url: string) {
 			invoke("plugin:shell|open", { path: url }).catch(() => {
@@ -690,5 +745,62 @@ export default {
 
 .rss-viewer-error {
   color: hsl(var(--destructive));
+}
+
+.rss-viewer-external {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  height: 100%;
+  font-size: 13px;
+  color: var(--mo-task-action-color);
+  padding: 24px;
+  text-align: center;
+}
+
+.rss-viewer-path {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  word-break: break-all;
+  opacity: .7;
+}
+
+.rss-item-quality {
+  font-size: 10px;
+  padding: 0 4px;
+  border-radius: 2px;
+  background: hsl(var(--muted));
+  color: hsl(var(--muted-foreground));
+  text-transform: uppercase;
+}
+
+.rss-item-rule {
+  font-size: 10px;
+  padding: 0 4px;
+  border-radius: 2px;
+  background: hsl(var(--primary) / 0.15);
+  color: hsl(var(--primary));
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rss-items--compact .rss-item {
+  padding: 4px 8px;
+}
+
+.rss-items--compact .rss-item-header {
+  gap: 6px;
+}
+
+.rss-items--compact .rss-item-title {
+  font-size: 12px;
+}
+
+.rss-items--compact .rss-item-meta {
+  font-size: 10px;
 }
 </style>

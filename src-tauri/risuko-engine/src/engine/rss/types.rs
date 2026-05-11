@@ -15,6 +15,37 @@ pub struct RssFeed {
     pub error_count: u32,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ParsedMeta {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub series: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub year: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub season: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub episode: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub episode_end: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub absolute_episode: Option<u32>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub quality_tags: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub codec: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub container: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub language: Option<String>,
+    /// Best-effort seeders parsed from title (e.g. `[123S/45L]`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seeders: Option<u32>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RssItem {
     pub id: String,
@@ -30,31 +61,236 @@ pub struct RssItem {
     pub is_downloaded: bool,
     #[serde(default)]
     pub download_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parsed_meta: Option<ParsedMeta>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub matched_rule_id: Option<String>,
+    /// Additional media URLs scraped from the entry's HTML body (img/video/audio/source)
+    /// plus any enclosure-style links beyond the primary `enclosure_url`. Useful for
+    /// content feeds where the primary enclosure is just a cover image and the real
+    /// payloads live inline
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub media_urls: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+#[derive(Default)]
+pub enum PatternKind {
+    #[default]
+    Contains,
+    Glob,
+    Regex,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Pattern {
+    pub value: String,
+    #[serde(default)]
+    pub kind: PatternKind,
+    #[serde(default)]
+    pub case_sensitive: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "type", rename_all = "kebab-case")]
+#[derive(Default)]
+pub enum EpisodeSelector {
+    #[default]
+    All,
+    From {
+        start: u32,
+    },
+    Range {
+        start: u32,
+        end: u32,
+    },
+    Specific {
+        values: Vec<u32>,
+    },
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum Weekday {
+    Mon,
+    Tue,
+    Wed,
+    Thu,
+    Fri,
+    Sat,
+    Sun,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Schedule {
+    pub days: Vec<Weekday>,
+    /// 0..=23
+    pub start_hour: u8,
+    /// 0..=23, exclusive end. If `end_hour <= start_hour` the window wraps midnight
+    pub end_hour: u8,
+    /// Minutes east of UTC
+    #[serde(default)]
+    pub tz_offset_min: i32,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+#[derive(Default)]
+pub enum RuleMode {
+    /// First matching rule (by priority desc) wins
+    #[default]
+    AnyMatch,
+    /// Highest-scoring matching rule across the active set wins
+    BestMatch,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct RuleStats {
+    #[serde(default)]
+    pub last_matched_at: Option<u64>,
+    #[serde(default)]
+    pub match_count: u64,
+    #[serde(default)]
+    pub download_count: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RssRule {
     pub id: String,
-    /// None means global (applies to all feeds)
-    pub feed_id: Option<String>,
     pub name: String,
-    pub pattern: String,
-    pub is_regex: bool,
+    #[serde(default = "default_true")]
     pub is_active: bool,
+    #[serde(default = "default_true")]
     pub auto_download: bool,
+
+    /// Empty = all feeds
+    #[serde(default)]
+    pub feed_ids: Vec<String>,
+    #[serde(default)]
+    pub priority: i32,
+    #[serde(default)]
+    pub mode: RuleMode,
+
+    // Filters
+    #[serde(default)]
+    pub title_must: Vec<Pattern>,
+    #[serde(default)]
+    pub title_must_not: Vec<Pattern>,
+    #[serde(default)]
+    pub min_size_bytes: Option<u64>,
+    #[serde(default)]
+    pub max_size_bytes: Option<u64>,
+    #[serde(default)]
+    pub min_seeders: Option<u32>,
+
+    // Series / episodes
+    #[serde(default)]
+    pub series_filter: Option<String>,
+    #[serde(default)]
+    pub seasons: Option<Vec<u32>>,
+    #[serde(default)]
+    pub episodes: Option<EpisodeSelector>,
+
+    // Quality
+    #[serde(default)]
+    pub quality_preferences: Vec<String>,
+    #[serde(default)]
+    pub required_qualities: Vec<String>,
+    #[serde(default)]
+    pub forbidden_qualities: Vec<String>,
+    #[serde(default)]
+    pub upgrade_existing: bool,
+
+    // Output
+    #[serde(default)]
     pub download_dir: Option<String>,
+    #[serde(default)]
+    pub filename_template: Option<String>,
+
+    // Schedule / cooldown
+    #[serde(default)]
+    pub schedule: Option<Schedule>,
+    #[serde(default)]
+    pub cooldown_secs: u64,
+
+    #[serde(default)]
+    pub stats: RuleStats,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub struct EpisodeKey {
+    pub series: String,
+    pub season: Option<u32>,
+    pub episode: u32,
+    pub absolute: bool,
+}
+
+impl EpisodeKey {
+    /// Stringified key for HashMap<String, _> persistence (JSON-friendly)
+    pub fn to_storage_key(&self) -> String {
+        format!(
+            "{}|s{}|e{}|{}",
+            self.series,
+            self.season.map(|v| v.to_string()).unwrap_or_default(),
+            self.episode,
+            if self.absolute { "abs" } else { "std" },
+        )
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EpisodeRecord {
+    pub item_id: String,
+    pub feed_id: String,
+    pub score: i32,
+    pub downloaded_at: u64,
+    #[serde(default)]
+    pub file_path: Option<String>,
+    #[serde(default)]
+    pub rule_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct RssStore {
     pub feeds: Vec<RssFeed>,
     pub items: HashMap<String, Vec<RssItem>>,
+    /// Stored sorted by priority desc
+    #[serde(default, deserialize_with = "deserialize_rules_lossy")]
     pub rules: Vec<RssRule>,
+    /// Keyed by `EpisodeKey::to_storage_key`.
+    #[serde(default)]
+    pub episode_history: HashMap<String, EpisodeRecord>,
 }
 
-/// Maximum items kept per feed to prevent storage bloat
-pub const MAX_ITEMS_PER_FEED: usize = 500;
-/// Default update interval in seconds (30 minutes)
-pub const DEFAULT_UPDATE_INTERVAL_SECS: u64 = 1800;
-/// Auto-disable feed after this many consecutive failures
-pub const MAX_CONSECUTIVE_ERRORS: u32 = 10;
+/// Lossy deserializer: if the rules field cannot be parsed (e.g. v1 schema
+/// from an existing store), drop the field silently rather than failing the
+/// whole store load. Acceptable in dev-stage where v1 rules are dropped
+fn deserialize_rules_lossy<'de, D>(deserializer: D) -> Result<Vec<RssRule>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    Ok(serde_json::from_value(value).unwrap_or_default())
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RuleEvaluation {
+    pub matched: bool,
+    pub score: i32,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DryRunMatch {
+    pub item_id: String,
+    pub feed_id: String,
+    pub title: String,
+    pub matched: bool,
+    pub score: i32,
+    pub reason: String,
+}
