@@ -86,7 +86,11 @@ impl TaskManager {
         events: EventBroadcaster,
     ) -> Result<Self, String> {
         let session = SessionManager::new(config_dir);
-        let saved_tasks = session.load();
+        let mut saved_tasks = session.load();
+
+        if options.purge_record_on_start() {
+            saved_tasks.retain(|t| !t.status.is_stopped());
+        }
 
         let output_dir = options.dir();
         let tuning = super::torrent::BtTuning {
@@ -184,7 +188,7 @@ impl TaskManager {
         // Without this, librqbit auto-resumes them on startup and writes files
         // even though the user has deleted or never had the task in Motrix.
         for (librqbit_id, info_hash) in orphans {
-            match te.remove(librqbit_id).await {
+            match te.remove(librqbit_id, true).await {
                 Ok(()) => log::info!(
                     "Purged orphan persisted torrent: librqbit_id={} ({})",
                     librqbit_id,
@@ -2057,7 +2061,7 @@ impl TaskManager {
             if let Some(&tid) = tid_guard.get(gid) {
                 let te_guard = self.torrent_engine.read().await;
                 if let Some(ref te) = *te_guard {
-                    te.remove(tid).await.ok();
+                    te.remove(tid, true).await.ok();
                 }
             }
         }
@@ -2544,11 +2548,40 @@ impl TaskManager {
     }
 
     pub async fn purge_download_result(&self) {
+        // Collect gids of stopped torrent tasks so we can drop their bt-session
+        // entries before evicting them from the task list. Without this, the
+        // bt session keeps the info-hash registered in `by_hash` and a later
+        // re-add of the same magnet short-circuits to `AlreadyManaged` with
+        // the old finished handle (UI shows "completed" with no download).
+        let stopped_torrent_gids: Vec<String> = {
+            let tasks = self.tasks.read().await;
+            tasks
+                .iter()
+                .filter(|t| t.status.is_stopped() && t.kind == TaskKind::Torrent)
+                .map(|t| t.gid.clone())
+                .collect()
+        };
+        for gid in &stopped_torrent_gids {
+            self.drop_torrent_engine_entry(gid).await;
+        }
         let mut tasks = self.tasks.write().await;
         tasks.retain(|t| !t.status.is_stopped());
     }
 
     pub async fn remove_download_result(&self, gid: &str) -> Result<(), String> {
+        // Drop the bt-session entry first (keep files on disk — this is a
+        // "remove from history" operation, not a payload deletion). Without
+        // this, the `by_hash` map retains the info-hash and re-adding the
+        // same magnet returns the stale completed torrent until restart.
+        let is_stopped_torrent = {
+            let tasks = self.tasks.read().await;
+            tasks
+                .iter()
+                .any(|t| t.gid == gid && t.status.is_stopped() && t.kind == TaskKind::Torrent)
+        };
+        if is_stopped_torrent {
+            self.drop_torrent_engine_entry(gid).await;
+        }
         let mut tasks = self.tasks.write().await;
         let len_before = tasks.len();
         tasks.retain(|t| !(t.gid == gid && t.status.is_stopped()));
@@ -2556,6 +2589,27 @@ impl TaskManager {
             Ok(())
         } else {
             Err(format!("GID {} not found or not stopped", gid))
+        }
+    }
+
+    /// Drop a torrent task's entry from the underlying bt session WITHOUT
+    /// touching on-disk files, and clear the gid->torrent-id mapping. Used
+    /// by `remove_download_result` / `purge_download_result` to prevent
+    /// stale `by_hash` entries from blocking re-adds of the same magnet.
+    async fn drop_torrent_engine_entry(&self, gid: &str) {
+        let maybe_tid = self.torrent_ids.write().await.remove(gid);
+        if let Some(tid) = maybe_tid {
+            let te_guard = self.torrent_engine.read().await;
+            if let Some(ref te) = *te_guard {
+                if let Err(e) = te.remove(tid, false).await {
+                    log::warn!(
+                        "[task:{}] failed to drop torrent engine entry (id={}): {}",
+                        gid,
+                        tid,
+                        e
+                    );
+                }
+            }
         }
     }
 

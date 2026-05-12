@@ -62,6 +62,29 @@ const MAX_PENDING_DIALS: usize = 256;
 /// keeps pipeline utilisation high all the way through the last 1 %
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(8);
 
+/// Disconnect peers that have not sent us any wire message for this long.
+/// The reader task has no per-read timeout post-handshake (a deliberate
+/// choice to keep the hot-path zero-cost), so without an idle eviction in
+/// the torrent loop a peer killed by a NAT idle expiry, an ISP-throttled
+/// black-holed TCP session, or a peer that crashed without sending RST
+/// will sit in `peers` forever, occupying one of the `max_peers` slots
+/// and excluding fresh tracker / DHT addresses from being dialled. Once
+/// enough peers reach this state — typical on long-running downloads
+/// against swarms with many flaky NAT-ed leechers — `peers.len() ==
+/// max_peers` and the global download rate collapses even while the UI
+/// still reports a healthy peer count. 180 s is 2× our 90 s KeepAlive
+/// cadence so a healthy peer that only ever sends KeepAlive (e.g. two
+/// idle seeders sharing nothing) is never evicted in error
+const PEER_IDLE_TIMEOUT: Duration = Duration::from_secs(180);
+
+/// A peer marked `snubbing` (one of its chunk requests timed out) is
+/// excluded from new request allocation until it delivers any Piece. If
+/// it never delivers, the soft back-off becomes a permanent slot leak —
+/// see `PEER_IDLE_TIMEOUT` for the same effect via a different path. We
+/// hard-disconnect peers that stay snubbed for this long so the slot is
+/// recycled to a peer that can actually serve us bytes
+const SNUB_EVICTION_TIMEOUT: Duration = Duration::from_secs(60);
+
 /// Per-peer message id we advertise for the BEP-9 `ut_metadata` extension.
 /// Peers send `Extended { ext_id: OUR_UT_METADATA_ID, .. }` to request a
 /// 16 KiB chunk of our raw `info` dict
@@ -213,6 +236,18 @@ struct Peer {
     /// peers — the slow-decay cause of the
     /// "speed great at first, then degrades over minutes" pattern
     snubbing: bool,
+    /// Instant we last received any wire message from this peer. Updated
+    /// on every `PeerEvent::Message` arrival; consulted by the tick to
+    /// evict peers idle past [`PEER_IDLE_TIMEOUT`]. Initialised on
+    /// adoption / handshake so a peer is never evicted before it has had
+    /// a chance to send anything
+    last_recv: Instant,
+    /// Instant the `snubbing` flag was last set, or `None` if not
+    /// snubbing. Consulted by the tick to evict peers that stay snubbed
+    /// past [`SNUB_EVICTION_TIMEOUT`] (otherwise a peer whose requests
+    /// keep timing out occupies a slot indefinitely without serving any
+    /// bytes)
+    snub_since: Option<Instant>,
     /// Per-peer message id the remote advertised for `ut_metadata` in its
     /// BEP-10 extended handshake. `None` until that handshake is received.
     /// We never *initiate* a `ut_metadata` request from the torrent loop
@@ -523,7 +558,10 @@ async fn torrent_loop(
                     // the actually-stuck peers, transiently
                     for r in &reclaimed {
                         if let Some(p) = peers.get_mut(&r.peer) {
-                            p.snubbing = true;
+                            if !p.snubbing {
+                                p.snubbing = true;
+                                p.snub_since = Some(Instant::now());
+                            }
                         }
                         unblocked_pieces.insert(r.piece);
                         // Free the peer's outstanding slot so drive_peer
@@ -552,6 +590,53 @@ async fn torrent_loop(
                     for pi in unblocked_pieces {
                         if let Ok(vpi) = lengths.validate_piece(pi) {
                             piece_tracker.clear_in_flight(vpi);
+                        }
+                    }
+                }
+                // Evict peers that have gone silent or stayed snubbed for
+                // too long. Without this sweep their slot is held until
+                // the (currently absent) reader-side timeout fires — i.e.
+                // never — so peers leak permanently and `peers.len()`
+                // saturates at `max_peers`, blocking fresh tracker / DHT
+                // addresses. This is the dominant cause of "download speed
+                // is great at first then collapses to 0 after a while":
+                // each silent / snubbed peer parks a slot, and the
+                // reclaim/snub mechanism alone can't free it because the
+                // peer never delivers anything to clear `snubbing`.
+                {
+                    let mut to_evict: Vec<u32> = Vec::new();
+                    for (&pid, p) in peers.iter() {
+                        if now.duration_since(p.last_recv) > PEER_IDLE_TIMEOUT {
+                            to_evict.push(pid);
+                            continue;
+                        }
+                        if let Some(snub_at) = p.snub_since {
+                            if now.duration_since(snub_at) > SNUB_EVICTION_TIMEOUT {
+                                to_evict.push(pid);
+                            }
+                        }
+                    }
+                    for pid in to_evict {
+                        if let Some(p) = peers.remove(&pid) {
+                            // Free the peer's address so the tracker /
+                            // DHT can re-dial it later. Drop bitfield
+                            // contributions and chunk reservations the
+                            // same way a Disconnected event would
+                            known_addrs.remove(&p.addr);
+                            let _ = p.cmd_tx.try_send(PeerCommand::Disconnect);
+                            piece_tracker.remove_peer_bitfield(&p.bitfield);
+                            let freed = chunk_tracker.release_peer(pid);
+                            for piece_idx in freed {
+                                if let Ok(vpi) = lengths.validate_piece(piece_idx) {
+                                    piece_tracker.clear_in_flight(vpi);
+                                }
+                                let should_drop = piece_assemblies
+                                    .get(&piece_idx)
+                                    .is_none_or(|a| a.received_chunks.is_empty());
+                                if should_drop {
+                                    piece_assemblies.remove(&piece_idx);
+                                }
+                            }
                         }
                     }
                 }
@@ -676,6 +761,8 @@ async fn adopt_inbound_peer(
             max_outstanding: pipeline_floor,
             received_since_grow: 0,
             snubbing: false,
+            last_recv: Instant::now(),
+            snub_since: None,
             their_ut_metadata_id: None,
             sent_ext_handshake: false,
         },
@@ -764,6 +851,8 @@ async fn process_peer_event(
                             max_outstanding: pipeline_floor,
                             received_since_grow: 0,
                             snubbing: false,
+                            last_recv: Instant::now(),
+                            snub_since: None,
                             their_ut_metadata_id: None,
                             sent_ext_handshake: false,
                         },
@@ -808,6 +897,12 @@ async fn process_peer_event(
             let Some(peer) = peers.get_mut(&pid) else {
                 return false;
             };
+            // Refresh per-peer liveness on every wire message (including
+            // KeepAlive / Choke / Have, not just Piece). The torrent loop's
+            // tick uses this to evict peers idle past PEER_IDLE_TIMEOUT
+            // and recycle their slot to a fresh dial \u2014 see the eviction
+            // sweep in the `tick.tick()` arm
+            peer.last_recv = Instant::now();
             match msg {
                 Message::Choke => peer.peer_choking = true,
                 Message::Unchoke => {
@@ -913,6 +1008,7 @@ async fn process_peer_event(
                     // session is allowed back into the request rotation
                     // as soon as it proves it can still deliver bytes
                     peer.snubbing = false;
+                    peer.snub_since = None;
                     // Adaptive pipeline grow: count successful
                     // deliveries in the current window, double the per-peer
                     // cap when 25 % of the cap has landed (cap at

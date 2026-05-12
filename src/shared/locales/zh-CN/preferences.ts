@@ -87,6 +87,7 @@ export default {
 	"prevent-sleep-while-downloading": "下载时阻止系统休眠",
 	"prevent-sleep-while-downloading-tips": "存在活动任务时保持电脑唤醒",
 	"auto-purge-record": "当应用退出时自动清除下载记录",
+	"purge-record-on-start": "当应用启动时清除下载记录",
 	ui: "界面",
 	appearance: "外观",
 	"theme-auto": "自动",
