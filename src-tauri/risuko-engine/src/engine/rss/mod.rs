@@ -137,12 +137,13 @@ impl RssManager {
         s.feeds.retain(|f| f.id != feed_id);
         s.items.remove(feed_id);
         // Strip the removed feed id from every rule, then drop any rule that
-        // ends up with no scoped feeds at all (an empty list means "all feeds"
-        // — preserving such rules would silently re-broaden their scope)
-        for rule in s.rules.iter_mut() {
-            rule.feed_ids.retain(|f| f != feed_id);
-        }
-        s.rules.retain(|r| !r.feed_ids.is_empty());
+        // started with a non-empty feed list and became empty (an empty list
+        // means "all feeds" — rules that were already global must be preserved)
+        s.rules.retain_mut(|r| {
+            let was_scoped = !r.feed_ids.is_empty();
+            r.feed_ids.retain(|f| f != feed_id);
+            !was_scoped || !r.feed_ids.is_empty()
+        });
         drop(s);
         self.save().await
     }
@@ -943,6 +944,7 @@ impl RssManager {
             return;
         };
 
+        let file_path_for_history = download_path.clone();
         let _ = self
             .mark_item_downloaded(feed_id, &item.id, download_path)
             .await;
@@ -968,7 +970,7 @@ impl RssManager {
                     feed_id: feed_id.to_string(),
                     score,
                     downloaded_at: now,
-                    file_path: None,
+                    file_path: file_path_for_history,
                     rule_id: Some(rule.id.clone()),
                 },
             );

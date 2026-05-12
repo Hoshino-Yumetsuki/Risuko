@@ -77,6 +77,8 @@ export default {
 	"rule-stats": "Matched {{matched}}, downloaded {{downloaded}}",
 	"rule-add-pattern": "Add pattern",
 	"rule-add-tag": "Add tag",
+	"rule-placeholder-seasons": "1, 2, 3",
+	"rule-placeholder-quality": "1080p, x265, WEB-DL, ...",
 	// v2: reader UX
 	"density-compact": "Compact",
 	"density-comfortable": "Comfortable",

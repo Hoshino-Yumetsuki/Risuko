@@ -339,10 +339,8 @@ export default {
 			if (store.currentFeedId && store.currentFeedId !== "__downloaded__") {
 				await store.markAllRead(store.currentFeedId);
 			} else {
-				// Virtual/filtered view: mark only visible items, not all feeds
-				for (const item of store.currentItems) {
-					await store.markItemRead(item.feed_id, item.id);
-				}
+				// Virtual/filtered view: mark only visible items in one bulk call
+				await store.markItemsReadBulk(store.currentItems);
 			}
 		},
 	},

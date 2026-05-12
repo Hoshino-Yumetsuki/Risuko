@@ -46,11 +46,43 @@ function loadItemsPerPage(): number {
 	return DEFAULT_ITEMS_PER_PAGE;
 }
 
+const VALID_DENSITY_MODES: DensityMode[] = ["compact", "comfortable"];
+const VALID_READER_MODES: ReaderMode[] = ["split", "list"];
+const VALID_SORT_MODES: SortMode[] = [
+	"newest",
+	"oldest",
+	"size-desc",
+	"rule-match",
+];
+
 function loadPrefs(): ReaderPrefs {
 	try {
 		const raw = localStorage.getItem(PREFS_STORAGE_KEY);
 		if (raw) {
-			return { ...DEFAULT_PREFS, ...JSON.parse(raw) };
+			const parsed = JSON.parse(raw) as Record<string, unknown>;
+			const prefs: ReaderPrefs = { ...DEFAULT_PREFS };
+			if (VALID_DENSITY_MODES.includes(parsed.densityMode as DensityMode)) {
+				prefs.densityMode = parsed.densityMode as DensityMode;
+			}
+			if (VALID_READER_MODES.includes(parsed.readerMode as ReaderMode)) {
+				prefs.readerMode = parsed.readerMode as ReaderMode;
+			}
+			if (typeof parsed.unreadOnly === "boolean") {
+				prefs.unreadOnly = parsed.unreadOnly;
+			}
+			if (typeof parsed.matchedOnly === "boolean") {
+				prefs.matchedOnly = parsed.matchedOnly;
+			}
+			if (VALID_SORT_MODES.includes(parsed.sortMode as SortMode)) {
+				prefs.sortMode = parsed.sortMode as SortMode;
+			}
+			if (typeof parsed.groupByEpisode === "boolean") {
+				prefs.groupByEpisode = parsed.groupByEpisode;
+			}
+			if (typeof parsed.markReadOnScroll === "boolean") {
+				prefs.markReadOnScroll = parsed.markReadOnScroll;
+			}
+			return prefs;
 		}
 	} catch {
 		// ignore
@@ -476,6 +508,39 @@ export const useRssStore = defineStore("rss", {
 					await api.markRssItemsRead(entries);
 				} catch (_e) {
 					// Revert on failure
+					for (const [fid, itemId] of entries) {
+						const it = this.items[fid]?.find((i) => i.id === itemId);
+						if (it) {
+							it.is_read = false;
+						}
+					}
+					if (this.unreadOnly) {
+						this.ensurePageInRange();
+					}
+				}
+			}
+		},
+
+		async markItemsReadBulk(items: { feed_id: string; id: string }[]) {
+			const entries: [string, string][] = [];
+			for (const { feed_id, id } of items) {
+				const feedItems = this.items[feed_id];
+				if (!feedItems) {
+					continue;
+				}
+				const item = feedItems.find((i) => i.id === id);
+				if (item && !item.is_read) {
+					item.is_read = true;
+					entries.push([feed_id, id]);
+				}
+			}
+			if (this.unreadOnly) {
+				this.ensurePageInRange();
+			}
+			if (entries.length > 0) {
+				try {
+					await api.markRssItemsRead(entries);
+				} catch (_e) {
 					for (const [fid, itemId] of entries) {
 						const it = this.items[fid]?.find((i) => i.id === itemId);
 						if (it) {

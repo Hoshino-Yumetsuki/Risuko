@@ -76,6 +76,8 @@ export default {
 	"rule-stats": "匹配 {{matched}}，下载 {{downloaded}}",
 	"rule-add-pattern": "添加模式",
 	"rule-add-tag": "添加标签",
+	"rule-placeholder-seasons": "1, 2, 3",
+	"rule-placeholder-quality": "1080p, x265, WEB-DL, ...",
 	// v2: reader UX
 	"density-compact": "紧凑",
 	"density-comfortable": "舒适",

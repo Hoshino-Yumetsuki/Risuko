@@ -441,6 +441,7 @@ pub async fn download_rss_item_tracked(
                             "itemId": monitor_item_id,
                             "gid": monitor_gid,
                             "downloadPath": monitor_download_path,
+                            "kind": "media",
                         }),
                     );
                     return;
@@ -476,6 +477,7 @@ pub async fn download_rss_item_tracked(
         "gid": gid,
         "extraGids": extra_gids,
         "downloadPath": download_path,
+        "kind": "media",
     }))
 }
 

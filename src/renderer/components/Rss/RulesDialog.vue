@@ -161,7 +161,7 @@
                 <Input
                   :model-value="seasonsText"
                   @update:model-value="(v: string | number) => updateSeasons(String(v))"
-                  placeholder="1, 2, 3"
+                  :placeholder="$t('rss.rule-placeholder-seasons')"
                 />
               </div>
               <div class="rss-field">
@@ -178,20 +178,20 @@
                 :label="$t('rss.rule-quality-prefs')"
                 :chips="form.quality_preferences"
                 @update="(v: string[]) => (form.quality_preferences = v)"
-                :placeholder="QUALITY_PLACEHOLDER"
+                :placeholder="$t('rss.rule-placeholder-quality')"
                 reorder
               />
               <ChipList
                 :label="$t('rss.rule-quality-required')"
                 :chips="form.required_qualities"
                 @update="(v: string[]) => (form.required_qualities = v)"
-                :placeholder="QUALITY_PLACEHOLDER"
+                :placeholder="$t('rss.rule-placeholder-quality')"
               />
               <ChipList
                 :label="$t('rss.rule-quality-forbidden')"
                 :chips="form.forbidden_qualities"
                 @update="(v: string[]) => (form.forbidden_qualities = v)"
-                :placeholder="QUALITY_PLACEHOLDER"
+                :placeholder="$t('rss.rule-placeholder-quality')"
               />
               <label class="rss-toggle">
                 <Switch v-model="form.upgrade_existing" />
@@ -288,8 +288,6 @@ import ChipList from "./ChipList.vue";
 import EpisodeSelectorEditor from "./EpisodeSelectorEditor.vue";
 import PatternList from "./PatternList.vue";
 
-const QUALITY_PLACEHOLDER = "1080p, x265, WEB-DL, ...";
-
 export default {
 	name: "mo-rss-rules-dialog",
 	components: {
@@ -324,7 +322,6 @@ export default {
 			currentTab: "general",
 			dryRunResults: [] as DryRunMatch[],
 			dryRunBusy: false,
-			QUALITY_PLACEHOLDER,
 		};
 	},
 	computed: {
