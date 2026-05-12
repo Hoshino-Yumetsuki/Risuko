@@ -62,11 +62,6 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
-      - name: Install cross for Linux baseline CLI builds
-        if: startsWith(matrix.os, 'ubuntu')
-        shell: bash
-        run: cargo install cross --locked
-
       - name: Install Linux build dependencies
         if: startsWith(matrix.os, 'ubuntu')
         shell: bash
@@ -232,12 +227,7 @@ jobs:
       - name: Build risuko-cli binary
         if: matrix.target != 'i686-pc-windows-msvc'
         working-directory: src-tauri
-        run: |
-          if [[ "${{ runner.os }}" == "Linux" ]]; then
-            cross build --release --target ${{ matrix.target }} -p risuko-cli
-          else
-            cargo build --release --target ${{ matrix.target }} -p risuko-cli
-          fi
+        run: cargo build --release --target ${{ matrix.target }} -p risuko-cli
 
       - name: Package risuko-cli binary (unix)
         if: matrix.target != 'i686-pc-windows-msvc' && runner.os != 'Windows'
