@@ -69,18 +69,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libssl-dev pkg-config
 
-      - name: Install cross for Linux baseline builds
-        if: startsWith(matrix.os, 'ubuntu')
-        run: cargo install cross --locked
-
       - name: Build risuko-cli
         working-directory: src-tauri
-        run: |
-          if [[ "${{ runner.os }}" == "Linux" ]]; then
-            cross build --release --target ${{ matrix.target }} -p risuko-cli
-          else
-            cargo build --release --target ${{ matrix.target }} -p risuko-cli
-          fi
+        run: cargo build --release --target ${{ matrix.target }} -p risuko-cli
 
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4
@@ -161,18 +152,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libssl-dev pkg-config
 
-      - name: Install cross for Linux baseline builds
-        if: startsWith(matrix.os, 'ubuntu')
-        run: cargo install cross --locked
-
       - name: Build risuko-napi
         working-directory: src-tauri
-        run: |
-          if [[ "${{ runner.os }}" == "Linux" ]]; then
-            cross build --release --target ${{ matrix.target }} -p risuko-napi
-          else
-            cargo build --release --target ${{ matrix.target }} -p risuko-napi
-          fi
+        run: cargo build --release --target ${{ matrix.target }} -p risuko-napi
 
       - name: Rename .node artifact
         shell: bash
