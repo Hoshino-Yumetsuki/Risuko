@@ -47,7 +47,32 @@ fn init_logging(
     guard
 }
 
+/// Apply environment workarounds for known WebKitGTK/Linux rendering issues
+/// before any GTK/WebKit code initializes. Only sets variables that are not
+/// already defined, so users can override.
+#[cfg(target_os = "linux")]
+fn apply_linux_webkit_workarounds() {
+    // WebKitGTK's DMA-BUF renderer (default since 2.42) frequently fails to
+    // initialize EGL/GBM on NVIDIA, virtualized GPUs, Wayland sessions without
+    // a working GBM backend, or older Mesa stacks. The failure manifests as:
+    //   "Could not create GBM EGL display: EGL_NOT_INITIALIZED. Aborting..."
+    // followed by SIGABRT before the window is shown.
+    // Disabling DMA-BUF forces the legacy GLES path which is far more
+    // compatible. See: https://github.com/tauri-apps/tauri/issues/9304
+    for (key, value) in [
+        ("WEBKIT_DISABLE_DMABUF_RENDERER", "1"),
+        ("WEBKIT_DISABLE_COMPOSITING_MODE", "1"),
+    ] {
+        if std::env::var_os(key).is_none() {
+            std::env::set_var(key, value);
+        }
+    }
+}
+
 pub fn run() {
+    #[cfg(target_os = "linux")]
+    apply_linux_webkit_workarounds();
+
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_dialog::init())
