@@ -417,21 +417,40 @@ pub async fn download_rss_item_tracked(
             };
 
             let status_result = engine
-                .tell_status(&monitor_gid, &["status".to_string()])
+                .tell_status(
+                    &monitor_gid,
+                    &["status".to_string(), "dir".to_string(), "files".to_string()],
+                )
                 .await;
 
-            let status = match &status_result {
-                Ok(val) => val.get("status").and_then(|s| s.as_str()).unwrap_or(""),
+            let status_val = match status_result {
+                Ok(val) => val,
                 Err(_) => break,
             };
+            let status = status_val
+                .get("status")
+                .and_then(|s| s.as_str())
+                .unwrap_or("");
 
             match status {
                 "complete" => {
+                    // Prefer the pre-computed path from opts; when absent, derive
+                    // it from the completed task's file list reported by the engine.
+                    let resolved_path = monitor_download_path.clone().or_else(|| {
+                        status_val
+                            .get("files")
+                            .and_then(|f| f.as_array())
+                            .and_then(|a| a.first())
+                            .and_then(|f| f.get("path"))
+                            .and_then(|p| p.as_str())
+                            .filter(|p| !p.is_empty())
+                            .map(|p| p.to_string())
+                    });
                     let _ = monitor_mgr
                         .mark_item_downloaded(
                             &monitor_feed_id,
                             &monitor_item_id,
-                            monitor_download_path.clone(),
+                            resolved_path.clone(),
                         )
                         .await;
                     let _ = handle.emit(
@@ -440,7 +459,7 @@ pub async fn download_rss_item_tracked(
                             "feedId": monitor_feed_id,
                             "itemId": monitor_item_id,
                             "gid": monitor_gid,
-                            "downloadPath": monitor_download_path,
+                            "downloadPath": resolved_path,
                             "kind": "media",
                         }),
                     );

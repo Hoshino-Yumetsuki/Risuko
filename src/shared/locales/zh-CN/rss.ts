@@ -78,6 +78,8 @@ export default {
 	"rule-add-tag": "添加标签",
 	"rule-placeholder-seasons": "1, 2, 3",
 	"rule-placeholder-quality": "1080p, x265, WEB-DL, ...",
+	"rule-placeholder-filename-template":
+		"{series} S{season:02}E{episode:02} [{quality}].{ext}",
 	// v2: reader UX
 	"density-compact": "紧凑",
 	"density-comfortable": "舒适",

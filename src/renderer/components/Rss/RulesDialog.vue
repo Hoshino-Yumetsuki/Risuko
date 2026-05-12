@@ -212,7 +212,7 @@
                 <Input
                   :model-value="form.filename_template ?? ''"
                   @update:model-value="(v: string | number) => (form.filename_template = String(v).trim() || null)"
-                  placeholder="{series} S{season:02}E{episode:02} [{quality}].{ext}"
+                  :placeholder="$t('rss.rule-placeholder-filename-template')"
                 />
               </div>
             </TabsContent>
