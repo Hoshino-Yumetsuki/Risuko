@@ -51,7 +51,7 @@
 		"@bany/curl-to-json": "^1.2.10",
 		"@tailwindcss/vite": "^4.3.0",
 		"@tauri-apps/cli": "^2.11.1",
-		"@types/node": "^25.6.2",
+		"@types/node": "^25.7.0",
 		"@vitejs/plugin-vue": "^6.0.6",
 		"@vue/compiler-sfc": "^3.5.34",
 		"axios": "^1.16.0",
