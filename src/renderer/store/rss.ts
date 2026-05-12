@@ -436,28 +436,56 @@ export const useRssStore = defineStore("rss", {
 			}
 			const item = feedItems.find((i) => i.id === itemId);
 			if (item && !item.is_read) {
+				// Optimistic update
 				item.is_read = true;
-				// When unread filtering is on, flipping an item to read may
-				// shrink the visible list past the current page boundary
 				if (this.unreadOnly) {
 					this.ensurePageInRange();
+				}
+				try {
+					await api.markRssItemRead(feedId, itemId);
+				} catch (_e) {
+					// Revert on failure
+					item.is_read = false;
+					if (this.unreadOnly) {
+						this.ensurePageInRange();
+					}
 				}
 			}
 		},
 
 		async markAllRead(feedId?: string) {
 			const feedIds = feedId ? [feedId] : Object.keys(this.items);
+			const entries: [string, string][] = [];
 			for (const fid of feedIds) {
 				const feedItems = this.items[fid];
 				if (!feedItems) {
 					continue;
 				}
 				for (const item of feedItems) {
-					item.is_read = true;
+					if (!item.is_read) {
+						item.is_read = true;
+						entries.push([fid, item.id]);
+					}
 				}
 			}
 			if (this.unreadOnly) {
 				this.ensurePageInRange();
+			}
+			if (entries.length > 0) {
+				try {
+					await api.markRssItemsRead(entries);
+				} catch (_e) {
+					// Revert on failure
+					for (const [fid, itemId] of entries) {
+						const it = this.items[fid]?.find((i) => i.id === itemId);
+						if (it) {
+							it.is_read = false;
+						}
+					}
+					if (this.unreadOnly) {
+						this.ensurePageInRange();
+					}
+				}
 			}
 		},
 

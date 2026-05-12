@@ -337,6 +337,8 @@ pub fn run() {
             commands::rss_cmds::clear_rss_download,
             commands::rss_cmds::read_rss_download,
             commands::rss_cmds::download_rss_item_tracked,
+            commands::rss_cmds::mark_rss_item_read,
+            commands::rss_cmds::mark_rss_items_read,
             commands::upload_cmds::list_upload_sinks,
             commands::upload_cmds::add_upload_sink,
             commands::upload_cmds::update_upload_sink,

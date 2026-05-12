@@ -621,6 +621,14 @@ export default class Api {
 		return invoke("download_rss_item_tracked", { feedId, itemId, options });
 	}
 
+	markRssItemRead(feedId: string, itemId: string) {
+		return invoke("mark_rss_item_read", { feedId, itemId });
+	}
+
+	markRssItemsRead(entries: [string, string][]) {
+		return invoke("mark_rss_items_read", { entries });
+	}
+
 	inferOutFromUri(uri: string) {
 		return invoke<string>("infer_out_from_uri", { uri });
 	}

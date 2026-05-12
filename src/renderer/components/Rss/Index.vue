@@ -336,11 +336,14 @@ export default {
 		},
 		async handleMarkAllRead() {
 			const store = useRssStore();
-			await store.markAllRead(
-				store.currentFeedId && store.currentFeedId !== "__downloaded__"
-					? store.currentFeedId
-					: undefined,
-			);
+			if (store.currentFeedId && store.currentFeedId !== "__downloaded__") {
+				await store.markAllRead(store.currentFeedId);
+			} else {
+				// Virtual/filtered view: mark only visible items, not all feeds
+				for (const item of store.currentItems) {
+					await store.markItemRead(item.feed_id, item.id);
+				}
+			}
 		},
 	},
 };

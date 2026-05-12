@@ -5,14 +5,18 @@
 //! metadata (host, label, protocol, timestamps) stays in `user.json` so the
 //! frontend can list and match credentials without unlocking the keychain
 //!
-//! Backend: `keyring` crate — macOS Keychain, Windows Credential Manager,
-//! Linux Secret Service. When the OS backend is unavailable (headless Linux
-//! without D-Bus, sandboxed environments, etc.) `VaultManager::probe()`
-//! reports `enabled = false` and the renderer transparently falls back to
-//! storing secrets inline in `user.json` (legacy behavior)
+//! Backend: `keyring-core` plus a platform-native store crate — Apple
+//! Keychain on macOS/iOS, Windows Credential Manager on Windows, and the
+//! D-Bus Secret Service on other Unix platforms. When the OS backend is
+//! unavailable (headless Linux without D-Bus, sandboxed environments, etc.)
+//! `VaultManager::probe()` reports `enabled = false` and the renderer
+//! transparently falls back to storing secrets inline in `user.json`
+//! (legacy behavior)
 
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Once;
 
+use keyring_core::{Entry, Error};
 use serde_json::Value;
 
 const SERVICE: &str = "risuko-credentials";
@@ -26,12 +30,58 @@ const SINK_SERVICE: &str = "risuko-sinks";
 /// for keychain access on every launch
 const PROBE_ACCOUNT: &str = "__probe__";
 
+/// Install the platform-native credential store as the keyring-core default.
+/// Idempotent: safe to call multiple times. Logs and swallows construction
+/// errors so callers fall back to the disabled vault path
+fn ensure_default_store() {
+    static INIT: Once = Once::new();
+    INIT.call_once(|| match build_default_store() {
+        Ok(store) => keyring_core::set_default_store(store),
+        Err(e) => log::warn!("Credential vault: failed to init keystore: {e}"),
+    });
+}
+
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+fn build_default_store() -> Result<std::sync::Arc<keyring_core::CredentialStore>, Error> {
+    apple_native_keyring_store::keychain::Store::new()
+        .map(|s| s as std::sync::Arc<keyring_core::CredentialStore>)
+}
+
+#[cfg(target_os = "windows")]
+fn build_default_store() -> Result<std::sync::Arc<keyring_core::CredentialStore>, Error> {
+    windows_native_keyring_store::Store::new()
+        .map(|s| s as std::sync::Arc<keyring_core::CredentialStore>)
+}
+
+#[cfg(all(
+    unix,
+    not(any(target_os = "macos", target_os = "ios", target_os = "android"))
+))]
+fn build_default_store() -> Result<std::sync::Arc<keyring_core::CredentialStore>, Error> {
+    dbus_secret_service_keyring_store::Store::new()
+        .map(|s| s as std::sync::Arc<keyring_core::CredentialStore>)
+}
+
+#[cfg(not(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "windows",
+    all(
+        unix,
+        not(any(target_os = "macos", target_os = "ios", target_os = "android"))
+    ),
+)))]
+fn build_default_store() -> Result<std::sync::Arc<keyring_core::CredentialStore>, Error> {
+    Err(Error::NoDefaultStore)
+}
+
 pub struct VaultManager {
     enabled: AtomicBool,
 }
 
 impl VaultManager {
     pub fn new() -> Self {
+        ensure_default_store();
         let mgr = Self {
             enabled: AtomicBool::new(false),
         };
@@ -60,9 +110,9 @@ impl VaultManager {
     /// previous implementation performed on every launch, which could
     /// trigger OS keychain access prompts and audit-log noise
     fn probe(&self) {
-        let ok = match keyring::Entry::new(SERVICE, PROBE_ACCOUNT) {
+        let ok = match Entry::new(SERVICE, PROBE_ACCOUNT) {
             Ok(entry) => match entry.get_password() {
-                Ok(_) | Err(keyring::Error::NoEntry) => true,
+                Ok(_) | Err(Error::NoEntry) => true,
                 Err(_) => false,
             },
             Err(_) => false,
@@ -111,7 +161,7 @@ impl VaultManager {
             return Err("vault not available".to_string());
         }
         let json = serde_json::to_string(secrets).map_err(|e| e.to_string())?;
-        let entry = keyring::Entry::new(service, account).map_err(|e| e.to_string())?;
+        let entry = Entry::new(service, account).map_err(|e| e.to_string())?;
         entry.set_password(&json).map_err(|e| e.to_string())
     }
 
@@ -119,13 +169,13 @@ impl VaultManager {
         if !self.enabled() {
             return Ok(None);
         }
-        let entry = keyring::Entry::new(service, account).map_err(|e| e.to_string())?;
+        let entry = Entry::new(service, account).map_err(|e| e.to_string())?;
         match entry.get_password() {
             Ok(json) => {
                 let v: Value = serde_json::from_str(&json).map_err(|e| e.to_string())?;
                 Ok(Some(v))
             }
-            Err(keyring::Error::NoEntry) => Ok(None),
+            Err(Error::NoEntry) => Ok(None),
             Err(e) => Err(e.to_string()),
         }
     }
@@ -134,9 +184,9 @@ impl VaultManager {
         if !self.enabled() {
             return Ok(());
         }
-        let entry = keyring::Entry::new(service, account).map_err(|e| e.to_string())?;
+        let entry = Entry::new(service, account).map_err(|e| e.to_string())?;
         match entry.delete_credential() {
-            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+            Ok(()) | Err(Error::NoEntry) => Ok(()),
             Err(e) => Err(e.to_string()),
         }
     }

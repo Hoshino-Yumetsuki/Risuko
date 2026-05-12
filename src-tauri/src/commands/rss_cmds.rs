@@ -511,3 +511,22 @@ pub async fn parse_rss_item_title(title: String) -> Result<Value, String> {
     let parsed = crate::engine::rss::parser::parse_title(&title);
     serde_json::to_value(parsed).map_err(|e| e.to_string())
 }
+
+#[tauri::command]
+pub async fn mark_rss_item_read(
+    state: State<'_, AppState>,
+    feed_id: String,
+    item_id: String,
+) -> Result<(), String> {
+    let mgr = get_rss(&state)?;
+    mgr.mark_item_read(&feed_id, &item_id).await
+}
+
+#[tauri::command]
+pub async fn mark_rss_items_read(
+    state: State<'_, AppState>,
+    entries: Vec<(String, String)>,
+) -> Result<(), String> {
+    let mgr = get_rss(&state)?;
+    mgr.mark_items_read(entries).await
+}

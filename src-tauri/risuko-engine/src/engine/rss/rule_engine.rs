@@ -1,6 +1,6 @@
 //! Rule evaluation: pure functions over `RssRule`, `RssItem`, `ParsedMeta`
 
-use globset::{Glob, GlobMatcher};
+use globset::{GlobBuilder, GlobMatcher};
 use regex::Regex;
 
 use super::parser::normalize_series;
@@ -174,14 +174,7 @@ fn pattern_matches(p: &Pattern, text: &str) -> bool {
             normalize(text, p.case_sensitive).contains(&normalize(&p.value, p.case_sensitive))
         }
         PatternKind::Glob => match build_glob(&p.value, p.case_sensitive) {
-            Some(matcher) => {
-                let candidate = if p.case_sensitive {
-                    text.to_string()
-                } else {
-                    text.to_lowercase()
-                };
-                matcher.is_match(&candidate)
-            }
+            Some(matcher) => matcher.is_match(text),
             None => false,
         },
         PatternKind::Regex => {
@@ -198,12 +191,11 @@ fn pattern_matches(p: &Pattern, text: &str) -> bool {
 }
 
 fn build_glob(value: &str, case_sensitive: bool) -> Option<GlobMatcher> {
-    let normalized = if case_sensitive {
-        value.to_string()
-    } else {
-        value.to_lowercase()
-    };
-    Glob::new(&normalized).ok().map(|g| g.compile_matcher())
+    GlobBuilder::new(value)
+        .case_insensitive(!case_sensitive)
+        .build()
+        .ok()
+        .map(|g| g.compile_matcher())
 }
 
 fn episode_in_selector(sel: &EpisodeSelector, ep: Option<u32>) -> bool {

@@ -58,9 +58,8 @@ export default {
 	emits: ["update"],
 	methods: {
 		keyFor(p: Pattern, idx: number): string {
-			// Compose a stable per-pattern identifier so add/remove doesn't reuse
-			// child state from a sibling row that shifted into the same index
-			return `${p.kind}::${p.value}::${idx}`;
+			// Exclude p.value so typing doesn't remount the input
+			return `${p.kind}::${idx}`;
 		},
 		emit(next: Pattern[]) {
 			this.$emit("update", next);

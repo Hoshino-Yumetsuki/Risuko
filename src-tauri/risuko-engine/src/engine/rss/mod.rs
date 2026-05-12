@@ -320,6 +320,32 @@ impl RssManager {
         self.save().await
     }
 
+    pub async fn mark_item_read(&self, feed_id: &str, item_id: &str) -> Result<(), String> {
+        let mut s = self.store.lock().await;
+        if let Some(items) = s.items.get_mut(feed_id) {
+            if let Some(item) = items.iter_mut().find(|i| i.id == item_id) {
+                item.is_read = true;
+            }
+        }
+        drop(s);
+        self.save().await
+    }
+
+    /// Mark multiple items read in a single save. `entries` is a list of
+    /// `(feed_id, item_id)` pairs.
+    pub async fn mark_items_read(&self, entries: Vec<(String, String)>) -> Result<(), String> {
+        let mut s = self.store.lock().await;
+        for (feed_id, item_id) in &entries {
+            if let Some(items) = s.items.get_mut(feed_id.as_str()) {
+                if let Some(item) = items.iter_mut().find(|i| i.id == *item_id) {
+                    item.is_read = true;
+                }
+            }
+        }
+        drop(s);
+        self.save().await
+    }
+
     pub async fn clear_item_download(&self, feed_id: &str, item_id: &str) -> Result<(), String> {
         let mut s = self.store.lock().await;
         let mut path_to_delete: Option<String> = None;
@@ -735,8 +761,7 @@ impl RssManager {
             // Fan out inline media + the (thumbnail) enclosure as siblings
             let mut media_opts = opts.clone();
             media_opts.remove("out");
-            let mut queued: std::collections::BTreeSet<String> =
-                std::collections::BTreeSet::new();
+            let mut queued: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
             for extra in item
                 .enclosure_url
                 .iter()
@@ -762,10 +787,13 @@ impl RssManager {
                     return;
                 }
             };
-            if let Err(e) = manager.add_http_task(vec![url.clone()], opts.clone()).await {
-                log::warn!("Auto-download failed for '{}': {}", item.title, e);
-                return;
-            }
+            let gid = match manager.add_http_task(vec![url.clone()], opts.clone()).await {
+                Ok(g) => g,
+                Err(e) => {
+                    log::warn!("Auto-download failed for '{}': {}", item.title, e);
+                    return;
+                }
+            };
             // Fan inline media (images / extra enclosures) out as separate
             // tasks so feeds whose primary enclosure is a thumbnail still
             // capture the full payload set
@@ -782,7 +810,137 @@ impl RssManager {
                     log::warn!("Auto-download extra media failed for '{}': {}", extra, e);
                 }
             }
-            None
+
+            // Spawn a monitor task: wait for the primary download to complete,
+            // then record the actual on-disk path and update episode history.
+            // This mirrors the pattern in download_rss_item_tracked so that
+            // get_item_download_path and open-file affordances work correctly.
+            let mon_store = Arc::clone(&self.store);
+            let mon_storage = Arc::clone(&self.storage);
+            let mon_feed_id = feed_id.to_string();
+            let mon_item_id = item.id.clone();
+            let mon_item_title = item.title.clone();
+            let mon_rule_id = rule.id.clone();
+            let mon_rule_name = rule.name.clone();
+            let mon_now = now;
+            let mon_score = score;
+            let mon_key = key.clone();
+            tokio::spawn(async move {
+                const POLL_INTERVAL: tokio::time::Duration = tokio::time::Duration::from_secs(1);
+                const MAX_POLLS: usize = 3600;
+
+                for _ in 0..MAX_POLLS {
+                    tokio::time::sleep(POLL_INTERVAL).await;
+
+                    let engine = match super::get_manager().await {
+                        Some(m) => m,
+                        None => break,
+                    };
+
+                    let status_result = engine
+                        .tell_status(
+                            &gid,
+                            &["status".to_string(), "dir".to_string(), "files".to_string()],
+                        )
+                        .await;
+
+                    let status_val = match status_result {
+                        Ok(v) => v,
+                        Err(_) => break,
+                    };
+                    let status = status_val
+                        .get("status")
+                        .and_then(|s| s.as_str())
+                        .unwrap_or("");
+
+                    match status {
+                        "complete" => {
+                            // Derive final path from the first file entry
+                            let download_path = status_val
+                                .get("files")
+                                .and_then(|f| f.as_array())
+                                .and_then(|a| a.first())
+                                .and_then(|f| f.get("path"))
+                                .and_then(|p| p.as_str())
+                                .filter(|p| !p.is_empty())
+                                .map(|p| p.to_string());
+
+                            let mut s = mon_store.lock().await;
+                            if let Some(items) = s.items.get_mut(&mon_feed_id) {
+                                if let Some(it) = items.iter_mut().find(|i| i.id == mon_item_id) {
+                                    it.is_downloaded = true;
+                                    it.is_read = true;
+                                    it.download_path = download_path.clone();
+                                    it.matched_rule_id = Some(mon_rule_id.clone());
+                                }
+                            }
+                            if let Some(rule_mut) = s.rules.iter_mut().find(|r| r.id == mon_rule_id)
+                            {
+                                rule_mut.stats.last_matched_at = Some(mon_now);
+                                rule_mut.stats.match_count =
+                                    rule_mut.stats.match_count.saturating_add(1);
+                                rule_mut.stats.download_count =
+                                    rule_mut.stats.download_count.saturating_add(1);
+                            }
+                            if let Some(k) = mon_key {
+                                let storage_key = k.to_storage_key();
+                                s.episode_history.insert(
+                                    storage_key,
+                                    EpisodeRecord {
+                                        item_id: mon_item_id.clone(),
+                                        feed_id: mon_feed_id.clone(),
+                                        score: mon_score,
+                                        downloaded_at: mon_now,
+                                        file_path: download_path,
+                                        rule_id: Some(mon_rule_id.clone()),
+                                    },
+                                );
+                                if s.episode_history.len() > MAX_EPISODE_HISTORY {
+                                    let mut entries: Vec<(String, u64)> = s
+                                        .episode_history
+                                        .iter()
+                                        .map(|(k, v)| (k.clone(), v.downloaded_at))
+                                        .collect();
+                                    entries.sort_by_key(|(_, ts)| *ts);
+                                    let excess = s.episode_history.len() - MAX_EPISODE_HISTORY;
+                                    for (k, _) in entries.into_iter().take(excess) {
+                                        s.episode_history.remove(&k);
+                                    }
+                                }
+                            }
+                            let wrapper = serde_json::json!({ "data": *s });
+                            drop(s);
+                            let _ = mon_storage.save(RSS_STORE_KEY, &wrapper);
+                            log::info!(
+                                "Auto-downloaded '{}' via rule '{}'",
+                                mon_item_title,
+                                mon_rule_name
+                            );
+                            return;
+                        }
+                        "error" | "removed" => {
+                            log::warn!(
+                                "RSS auto-download task {} for '{}' ended with status '{}'",
+                                gid,
+                                mon_item_title,
+                                status
+                            );
+                            return;
+                        }
+                        _ => {}
+                    }
+                }
+
+                log::warn!(
+                    "RSS auto-download monitor for '{}' (gid={}) timed out",
+                    mon_item_title,
+                    gid
+                );
+            });
+
+            // Episode history and rule stats are handled by the monitor above.
+            // Return without the synchronous mark_item_downloaded call.
+            return;
         };
 
         let _ = self
@@ -1181,12 +1339,53 @@ fn scrape_media_from_html(html: &str) -> Vec<String> {
 }
 
 fn decode_html_entities(s: &str) -> String {
-    s.replace("&amp;", "&")
+    // First handle named entities via simple replacement
+    let s = s
+        .replace("&amp;", "&")
         .replace("&quot;", "\"")
         .replace("&#39;", "'")
         .replace("&apos;", "'")
         .replace("&lt;", "<")
-        .replace("&gt;", ">")
+        .replace("&gt;", ">");
+
+    // Then scan for numeric character references: &#NNN; (decimal) and &#xHHH; (hex)
+    let mut out = String::with_capacity(s.len());
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'&' && i + 2 < bytes.len() && bytes[i + 1] == b'#' {
+            let rest = &s[i + 2..];
+            let (is_hex, digits_start) = if rest.starts_with('x') || rest.starts_with('X') {
+                (true, 1)
+            } else {
+                (false, 0)
+            };
+            let digits: &str = {
+                let src = &rest[digits_start..];
+                match src.find(';') {
+                    Some(end) => &src[..end],
+                    None => "",
+                }
+            };
+            if !digits.is_empty() {
+                let parsed = if is_hex {
+                    u32::from_str_radix(digits, 16).ok()
+                } else {
+                    digits.parse::<u32>().ok()
+                };
+                if let Some(ch) = parsed.and_then(char::from_u32) {
+                    out.push(ch);
+                    // skip `&#` + optional `x` + digits + `;`
+                    i += 2 + digits_start + digits.len() + 1;
+                    continue;
+                }
+            }
+        }
+        // Copy the byte as-is (safe: push char at byte boundary)
+        out.push(s[i..].chars().next().unwrap());
+        i += s[i..].chars().next().unwrap().len_utf8();
+    }
+    out
 }
 
 /// What kind of payload an RSS item primarily represents
@@ -1347,14 +1546,7 @@ fn sanitize_article_html(html: &str) -> String {
     // tag instead of a single `</\1>` pattern
     let block_res = BLOCK_RES.get_or_init(|| {
         const TAGS: &[&str] = &[
-            "script",
-            "style",
-            "iframe",
-            "object",
-            "embed",
-            "frame",
-            "frameset",
-            "noscript",
+            "script", "style", "iframe", "object", "embed", "frame", "frameset", "noscript",
             "template",
         ];
         TAGS.iter()
