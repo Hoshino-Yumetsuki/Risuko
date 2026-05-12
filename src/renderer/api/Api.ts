@@ -565,6 +565,22 @@ export default class Api {
 		return invoke("add_rss_rule", { rule });
 	}
 
+	updateRssRule(rule: RssRule) {
+		return invoke("update_rss_rule", { rule });
+	}
+
+	reorderRssRules(orderedIds: string[]) {
+		return invoke("reorder_rss_rules", { orderedIds });
+	}
+
+	dryRunRssRule(rule: RssRule, sampleSize?: number) {
+		return invoke("dry_run_rss_rule", { rule, sampleSize });
+	}
+
+	parseRssItemTitle(title: string) {
+		return invoke("parse_rss_item_title", { title });
+	}
+
 	removeRssRule(ruleId: string) {
 		return invoke("remove_rss_rule", { ruleId });
 	}
@@ -603,6 +619,14 @@ export default class Api {
 		options?: Record<string, unknown>,
 	) {
 		return invoke("download_rss_item_tracked", { feedId, itemId, options });
+	}
+
+	markRssItemRead(feedId: string, itemId: string) {
+		return invoke("mark_rss_item_read", { feedId, itemId });
+	}
+
+	markRssItemsRead(entries: [string, string][]) {
+		return invoke("mark_rss_items_read", { entries });
 	}
 
 	inferOutFromUri(uri: string) {

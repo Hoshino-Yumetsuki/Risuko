@@ -1,6 +1,6 @@
 {
 	"name": "@risuko/cli",
-	"version": "0.2.0",
+	"version": "0.3.0",
 	"description": "Risuko download engine CLI — multi-protocol downloads (HTTP, BitTorrent, ED2K, M3U8, FTP/SFTP)",
 	"license": "MIT",
 	"repository": {
@@ -24,12 +24,12 @@
 		"bin.js"
 	],
 	"optionalDependencies": {
-		"@risuko/cli-darwin-arm64": "0.2.0",
-		"@risuko/cli-darwin-x64": "0.2.0",
-		"@risuko/cli-linux-arm64-gnu": "0.2.0",
-		"@risuko/cli-linux-x64-gnu": "0.2.0",
-		"@risuko/cli-win32-arm64-msvc": "0.2.0",
-		"@risuko/cli-win32-x64-msvc": "0.2.0"
+		"@risuko/cli-darwin-arm64": "0.3.0",
+		"@risuko/cli-darwin-x64": "0.3.0",
+		"@risuko/cli-linux-arm64-gnu": "0.3.0",
+		"@risuko/cli-linux-x64-gnu": "0.3.0",
+		"@risuko/cli-win32-arm64-msvc": "0.3.0",
+		"@risuko/cli-win32-x64-msvc": "0.3.0"
 	},
 	"engines": {
 		"node": ">= 18"

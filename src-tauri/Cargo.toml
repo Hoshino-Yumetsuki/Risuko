@@ -2,7 +2,7 @@
 members = ["risuko-engine", "risuko-bt", "risuko-cli", "risuko-napi", "risuko-http"]
 
 [workspace.package]
-version = "0.2.0"
+version = "0.3.0"
 authors = ["YueMiyuki"]
 edition = "2021"
 rust-version = "1.82"
@@ -71,8 +71,17 @@ base64 = "0.22"
 sha1 = "0.11"
 sha2 = "0.11"
 urlencoding = "2"
-keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
-fs4 = "0.13"
+keyring-core = "1"
+fs4 = "1"
 tempfile = "3"
+
+[target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
+apple-native-keyring-store = { version = "1", features = ["keychain"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-native-keyring-store = "1"
+
+[target.'cfg(all(unix, not(any(target_os = "macos", target_os = "ios", target_os = "android"))))'.dependencies]
+dbus-secret-service-keyring-store = { version = "1", features = ["crypto-rust"] }
 
 [dev-dependencies]
