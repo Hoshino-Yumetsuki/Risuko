@@ -77,5 +77,5 @@ body:
           required: true
         - label: You have tried with test URL https://cdn.hotelnearmedanta.com/testfile.org/testfile.org-5GB.dat and the bug still occurs.
           required: true
-        - label: You have provided logs (In Preference - Advanced - Log level set to Debug, Reproduce the erorr and find log file by clicking "Open log file" in the same page)
+        - label: You have provided logs (In Preference - Advanced - Log level set to Debug, Reproduce the error and find log file by clicking "Open log file" in the same page)
           required: true

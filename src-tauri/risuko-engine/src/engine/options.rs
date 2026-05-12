@@ -489,4 +489,44 @@ mod tests {
         let opts = EngineOptions::from_config(&sys, &Map::new());
         assert!(!opts.bt_enable_lsd());
     }
+
+    #[test]
+    fn purge_record_on_start_defaults_false() {
+        let opts = EngineOptions::from_config(&Map::new(), &Map::new());
+        assert!(!opts.purge_record_on_start());
+    }
+
+    #[test]
+    fn purge_record_on_start_from_bool_value() {
+        let mut sys = Map::new();
+        sys.insert("purge-record-on-start".into(), json!(true));
+        let opts = EngineOptions::from_config(&sys, &Map::new());
+        assert!(opts.purge_record_on_start());
+
+        let mut sys = Map::new();
+        sys.insert("purge-record-on-start".into(), json!(false));
+        let opts = EngineOptions::from_config(&sys, &Map::new());
+        assert!(!opts.purge_record_on_start());
+    }
+
+    #[test]
+    fn purge_record_on_start_from_string_coercion() {
+        for (set, want) in [
+            ("true", true),
+            ("false", false),
+            ("yes", true),
+            ("no", false),
+            ("1", true),
+            ("0", false),
+        ] {
+            let mut sys = Map::new();
+            sys.insert("purge-record-on-start".into(), json!(set));
+            let opts = EngineOptions::from_config(&sys, &Map::new());
+            assert_eq!(
+                opts.purge_record_on_start(),
+                want,
+                "string value '{set}' should coerce to {want}"
+            );
+        }
+    }
 }

@@ -88,7 +88,15 @@ impl TaskManager {
         let session = SessionManager::new(config_dir);
         let mut saved_tasks = session.load();
 
+        let mut purged_hashes: std::collections::HashSet<String> = std::collections::HashSet::new();
         if options.purge_record_on_start() {
+            for task in saved_tasks.iter() {
+                if task.status.is_stopped() {
+                    if let Some(hash) = &task.info_hash {
+                        purged_hashes.insert(hash.clone());
+                    }
+                }
+            }
             saved_tasks.retain(|t| !t.status.is_stopped());
         }
 
@@ -125,7 +133,7 @@ impl TaskManager {
         };
 
         // Restore torrent_ids mapping from persisted librqbit session
-        manager.restore_torrent_mappings().await;
+        manager.restore_torrent_mappings(purged_hashes).await;
 
         Ok(manager)
     }
@@ -133,7 +141,12 @@ impl TaskManager {
     /// restarted, match persisted librqbit torrents back to saved tasks by info_hash.
     /// Any persisted librqbit torrent with no matching live task is purged from
     /// the librqbit session so it does not silently resume downloading on startup.
-    async fn restore_torrent_mappings(&self) {
+    /// purged_hashes: info_hashes of tasks removed due to purge_record_on_start;
+    /// these are preserved on disk (files kept) but records removed from librqbit.
+    async fn restore_torrent_mappings(
+        &self,
+        purged_hashes: std::collections::HashSet<String>,
+    ) {
         let te_guard = self.torrent_engine.read().await;
         let Some(ref te) = *te_guard else { return };
 
@@ -187,12 +200,15 @@ impl TaskManager {
         // Purge orphan librqbit torrents (persisted but no live Motrix task).
         // Without this, librqbit auto-resumes them on startup and writes files
         // even though the user has deleted or never had the task in Motrix.
+        // However, if the orphan came from purge_record_on_start, preserve files.
         for (librqbit_id, info_hash) in orphans {
-            match te.remove(librqbit_id, true).await {
+            let delete_files = !purged_hashes.contains(&info_hash);
+            match te.remove(librqbit_id, delete_files).await {
                 Ok(()) => log::info!(
-                    "Purged orphan persisted torrent: librqbit_id={} ({})",
+                    "Purged orphan persisted torrent: librqbit_id={} ({}) [delete_files={}]",
                     librqbit_id,
-                    info_hash
+                    info_hash,
+                    delete_files
                 ),
                 Err(e) => log::warn!(
                     "Failed to purge orphan torrent librqbit_id={} ({}): {}",
