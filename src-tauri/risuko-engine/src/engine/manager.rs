@@ -20,6 +20,7 @@ use super::task::{
 use super::torrent::{self, TorrentEngine};
 use super::upload::UploadFileSnapshot;
 use super::youtube;
+use std::collections::HashSet;
 
 struct ActiveDownload {
     cancel: Arc<AtomicBool>,
@@ -36,6 +37,7 @@ pub struct TaskManager {
     tasks: Arc<RwLock<Vec<DownloadTask>>>,
     active_downloads: Arc<RwLock<HashMap<String, ActiveDownload>>>,
     torrent_ids: Arc<RwLock<HashMap<String, usize>>>,
+    purged_hashes: Arc<RwLock<HashSet<String>>>,
     options: Arc<RwLock<EngineOptions>>,
     events: EventBroadcaster,
     session: SessionManager,
@@ -86,7 +88,19 @@ impl TaskManager {
         events: EventBroadcaster,
     ) -> Result<Self, String> {
         let session = SessionManager::new(config_dir);
-        let saved_tasks = session.load();
+        let mut saved_tasks = session.load();
+
+        let mut purged_hashes: HashSet<String> = HashSet::new();
+        if options.purge_record_on_start() {
+            for task in saved_tasks.iter() {
+                if task.status.is_stopped() {
+                    if let Some(hash) = &task.info_hash {
+                        purged_hashes.insert(hash.clone());
+                    }
+                }
+            }
+            saved_tasks.retain(|t| !t.status.is_stopped());
+        }
 
         let output_dir = options.dir();
         let tuning = super::torrent::BtTuning {
@@ -113,6 +127,7 @@ impl TaskManager {
             tasks: Arc::new(RwLock::new(saved_tasks)),
             active_downloads: Arc::new(RwLock::new(HashMap::new())),
             torrent_ids: Arc::new(RwLock::new(HashMap::new())),
+            purged_hashes: Arc::new(RwLock::new(purged_hashes)),
             options: Arc::new(RwLock::new(options)),
             events,
             session,
@@ -121,7 +136,9 @@ impl TaskManager {
         };
 
         // Restore torrent_ids mapping from persisted librqbit session
-        manager.restore_torrent_mappings().await;
+        if manager.restore_torrent_mappings().await {
+            manager.purged_hashes.write().await.clear();
+        }
 
         Ok(manager)
     }
@@ -129,16 +146,20 @@ impl TaskManager {
     /// restarted, match persisted librqbit torrents back to saved tasks by info_hash.
     /// Any persisted librqbit torrent with no matching live task is purged from
     /// the librqbit session so it does not silently resume downloading on startup.
-    async fn restore_torrent_mappings(&self) {
+    /// purge provenance stays on the manager until this cleanup completes successfully.
+    async fn restore_torrent_mappings(&self) -> bool {
         let te_guard = self.torrent_engine.read().await;
-        let Some(ref te) = *te_guard else { return };
+        let Some(ref te) = *te_guard else { return false };
+
+        let purged_hashes = self.purged_hashes.read().await.clone();
 
         let managed = te.list_managed_torrents();
         if managed.is_empty() {
-            return;
+            return true;
         }
 
         let mut orphans: Vec<(usize, String)> = Vec::new();
+        let mut cleanup_failed = false;
 
         {
             let mut tasks = self.tasks.write().await;
@@ -183,12 +204,17 @@ impl TaskManager {
         // Purge orphan librqbit torrents (persisted but no live Motrix task).
         // Without this, librqbit auto-resumes them on startup and writes files
         // even though the user has deleted or never had the task in Motrix.
+        // However, if the orphan came from purge_record_on_start, preserve files.
         for (librqbit_id, info_hash) in orphans {
-            match te.remove(librqbit_id).await {
+            let delete_files = !purged_hashes.contains(&info_hash);
+            let removal_result = te.remove(librqbit_id, delete_files).await;
+            let removal_failed = removal_result.is_err();
+            match removal_result {
                 Ok(()) => log::info!(
-                    "Purged orphan persisted torrent: librqbit_id={} ({})",
+                    "Purged orphan persisted torrent: librqbit_id={} ({}) [delete_files={}]",
                     librqbit_id,
-                    info_hash
+                    info_hash,
+                    delete_files
                 ),
                 Err(e) => log::warn!(
                     "Failed to purge orphan torrent librqbit_id={} ({}): {}",
@@ -197,7 +223,12 @@ impl TaskManager {
                     e
                 ),
             }
+            if removal_failed {
+                cleanup_failed = true;
+            }
         }
+
+        !cleanup_failed
     }
 
     /// Resolve download directory and tag for a new task by evaluating routing
@@ -2057,7 +2088,7 @@ impl TaskManager {
             if let Some(&tid) = tid_guard.get(gid) {
                 let te_guard = self.torrent_engine.read().await;
                 if let Some(ref te) = *te_guard {
-                    te.remove(tid).await.ok();
+                    te.remove(tid, true).await.ok();
                 }
             }
         }
@@ -2544,11 +2575,40 @@ impl TaskManager {
     }
 
     pub async fn purge_download_result(&self) {
+        // Collect gids of stopped torrent tasks so we can drop their bt-session
+        // entries before evicting them from the task list. Without this, the
+        // bt session keeps the info-hash registered in `by_hash` and a later
+        // re-add of the same magnet short-circuits to `AlreadyManaged` with
+        // the old finished handle (UI shows "completed" with no download).
+        let stopped_torrent_gids: Vec<String> = {
+            let tasks = self.tasks.read().await;
+            tasks
+                .iter()
+                .filter(|t| t.status.is_stopped() && t.kind == TaskKind::Torrent)
+                .map(|t| t.gid.clone())
+                .collect()
+        };
+        for gid in &stopped_torrent_gids {
+            self.drop_torrent_engine_entry(gid).await;
+        }
         let mut tasks = self.tasks.write().await;
         tasks.retain(|t| !t.status.is_stopped());
     }
 
     pub async fn remove_download_result(&self, gid: &str) -> Result<(), String> {
+        // Drop the bt-session entry first (keep files on disk — this is a
+        // "remove from history" operation, not a payload deletion). Without
+        // this, the `by_hash` map retains the info-hash and re-adding the
+        // same magnet returns the stale completed torrent until restart.
+        let is_stopped_torrent = {
+            let tasks = self.tasks.read().await;
+            tasks
+                .iter()
+                .any(|t| t.gid == gid && t.status.is_stopped() && t.kind == TaskKind::Torrent)
+        };
+        if is_stopped_torrent {
+            self.drop_torrent_engine_entry(gid).await;
+        }
         let mut tasks = self.tasks.write().await;
         let len_before = tasks.len();
         tasks.retain(|t| !(t.gid == gid && t.status.is_stopped()));
@@ -2557,6 +2617,33 @@ impl TaskManager {
         } else {
             Err(format!("GID {} not found or not stopped", gid))
         }
+    }
+
+    /// Drop a torrent task's entry from the underlying bt session WITHOUT
+    /// touching on-disk files, and clear the gid->torrent-id mapping. Used
+    /// by `remove_download_result` / `purge_download_result` to prevent
+    /// stale `by_hash` entries from blocking re-adds of the same magnet.
+    async fn drop_torrent_engine_entry(&self, gid: &str) {
+        let tid = {
+            let tid_guard = self.torrent_ids.read().await;
+            tid_guard.get(gid).copied()
+        };
+        let Some(tid) = tid else { return };
+
+        let te_guard = self.torrent_engine.read().await;
+        if let Some(ref te) = *te_guard {
+            if let Err(e) = te.remove(tid, false).await {
+                log::warn!(
+                    "[task:{}] failed to drop torrent engine entry (id={}): {}",
+                    gid,
+                    tid,
+                    e
+                );
+                return;
+            }
+        }
+
+        self.torrent_ids.write().await.remove(gid);
     }
 
     pub async fn pause_all(&self) {
@@ -2803,6 +2890,7 @@ mod tests {
             tasks: Arc::new(RwLock::new(tasks)),
             active_downloads: Arc::new(RwLock::new(HashMap::new())),
             torrent_ids: Arc::new(RwLock::new(HashMap::new())),
+            purged_hashes: Arc::new(RwLock::new(HashSet::new())),
             options: Arc::new(RwLock::new(options)),
             events,
             session,

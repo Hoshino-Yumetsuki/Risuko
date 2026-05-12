@@ -439,10 +439,18 @@ impl TorrentEngine {
             .map_err(|e| format!("Failed to unpause: {}", e))
     }
 
-    pub async fn remove(&self, torrent_id: usize) -> Result<(), String> {
+    /// Drop a torrent from the bt session
+    ///
+    /// `with_files = true` also wipes the on-disk payload (used by
+    /// "remove task" / orphan purge). `with_files = false` keeps files but
+    /// still releases the in-memory `by_hash` reservation, which is required
+    /// by `remove_download_result` / `purge_download_result` so re-adding
+    /// the same magnet does not short-circuit to `AlreadyManaged` and
+    /// surface as "magnet shows complete with no download" until restart
+    pub async fn remove(&self, torrent_id: usize, with_files: bool) -> Result<(), String> {
         let session = self.get_session()?;
         session
-            .delete(bt::TorrentIdOrHash::Id(torrent_id), false)
+            .delete(bt::TorrentIdOrHash::Id(torrent_id), with_files)
             .await
             .map_err(|e| format!("Failed to remove torrent: {}", e))
     }

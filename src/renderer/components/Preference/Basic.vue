@@ -131,6 +131,17 @@
                 />
               </div>
             </div>
+            <div class="settings-row">
+              <div class="settings-row-content">
+                <span class="settings-row-title">{{ $t('preferences.purge-record-on-start') }}</span>
+              </div>
+              <div class="settings-row-action">
+                <ui-checkbox
+                  :model-value="!!form.purgeRecordOnStart"
+                  @change="(val) => setBasicBoolean('purgeRecordOnStart', val)"
+                />
+              </div>
+            </div>
           </div>
         </div>
 
@@ -666,6 +677,7 @@ const initForm = (config) => {
 		noConfirmBeforeDeleteTask,
 		openAtLogin,
 		preventSleepWhileDownloading,
+		purgeRecordOnStart,
 		resumeAllWhenAppLaunched,
 		runMode,
 		seedRatio,
@@ -721,6 +733,7 @@ const initForm = (config) => {
 			preventSleepWhileDownloading === undefined
 				? false
 				: parseBooleanConfig(preventSleepWhileDownloading),
+		purgeRecordOnStart: parseBooleanConfig(purgeRecordOnStart),
 		resumeAllWhenAppLaunched: parseBooleanConfig(resumeAllWhenAppLaunched),
 		runMode,
 		seedRatio,
@@ -985,6 +998,7 @@ export default {
 				"openAtLogin",
 				"keepWindowState",
 				"resumeAllWhenAppLaunched",
+				"purgeRecordOnStart",
 				"btSaveMetadata",
 				"btForceEncryption",
 				"keepSeeding",

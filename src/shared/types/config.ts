@@ -61,6 +61,7 @@ export interface AppConfig {
 	};
 	openAtLogin?: boolean;
 	preventSleepWhileDownloading?: boolean;
+	purgeRecordOnStart?: boolean;
 	autoDetectLowSpeedTasks?: boolean;
 	lowSpeedThreshold?: number;
 	lowSpeedStrikeThreshold?: number;

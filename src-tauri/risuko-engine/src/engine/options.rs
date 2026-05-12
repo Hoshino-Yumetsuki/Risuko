@@ -57,6 +57,7 @@ impl EngineOptions {
             "bt-encryption-policy",
             "bt-listen-v6",
             "bt-enable-lsd",
+            "purge-record-on-start",
             "task-routing-rules",
             "file-category-dirs",
         ] {
@@ -208,6 +209,11 @@ impl EngineOptions {
     /// BEP-14 Local Service Discovery. Defaults to on
     pub fn bt_enable_lsd(&self) -> bool {
         self.get_bool("bt-enable-lsd").unwrap_or(true)
+    }
+
+    /// Purge completed/stopped download records when the engine starts
+    pub fn purge_record_on_start(&self) -> bool {
+        self.get_bool("purge-record-on-start").unwrap_or(false)
     }
 
     pub fn ed2k_servers(&self) -> Vec<String> {
@@ -482,5 +488,45 @@ mod tests {
         sys.insert("bt-enable-lsd".into(), json!(false));
         let opts = EngineOptions::from_config(&sys, &Map::new());
         assert!(!opts.bt_enable_lsd());
+    }
+
+    #[test]
+    fn purge_record_on_start_defaults_false() {
+        let opts = EngineOptions::from_config(&Map::new(), &Map::new());
+        assert!(!opts.purge_record_on_start());
+    }
+
+    #[test]
+    fn purge_record_on_start_from_bool_value() {
+        let mut sys = Map::new();
+        sys.insert("purge-record-on-start".into(), json!(true));
+        let opts = EngineOptions::from_config(&sys, &Map::new());
+        assert!(opts.purge_record_on_start());
+
+        let mut sys = Map::new();
+        sys.insert("purge-record-on-start".into(), json!(false));
+        let opts = EngineOptions::from_config(&sys, &Map::new());
+        assert!(!opts.purge_record_on_start());
+    }
+
+    #[test]
+    fn purge_record_on_start_from_string_coercion() {
+        for (set, want) in [
+            ("true", true),
+            ("false", false),
+            ("yes", true),
+            ("no", false),
+            ("1", true),
+            ("0", false),
+        ] {
+            let mut sys = Map::new();
+            sys.insert("purge-record-on-start".into(), json!(set));
+            let opts = EngineOptions::from_config(&sys, &Map::new());
+            assert_eq!(
+                opts.purge_record_on_start(),
+                want,
+                "string value '{set}' should coerce to {want}"
+            );
+        }
     }
 }

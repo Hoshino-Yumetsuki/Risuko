@@ -91,6 +91,7 @@ pub fn user_defaults() -> Map<String, Value> {
         }),
     );
     m.insert("rpc-host".into(), json!("127.0.0.1"));
+    m.insert("purge-record-on-start".into(), json!(false));
     m.insert("resume-all-when-app-launched".into(), json!(false));
     m.insert("run-mode".into(), json!(1));
     m.insert("show-progress-bar".into(), json!(true));
@@ -190,6 +191,8 @@ mod tests {
         assert_eq!(user.get("keep-seeding").unwrap(), false);
         assert_eq!(user.get("rpc-host").unwrap(), "127.0.0.1");
         assert_eq!(user.get("m3u8-output-format").unwrap(), "ts");
+        // Regression: purge-record-on-start defaults to false
+        assert_eq!(user.get("purge-record-on-start").unwrap(), false);
     }
 
     #[cfg(target_os = "macos")]

@@ -28,6 +28,7 @@ const userKeys = [
 	"prevent-sleep-while-downloading",
 	"protocols",
 	"proxy",
+	"purge-record-on-start",
 	"resume-all-when-app-launched",
 	"run-mode",
 	"show-progress-bar",

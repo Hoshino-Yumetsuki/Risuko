@@ -92,6 +92,7 @@ export default {
 	"prevent-sleep-while-downloading-tips":
 		"Keep the computer awake whenever an active task is in progress",
 	"auto-purge-record": "Automatically purge download records when exiting app",
+	"purge-record-on-start": "Purge download records when app starts",
 	ui: "UI",
 	appearance: "Appearance",
 	"theme-auto": "Auto",
