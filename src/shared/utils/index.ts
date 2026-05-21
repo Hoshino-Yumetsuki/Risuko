@@ -584,23 +584,24 @@ export const parseRenameDirective = (line = ""): ParsedTaskLink => {
 		return { uri: line };
 	}
 	const rename = m[1].trim();
+	const uri = line.slice(0, m.index).trim();
 	// Reject path separators — `out` is a filename, never a path
 	if (!rename || rename.includes("/") || rename.includes("\\")) {
-		return { uri: line };
+		return { uri };
 	}
-	return { uri: line.slice(0, m.index).trim(), rename };
+	return { uri, rename };
 };
 
 export const splitTaskLinks = (links = "") => {
 	return compact(splitTextRows(links))
-		.map(decodeThunderLink)
-		.map((line) => parseRenameDirective(line).uri);
+		.map(parseRenameDirective)
+		.map(({ uri }) => decodeThunderLink(uri));
 };
 
 export const splitTaskLinksWithRenames = (links = ""): ParsedTaskLink[] => {
 	return compact(splitTextRows(links))
-		.map(decodeThunderLink)
-		.map(parseRenameDirective);
+		.map(parseRenameDirective)
+		.map(({ uri, rename }) => ({ uri: decodeThunderLink(uri), rename }));
 };
 
 const isFtpLink = (uri: string): boolean => {
