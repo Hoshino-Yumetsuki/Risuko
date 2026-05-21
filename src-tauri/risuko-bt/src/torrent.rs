@@ -137,6 +137,13 @@ pub struct ManagedTorrent {
     /// Mirror of `TorrentInit::create_subfolder` so `Session::delete`
     /// can decide whether the on-disk layout is grouped or flat.
     pub create_subfolder: bool,
+    /// Resolved per-torrent root directory: the folder that directly
+    /// contains the torrent's files on disk. For multi-file grouped
+    /// layouts this already includes the torrent name. Mirrors
+    /// `TorrentInit::root_dir` so `Session::delete(with_files=true)`
+    /// can target the actual output location rather than the session
+    /// default `output_dir` (per-torrent `opts.output_folder` overrides).
+    pub root_dir: PathBuf,
     pub(crate) cmd_tx: mpsc::Sender<TorrentCommand>,
     pub(crate) stats: Arc<Mutex<TorrentStats>>,
 }
@@ -199,6 +206,7 @@ pub async fn spawn(
         name,
         metadata: metadata_swap,
         create_subfolder: init.create_subfolder,
+        root_dir: init.root_dir.clone(),
         cmd_tx,
         stats: stats.clone(),
     });

@@ -1762,7 +1762,7 @@ impl TaskManager {
             // Update torrent tasks
             let te_guard = self.torrent_engine.read().await;
             let tid_guard = self.torrent_ids.read().await;
-            let (keep_seeding, seed_time_minutes, seed_ratio) = {
+            let (keep_seeding, seed_time_minutes, seed_ratio, bt_create_subfolder_default) = {
                 let opts = self.options.read().await;
                 let st = opts.seed_time();
                 let ratio = opts.seed_ratio();
@@ -1775,7 +1775,11 @@ impl TaskManager {
                 let keep = manual || st > 0 || ratio > 0.0;
                 let effective_time = if manual { 0 } else { st };
                 let effective_ratio = if manual { 0.0 } else { ratio };
-                (keep, effective_time, effective_ratio)
+                // Capture the global default so per-task missing values fall
+                // back to it instead of hard-coded `true`, which previously
+                // ignored a user-configured `bt-create-subfolder=false`.
+                let csub_default = opts.get_bool("bt-create-subfolder").unwrap_or(true);
+                (keep, effective_time, effective_ratio, csub_default)
             };
             if let Some(ref te) = *te_guard {
                 for task in tasks.iter_mut() {
@@ -1844,7 +1848,7 @@ impl TaskManager {
                                     .options
                                     .get("bt-create-subfolder")
                                     .and_then(|v| v.as_bool())
-                                    .unwrap_or(true);
+                                    .unwrap_or(bt_create_subfolder_default);
                                 let base_dir = if torrent_name.is_empty()
                                     || file_details.len() <= 1
                                     || !create_subfolder

@@ -557,17 +557,26 @@ impl Session {
         // (the torrent loop owns storage and will drop it on Stop).
         let file_paths: Option<Vec<(PathBuf, bool)>> = if with_files {
             let create_subfolder = handle.create_subfolder;
+            // Use the torrent's resolved root_dir (which honors a per-torrent
+            // `opts.output_folder` override) rather than the session-wide
+            // `output_dir`. For grouped multi-file layouts this root already
+            // points at `<output>/<name>/`; for flat / single-file it points
+            // at the parent directory.
+            let root = handle.root_dir.clone();
             handle
                 .with_metadata(|meta| {
-                    let root = self.output_dir.clone();
-                    if meta.info.single_file_mode {
-                        // Single-file: files live directly under root
+                    let name_empty = meta.info.name.is_empty();
+                    if meta.info.single_file_mode && !name_empty {
+                        // Single-file: file lives directly under root
                         vec![(root.join(&meta.info.name), false)]
-                    } else if create_subfolder {
-                        // Multi-file grouped: everything under root/<name>/
-                        vec![(root.join(&meta.info.name), true)]
+                    } else if !meta.info.single_file_mode && create_subfolder && !name_empty {
+                        // Multi-file grouped: root_dir IS the torrent folder,
+                        // safe to remove wholesale.
+                        vec![(root, true)]
                     } else {
-                        // Enumerate per-file paths under root
+                        // Flat layout, or any case with an empty torrent
+                        // name (defensive): enumerate per-file paths under
+                        // root so we never `remove_dir_all` the parent.
                         meta.info
                             .iter_file_details()
                             .map(|f| {
