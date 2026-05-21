@@ -659,6 +659,13 @@ impl DownloadTask {
             "status".into(),
             Value::String(self.status.as_str().to_string()),
         );
+        // Lowercase task kind (http/ftp/torrent/ed2k/m3u8/youtube/adc/gnutella/g2/gift).
+        // Surfaces protocol family to the frontend so policy decisions (e.g. skipping
+        // peer-swarm tasks from low-speed pause/resume recovery) don't have to infer
+        // it from optional sentinel fields
+        if let Ok(Value::String(kind)) = serde_json::to_value(self.kind) {
+            m.insert("kind".into(), Value::String(kind));
+        }
         m.insert(
             "totalLength".into(),
             Value::String(self.total_length.to_string()),

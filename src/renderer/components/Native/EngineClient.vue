@@ -4,7 +4,12 @@
 
 <script lang="ts">
 import type { DownloadTask } from "@shared/types/task";
-import { checkTaskIsBT, getTaskName, parseBooleanConfig } from "@shared/utils";
+import {
+	checkTaskIsBT,
+	getTaskName,
+	parseBooleanConfig,
+	taskBenefitsFromLowSpeedRecovery,
+} from "@shared/utils";
 import logger from "@shared/utils/logger";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -381,16 +386,37 @@ export default {
 		async handleLowSpeedTasks(
 			tasks: Pick<
 				DownloadTask,
-				"gid" | "status" | "downloadSpeed" | "seeder"
+				| "gid"
+				| "status"
+				| "downloadSpeed"
+				| "seeder"
+				| "bittorrent"
+				| "ed2kLink"
+				| "kind"
 			>[] = [],
 		) {
 			if (!this.autoDetectLowSpeedTasks) {
 				return;
 			}
 
+			// Pause/resume only revives a stalled single TCP socket. Peer-swarm
+			// tasks (BT/ED2K/ADC/Gnutella/G2/giFT) take minutes to warm up and a
+			// force-pause aborts that warm-up; the cooldown then refires before
+			// the swarm can rebuild, leaving speed permanently at zero. Filter
+			// down to kinds that actually benefit before consulting the evaluator
+			const eligibleTasks = tasks.filter((task) =>
+				taskBenefitsFromLowSpeedRecovery(task),
+			);
+			if (!eligibleTasks.length) {
+				this.lowSpeedStrikeMap = {};
+				this.lowSpeedRecoverAtMap = {};
+				this.syncLowSpeedRecoveringMapWithState();
+				return;
+			}
+
 			try {
 				const result = await api.evaluateLowSpeedTasks({
-					tasks: tasks.map((task) => {
+					tasks: eligibleTasks.map((task) => {
 						const isSeedingTask =
 							task?.seeder === "true" || String(task?.seeder) === "true";
 						return {
@@ -836,7 +862,13 @@ export default {
 				];
 				let activeTasksForLowSpeedCheck: Pick<
 					DownloadTask,
-					"gid" | "status" | "downloadSpeed" | "seeder"
+					| "gid"
+					| "status"
+					| "downloadSpeed"
+					| "seeder"
+					| "bittorrent"
+					| "ed2kLink"
+					| "kind"
 				>[] = [];
 
 				if (!document.hidden || this.taskDetailVisible) {
@@ -847,7 +879,15 @@ export default {
 					jobs.push(
 						api
 							.fetchActiveTaskList({
-								keys: ["gid", "status", "downloadSpeed", "seeder"],
+								keys: [
+									"gid",
+									"status",
+									"downloadSpeed",
+									"seeder",
+									"bittorrent",
+									"ed2kLink",
+									"kind",
+								],
 							})
 							.then((tasks) => {
 								activeTasksForLowSpeedCheck = Array.isArray(tasks) ? tasks : [];

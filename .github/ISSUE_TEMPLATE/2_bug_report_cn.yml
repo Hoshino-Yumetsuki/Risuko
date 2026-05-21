@@ -75,7 +75,7 @@ body:
           required: true
         - label: 提供的复现是该 Bug 的 [最小复现例子](https://stackoverflow.com/help/minimal-reproducible-example)。
           required: true
-        - label: 您已经尝试使用测试 URL https://cdn.hotelnearmedanta.com/testfile.org/testfile.org-5GB.dat，并且该 Bug 仍然存在。
+        - label: 您已经尝试使用测试 URL https://cdn.hotelnearmedanta.com/testfile.org/testfile.org-5GB.dat 并且该 Bug 仍然存在。
           required: true
         - label: 您已经提供了日志（在首选项 → 进阶设置 → 应用日志路径，或在健康检查 → 工具 → 打开日志目录）
           required: true
