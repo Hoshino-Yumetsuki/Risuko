@@ -1849,8 +1849,12 @@ impl TaskManager {
                                     .get("bt-create-subfolder")
                                     .and_then(|v| v.as_bool())
                                     .unwrap_or(bt_create_subfolder_default);
-                                let base_dir = if torrent_name.is_empty()
-                                    || file_details.len() <= 1
+                                let base_dir = if let Some(resolved_root) =
+                                    stats.resolved_root.as_ref().filter(|s| !s.is_empty())
+                                {
+                                    resolved_root.clone()
+                                } else if torrent_name.is_empty()
+                                    || stats.single_file_mode
                                     || !create_subfolder
                                 {
                                     task.dir.clone()

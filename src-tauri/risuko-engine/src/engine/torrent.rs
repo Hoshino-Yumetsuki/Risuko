@@ -409,6 +409,10 @@ impl TorrentEngine {
         let file_details = metadata_payload
             .as_ref()
             .map(|meta| extract_file_details(&meta.info));
+        let single_file_mode = metadata_payload
+            .as_ref()
+            .map(|meta| meta.info.single_file_mode)
+            .unwrap_or(false);
 
         Some(TorrentStats {
             total_bytes: stats.total_bytes,
@@ -422,6 +426,8 @@ impl TorrentEngine {
             name,
             file_progress: stats.file_progress,
             file_details,
+            resolved_root: Some(handle.root_dir.to_string_lossy().into_owned()),
+            single_file_mode,
             peers,
             metadata,
         })
@@ -541,6 +547,8 @@ pub struct TorrentStats {
     pub name: Option<String>,
     pub file_progress: Vec<u64>,
     pub file_details: Option<Vec<TorrentFileInfo>>,
+    pub resolved_root: Option<String>,
+    pub single_file_mode: bool,
     pub peers: Vec<PeerSnapshot>,
     pub metadata: Option<TorrentMetadataInfo>,
 }
