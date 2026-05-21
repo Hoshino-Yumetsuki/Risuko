@@ -567,8 +567,40 @@ const decodeThunderLink = (url = "") => {
 	return result;
 };
 
+// Trailing ` Rename: <filename>` directive on a single link line lets users
+// override the output filename per URL without filling out the form `out`
+// field. The capture is greedy to end-of-line so filenames with spaces are
+// preserved; we trim and reject path separators to keep it strictly a name
+const RENAME_SUFFIX_REGEX = /\s+Rename:\s*(\S.*?)\s*$/i;
+
+export interface ParsedTaskLink {
+	uri: string;
+	rename?: string;
+}
+
+export const parseRenameDirective = (line = ""): ParsedTaskLink => {
+	const m = RENAME_SUFFIX_REGEX.exec(line);
+	if (!m) {
+		return { uri: line };
+	}
+	const rename = m[1].trim();
+	// Reject path separators — `out` is a filename, never a path
+	if (!rename || rename.includes("/") || rename.includes("\\")) {
+		return { uri: line };
+	}
+	return { uri: line.slice(0, m.index).trim(), rename };
+};
+
 export const splitTaskLinks = (links = "") => {
-	return compact(splitTextRows(links)).map(decodeThunderLink);
+	return compact(splitTextRows(links))
+		.map(decodeThunderLink)
+		.map((line) => parseRenameDirective(line).uri);
+};
+
+export const splitTaskLinksWithRenames = (links = ""): ParsedTaskLink[] => {
+	return compact(splitTextRows(links))
+		.map(decodeThunderLink)
+		.map(parseRenameDirective);
 };
 
 const isFtpLink = (uri: string): boolean => {

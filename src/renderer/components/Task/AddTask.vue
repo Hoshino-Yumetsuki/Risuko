@@ -284,7 +284,11 @@ import {
 	NONE_SELECTED_FILES,
 	SELECTED_ALL_FILES,
 } from "@shared/constants";
-import { detectUriProtocol, splitTaskLinks } from "@shared/utils";
+import {
+	detectUriProtocol,
+	splitTaskLinks,
+	splitTaskLinksWithRenames,
+} from "@shared/utils";
 import logger from "@shared/utils/logger";
 import { readText } from "@tauri-apps/plugin-clipboard-manager";
 import { open as tauriOpen } from "@tauri-apps/plugin-dialog";
@@ -592,13 +596,19 @@ export default {
 		},
 		commitUriDraft() {
 			const text = this.uriDraft || "";
-			const links = splitTaskLinks(text);
-			if (links.length === 0) {
+			const parsed = splitTaskLinksWithRenames(text);
+			if (parsed.length === 0) {
 				return;
 			}
-			const items = links.map((u) => createUriBatchItem(u));
+			const items = parsed.map(({ uri, rename }) => {
+				const item = createUriBatchItem(uri);
+				if (rename) {
+					item.out = rename;
+				}
+				return item;
+			});
 			useAppStore().enqueueBatchItems(items);
-			this.notifyDetectedProtocols(links);
+			this.notifyDetectedProtocols(parsed.map((p) => p.uri));
 			this.uriDraft = "";
 		},
 		notifyDetectedProtocols(links: string[]) {

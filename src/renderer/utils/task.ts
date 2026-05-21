@@ -5,7 +5,11 @@ import {
 } from "@shared/constants";
 import type { AppConfig } from "@shared/types/config";
 import type { SavedCredential } from "@shared/types/credential";
-import { isFtpFamily, isSftpLink, splitTaskLinks } from "@shared/utils";
+import {
+	isFtpFamily,
+	isSftpLink,
+	splitTaskLinksWithRenames,
+} from "@shared/utils";
 import {
 	buildDefaultOptionsFromCurl,
 	buildHeadersFromCurl,
@@ -204,10 +208,16 @@ export const buildUriPayload = async (form: TaskForm) => {
 		throw new Error("task.new-task-uris-required");
 	}
 
-	let uriList = splitTaskLinks(rawUris);
+	const parsedLines = splitTaskLinksWithRenames(rawUris);
+	let uriList = parsedLines.map((p) => p.uri);
 	const curlHeaders = buildHeadersFromCurl(uriList);
 	uriList = buildUrisFromCurl(uriList);
-	const outs = buildOuts(uriList, out);
+	const formOuts = buildOuts(uriList, out);
+	// Per-line `Rename:` directives win over the form-level out; otherwise
+	// fall back to the form-level value (with index-rule expansion)
+	const outs = uriList.map(
+		(_, i) => parsedLines[i]?.rename || formOuts[i] || "",
+	);
 
 	const resolvedForm: TaskForm = buildDefaultOptionsFromCurl(form, curlHeaders);
 
