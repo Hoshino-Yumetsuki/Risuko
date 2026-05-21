@@ -109,6 +109,11 @@ pub struct TorrentInit {
     /// and pure-v1 torrents use SHA-1; pure-v2 torrents use SHA-256
     /// Merkle subtree verification
     pub verifier: PieceVerifier,
+    /// Whether multi-file torrents are wrapped in a `<root>/<name>/`
+    /// subfolder (the BitTorrent default). When `false`, files are
+    /// written directly under `root_dir`. Carried on `ManagedTorrent`
+    /// so `Session::delete(with_files=true)` can locate the right paths
+    pub create_subfolder: bool,
 }
 
 #[derive(Debug)]
@@ -129,6 +134,16 @@ pub struct ManagedTorrent {
     pub info_hash: Id20,
     pub name: Option<String>,
     pub metadata: ArcSwapOption<TorrentMeta>,
+    /// Mirror of `TorrentInit::create_subfolder` so `Session::delete`
+    /// can decide whether the on-disk layout is grouped or flat.
+    pub create_subfolder: bool,
+    /// Resolved per-torrent root directory: the folder that directly
+    /// contains the torrent's files on disk. For multi-file grouped
+    /// layouts this already includes the torrent name. Mirrors
+    /// `TorrentInit::root_dir` so `Session::delete(with_files=true)`
+    /// can target the actual output location rather than the session
+    /// default `output_dir` (per-torrent `opts.output_folder` overrides).
+    pub root_dir: PathBuf,
     pub(crate) cmd_tx: mpsc::Sender<TorrentCommand>,
     pub(crate) stats: Arc<Mutex<TorrentStats>>,
 }
@@ -190,6 +205,8 @@ pub async fn spawn(
         info_hash,
         name,
         metadata: metadata_swap,
+        create_subfolder: init.create_subfolder,
+        root_dir: init.root_dir.clone(),
         cmd_tx,
         stats: stats.clone(),
     });
