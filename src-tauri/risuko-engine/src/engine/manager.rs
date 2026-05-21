@@ -1840,13 +1840,19 @@ impl TaskManager {
                             // Populate file list from torrent metadata
                             if let Some(ref file_details) = stats.file_details {
                                 let torrent_name = task.bt_name.as_deref().unwrap_or("");
-                                let base_dir = if torrent_name.is_empty() {
+                                let create_subfolder = task
+                                    .options
+                                    .get("bt-create-subfolder")
+                                    .and_then(|v| v.as_bool())
+                                    .unwrap_or(true);
+                                let base_dir = if torrent_name.is_empty()
+                                    || file_details.len() <= 1
+                                    || !create_subfolder
+                                {
                                     task.dir.clone()
-                                } else if file_details.len() > 1 {
-                                    // Multi-file: files are inside torrent folder
-                                    format!("{}/{}", task.dir, torrent_name)
                                 } else {
-                                    task.dir.clone()
+                                    // Multi-file grouped: files are inside torrent folder
+                                    format!("{}/{}", task.dir, torrent_name)
                                 };
 
                                 // Determine which files are selected (0-based indices)

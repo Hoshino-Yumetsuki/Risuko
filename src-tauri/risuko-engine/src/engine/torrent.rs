@@ -156,6 +156,10 @@ impl TorrentEngine {
 
         let trackers = Self::parse_trackers(options);
         let only_files = Self::parse_select_files(options);
+        let create_subfolder = options
+            .get("bt-create-subfolder")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
 
         let add_opts = bt::AddTorrentOptions {
             output_folder: Some(dir.to_string()),
@@ -167,6 +171,7 @@ impl TorrentEngine {
             },
             only_files,
             list_only: false,
+            create_subfolder,
         };
 
         log::info!("Adding torrent bytes ({} bytes) to dir={}", data.len(), dir);
@@ -202,6 +207,10 @@ impl TorrentEngine {
 
         let trackers = Self::parse_trackers(options);
         let only_files = Self::parse_select_files(options);
+        let create_subfolder = options
+            .get("bt-create-subfolder")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
 
         let add_opts = bt::AddTorrentOptions {
             output_folder: Some(dir.to_string()),
@@ -213,6 +222,7 @@ impl TorrentEngine {
             },
             only_files,
             list_only: false,
+            create_subfolder,
         };
 
         log::info!("Adding magnet to dir={}: {}", dir, magnet_uri);

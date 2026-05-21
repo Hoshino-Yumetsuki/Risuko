@@ -406,6 +406,23 @@
             <div class="settings-row" style="margin-top: 8px">
               <div class="settings-row-content">
                 <div class="settings-row-title">
+                  {{ $t('preferences.bt-create-subfolder') }}
+                </div>
+                <div class="settings-row-description">
+                  {{ $t('preferences.bt-create-subfolder-tips') }}
+                </div>
+              </div>
+              <div class="settings-row-action">
+                <ui-checkbox
+                  :model-value="!!form.btCreateSubfolder"
+                  @change="(val) => setAdvancedBoolean('btCreateSubfolder', val)"
+                />
+              </div>
+            </div>
+
+            <div class="settings-row" style="margin-top: 8px">
+              <div class="settings-row-content">
+                <div class="settings-row-title">
                   {{ $t('preferences.bt-encryption-policy') }}
                 </div>
                 <div class="settings-row-description">
@@ -1205,6 +1222,7 @@ const initForm = (config) => {
 		btEnableUpnp,
 		btUpnpLease,
 		btEnableLsd,
+		btCreateSubfolder,
 		btEncryptionPolicy,
 		btListenV6,
 		connectTimeout,
@@ -1255,6 +1273,7 @@ const initForm = (config) => {
 		btEnableUpnp: parseBooleanConfig(btEnableUpnp, true),
 		btUpnpLease: btUpnpLease ?? 300,
 		btEnableLsd: parseBooleanConfig(btEnableLsd, true),
+		btCreateSubfolder: parseBooleanConfig(btCreateSubfolder, true),
 		btEncryptionPolicy: btEncryptionPolicy || "prefer",
 		btListenV6: parseBooleanConfig(btListenV6, false),
 		connectTimeout: connectTimeout ?? 60,

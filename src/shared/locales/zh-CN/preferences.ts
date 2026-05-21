@@ -36,6 +36,9 @@ export default {
 	"transfer-speed-unlimited": "不限速",
 	"bt-settings": "BT 设置",
 	"bt-save-metadata": "保存磁力链接元数据为种子文件",
+	"bt-create-subfolder": "多文件种子下载到独立子文件夹",
+	"bt-create-subfolder-tips":
+		"启用后，多文件的 BT 与磁力下载会被放入以种子名称命名的文件夹中；关闭则直接保存到下载目录。",
 	"bt-auto-download-content": "自动开始下载磁力链接、种子的文件",
 	"bt-force-encryption": "BT强制加密",
 	"keep-seeding": "持续做种，直到手动停止",

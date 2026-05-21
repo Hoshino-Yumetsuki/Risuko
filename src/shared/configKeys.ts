@@ -58,6 +58,7 @@ const systemKeys = [
 	"bt-force-encryption",
 	"bt-load-saved-metadata",
 	"bt-save-metadata",
+	"bt-create-subfolder",
 	"bt-tracker",
 	"bt-max-peers-per-torrent",
 	"bt-max-outstanding-per-peer",

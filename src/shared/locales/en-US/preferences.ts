@@ -36,6 +36,9 @@ export default {
 	"transfer-speed-unlimited": "Unlimited",
 	"bt-settings": "BitTorrent",
 	"bt-save-metadata": "Save magnet link as torrent file",
+	"bt-create-subfolder": "Group multi-file torrents into a subfolder",
+	"bt-create-subfolder-tips":
+		"When enabled, multi-file BitTorrent and magnet downloads are placed inside a folder named after the torrent. When disabled, the files are written directly into the download directory.",
 	"bt-auto-download-content":
 		"Automatically download magnet and torrent content",
 	"bt-force-encryption": "BT force encryption",

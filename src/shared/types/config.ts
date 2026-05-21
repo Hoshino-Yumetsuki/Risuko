@@ -40,6 +40,7 @@ export interface AppConfig {
 	autoSyncTracker?: boolean;
 	trackerSource?: string[];
 	btTracker?: string;
+	btCreateSubfolder?: boolean;
 	lastSyncTrackerTime?: number;
 	maxOverallDownloadLimit?: number;
 	maxOverallUploadLimit?: number;

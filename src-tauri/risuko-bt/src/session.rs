@@ -74,13 +74,31 @@ pub struct SessionOptions {
     pub encryption: super::peer::EncryptionPolicy,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct AddTorrentOptions {
     pub output_folder: Option<String>,
     pub overwrite: bool,
     pub trackers: Option<Vec<String>>,
     pub only_files: Option<Vec<usize>>,
     pub list_only: bool,
+    /// When `true` (default), multi-file torrents are placed inside a
+    /// subfolder named after the torrent (`<output>/<name>/...`). When
+    /// `false`, files are written directly under the output folder
+    /// Single-file torrents are unaffected
+    pub create_subfolder: bool,
+}
+
+impl Default for AddTorrentOptions {
+    fn default() -> Self {
+        Self {
+            output_folder: None,
+            overwrite: false,
+            trackers: None,
+            only_files: None,
+            list_only: false,
+            create_subfolder: true,
+        }
+    }
 }
 
 pub enum AddTorrent {
@@ -412,9 +430,12 @@ impl Session {
             .output_folder
             .map(PathBuf::from)
             .unwrap_or_else(|| self.output_dir.clone());
-        // For multi-file torrents, files are laid out under <output>/<name>/.
-        // Single-file torrents store the file directly under <output>/.
-        let root_dir = if info.single_file_mode {
+        // For multi-file torrents, files are laid out under <output>/<name>/
+        // when `create_subfolder` is set (default). When unset, files are
+        // placed directly under <output>/. Single-file torrents always
+        // store the file directly under <output>/.
+        let create_subfolder = opts.create_subfolder;
+        let root_dir = if info.single_file_mode || !create_subfolder {
             root_dir
         } else {
             root_dir.join(&info.name)
@@ -460,6 +481,7 @@ impl Session {
             max_peers: self.opts.max_peers_per_torrent,
             encryption: self.opts.encryption,
             verifier,
+            create_subfolder,
         };
         let handle = match spawn_torrent(id, init, self.peer_id, self.listen_port).await {
             Ok(h) => h,
@@ -534,15 +556,28 @@ impl Session {
         // Capture file paths for optional deletion before stopping the torrent
         // (the torrent loop owns storage and will drop it on Stop).
         let file_paths: Option<Vec<(PathBuf, bool)>> = if with_files {
+            let create_subfolder = handle.create_subfolder;
             handle
                 .with_metadata(|meta| {
                     let root = self.output_dir.clone();
                     if meta.info.single_file_mode {
                         // Single-file: files live directly under root
                         vec![(root.join(&meta.info.name), false)]
-                    } else {
-                        // Multi-file: everything under root/<name>/
+                    } else if create_subfolder {
+                        // Multi-file grouped: everything under root/<name>/
                         vec![(root.join(&meta.info.name), true)]
+                    } else {
+                        // Enumerate per-file paths under root
+                        meta.info
+                            .iter_file_details()
+                            .map(|f| {
+                                let mut p = root.clone();
+                                for c in f.filename.split('/') {
+                                    p.push(c);
+                                }
+                                (p, false)
+                            })
+                            .collect()
                     }
                 })
                 .ok()
