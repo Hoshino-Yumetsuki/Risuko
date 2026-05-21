@@ -149,7 +149,9 @@ impl TaskManager {
     /// purge provenance stays on the manager until this cleanup completes successfully.
     async fn restore_torrent_mappings(&self) -> bool {
         let te_guard = self.torrent_engine.read().await;
-        let Some(ref te) = *te_guard else { return false };
+        let Some(ref te) = *te_guard else {
+            return false;
+        };
 
         let purged_hashes = self.purged_hashes.read().await.clone();
 

@@ -426,6 +426,40 @@ export const checkTaskIsBT = (task: Partial<DownloadTask> = {}) => {
 	return !!bittorrent;
 };
 
+// Task kinds (engine-side `TaskKind`, lowercase) where force-pause + resume
+// is a useful recovery for a stalled connection: a single TCP socket gets
+// stuck and reopening it kicks the download free. HTTP/HTTPS, FTP/SFTP
+// (both folded into `ftp`), HTTP-segment streams (`youtube`, `m3u8`) all
+// fit that mould
+//
+// Peer-swarm protocols (`torrent`, `ed2k`, `adc`, `gnutella`, `g2`, `gift`)
+// do NOT fit. Pause tears down peer connections, aborts in-flight tracker
+// announces and choke-unchoke negotiations; the swarm just spent minutes
+// warming up and is wiped in 500 ms. The recovery cooldown then refires
+// before the swarm can rebuild, leaving speed permanently at zero
+const LOW_SPEED_RECOVERABLE_KINDS = new Set(["http", "ftp", "youtube", "m3u8"]);
+
+export const taskBenefitsFromLowSpeedRecovery = (
+	task: Partial<DownloadTask> = {},
+) => {
+	if (checkTaskIsBT(task)) {
+		return false;
+	}
+	// Defensive: legacy/unknown task shapes that lack `kind` but expose a
+	// peer-swarm sentinel field should still be excluded.
+	if (task.ed2kLink) {
+		return false;
+	}
+	const kind = `${task.kind || ""}`.toLowerCase();
+	if (!kind) {
+		// No kind reported. Without a positive signal we can't tell whether
+		// pause/resume is safe, so opt out — losing recovery on an HTTP task
+		// is harmless, while applying it to a swarm task is destructive.
+		return false;
+	}
+	return LOW_SPEED_RECOVERABLE_KINDS.has(kind);
+};
+
 const changeKeysCase = (obj, caseConverter) => {
 	const result = {};
 	if (isEmpty(obj) || !isFunction(caseConverter)) {
