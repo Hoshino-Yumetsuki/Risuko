@@ -475,7 +475,6 @@ export default {
 					`[Risuko] CF dialog: imported ${imported.count} cookie(s) from ${this.selectedBrowser} for host=${imported.host}`,
 					{
 						hasCfClearance: imported.hasCfClearance,
-						cookieNames: imported.cookieNames,
 					},
 				);
 				this.imported = imported;

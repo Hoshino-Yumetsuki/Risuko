@@ -902,7 +902,7 @@ async fn run_single_uri_download(
     // Content-Disposition filename even when the response can't be
     // sliced into ranges (chunked transfer, Content-Encoding, etc.) so
     // the streaming path below still gets the rename
-    let probe_for_name: Option<ProbeResult> = if is_http && filename_was_url_derived {
+    let probe_for_name: Option<ProbeResult> = if is_http {
         match probe_range_support(&range_client, uri, &headers).await {
             Ok(p) => Some(p),
             Err(e) => {
@@ -2299,8 +2299,13 @@ fn sanitize_filename(name: &str) -> String {
 /// server suggests via `Content-Disposition`. Skips the swap when the
 /// suggested name is unsafe, identical to what we already have, when
 /// an existing .part on disk would have to be moved (resume safety),
-/// or when adopting it would clobber an unrelated `.part` already in
-/// progress on disk or a finalized file with the same target name.
+/// or when adopting it would trample another `.part` already in
+/// progress on disk under the same name. We deliberately do *not*
+/// block adoption when a finalized file with the target name already
+/// exists — `finalize_download` overwrites by design (matches aria2's
+/// default `allow-overwrite=true` semantics) and rejecting adoption
+/// here would silently leave the file under the placeholder name even
+/// for legitimate re-downloads.
 /// Returns the new (filename, part_path) pair when adoption fires
 fn adopt_suggested_filename(
     suggested: &str,
@@ -2334,17 +2339,6 @@ fn adopt_suggested_filename(
             .map(|m| m.len() > 0)
             .unwrap_or(false)
     {
-        return None;
-    }
-    // Also refuse to overwrite an existing finalized file with the
-    // same name. finalize_download would happily rename our `.part`
-    // over it otherwise
-    let final_name = candidate
-        .strip_suffix(PART_SUFFIX)
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| candidate.clone());
-    let final_path = dir_path.join(&final_name);
-    if final_path.exists() {
         return None;
     }
     Some((candidate, new_part))
@@ -2672,21 +2666,23 @@ mod tests {
     }
 
     #[test]
-    fn adopt_suggested_filename_skips_when_target_exists() {
+    fn adopt_suggested_filename_proceeds_when_finalized_target_exists() {
+        // A finalized file with the same name as the CD suggestion is
+        // NOT a blocker — finalize_download is the layer that decides
+        // overwrite policy, and refusing here would just trap legitimate
+        // re-downloads under the placeholder name (regression: re-fetch
+        // of `StoragePeek.jar` ended up named `download-<hash>` because
+        // a prior copy lived in the directory)
         let dir = tempfile::tempdir().unwrap();
         let dir_path = dir.path();
-        // The current task's .part is empty (typical first-byte state)
         let current_part = dir_path.join("download.part");
         std::fs::write(&current_part, b"").unwrap();
-        // A finalized file with the suggested name already lives here
         std::fs::write(dir_path.join("Report.pdf"), b"existing").unwrap();
 
-        let result =
-            adopt_suggested_filename("Report.pdf", "download", &current_part, dir_path);
-        assert!(
-            result.is_none(),
-            "must not adopt when finalized target file exists"
-        );
+        let (name, new_part) =
+            adopt_suggested_filename("Report.pdf", "download", &current_part, dir_path).unwrap();
+        assert_eq!(name, "Report.pdf");
+        assert_eq!(new_part, dir_path.join("Report.pdf.part"));
     }
 
     #[test]

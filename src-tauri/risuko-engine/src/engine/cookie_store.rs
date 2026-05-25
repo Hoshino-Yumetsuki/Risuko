@@ -232,7 +232,11 @@ fn write_to_disk(path: &Path, state: &StoreFile) -> Result<(), String> {
         .map_err(|e| format!("serialize cookie store failed: {e}"))?;
     let tmp = path.with_extension("json.tmp");
     std::fs::write(&tmp, json).map_err(|e| format!("write cookie store failed: {e}"))?;
-    std::fs::rename(&tmp, path).map_err(|e| format!("rename cookie store failed: {e}"))?;
+    if let Err(e) = std::fs::rename(&tmp, path) {
+        // On Windows rename fails if the destination exists; remove it and retry
+        std::fs::remove_file(path).map_err(|re| format!("rename cookie store failed: {e}; remove existing failed: {re}"))?;
+        std::fs::rename(&tmp, path).map_err(|e2| format!("rename cookie store failed: {e2}"))?;
+    }
     Ok(())
 }
 

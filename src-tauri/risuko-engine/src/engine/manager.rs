@@ -103,6 +103,7 @@ fn header_contains_cookie(value: &Value) -> bool {
 
 /// Extract `host=...` from the cloudflare-challenge marker error so the
 /// manager can evict the matching saved entry on re-detection
+#[cfg_attr(not(test), allow(dead_code))]
 fn parse_cf_host(msg: &str) -> Option<String> {
     let key = "host=";
     let start = msg.find(key)? + key.len();
@@ -1242,10 +1243,13 @@ impl TaskManager {
                             // working so the next attempt re-prompts the
                             // user instead of replaying stale credentials
                             if code == super::error_code::ErrorCode::CLOUDFLARE_CHALLENGE {
-                                if let Some(host) = parse_cf_host(&e) {
-                                    if let Err(err) = cookie_store.remove(&host) {
+                                if let Some(entry) = cookie_store.find_for_url(
+                                    task.uris.first().map(|u| u.as_str()).unwrap_or(""),
+                                ) {
+                                    if let Err(err) = cookie_store.remove(&entry.host) {
                                         log::warn!(
-                                            "[task:{gid_clone}] cookie store remove({host}) failed: {err}"
+                                            "[task:{gid_clone}] cookie store remove({}) failed: {err}",
+                                            entry.host
                                         );
                                     }
                                 }
