@@ -182,6 +182,19 @@ export default {
 	"cookies-tips":
 		"從 Netscape/Mozilla 格式的 cookies.txt 檔案載入 Cookie（同時相容 curl/wget 匯出格式）。",
 	"load-cookies-placeholder": "/path/to/cookies.txt",
+	"saved-cookies": "已儲存的網域憑證",
+	"saved-cookies-tips":
+		"從瀏覽器匯入的 Cookie 與 User-Agent，用於繞過 Cloudflare 等驗證頁面。Risuko 會在同網域的後續下載中重複使用這些憑證，直到失效或失敗為止。",
+	"saved-cookies-empty": "尚未儲存任何憑證。",
+	"saved-cookies-host": "網域",
+	"saved-cookies-browser": "瀏覽器",
+	"saved-cookies-count": "Cookie 數量",
+	"saved-cookies-imported": "匯入時間",
+	"saved-cookies-actions": "操作",
+	"saved-cookies-clear": "全部清除",
+	"saved-cookies-confirm-clear":
+		"確定要刪除所有已儲存的網域憑證嗎？相關站台的後續下載可能在重新匯入前失敗。",
+	"saved-cookies-delete": "刪除",
 	netrc: ".netrc 憑證",
 	"netrc-tips":
 		"當 URL 未攜帶憑證時，從 .netrc 檔案注入 HTTP Basic 認證。預設路徑：~/.netrc（Windows 下為 %USERPROFILE%/_netrc）。",

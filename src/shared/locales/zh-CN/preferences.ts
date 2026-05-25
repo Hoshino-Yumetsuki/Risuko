@@ -193,6 +193,19 @@ export default {
 	"cookies-tips":
 		"从 Netscape/Mozilla 格式的 cookies.txt 文件加载 Cookie（同时兼容 curl/wget 导出格式）。",
 	"load-cookies-placeholder": "/path/to/cookies.txt",
+	"saved-cookies": "已保存的域名凭据",
+	"saved-cookies-tips":
+		"从浏览器导入的 Cookie 与 User-Agent，用于绕过 Cloudflare 等验证页面。Risuko 会在同域名的后续下载中复用这些凭据，直到过期或失败。",
+	"saved-cookies-empty": "尚未保存任何凭据。",
+	"saved-cookies-host": "域名",
+	"saved-cookies-browser": "浏览器",
+	"saved-cookies-count": "Cookie 数",
+	"saved-cookies-imported": "导入时间",
+	"saved-cookies-actions": "操作",
+	"saved-cookies-clear": "全部清除",
+	"saved-cookies-confirm-clear":
+		"确定要删除所有已保存的域名凭据吗？相关站点的后续下载可能在重新导入前失败。",
+	"saved-cookies-delete": "删除",
 	netrc: ".netrc 凭证",
 	"netrc-tips":
 		"当 URL 未携带凭证时，从 .netrc 文件注入 HTTP Basic 认证。默认路径：~/.netrc（Windows 下为 %USERPROFILE%/_netrc）。",

@@ -1,0 +1,18 @@
+[package]
+name = "risuko-cookies"
+version.workspace = true
+description = "Browser cookie extraction for Risuko"
+authors.workspace = true
+edition.workspace = true
+license = "MIT"
+
+[lib]
+name = "risuko_cookies"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
+tokio = { version = "1", features = ["rt"] }
+rookie = "0.5"
+url = "2"

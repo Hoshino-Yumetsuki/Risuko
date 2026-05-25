@@ -624,6 +624,39 @@ export default {
 				logger.error(
 					`[Risuko] download error gid: ${gid}, #${errorCode}, ${errorMessage}`,
 				);
+
+				if (normalizedErrorCode === "315") {
+					const errorString = String(errorMessage || "");
+					const hostMatch = errorString.match(/host=([^\s]+)/);
+					const host = hostMatch?.[1] || "";
+					const url =
+						(task.files || [])
+							.flatMap((f) => f.uris || [])
+							.map((u) => u.uri || "")
+							.find((u) => /^https?:\/\//i.test(u)) || "";
+
+					const appStore = useAppStore();
+					if (host && appStore.cloudflareSkipHosts.includes(host)) {
+						this.$msg.error({
+							duration: 5000,
+							message: this.$t("task.download-error-message", { taskName }),
+						});
+					} else {
+						appStore.showCloudflareDialog({ gid, host, url, taskName });
+					}
+					this.readCompletionScriptOverrides(gid).then((overrides) => {
+						invoke("run_completion_script", {
+							path: getTaskFullPath(task) || "",
+							hash: task?.infoHash || null,
+							status: "error",
+							overrides,
+						}).catch(() => {
+							/* noop */
+						});
+					});
+					return;
+				}
+
 				const isMissingYtDlp =
 					normalizedErrorCode === "540" ||
 					/yt-dlp\s+is\s+not\s+available/i.test(String(errorMessage || "")) ||

@@ -692,6 +692,7 @@ pub async fn run_http_download(
         global_limiter,
         task_limiter,
         chunk_completed,
+        Arc::new(parking_lot::Mutex::new(None)),
     )
     .await
 }
@@ -716,6 +717,7 @@ pub async fn run_http_download_multi(
     global_limiter: Arc<SpeedLimiter>,
     task_limiter: Arc<SpeedLimiter>,
     chunk_completed: Vec<Arc<AtomicU64>>,
+    adopted_filename: Arc<parking_lot::Mutex<Option<String>>>,
 ) -> Result<PathBuf, String> {
     if uris.is_empty() {
         return Err("no URIs provided".to_string());
@@ -760,6 +762,7 @@ pub async fn run_http_download_multi(
             global_limiter.clone(),
             task_limiter.clone(),
             chunk_completed.clone(),
+            adopted_filename.clone(),
         )
         .await;
 
@@ -806,25 +809,41 @@ async fn run_single_uri_download(
     global_limiter: Arc<SpeedLimiter>,
     task_limiter: Arc<SpeedLimiter>,
     chunk_completed: Vec<Arc<AtomicU64>>,
+    adopted_filename: Arc<parking_lot::Mutex<Option<String>>>,
 ) -> Result<PathBuf, String> {
     tracing::info!("Starting download: uri={uri}, dir={dir}, out={out}");
     let dir_path = Path::new(dir);
     fs::create_dir_all(dir_path).map_err(|e| format!("Failed to create dir: {e}"))?;
 
-    let filename = if out.is_empty() {
+    let out_was_empty = out.is_empty();
+    let mut filename = if out_was_empty {
         infer_filename_from_uri(uri)
     } else {
         out.to_string()
     };
     // Sanitize: strip path separators and traversal components
-    let filename = sanitize_filename(&filename);
+    filename = sanitize_filename(&filename);
+
+    // Detect a URL-derived filename. The Tauri layer pre-fills task.out
+    // from the URL path, falling back to "download" for opaque URLs (e.g.
+    // /resources/foo/download?version=N). Treat any of those as
+    // URL-derived so the engine can replace them when the server suggests
+    // a real name via Content-Disposition
+    let url_inferred = sanitize_filename(&infer_filename_from_uri(uri));
+    let url_inferred_part = format!("{url_inferred}{PART_SUFFIX}");
+    let filename_was_url_derived = out_was_empty
+        || filename == url_inferred
+        || filename == url_inferred_part
+        || filename.trim_end_matches(PART_SUFFIX) == url_inferred
+        || filename == "download"
+        || filename == "download.part";
 
     let part_name = if filename.ends_with(PART_SUFFIX) {
         filename.clone()
     } else {
         format!("{filename}{PART_SUFFIX}")
     };
-    let part_path = dir_path.join(&part_name);
+    let mut part_path = dir_path.join(&part_name);
 
     let split = options
         .get("split")
@@ -878,14 +897,50 @@ async fn run_single_uri_download(
     let mut last_modified_header: Option<String> = None;
 
     let is_http = uri.starts_with("http://") || uri.starts_with("https://");
-    if is_http && split > 1 {
-        // Probe with the no-decompress client so the response headers preserve
-        // any `Content-Encoding` the origin advertises. Probing with the
-        // decompressing client would strip that header before we could
-        // inspect it, defeating the compatibility check
+
+    // Probe the server before opening any output file. Picks up the
+    // Content-Disposition filename even when the response can't be
+    // sliced into ranges (chunked transfer, Content-Encoding, etc.) so
+    // the streaming path below still gets the rename
+    let probe_for_name: Option<ProbeResult> = if is_http && filename_was_url_derived {
         match probe_range_support(&range_client, uri, &headers).await {
-            Ok(Some(probe))
-                if probe.content_length > min_split_size.saturating_mul(split as u64) =>
+            Ok(p) => Some(p),
+            Err(e) => {
+                tracing::warn!("Range probe failed, falling back to single: {e}");
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    if filename_was_url_derived {
+        if let Some(suggested) = probe_for_name
+            .as_ref()
+            .and_then(|p| p.suggested_filename.as_ref())
+        {
+            if let Some((new_name, new_part)) =
+                adopt_suggested_filename(suggested, &filename, &part_path, dir_path)
+            {
+                tracing::info!(
+                    "Adopting Content-Disposition filename: {filename:?} -> {new_name:?}"
+                );
+                *adopted_filename.lock() = Some(new_name.clone());
+                filename = new_name;
+                part_path = new_part;
+            }
+        } else if is_http {
+            tracing::debug!(
+                "No Content-Disposition filename available, keeping URL-derived name {filename:?}"
+            );
+        }
+    }
+
+    if is_http && split > 1 {
+        match probe_for_name.clone() {
+            Some(probe)
+                if probe.range_supported
+                    && probe.content_length > min_split_size.saturating_mul(split as u64) =>
             {
                 if use_remote_time {
                     last_modified_header = probe.last_modified.clone();
@@ -935,14 +990,11 @@ async fn run_single_uri_download(
                 }
                 return result;
             }
-            Ok(Some(_)) => {
+            Some(_) => {
                 tracing::info!("File too small for multi-chunk, using single connection");
             }
-            Ok(None) => {
+            None => {
                 tracing::info!("Server does not support ranges, using single connection");
-            }
-            Err(e) => {
-                tracing::warn!("Range probe failed, falling back to single: {e}");
             }
         }
     }
@@ -988,8 +1040,10 @@ async fn run_single_uri_download(
             }
 
             if is_http && split > 1 {
-                if let Ok(Some(probe)) = probe_range_support(&range_client, uri, &headers).await {
-                    if probe.content_length > min_split_size.saturating_mul(split as u64) {
+                if let Ok(probe) = probe_range_support(&range_client, uri, &headers).await {
+                    if probe.range_supported
+                        && probe.content_length > min_split_size.saturating_mul(split as u64)
+                    {
                         if use_remote_time {
                             last_modified_header = probe.last_modified.clone();
                         }
@@ -1071,19 +1125,79 @@ async fn run_single_uri_download(
 }
 
 /// Result from probing range support: content length + optional ETag
+#[derive(Clone, Default)]
 struct ProbeResult {
     content_length: u64,
     etag: Option<String>,
     last_modified: Option<String>,
+    /// Filename advertised by `Content-Disposition: attachment; filename=...`
+    /// when present. Overrides URL-path inference for opaque endpoints
+    /// like `download?version=N`
+    suggested_filename: Option<String>,
+    /// True when the response confirms range support (206 with valid
+    /// Content-Range, or 200 + Accept-Ranges + Content-Length). When
+    /// false the caller must fall back to a single-connection stream;
+    /// the other fields can still carry useful headers
+    range_supported: bool,
 }
 
-/// Probe whether the server supports Range requests
-/// Returns Some(ProbeResult) if ranges are supported, None otherwise
+/// Marker prefix used in error strings for Cloudflare-blocked downloads.
+/// `manager.rs::classify_error` reads this and maps it to
+/// `ErrorCode::CLOUDFLARE_CHALLENGE` (315)
+pub const CLOUDFLARE_MARKER: &str = "[cloudflare-challenge]";
+
+/// Returns true when the response looks like a Cloudflare bot-protection
+/// challenge: a 4xx/5xx status from CF's edge carrying either a `cf-ray`
+/// header, `server: cloudflare`, or `cf-mitigated: challenge`
+///
+/// Header-only on purpose. Modern CF challenges always set these
+/// headers, and reading the body would force buffering before downstream
+/// code runs. Skipping the body keeps the streaming path simple
+fn looks_like_cloudflare_block(headers: &HeaderMap, status: u16) -> bool {
+    if !matches!(status, 403 | 429 | 503) {
+        return false;
+    }
+    let header_str = |name: &str| -> Option<String> {
+        headers
+            .get(name)
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.to_ascii_lowercase())
+    };
+
+    if header_str("cf-ray").is_some() {
+        return true;
+    }
+    if let Some(server) = header_str("server") {
+        if server.contains("cloudflare") {
+            return true;
+        }
+    }
+    if let Some(mitigated) = header_str("cf-mitigated") {
+        if mitigated.contains("challenge") {
+            return true;
+        }
+    }
+    false
+}
+
+/// Build a cloudflare-marker error message the classifier maps to
+/// `CLOUDFLARE_CHALLENGE` and the renderer can scan for the host
+fn cloudflare_error(uri: &str, status: u16) -> String {
+    let host = url::Url::parse(uri)
+        .ok()
+        .and_then(|u| u.host_str().map(|s| s.to_string()))
+        .unwrap_or_else(|| "unknown".to_string());
+    format!("{CLOUDFLARE_MARKER} host={host} status={status}")
+}
+
+/// Probe whether the server supports Range requests. Returns the
+/// response headers we care about regardless of range support; check
+/// `range_supported` on the result before slicing
 async fn probe_range_support(
     client: &Client,
     uri: &str,
     headers: &HeaderMap,
-) -> Result<Option<ProbeResult>, String> {
+) -> Result<ProbeResult, String> {
     let resp = client
         .get(uri)
         .headers(headers.clone())
@@ -1094,6 +1208,11 @@ async fn probe_range_support(
         .map_err(|e| format!("Range probe request failed: {e}"))?;
 
     let status = resp.status().as_u16();
+
+    if looks_like_cloudflare_block(resp.headers(), status) {
+        return Err(cloudflare_error(uri, status));
+    }
+
     let etag = resp
         .headers()
         .get(ETAG)
@@ -1104,14 +1223,26 @@ async fn probe_range_support(
         .get(LAST_MODIFIED)
         .and_then(|v| v.to_str().ok())
         .map(|s| s.to_string());
+    let suggested_filename = filename_from_content_disposition(resp.headers());
 
-    // Compatibility short-circuits: if the server returns a compressed body
-    // or chunked transfer-encoding (no length), parallel range workers can't
-    // safely slice the file. Range offsets refer to the *encoded* bytes when
-    // Content-Encoding is present, but the worker sees decoded bytes — the
-    // two address spaces are incompatible. The chunked path additionally
-    // means we don't know the total size up front. Fall back to the single
-    // streaming path in either case
+    // The fallback we hand back whenever range support isn't confirmed.
+    // Carries the filename / ETag / last-modified info so the streaming
+    // path can still adopt them
+    let no_range = ProbeResult {
+        content_length: 0,
+        etag: etag.clone(),
+        last_modified: last_modified.clone(),
+        suggested_filename: suggested_filename.clone(),
+        range_supported: false,
+    };
+
+    // Compatibility short-circuits: a compressed body or chunked
+    // transfer-encoding (no length) blocks parallel range workers from
+    // slicing the file safely. Range offsets refer to *encoded* bytes
+    // when Content-Encoding is present, but workers see decoded bytes;
+    // the two address spaces don't line up. Chunked also leaves the
+    // total size unknown up front. Drop to the streaming path in either
+    // case but keep the filename info we already pulled
     let content_encoding = resp
         .headers()
         .get(CONTENT_ENCODING)
@@ -1121,7 +1252,7 @@ async fn probe_range_support(
         tracing::info!(
             "Range probe: Content-Encoding={content_encoding}; falling back to single connection"
         );
-        return Ok(None);
+        return Ok(no_range);
     }
     let transfer_encoding = resp
         .headers()
@@ -1133,7 +1264,7 @@ async fn probe_range_support(
         .any(|t| t.trim().eq_ignore_ascii_case("chunked"))
     {
         tracing::info!("Range probe: Transfer-Encoding=chunked; falling back to single connection");
-        return Ok(None);
+        return Ok(no_range);
     }
 
     if status == 206 {
@@ -1145,19 +1276,21 @@ async fn probe_range_support(
         {
             if let Some(slash) = cr.rfind('/') {
                 if let Ok(total) = cr[slash + 1..].trim().parse::<u64>() {
-                    return Ok(Some(ProbeResult {
+                    return Ok(ProbeResult {
                         content_length: total,
                         etag,
                         last_modified,
-                    }));
+                        suggested_filename,
+                        range_supported: true,
+                    });
                 }
             }
         }
-        return Ok(None);
+        return Ok(no_range);
     }
 
     if status == 200 {
-        // Server ignored Range header, check Accept-Ranges
+        // Server ignored Range header; check Accept-Ranges
         if let Some(ar) = resp
             .headers()
             .get(ACCEPT_RANGES)
@@ -1171,20 +1304,22 @@ async fn probe_range_support(
                 {
                     if let Ok(total) = cl.trim().parse::<u64>() {
                         if total > 0 {
-                            return Ok(Some(ProbeResult {
+                            return Ok(ProbeResult {
                                 content_length: total,
                                 etag,
                                 last_modified,
-                            }));
+                                suggested_filename,
+                                range_supported: true,
+                            });
                         }
                     }
                 }
             }
         }
-        return Ok(None);
+        return Ok(no_range);
     }
 
-    Ok(None)
+    Ok(no_range)
 }
 
 /// Multi-chunk parallel download using a piece queue + worker pool.
@@ -1552,6 +1687,12 @@ async fn download_piece_stream(
 
     let status = resp.status().as_u16();
 
+    if looks_like_cloudflare_block(resp.headers(), status) {
+        return StreamOutcome {
+            error: Some(cloudflare_error(uri, status)),
+        };
+    }
+
     if let Some(expected) = expected_etag {
         if let Some(actual) = resp.headers().get(ETAG).and_then(|v| v.to_str().ok()) {
             if actual != expected {
@@ -1845,6 +1986,10 @@ async fn run_single_download(
     })?;
 
     let status = resp.status().as_u16();
+
+    if looks_like_cloudflare_block(resp.headers(), status) {
+        return Err(cloudflare_error(uri, status));
+    }
 
     if status == 416 && existing_size > 0 {
         tracing::warn!("Got 416 with existing_size={existing_size}, deleting stale .part");
@@ -2150,6 +2295,37 @@ fn sanitize_filename(name: &str) -> String {
     }
 }
 
+/// Decide whether to switch from the URL-inferred filename to one the
+/// server suggests via `Content-Disposition`. Skips the swap when the
+/// suggested name is unsafe, identical to what we already have, or when
+/// an existing .part on disk would have to be moved (resume safety).
+/// Returns the new (filename, part_path) pair when adoption fires
+fn adopt_suggested_filename(
+    suggested: &str,
+    current_filename: &str,
+    current_part_path: &Path,
+    dir_path: &Path,
+) -> Option<(String, std::path::PathBuf)> {
+    let candidate = sanitize_filename(suggested);
+    if candidate.is_empty() || candidate == current_filename {
+        return None;
+    }
+    // Refuse to rename a download that already has bytes on disk
+    if current_part_path.exists()
+        && fs::metadata(current_part_path)
+            .map(|m| m.len() > 0)
+            .unwrap_or(false)
+    {
+        return None;
+    }
+    let new_part = if candidate.ends_with(PART_SUFFIX) {
+        dir_path.join(&candidate)
+    } else {
+        dir_path.join(format!("{candidate}{PART_SUFFIX}"))
+    };
+    Some((candidate, new_part))
+}
+
 pub fn infer_filename_from_uri(uri: &str) -> String {
     let without_hash = uri.split('#').next().unwrap_or(uri);
     let without_query = without_hash.split('?').next().unwrap_or(without_hash);
@@ -2158,6 +2334,57 @@ pub fn infer_filename_from_uri(uri: &str) -> String {
         "download".to_string()
     } else {
         url_decode(candidate)
+    }
+}
+
+/// Parse `Content-Disposition` for a filename. Recognizes:
+/// - `attachment; filename="StoragePeek.jar"` (RFC 6266 quoted-string)
+/// - `attachment; filename=StoragePeek.jar` (unquoted token)
+/// - `attachment; filename*=UTF-8''Storage%20Peek.jar` (RFC 5987 ext-value)
+///
+/// Returns `None` when no usable filename is present
+pub fn filename_from_content_disposition(headers: &HeaderMap) -> Option<String> {
+    let raw = headers
+        .get("content-disposition")
+        .and_then(|v| v.to_str().ok())?;
+
+    // Prefer filename* (RFC 5987) since it can carry non-ASCII names.
+    let mut star_value: Option<String> = None;
+    let mut plain_value: Option<String> = None;
+
+    for part in raw.split(';') {
+        let part = part.trim();
+        if let Some(rest) = part
+            .strip_prefix("filename*=")
+            .or_else(|| part.strip_prefix("FILENAME*="))
+        {
+            // Format: charset'lang'percent-encoded
+            // Find the second quote-mark
+            if let Some(second_tick) = rest[rest.find('\'').map(|i| i + 1).unwrap_or(0)..]
+                .find('\'')
+                .map(|i| i + rest.find('\'').map(|j| j + 1).unwrap_or(0))
+            {
+                let encoded = &rest[second_tick + 1..];
+                star_value = Some(url_decode(encoded.trim_matches('"')));
+            }
+        } else if let Some(rest) = part
+            .strip_prefix("filename=")
+            .or_else(|| part.strip_prefix("FILENAME="))
+            .or_else(|| part.strip_prefix("Filename="))
+        {
+            let val = rest.trim().trim_matches('"').trim_matches('\'');
+            if !val.is_empty() {
+                plain_value = Some(url_decode(val));
+            }
+        }
+    }
+
+    let candidate = star_value.or(plain_value)?;
+    let trimmed = candidate.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(sanitize_filename(trimmed))
     }
 }
 
@@ -2191,6 +2418,107 @@ fn hex_val(b: u8) -> Option<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn h(pairs: &[(&str, &str)]) -> HeaderMap {
+        let mut hm = HeaderMap::new();
+        for (k, v) in pairs {
+            hm.insert(
+                HeaderName::from_bytes(k.as_bytes()).unwrap(),
+                HeaderValue::from_str(v).unwrap(),
+            );
+        }
+        hm
+    }
+
+    #[test]
+    fn filename_from_quoted_attachment() {
+        let headers = h(&[(
+            "content-disposition",
+            "attachment; filename=\"StoragePeek.jar\"",
+        )]);
+        assert_eq!(
+            filename_from_content_disposition(&headers).as_deref(),
+            Some("StoragePeek.jar")
+        );
+    }
+
+    #[test]
+    fn filename_from_unquoted_attachment() {
+        let headers = h(&[("content-disposition", "attachment; filename=Build_v2.zip")]);
+        assert_eq!(
+            filename_from_content_disposition(&headers).as_deref(),
+            Some("Build_v2.zip")
+        );
+    }
+
+    #[test]
+    fn filename_from_rfc5987() {
+        let headers = h(&[(
+            "content-disposition",
+            "attachment; filename*=UTF-8''Storage%20Peek.jar",
+        )]);
+        assert_eq!(
+            filename_from_content_disposition(&headers).as_deref(),
+            Some("Storage Peek.jar")
+        );
+    }
+
+    #[test]
+    fn filename_strips_path_traversal() {
+        let headers = h(&[(
+            "content-disposition",
+            "attachment; filename=\"../../etc/passwd\"",
+        )]);
+        // sanitize_filename collapses path components — exact result depends
+        // on the helper, but must not contain a slash.
+        let got = filename_from_content_disposition(&headers).unwrap();
+        assert!(!got.contains('/'));
+        assert!(!got.contains('\\'));
+    }
+
+    #[test]
+    fn filename_absent_returns_none() {
+        let headers = h(&[("content-type", "application/zip")]);
+        assert_eq!(filename_from_content_disposition(&headers), None);
+    }
+
+    #[test]
+    fn cloudflare_detection_cf_ray_403() {
+        let headers = h(&[("cf-ray", "abc-IAD"), ("server", "cloudflare")]);
+        assert!(looks_like_cloudflare_block(&headers, 403));
+    }
+
+    #[test]
+    fn cloudflare_detection_503_challenge() {
+        let headers = h(&[("server", "cloudflare"), ("cf-mitigated", "challenge")]);
+        assert!(looks_like_cloudflare_block(&headers, 503));
+    }
+
+    #[test]
+    fn cloudflare_detection_429_with_cf_ray() {
+        let headers = h(&[("cf-ray", "xyz-LHR")]);
+        assert!(looks_like_cloudflare_block(&headers, 429));
+    }
+
+    #[test]
+    fn cloudflare_detection_skipped_on_2xx() {
+        let headers = h(&[("server", "cloudflare"), ("cf-ray", "abc")]);
+        assert!(!looks_like_cloudflare_block(&headers, 200));
+    }
+
+    #[test]
+    fn cloudflare_detection_skipped_on_plain_403() {
+        let headers = h(&[("server", "nginx")]);
+        assert!(!looks_like_cloudflare_block(&headers, 403));
+    }
+
+    #[test]
+    fn cloudflare_error_includes_marker_and_host() {
+        let msg = cloudflare_error("https://dl.example.com/file.zip", 403);
+        assert!(msg.starts_with(CLOUDFLARE_MARKER));
+        assert!(msg.contains("host=dl.example.com"));
+        assert!(msg.contains("status=403"));
+    }
 
     #[test]
     fn piece_queue_partitions_content_into_1mib_pieces() {

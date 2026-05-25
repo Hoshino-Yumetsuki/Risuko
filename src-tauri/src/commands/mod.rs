@@ -1,6 +1,7 @@
 pub mod app_cmds;
 pub mod completion_script_cmds;
 pub mod config_cmds;
+pub mod cookie_cmds;
 pub mod engine_cmds;
 pub mod event_cmds;
 pub mod file_cmds;

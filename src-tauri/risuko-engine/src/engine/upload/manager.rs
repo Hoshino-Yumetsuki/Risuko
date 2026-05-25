@@ -810,8 +810,7 @@ mod tests {
     use tempfile::TempDir;
 
     struct UploadTestCtx {
-        #[allow(dead_code)]
-        dir: TempDir,
+        _dir: TempDir,
         mgr: UploadSinkManager,
     }
 
@@ -821,7 +820,7 @@ mod tests {
             Arc::new(FileStorage::new(dir.path().to_path_buf()));
         let event_sink: Arc<dyn crate::traits::EventSink> = Arc::new(NoopEventSink);
         let mgr = UploadSinkManager::new(storage, event_sink);
-        UploadTestCtx { dir, mgr }
+        UploadTestCtx { _dir: dir, mgr }
     }
 
     fn sftp_config() -> SinkConfig {

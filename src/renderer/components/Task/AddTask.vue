@@ -161,7 +161,14 @@
               />
             </div>
             <div>
-              <label class="mb-1 block text-[11px] text-muted-foreground">{{ $t('task.task-cookie') }}</label>
+              <label class="mb-1 flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
+                <span>{{ $t('task.task-cookie') }}</span>
+                <BrowserCookiePicker
+                  v-if="cookiePickerUrl"
+                  :url="cookiePickerUrl"
+                  @imported="onCookiesImported"
+                />
+              </label>
               <Textarea
                 auto-complete="off"
                 rows="2"
@@ -304,6 +311,7 @@ import { AnimatePresence, Motion } from "motion-v";
 import { toast } from "vue-sonner";
 import SelectDirectory from "@/components/Native/SelectDirectory.vue";
 import BatchItemCard from "@/components/Task/BatchItemCard.vue";
+import BrowserCookiePicker from "@/components/Task/BrowserCookiePicker.vue";
 import { Accordion } from "@/components/ui/accordion";
 import UiButton from "@/components/ui/compat/UiButton.vue";
 import {
@@ -339,6 +347,7 @@ export default {
 		[BatchItemCard.name]: BatchItemCard,
 		[SelectDirectory.name]: SelectDirectory,
 		[LoadingOverlay.name]: LoadingOverlay,
+		BrowserCookiePicker,
 		UiButton,
 		NumberInput,
 		Dialog,
@@ -406,6 +415,16 @@ export default {
 		},
 		submitCount(): number {
 			return this.queue.length + this.draftLinkCount;
+		},
+		cookiePickerUrl(): string {
+			const fromDraft = splitTaskLinks(this.uriDraft || "")[0];
+			if (fromDraft && /^https?:\/\//i.test(fromDraft)) {
+				return fromDraft;
+			}
+			const queued = this.queue
+				.map((it) => (it as { uri?: string }).uri || "")
+				.find((u) => /^https?:\/\//i.test(u));
+			return queued || "";
 		},
 	},
 	watch: {
@@ -881,6 +900,18 @@ export default {
 				);
 				appStore.resetBatchQueue();
 				appStore.enqueueBatchItems(remaining);
+			}
+		},
+		onCookiesImported({
+			result,
+		}: {
+			result: { cookieHeader: string; userAgent: string };
+		}) {
+			if (result.cookieHeader) {
+				this.form.cookie = result.cookieHeader;
+			}
+			if (result.userAgent && !(this.form.userAgent || "").trim()) {
+				this.form.userAgent = result.userAgent;
 			}
 		},
 	},

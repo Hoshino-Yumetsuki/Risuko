@@ -209,6 +209,7 @@ async fn mirror_failover_with_checksum_verify() {
         gl,
         tl,
         cc,
+        std::sync::Arc::new(parking_lot::Mutex::new(None)),
     )
     .await
     .expect("download should succeed via failover to good mirror");
@@ -241,8 +242,20 @@ async fn checksum_mismatch_deletes_file() {
     let (total, completed, speed, cancelled, conns, ct, gl, tl, cc) = dummy_state();
 
     let err = run_http_download_multi(
-        &uris, &dir, "file.bin", &options, total, completed, speed, cancelled, conns, ct, gl, tl,
+        &uris,
+        &dir,
+        "file.bin",
+        &options,
+        total,
+        completed,
+        speed,
+        cancelled,
+        conns,
+        ct,
+        gl,
+        tl,
         cc,
+        std::sync::Arc::new(parking_lot::Mutex::new(None)),
     )
     .await
     .expect_err("checksum mismatch must fail");
@@ -282,4 +295,267 @@ async fn cookie_jar_loaded_from_netscape_file() {
         json!(cookies_path.to_string_lossy()),
     )]);
     assert!(opts.get("load-cookies").and_then(|v| v.as_str()).is_some());
+}
+
+async fn handle_with_disposition(
+    req: Request<Incoming>,
+    payload: Arc<Vec<u8>>,
+    filename: &'static str,
+) -> Result<Response<Full<Bytes>>, Infallible> {
+    let len = payload.len() as u64;
+    let cd = format!("attachment; filename=\"{filename}\"");
+    if let Some(range) = req.headers().get(hyper::header::RANGE) {
+        if let Ok(s) = range.to_str() {
+            if let Some(rest) = s.strip_prefix("bytes=") {
+                let mut parts = rest.split('-');
+                let start: u64 = parts.next().unwrap_or("0").parse().unwrap_or(0);
+                let end_str = parts.next().unwrap_or("");
+                let end: u64 = if end_str.is_empty() {
+                    len - 1
+                } else {
+                    end_str.parse().unwrap_or(len - 1)
+                };
+                let end = end.min(len - 1);
+                let slice = payload[start as usize..=end as usize].to_vec();
+                return Ok(Response::builder()
+                    .status(StatusCode::PARTIAL_CONTENT)
+                    .header("Accept-Ranges", "bytes")
+                    .header("Content-Length", slice.len().to_string())
+                    .header("Content-Range", format!("bytes {start}-{end}/{len}"))
+                    .header("Content-Disposition", cd)
+                    .body(Full::new(Bytes::from(slice)))
+                    .unwrap());
+            }
+        }
+    }
+    Ok(Response::builder()
+        .status(StatusCode::OK)
+        .header("Accept-Ranges", "bytes")
+        .header("Content-Length", len.to_string())
+        .header("Content-Disposition", cd)
+        .body(Full::new(Bytes::from(payload.as_ref().clone())))
+        .unwrap())
+}
+
+async fn spawn_disposition_server(payload: Arc<Vec<u8>>, filename: &'static str) -> SocketAddr {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        loop {
+            let (stream, _) = match listener.accept().await {
+                Ok(p) => p,
+                Err(_) => return,
+            };
+            let payload = payload.clone();
+            tokio::spawn(async move {
+                let io = TokioIo::new(stream);
+                let _ = http1::Builder::new()
+                    .serve_connection(
+                        io,
+                        service_fn(move |req| {
+                            handle_with_disposition(req, payload.clone(), filename)
+                        }),
+                    )
+                    .await;
+            });
+        }
+    });
+    addr
+}
+
+#[tokio::test]
+async fn adopts_filename_from_content_disposition() {
+    // Server advertises filename="StoragePeek.jar", URL ends in /download
+    let payload = Arc::new(make_payload());
+    let addr = spawn_disposition_server(payload.clone(), "StoragePeek.jar").await;
+    tokio::task::yield_now().await;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().to_string_lossy().to_string();
+    let uris = vec![format!("http://{}/resources/foo/download?version=42", addr)];
+    let options = options_with(vec![]);
+    let (total, completed, speed, cancelled, conns, ct, gl, tl, cc) = dummy_state();
+    let adopted = std::sync::Arc::new(parking_lot::Mutex::new(None));
+
+    // out is empty so the engine starts from URL inference ("download"),
+    // the placeholder we want overridden by Content-Disposition
+    let result = run_http_download_multi(
+        &uris,
+        &dir,
+        "",
+        &options,
+        total,
+        completed,
+        speed,
+        cancelled,
+        conns,
+        ct,
+        gl,
+        tl,
+        cc,
+        adopted.clone(),
+    )
+    .await
+    .expect("download should succeed");
+
+    let final_name = result
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("")
+        .to_string();
+    assert!(
+        final_name.starts_with("StoragePeek.jar"),
+        "expected StoragePeek.jar*, got {final_name:?}"
+    );
+    assert_eq!(
+        adopted.lock().as_deref(),
+        Some("StoragePeek.jar"),
+        "engine should publish the adopted filename to the manager slot"
+    );
+}
+
+#[tokio::test]
+async fn keeps_user_supplied_filename_over_content_disposition() {
+    // When the user explicitly typed an output name, the server's
+    // Content-Disposition must not stomp it
+    let payload = Arc::new(make_payload());
+    let addr = spawn_disposition_server(payload.clone(), "ServerSays.jar").await;
+    tokio::task::yield_now().await;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().to_string_lossy().to_string();
+    let uris = vec![format!("http://{}/foo", addr)];
+    let options = options_with(vec![]);
+    let (total, completed, speed, cancelled, conns, ct, gl, tl, cc) = dummy_state();
+    let adopted = std::sync::Arc::new(parking_lot::Mutex::new(None));
+
+    let result = run_http_download_multi(
+        &uris,
+        &dir,
+        "MyChoice.jar",
+        &options,
+        total,
+        completed,
+        speed,
+        cancelled,
+        conns,
+        ct,
+        gl,
+        tl,
+        cc,
+        adopted.clone(),
+    )
+    .await
+    .expect("download should succeed");
+
+    let final_name = result
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("")
+        .to_string();
+    assert!(
+        final_name.starts_with("MyChoice.jar"),
+        "user-supplied name must win, got {final_name:?}"
+    );
+    assert!(
+        adopted.lock().is_none(),
+        "user-supplied name must not trigger an adoption notification"
+    );
+}
+
+async fn handle_chunked_disposition(
+    _req: Request<Incoming>,
+    payload: Arc<Vec<u8>>,
+    filename: &'static str,
+) -> Result<Response<Full<Bytes>>, Infallible> {
+    // Simulates an app server like Spigot: serves the file with a
+    // Content-Disposition filename but no Accept-Ranges and no
+    // Content-Length, forcing the engine into the streaming path
+    let cd = format!("attachment; filename=\"{filename}\"");
+    Ok(Response::builder()
+        .status(StatusCode::OK)
+        .header("Content-Disposition", cd)
+        .header("Content-Type", "application/java-archive")
+        .body(Full::new(Bytes::from(payload.as_ref().clone())))
+        .unwrap())
+}
+
+async fn spawn_chunked_disposition_server(
+    payload: Arc<Vec<u8>>,
+    filename: &'static str,
+) -> SocketAddr {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        loop {
+            let (stream, _) = match listener.accept().await {
+                Ok(p) => p,
+                Err(_) => return,
+            };
+            let payload = payload.clone();
+            tokio::spawn(async move {
+                let io = TokioIo::new(stream);
+                let _ = http1::Builder::new()
+                    .serve_connection(
+                        io,
+                        service_fn(move |req| {
+                            handle_chunked_disposition(req, payload.clone(), filename)
+                        }),
+                    )
+                    .await;
+            });
+        }
+    });
+    addr
+}
+
+#[tokio::test]
+async fn adopts_filename_when_server_doesnt_support_ranges() {
+    // Spigot's case: server returns the file body with
+    // Content-Disposition but no range support. The engine should still
+    // pick up the filename rather than discarding it
+    let payload = Arc::new(make_payload());
+    let addr = spawn_chunked_disposition_server(payload.clone(), "StoragePeek.jar").await;
+    tokio::task::yield_now().await;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().to_string_lossy().to_string();
+    let uris = vec![format!("http://{}/resources/foo/download?version=1", addr)];
+    let options = options_with(vec![]);
+    let (total, completed, speed, cancelled, conns, ct, gl, tl, cc) = dummy_state();
+    let adopted = std::sync::Arc::new(parking_lot::Mutex::new(None));
+
+    let result = run_http_download_multi(
+        &uris,
+        &dir,
+        "",
+        &options,
+        total,
+        completed,
+        speed,
+        cancelled,
+        conns,
+        ct,
+        gl,
+        tl,
+        cc,
+        adopted.clone(),
+    )
+    .await
+    .expect("download should succeed");
+
+    let final_name = result
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("")
+        .to_string();
+    assert!(
+        final_name.starts_with("StoragePeek.jar"),
+        "expected StoragePeek.jar*, got {final_name:?}"
+    );
+    assert_eq!(
+        adopted.lock().as_deref(),
+        Some("StoragePeek.jar"),
+        "engine should publish the adopted filename even without range support"
+    );
 }

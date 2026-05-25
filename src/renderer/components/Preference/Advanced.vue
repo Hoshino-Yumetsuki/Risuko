@@ -986,6 +986,69 @@
           </div>
         </div>
 
+        <!-- Saved domain credentials -->
+        <div class="settings-section">
+          <div class="settings-section-header">
+            <div class="section-icon"><Globe :size="16" /></div>
+            <div class="section-title">
+              <h3>{{ $t('preferences.saved-cookies') }}</h3>
+              <p>{{ $t('preferences.saved-cookies-tips') }}</p>
+            </div>
+            <ui-button
+              v-if="cookieEntries.length > 0"
+              size="sm"
+              variant="ghost"
+              class="ml-auto"
+              @click="handleClearAllCookieEntries"
+            >
+              {{ $t('preferences.saved-cookies-clear') }}
+            </ui-button>
+          </div>
+          <div class="settings-section-content">
+            <div
+              v-if="cookieEntries.length === 0"
+              class="text-xs text-muted-foreground"
+            >
+              {{ $t('preferences.saved-cookies-empty') }}
+            </div>
+            <div v-else class="overflow-hidden rounded-md border border-border/60">
+              <table class="w-full text-left text-[11px]">
+                <thead class="bg-muted/40 text-muted-foreground">
+                  <tr>
+                    <th class="px-2 py-1.5 font-medium">{{ $t('preferences.saved-cookies-host') }}</th>
+                    <th class="px-2 py-1.5 font-medium">{{ $t('preferences.saved-cookies-browser') }}</th>
+                    <th class="px-2 py-1.5 font-medium">{{ $t('preferences.saved-cookies-count') }}</th>
+                    <th class="px-2 py-1.5 font-medium">{{ $t('preferences.saved-cookies-imported') }}</th>
+                    <th class="px-2 py-1.5"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr
+                    v-for="entry in cookieEntries"
+                    :key="entry.host"
+                    class="border-t border-border/60"
+                  >
+                    <td class="px-2 py-1.5 font-mono">{{ entry.host }}</td>
+                    <td class="px-2 py-1.5">{{ entry.browserId }}</td>
+                    <td class="px-2 py-1.5">{{ entry.cookieCount }}</td>
+                    <td class="px-2 py-1.5 text-muted-foreground">{{ formatTimestamp(entry.importedAt) }}</td>
+                    <td class="px-2 py-1.5 text-right">
+                      <ui-button
+                        size="sm"
+                        variant="ghost"
+                        class="h-6 px-2 text-[11px]"
+                        @click="() => handleDeleteCookieEntry(entry.host)"
+                      >
+                        {{ $t('preferences.saved-cookies-delete') }}
+                      </ui-button>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
         <!-- Netrc auth Section -->
         <div class="settings-section">
           <div class="settings-section-header">
@@ -1181,6 +1244,7 @@ import {
 	X,
 } from "lucide-vue-next";
 import randomize from "randomatic";
+import api, { type CookieEntryView } from "@/api";
 import ShowInFolder from "@/components/Native/ShowInFolder.vue";
 import CredentialManager from "@/components/Preference/CredentialManager.vue";
 import SubnavSwitcher from "@/components/Subnav/SubnavSwitcher.vue";
@@ -1388,7 +1452,6 @@ export default {
 		PopoverContent,
 		PopoverTrigger,
 		RefreshCw,
-		Globe,
 		Radio,
 		Cable,
 		Network,
@@ -1397,6 +1460,7 @@ export default {
 		Code,
 		Cookie,
 		FileKey,
+		Globe,
 		FileText,
 		KeyRound,
 		ScrollText,
@@ -1429,6 +1493,7 @@ export default {
 			trackerSyncing: false,
 			completionScriptTesting: false,
 			completionScriptTestResult: "",
+			cookieEntries: [] as CookieEntryView[],
 		};
 	},
 	computed: {
@@ -1920,6 +1985,49 @@ export default {
 		resetForm(_formName) {
 			this.syncFormConfig();
 		},
+		async refreshCookieEntries() {
+			try {
+				this.cookieEntries = await api.listCookieEntries();
+			} catch (_e) {
+				this.cookieEntries = [];
+			}
+		},
+		async handleDeleteCookieEntry(host: string) {
+			try {
+				await api.deleteCookieEntry(host);
+				await this.refreshCookieEntries();
+			} catch (e) {
+				this.$msg.error(String(e));
+			}
+		},
+		async handleClearAllCookieEntries() {
+			const { confirmed } = await confirm({
+				message: this.$t("preferences.saved-cookies-confirm-clear"),
+				title: this.$t("preferences.saved-cookies-clear"),
+				kind: "warning",
+				confirmText: this.$t("app.yes"),
+				cancelText: this.$t("app.no"),
+			});
+			if (!confirmed) {
+				return;
+			}
+			try {
+				await api.clearCookieEntries();
+				await this.refreshCookieEntries();
+			} catch (e) {
+				this.$msg.error(String(e));
+			}
+		},
+		formatTimestamp(seconds: number): string {
+			if (!seconds) {
+				return "-";
+			}
+			const d = new Date(seconds * 1000);
+			return d.toLocaleString();
+		},
+	},
+	mounted() {
+		this.refreshCookieEntries();
 	},
 	async beforeRouteLeave(to, _from) {
 		changedConfig.advanced = diffConfig(this.formOriginal, this.form);

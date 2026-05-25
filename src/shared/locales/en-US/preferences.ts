@@ -209,6 +209,19 @@ export default {
 	"cookies-tips":
 		"Load cookies from a Netscape/Mozilla format cookies.txt file (also accepts curl/wget output).",
 	"load-cookies-placeholder": "/path/to/cookies.txt",
+	"saved-cookies": "Saved domain credentials",
+	"saved-cookies-tips":
+		"Cookies and User-Agent imported from a browser when bypassing Cloudflare or other auth-protected downloads. Risuko reuses these for new downloads on the same domain until they expire or stop working.",
+	"saved-cookies-empty": "No saved credentials yet.",
+	"saved-cookies-host": "Domain",
+	"saved-cookies-browser": "Browser",
+	"saved-cookies-count": "Cookies",
+	"saved-cookies-imported": "Imported",
+	"saved-cookies-actions": "Actions",
+	"saved-cookies-clear": "Clear all",
+	"saved-cookies-confirm-clear":
+		"Delete all saved domain credentials? Future downloads on those sites may fail until you re-import.",
+	"saved-cookies-delete": "Delete",
 	netrc: ".netrc credentials",
 	"netrc-tips":
 		"Inject HTTP Basic auth from a .netrc file when the URL has no embedded credentials. Default: ~/.netrc (or %USERPROFILE%/_netrc on Windows).",

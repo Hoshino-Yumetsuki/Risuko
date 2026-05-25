@@ -194,13 +194,17 @@ fn infer_out_from_uri_inner(uri: &str) -> String {
     let decoded_candidate = crate::commands::file_cmds::percent_decode_lossy(candidate);
     let decoded_candidate = decoded_candidate.trim();
     if decoded_candidate.is_empty() || !decoded_candidate.contains('.') {
-        return String::new();
+        // Opaque URL like /resources/foo/download?version=N has no
+        // extension to hint at a name. Drop in a placeholder so the task
+        // carries a stable display name; the engine swaps in the real
+        // filename once it sees Content-Disposition on the first response
+        return "download".to_string();
     }
     if decoded_candidate.contains('/') || decoded_candidate.contains('\\') {
-        return String::new();
+        return "download".to_string();
     }
     if decoded_candidate.starts_with('.') || decoded_candidate.ends_with('.') {
-        return String::new();
+        return "download".to_string();
     }
 
     decoded_candidate.to_string()
@@ -1368,10 +1372,19 @@ mod tests {
     }
 
     #[test]
-    fn infer_out_no_extension() {
+    fn infer_out_no_extension_falls_back_to_download() {
+        // Opaque URLs with no extension hint get a generic placeholder
+        // so the task carries a stable display name; Content-Disposition
+        // takes over once the engine sees the first response
         assert_eq!(
             infer_out_from_uri_inner("http://example.com/path/noext"),
-            ""
+            "download"
+        );
+        assert_eq!(
+            infer_out_from_uri_inner(
+                "https://www.spigotmc.org/resources/storagepeek.134712/download?version=638562"
+            ),
+            "download"
         );
     }
 

@@ -36,6 +36,7 @@ tiger = "0.3"
 tower-http = { version = "0.6", features = ["cors"] }
 tracing = "0.1"
 risuko-http = { workspace = true }
+risuko-cookies = { workspace = true }
 tokio-util = { version = "0.7", features = ["io"] }
 async-trait = "0.1"
 bytes = "1"

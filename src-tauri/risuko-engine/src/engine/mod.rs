@@ -23,6 +23,7 @@ pub mod youtube;
 
 // Legacy P2P / IPC protocol stacks
 pub mod adc;
+pub mod cookie_store;
 pub mod g2;
 pub mod gift;
 pub mod gnutella;

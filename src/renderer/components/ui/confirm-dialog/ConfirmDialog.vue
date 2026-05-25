@@ -82,7 +82,7 @@ function onOpenChange(val: boolean) {
         <DialogHeader class="gap-3">
           <div
             v-if="kind === 'warning'"
-            class="flex size-9 items-center justify-center rounded-full bg-amber-500/10"
+            class="flex size-9 items-center justify-center rounded-md bg-amber-500/10"
           >
             <TriangleAlert class="size-5 text-amber-500" />
           </div>

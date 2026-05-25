@@ -74,6 +74,17 @@ export const useAppStore = defineStore("app", {
 		addTaskQueue: [] as BatchQueueItem[],
 		addTaskOptions: {},
 		progress: 0,
+		cloudflareDialog: {
+			visible: false,
+			gid: "",
+			host: "",
+			url: "",
+			taskName: "",
+			retried: false,
+			lastImportedNames: [] as string[],
+		},
+		cloudflareSkipHosts: [] as string[],
+		cloudflareLastRetryGids: new Set<string>(),
 	}),
 	actions: {
 		updateSystemTheme(theme: string) {
@@ -162,6 +173,43 @@ export const useAppStore = defineStore("app", {
 			this.addTaskUrl = "";
 			this.addTaskTorrents = [];
 			this.addTaskQueue = [];
+		},
+		showCloudflareDialog(payload: {
+			gid: string;
+			host: string;
+			url: string;
+			taskName: string;
+		}) {
+			const retried = this.cloudflareLastRetryGids.has(payload.gid);
+			this.cloudflareDialog = {
+				visible: true,
+				retried,
+				lastImportedNames: this.cloudflareDialog.lastImportedNames,
+				...payload,
+			};
+		},
+		hideCloudflareDialog() {
+			this.cloudflareDialog = {
+				visible: false,
+				gid: "",
+				host: "",
+				url: "",
+				taskName: "",
+				retried: false,
+				lastImportedNames: [],
+			};
+		},
+		markCloudflareRetried(gid: string, importedNames: string[]) {
+			this.cloudflareLastRetryGids.add(gid);
+			this.cloudflareDialog.lastImportedNames = importedNames;
+		},
+		clearCloudflareRetryFlag(gid: string) {
+			this.cloudflareLastRetryGids.delete(gid);
+		},
+		addCloudflareSkipHost(host: string) {
+			if (host && !this.cloudflareSkipHosts.includes(host)) {
+				this.cloudflareSkipHosts.push(host);
+			}
 		},
 		changeAddTaskType(taskType: string) {
 			this.addTaskType = taskType;
