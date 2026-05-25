@@ -79,16 +79,17 @@ pub async fn import_browser_cookies(
     browser: String,
     url: String,
     persist: Option<bool>,
+    user_agent: Option<String>,
 ) -> Result<ImportedCookies, String> {
-    log::info!("import_browser_cookies: browser={browser} url={url}");
+    log::info!("import_browser_cookies: browser={browser}");
     let HostCookies {
         host,
-        user_agent,
+        user_agent: browser_user_agent,
         cookies,
     } = cookies_for_url(&browser, &url).await?;
 
-    log::info!(
-        "import_browser_cookies: rookie returned {} cookie(s) for host={host} (browser={browser})",
+    log::debug!(
+        "import_browser_cookies: rookie returned {} cookie(s) for browser={browser}",
         cookies.len()
     );
     for c in cookies.iter() {
@@ -125,22 +126,33 @@ pub async fn import_browser_cookies(
         .any(|c| c.name.eq_ignore_ascii_case("cf_clearance"));
     let cookie_names: Vec<String> = stored.iter().map(|c| c.name.clone()).collect();
 
-    log::info!(
-        "import_browser_cookies: cookie names for host={host}: {cookie_names:?} (cf_clearance present: {has_cf_clearance})"
+    log::debug!(
+        "import_browser_cookies: {} cookie(s) imported (cf_clearance present: {has_cf_clearance})",
+        cookie_names.len()
     );
 
+    // Caller-supplied UA wins (e.g. Cloudflare dialog passes the
+    // textarea's edited value). Falls back to whatever rookie reports
+    // for the browser so empty hand-offs still get a sensible default
+    let effective_user_agent = user_agent
+        .as_ref()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| browser_user_agent.clone());
+
     if persist.unwrap_or(true) {
-        if let Some(manager) = engine::get_manager().await {
-            let entry = CookieEntry {
-                host: host.clone(),
-                browser_id: browser.clone(),
-                user_agent: user_agent.clone(),
-                cookies: stored.clone(),
-                imported_at: 0,
-                last_validated_at: 0,
-            };
-            manager.cookie_store().upsert(entry)?;
-        }
+        let manager = engine::get_manager().await.ok_or_else(|| {
+            "cookie persistence failed: engine manager unavailable".to_string()
+        })?;
+        let entry = CookieEntry {
+            host: host.clone(),
+            browser_id: browser.clone(),
+            user_agent: effective_user_agent.clone(),
+            cookies: stored.clone(),
+            imported_at: 0,
+            last_validated_at: 0,
+        };
+        manager.cookie_store().upsert(entry)?;
     }
 
     let cookies_view: Vec<ImportedCookieView> = stored
@@ -158,7 +170,7 @@ pub async fn import_browser_cookies(
 
     Ok(ImportedCookies {
         host,
-        user_agent,
+        user_agent: effective_user_agent,
         cookie_header,
         count: cookies.len(),
         has_cf_clearance,

@@ -654,6 +654,12 @@ export default {
 							/* noop */
 						});
 					});
+					// Cloudflare resolution requires user action (importing
+					// cookies + retrying). Any auto-retry that was scheduled
+					// for an earlier failure on this gid would race the
+					// dialog and either retry without cookies or stomp on
+					// the user's pending submit, so cancel it now
+					this.clearAutoRetryState(gid);
 					return;
 				}
 

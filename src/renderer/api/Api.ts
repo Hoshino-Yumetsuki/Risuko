@@ -770,6 +770,7 @@ export default class Api {
 		browser: string;
 		url: string;
 		persist?: boolean;
+		userAgent?: string;
 	}) {
 		return invoke<ImportedCookies>("import_browser_cookies", params);
 	}

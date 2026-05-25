@@ -825,18 +825,18 @@ async fn run_single_uri_download(
     filename = sanitize_filename(&filename);
 
     // Detect a URL-derived filename. The Tauri layer pre-fills task.out
-    // from the URL path, falling back to "download" for opaque URLs (e.g.
-    // /resources/foo/download?version=N). Treat any of those as
-    // URL-derived so the engine can replace them when the server suggests
-    // a real name via Content-Disposition
+    // from the URL path, falling back to "download" / "download-<hash>"
+    // for opaque URLs (e.g. /resources/foo/download?version=N). Treat
+    // any of those as URL-derived so the engine can replace them when
+    // the server suggests a real name via Content-Disposition
     let url_inferred = sanitize_filename(&infer_filename_from_uri(uri));
     let url_inferred_part = format!("{url_inferred}{PART_SUFFIX}");
     let filename_was_url_derived = out_was_empty
         || filename == url_inferred
         || filename == url_inferred_part
         || filename.trim_end_matches(PART_SUFFIX) == url_inferred
-        || filename == "download"
-        || filename == "download.part";
+        || is_placeholder_download_name(&filename)
+        || is_placeholder_download_name(filename.trim_end_matches(PART_SUFFIX));
 
     let part_name = if filename.ends_with(PART_SUFFIX) {
         filename.clone()
@@ -2297,8 +2297,10 @@ fn sanitize_filename(name: &str) -> String {
 
 /// Decide whether to switch from the URL-inferred filename to one the
 /// server suggests via `Content-Disposition`. Skips the swap when the
-/// suggested name is unsafe, identical to what we already have, or when
-/// an existing .part on disk would have to be moved (resume safety).
+/// suggested name is unsafe, identical to what we already have, when
+/// an existing .part on disk would have to be moved (resume safety),
+/// or when adopting it would clobber an unrelated `.part` already in
+/// progress on disk or a finalized file with the same target name.
 /// Returns the new (filename, part_path) pair when adoption fires
 fn adopt_suggested_filename(
     suggested: &str,
@@ -2323,6 +2325,28 @@ fn adopt_suggested_filename(
     } else {
         dir_path.join(format!("{candidate}{PART_SUFFIX}"))
     };
+    // Don't trample another download that's already mid-flight under
+    // the suggested filename. A `.part` with bytes belongs to a
+    // different task; leaving it alone preserves their work
+    if new_part != current_part_path
+        && new_part.exists()
+        && fs::metadata(&new_part)
+            .map(|m| m.len() > 0)
+            .unwrap_or(false)
+    {
+        return None;
+    }
+    // Also refuse to overwrite an existing finalized file with the
+    // same name. finalize_download would happily rename our `.part`
+    // over it otherwise
+    let final_name = candidate
+        .strip_suffix(PART_SUFFIX)
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| candidate.clone());
+    let final_path = dir_path.join(&final_name);
+    if final_path.exists() {
+        return None;
+    }
     Some((candidate, new_part))
 }
 
@@ -2335,6 +2359,22 @@ pub fn infer_filename_from_uri(uri: &str) -> String {
     } else {
         url_decode(candidate)
     }
+}
+
+/// Recognize the placeholder names emitted by the Tauri layer for
+/// opaque URLs: bare `download` (legacy) and `download-<hexhash>` (new,
+/// per-URL unique). These shouldn't be treated as user-chosen filenames
+/// when deciding whether to adopt a Content-Disposition suggestion
+fn is_placeholder_download_name(name: &str) -> bool {
+    if name == "download" {
+        return true;
+    }
+    let Some(rest) = name.strip_prefix("download-") else {
+        return false;
+    };
+    !rest.is_empty()
+        && rest.len() <= 32
+        && rest.chars().all(|c| c.is_ascii_hexdigit())
 }
 
 /// Parse `Content-Disposition` for a filename. Recognizes:
@@ -2389,21 +2429,27 @@ pub fn filename_from_content_disposition(headers: &HeaderMap) -> Option<String> 
 }
 
 fn url_decode(s: &str) -> String {
-    let mut result = String::with_capacity(s.len());
+    // Decode percent-escapes into raw bytes, then interpret the buffer
+    // as UTF-8. Going byte-by-byte and casting each octet to `char` was
+    // the previous behavior — it produced mojibake whenever a multi-byte
+    // UTF-8 sequence (e.g. `%E4%B8%AD`) showed up in `filename*=`
+    // RFC 5987 ext-values. `from_utf8_lossy` keeps the original ASCII
+    // path intact and only kicks in for the rare invalid case
     let bytes = s.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
     let mut i = 0;
     while i < bytes.len() {
         if bytes[i] == b'%' && i + 2 < bytes.len() {
             if let (Some(hi), Some(lo)) = (hex_val(bytes[i + 1]), hex_val(bytes[i + 2])) {
-                result.push((hi << 4 | lo) as char);
+                out.push(hi << 4 | lo);
                 i += 3;
                 continue;
             }
         }
-        result.push(bytes[i] as char);
+        out.push(bytes[i]);
         i += 1;
     }
-    result
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 fn hex_val(b: u8) -> Option<u8> {
@@ -2460,6 +2506,21 @@ mod tests {
         assert_eq!(
             filename_from_content_disposition(&headers).as_deref(),
             Some("Storage Peek.jar")
+        );
+    }
+
+    #[test]
+    fn filename_from_rfc5987_utf8_multibyte() {
+        // `中.txt` in UTF-8 = E4 B8 AD 2E 74 78 74. The previous
+        // byte-by-byte cast produced mojibake; verify the bytes-then-UTF8
+        // path renders the original Unicode codepoint
+        let headers = h(&[(
+            "content-disposition",
+            "attachment; filename*=UTF-8''%E4%B8%AD.txt",
+        )]);
+        assert_eq!(
+            filename_from_content_disposition(&headers).as_deref(),
+            Some("\u{4e2d}.txt")
         );
     }
 
@@ -2608,5 +2669,53 @@ mod tests {
         // Cleanup
         delete_chunk_meta(&part);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn adopt_suggested_filename_skips_when_target_exists() {
+        let dir = tempfile::tempdir().unwrap();
+        let dir_path = dir.path();
+        // The current task's .part is empty (typical first-byte state)
+        let current_part = dir_path.join("download.part");
+        std::fs::write(&current_part, b"").unwrap();
+        // A finalized file with the suggested name already lives here
+        std::fs::write(dir_path.join("Report.pdf"), b"existing").unwrap();
+
+        let result =
+            adopt_suggested_filename("Report.pdf", "download", &current_part, dir_path);
+        assert!(
+            result.is_none(),
+            "must not adopt when finalized target file exists"
+        );
+    }
+
+    #[test]
+    fn adopt_suggested_filename_skips_when_other_part_in_progress() {
+        let dir = tempfile::tempdir().unwrap();
+        let dir_path = dir.path();
+        let current_part = dir_path.join("download.part");
+        std::fs::write(&current_part, b"").unwrap();
+        // Another download is partway through under the suggested name
+        std::fs::write(dir_path.join("Report.pdf.part"), b"halfway").unwrap();
+
+        let result =
+            adopt_suggested_filename("Report.pdf", "download", &current_part, dir_path);
+        assert!(
+            result.is_none(),
+            "must not adopt when another .part is mid-flight"
+        );
+    }
+
+    #[test]
+    fn adopt_suggested_filename_proceeds_when_target_clear() {
+        let dir = tempfile::tempdir().unwrap();
+        let dir_path = dir.path();
+        let current_part = dir_path.join("download.part");
+        std::fs::write(&current_part, b"").unwrap();
+
+        let (name, new_part) =
+            adopt_suggested_filename("Report.pdf", "download", &current_part, dir_path).unwrap();
+        assert_eq!(name, "Report.pdf");
+        assert_eq!(new_part, dir_path.join("Report.pdf.part"));
     }
 }

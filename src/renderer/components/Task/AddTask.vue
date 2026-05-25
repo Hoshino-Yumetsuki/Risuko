@@ -417,8 +417,13 @@ export default {
 			return this.queue.length + this.draftLinkCount;
 		},
 		cookiePickerUrl(): string {
-			const fromDraft = splitTaskLinks(this.uriDraft || "")[0];
-			if (fromDraft && /^https?:\/\//i.test(fromDraft)) {
+			// A draft can hold a magnet alongside an HTTP URL on later
+			// lines; only the HTTP one is meaningful for the cookie
+			// picker, so scan all parsed links rather than just the first
+			const fromDraft = splitTaskLinks(this.uriDraft || "").find((u) =>
+				/^https?:\/\//i.test(u),
+			);
+			if (fromDraft) {
 				return fromDraft;
 			}
 			const queued = this.queue

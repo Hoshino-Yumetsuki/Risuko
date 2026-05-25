@@ -144,7 +144,10 @@ pub async fn cookies_for_host(browser: &str, host: &str) -> Result<Vec<Cookie>, 
 fn cookies_for_host_sync(browser: &str, host: &str) -> Result<Vec<Cookie>, String> {
     // rookie does a substring match on the cookie's domain field. Passing
     // both the bare host and its eTLD+1 catches `example.com` and
-    // `.example.com` alike
+    // `.example.com` alike. The substring filter can also pull in
+    // unrelated cookies (e.g. for `co.uk` when the host is on a multi-part
+    // ccTLD); the post-filter below enforces a real RFC 6265 host-match
+    // before returning to callers
     let mut domains: Vec<String> = vec![host.to_string()];
     if let Some(parent) = registrable_domain(host) {
         if parent != host {
@@ -173,7 +176,38 @@ fn cookies_for_host_sync(browser: &str, host: &str) -> Result<Vec<Cookie>, Strin
             value_len = c.value.len(),
         );
     }
-    Ok(raw.into_iter().map(Cookie::from).collect())
+    let total = raw.len();
+    let filtered: Vec<Cookie> = raw
+        .into_iter()
+        .filter(|c| cookie_domain_matches_host(&c.domain, host))
+        .map(Cookie::from)
+        .collect();
+    if filtered.len() != total {
+        tracing::info!(
+            "risuko-cookies: filtered {} cookie(s) down to {} after host-match for {}",
+            total,
+            filtered.len(),
+            host
+        );
+    }
+    Ok(filtered)
+}
+
+/// RFC 6265 host-match: a cookie applies to `host` when the cookie's
+/// domain attribute equals `host`, or when `host` is a subdomain of the
+/// cookie domain. Leading dots on the cookie domain (legacy form) are
+/// stripped before comparison. Hosts and domains are matched
+/// case-insensitively
+fn cookie_domain_matches_host(cookie_domain: &str, host: &str) -> bool {
+    let host_l = host.trim().to_ascii_lowercase();
+    let domain_l = cookie_domain.trim().trim_start_matches('.').to_ascii_lowercase();
+    if domain_l.is_empty() || host_l.is_empty() {
+        return false;
+    }
+    if host_l == domain_l {
+        return true;
+    }
+    host_l.ends_with(&format!(".{domain_l}"))
 }
 
 /// Resolve a URL or bare host to (host, cookies, ua) for the named browser
@@ -259,15 +293,39 @@ fn extract_host(target: &str) -> Option<String> {
     }
 }
 
-/// Best-effort registrable domain. Strips a single label off the front
-/// when the host has at least two dotted components. Skips the full PSL
-/// since we only need to widen rookie's domain filter
+/// Best-effort registrable domain. Returns the eTLD+1 for typical
+/// hostnames, and falls back to eTLD+2 when the trailing two labels look
+/// like a known multi-label public suffix (`co.uk`, `com.au`, `co.jp`,
+/// etc). We avoid pulling in the full Public Suffix List — this only
+/// needs to be good enough to widen rookie's substring filter without
+/// over-broadening into a public suffix that would match unrelated
+/// sites. The `cookie_domain_matches_host` post-filter in
+/// `cookies_for_host_sync` enforces correctness for whatever rookie
+/// returns
 fn registrable_domain(host: &str) -> Option<String> {
     let labels: Vec<&str> = host.split('.').collect();
     if labels.len() < 2 {
         return None;
     }
-    Some(labels[labels.len() - 2..].join("."))
+    let two = &labels[labels.len() - 2..];
+    if labels.len() >= 3 && is_multi_label_public_suffix(two[0], two[1]) {
+        return Some(labels[labels.len() - 3..].join("."));
+    }
+    Some(two.join("."))
+}
+
+/// True for the most common second-level public suffixes that are
+/// shaped like `<role>.<cc>` (`co.uk`, `com.au`, `ac.jp`, ...). Not
+/// exhaustive; this is a conservative widening guard, not a security
+/// boundary
+fn is_multi_label_public_suffix(role: &str, cc: &str) -> bool {
+    if cc.len() != 2 {
+        return false;
+    }
+    matches!(
+        role.to_ascii_lowercase().as_str(),
+        "co" | "com" | "net" | "org" | "edu" | "gov" | "mil" | "ac" | "or" | "ne" | "go"
+    )
 }
 
 #[cfg(test)]
@@ -298,6 +356,42 @@ mod tests {
             Some("example.com".into())
         );
         assert_eq!(registrable_domain("localhost"), None);
+    }
+
+    #[test]
+    fn registrable_widens_to_three_labels_for_known_multi_part_tlds() {
+        assert_eq!(
+            registrable_domain("foo.example.co.uk"),
+            Some("example.co.uk".into())
+        );
+        assert_eq!(
+            registrable_domain("a.b.bbc.co.uk"),
+            Some("bbc.co.uk".into())
+        );
+        assert_eq!(
+            registrable_domain("shop.example.com.au"),
+            Some("example.com.au".into())
+        );
+        // 2-label inputs cannot widen further; return as-is
+        assert_eq!(registrable_domain("co.uk"), Some("co.uk".into()));
+    }
+
+    #[test]
+    fn cookie_domain_host_match_rules() {
+        // Exact match
+        assert!(cookie_domain_matches_host("example.com", "example.com"));
+        // Leading dot is treated like host-only (legacy compatibility)
+        assert!(cookie_domain_matches_host(".example.com", "dl.example.com"));
+        // Subdomain match
+        assert!(cookie_domain_matches_host("example.com", "dl.example.com"));
+        // Suffix-but-not-dot-bounded must NOT match
+        assert!(!cookie_domain_matches_host("example.com", "notexample.com"));
+        // Unrelated domain
+        assert!(!cookie_domain_matches_host("attacker.com", "example.com"));
+        // Public-suffix-style cookie should not match unrelated subdomains
+        assert!(!cookie_domain_matches_host(".co.uk", "example.com"));
+        // But still legitimately matches when host is on that domain
+        assert!(cookie_domain_matches_host(".co.uk", "foo.co.uk"));
     }
 
     #[test]

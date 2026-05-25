@@ -57,7 +57,43 @@ pub struct CookieStore {
 impl CookieStore {
     pub fn new(config_dir: &Path) -> Self {
         let path = config_dir.join(STORE_FILE);
-        let state = load_from_disk(&path).unwrap_or_default();
+        let state = match load_from_disk(&path) {
+            Ok(s) => s,
+            Err(err) => {
+                // A corrupted or unreadable file would be silently
+                // overwritten by the next write if we treated it as
+                // empty. Sidestep the file by renaming it with a
+                // timestamped `.corrupt-N` suffix so the user can recover
+                // it manually, and start with an empty in-memory store
+                log::warn!(
+                    "cookie store load failed for {}: {err}. Backing up to .corrupt and starting empty",
+                    path.display()
+                );
+                if path.exists() {
+                    let backup = corrupt_backup_path(&path);
+                    if let Err(rename_err) = std::fs::rename(&path, &backup) {
+                        log::error!(
+                            "cookie store backup failed (rename {} -> {}): {rename_err}; refusing to overwrite",
+                            path.display(),
+                            backup.display()
+                        );
+                        // Last-resort safety: if we can't move the file
+                        // aside, don't risk clobbering it. Return a
+                        // store whose path points elsewhere so writes
+                        // can't destroy the original
+                        return Self {
+                            path: backup,
+                            state: RwLock::new(StoreFile::default()),
+                        };
+                    }
+                    log::info!(
+                        "cookie store backup created at {}",
+                        backup.display()
+                    );
+                }
+                StoreFile::default()
+            }
+        };
         Self {
             path,
             state: RwLock::new(state),
@@ -200,6 +236,28 @@ fn write_to_disk(path: &Path, state: &StoreFile) -> Result<(), String> {
     Ok(())
 }
 
+/// Pick a side-by-side backup path that doesn't already exist. The
+/// browser_cookies.json file is the canonical one we don't want to
+/// overwrite when load fails, so we move it aside before starting fresh
+fn corrupt_backup_path(path: &Path) -> std::path::PathBuf {
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let mut candidate = path.with_extension(format!("json.corrupt-{stamp}"));
+    // Extremely unlikely to collide, but be defensive in case the user
+    // already has a stale backup with the same timestamp
+    let mut suffix = 1u32;
+    while candidate.exists() {
+        candidate = path.with_extension(format!("json.corrupt-{stamp}-{suffix}"));
+        suffix += 1;
+        if suffix > 100 {
+            break;
+        }
+    }
+    candidate
+}
+
 /// Render the entry's cookies into a single `Cookie:` header value
 pub fn cookies_to_header(cookies: &[StoredCookie]) -> String {
     cookies
@@ -322,5 +380,36 @@ mod tests {
             },
         ];
         assert_eq!(cookies_to_header(&cs), "a=1; b=two");
+    }
+
+    #[test]
+    fn corrupted_store_is_backed_up_not_overwritten() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join(STORE_FILE);
+        // Plant garbage so serde_json::from_str returns an error
+        std::fs::write(&path, b"{not valid json").unwrap();
+
+        // Loading must NOT silently default. The corrupt file should be
+        // moved aside, and a sibling .corrupt-* file should now exist
+        let store = CookieStore::new(dir.path());
+        assert!(store.list().is_empty());
+        assert!(!path.exists(), "original corrupt file should be moved aside");
+
+        let backups: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| {
+                e.file_name()
+                    .to_string_lossy()
+                    .starts_with("browser_cookies.json.corrupt-")
+            })
+            .collect();
+        assert_eq!(backups.len(), 1, "expected exactly one .corrupt-* backup");
+
+        // A subsequent upsert should write a fresh, valid file at the
+        // canonical path without touching the backup
+        store.upsert(dummy_entry("example.com")).unwrap();
+        assert!(path.exists());
+        assert!(backups[0].path().exists());
     }
 }

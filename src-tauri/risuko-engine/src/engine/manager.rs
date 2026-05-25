@@ -1014,13 +1014,13 @@ impl TaskManager {
             return;
         };
 
-        let cookie_names: Vec<&str> = entry.cookies.iter().map(|c| c.name.as_str()).collect();
-        log::info!(
-            "apply_stored_cookies: matched entry host={} browser={} ({} cookies: {:?})",
-            entry.host,
+        // Cookie names and the destination host together leak more than
+        // we want at info level (recognizable session keys, plus what
+        // the user is downloading from). Stick to debug and elide names
+        log::debug!(
+            "apply_stored_cookies: matched stored entry (browser={}, {} cookie(s))",
             entry.browser_id,
             entry.cookies.len(),
-            cookie_names
         );
 
         let has_cookie = merged
@@ -1034,15 +1034,14 @@ impl TaskManager {
         if !has_cookie {
             let cookie_header = super::cookie_store::cookies_to_header(&entry.cookies);
             if !cookie_header.is_empty() {
-                log::info!(
-                    "apply_stored_cookies: injecting cookie header ({} bytes) for host={}",
+                log::debug!(
+                    "apply_stored_cookies: injecting cookie header ({} bytes)",
                     cookie_header.len(),
-                    entry.host
                 );
                 merged.insert("cookie".to_string(), Value::String(cookie_header));
             }
         } else {
-            log::info!(
+            log::debug!(
                 "apply_stored_cookies: cookie already set on task, leaving stored entry untouched"
             );
         }

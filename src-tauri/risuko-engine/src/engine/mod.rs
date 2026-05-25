@@ -8,6 +8,7 @@ pub mod http;
 pub mod m3u8;
 pub mod manager;
 pub mod netrc;
+pub mod cookie_store;
 pub mod options;
 pub mod routing;
 pub mod rpc;
@@ -23,7 +24,6 @@ pub mod youtube;
 
 // Legacy P2P / IPC protocol stacks
 pub mod adc;
-pub mod cookie_store;
 pub mod g2;
 pub mod gift;
 pub mod gnutella;

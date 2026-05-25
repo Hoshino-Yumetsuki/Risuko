@@ -476,8 +476,6 @@ export default {
 					{
 						hasCfClearance: imported.hasCfClearance,
 						cookieNames: imported.cookieNames,
-						userAgent: imported.userAgent,
-						cookies: imported.cookies,
 					},
 				);
 				this.imported = imported;
@@ -513,6 +511,7 @@ export default {
 					browser: this.selectedBrowser,
 					url: this.url || `https://${this.host}`,
 					persist: true,
+					userAgent: ua,
 				});
 				const appStore = useAppStore();
 				appStore.markCloudflareRetried(

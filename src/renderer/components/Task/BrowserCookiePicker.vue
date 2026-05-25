@@ -27,7 +27,7 @@
           <button
             type="button"
             class="flex w-full items-center justify-between gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors hover:bg-muted disabled:opacity-50"
-            :disabled="!b.available || importing === b.id"
+            :disabled="!b.available || importing !== ''"
             @click="handlePick(b)"
           >
             <span class="truncate">{{ b.name }}</span>
@@ -118,9 +118,7 @@ export default {
 			}
 			this.importing = b.id;
 			try {
-				logger.log(
-					`[Risuko] cookie picker: importing browser=${b.id} url=${url}`,
-				);
+				logger.log(`[Risuko] cookie picker: starting import for browser=${b.id}`);
 				const result: ImportedCookies = await api.importBrowserCookies({
 					browser: b.id,
 					url,
@@ -130,8 +128,6 @@ export default {
 					`[Risuko] cookie picker: imported ${result.count} cookie(s) from ${b.id} for host=${result.host}`,
 					{
 						hasCfClearance: result.hasCfClearance,
-						cookieNames: result.cookieNames,
-						userAgent: result.userAgent,
 					},
 				);
 				toast.success(

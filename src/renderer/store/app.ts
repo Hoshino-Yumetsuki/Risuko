@@ -201,7 +201,10 @@ export const useAppStore = defineStore("app", {
 		},
 		markCloudflareRetried(gid: string, importedNames: string[]) {
 			this.cloudflareLastRetryGids.add(gid);
-			this.cloudflareDialog.lastImportedNames = importedNames;
+			if (this.cloudflareDialog) {
+				this.cloudflareDialog.retried = true;
+				this.cloudflareDialog.lastImportedNames = importedNames;
+			}
 		},
 		clearCloudflareRetryFlag(gid: string) {
 			this.cloudflareLastRetryGids.delete(gid);
