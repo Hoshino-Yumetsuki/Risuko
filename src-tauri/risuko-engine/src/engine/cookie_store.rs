@@ -231,8 +231,12 @@ fn write_to_disk(path: &Path, state: &StoreFile) -> Result<(), String> {
     std::fs::write(&tmp, json).map_err(|e| format!("write cookie store failed: {e}"))?;
     if let Err(e) = std::fs::rename(&tmp, path) {
         // On Windows rename fails if the destination exists; remove it and retry.
-        // We remove the destination only after the first rename fails so the
-        // canonical file is never absent if the second rename also fails
+        // Only attempt removal for AlreadyExists — other errors (permission, I/O)
+        // are returned as-is so the existing cookie store is never deleted on
+        // transient failures.
+        if e.kind() != std::io::ErrorKind::AlreadyExists {
+            return Err(format!("rename cookie store failed: {e}"));
+        }
         if let Err(re) = std::fs::remove_file(path) {
             // Clean up the temp file so we don't leave it behind, then surface
             // the original rename error together with the remove failure

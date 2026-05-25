@@ -2367,7 +2367,7 @@ fn is_placeholder_download_name(name: &str) -> bool {
     let Some(rest) = name.strip_prefix("download-") else {
         return false;
     };
-    !rest.is_empty() && rest.len() <= 32 && rest.chars().all(|c| c.is_ascii_hexdigit())
+    !rest.is_empty() && rest.chars().all(|c| c.is_ascii_hexdigit())
 }
 
 /// Parse `Content-Disposition` for a filename. Recognizes:
