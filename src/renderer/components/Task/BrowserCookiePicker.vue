@@ -118,7 +118,9 @@ export default {
 			}
 			this.importing = b.id;
 			try {
-				logger.log(`[Risuko] cookie picker: starting import for browser=${b.id}`);
+				logger.log(
+					`[Risuko] cookie picker: starting import for browser=${b.id}`,
+				);
 				const result: ImportedCookies = await api.importBrowserCookies({
 					browser: b.id,
 					url,

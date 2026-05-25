@@ -200,7 +200,10 @@ fn cookies_for_host_sync(browser: &str, host: &str) -> Result<Vec<Cookie>, Strin
 /// case-insensitively
 fn cookie_domain_matches_host(cookie_domain: &str, host: &str) -> bool {
     let host_l = host.trim().to_ascii_lowercase();
-    let domain_l = cookie_domain.trim().trim_start_matches('.').to_ascii_lowercase();
+    let domain_l = cookie_domain
+        .trim()
+        .trim_start_matches('.')
+        .to_ascii_lowercase();
     if domain_l.is_empty() || host_l.is_empty() {
         return false;
     }

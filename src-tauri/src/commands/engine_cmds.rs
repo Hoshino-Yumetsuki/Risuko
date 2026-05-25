@@ -1395,12 +1395,18 @@ mod tests {
         // so the task carries a stable display name; Content-Disposition
         // takes over once the engine sees the first response
         let r1 = infer_out_from_uri_inner("http://example.com/path/noext");
-        assert!(r1.starts_with("download-"), "expected download-<hex>, got {r1}");
+        assert!(
+            r1.starts_with("download-"),
+            "expected download-<hex>, got {r1}"
+        );
         assert_eq!(r1.len(), "download-".len() + 8);
         let r2 = infer_out_from_uri_inner(
-            "https://www.spigotmc.org/resources/storagepeek.134712/download?version=638562"
+            "https://www.spigotmc.org/resources/storagepeek.134712/download?version=638562",
         );
-        assert!(r2.starts_with("download-"), "expected download-<hex>, got {r2}");
+        assert!(
+            r2.starts_with("download-"),
+            "expected download-<hex>, got {r2}"
+        );
         assert_eq!(r2.len(), "download-".len() + 8);
     }
 

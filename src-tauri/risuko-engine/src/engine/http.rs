@@ -898,11 +898,12 @@ async fn run_single_uri_download(
 
     let is_http = uri.starts_with("http://") || uri.starts_with("https://");
 
-    // Probe the server before opening any output file. Picks up the
-    // Content-Disposition filename even when the response can't be
-    // sliced into ranges (chunked transfer, Content-Encoding, etc.) so
-    // the streaming path below still gets the rename
-    let probe_for_name: Option<ProbeResult> = if is_http {
+    // Only probe when the result will actually be used: multi-chunk downloads
+    // need range metadata, and URL-derived filenames can be replaced by a
+    // Content-Disposition suggestion. Single-stream downloads with an explicit
+    // output name get no benefit and the extra GET can break single-use URLs
+    let probe_for_name: Option<ProbeResult> = if is_http && (split > 1 || filename_was_url_derived)
+    {
         match probe_range_support(&range_client, uri, &headers).await {
             Ok(p) => Some(p),
             Err(e) => {
@@ -2366,9 +2367,7 @@ fn is_placeholder_download_name(name: &str) -> bool {
     let Some(rest) = name.strip_prefix("download-") else {
         return false;
     };
-    !rest.is_empty()
-        && rest.len() <= 32
-        && rest.chars().all(|c| c.is_ascii_hexdigit())
+    !rest.is_empty() && rest.len() <= 32 && rest.chars().all(|c| c.is_ascii_hexdigit())
 }
 
 /// Parse `Content-Disposition` for a filename. Recognizes:
@@ -2694,8 +2693,7 @@ mod tests {
         // Another download is partway through under the suggested name
         std::fs::write(dir_path.join("Report.pdf.part"), b"halfway").unwrap();
 
-        let result =
-            adopt_suggested_filename("Report.pdf", "download", &current_part, dir_path);
+        let result = adopt_suggested_filename("Report.pdf", "download", &current_part, dir_path);
         assert!(
             result.is_none(),
             "must not adopt when another .part is mid-flight"

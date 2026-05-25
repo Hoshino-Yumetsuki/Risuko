@@ -141,9 +141,9 @@ pub async fn import_browser_cookies(
         .unwrap_or_else(|| browser_user_agent.clone());
 
     if persist.unwrap_or(true) {
-        let manager = engine::get_manager().await.ok_or_else(|| {
-            "cookie persistence failed: engine manager unavailable".to_string()
-        })?;
+        let manager = engine::get_manager()
+            .await
+            .ok_or_else(|| "cookie persistence failed: engine manager unavailable".to_string())?;
         let entry = CookieEntry {
             host: host.clone(),
             browser_id: browser.clone(),

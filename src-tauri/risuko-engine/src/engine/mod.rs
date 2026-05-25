@@ -1,3 +1,4 @@
+pub mod cookie_store;
 pub mod ed2k;
 pub mod error_code;
 pub mod events;
@@ -8,7 +9,6 @@ pub mod http;
 pub mod m3u8;
 pub mod manager;
 pub mod netrc;
-pub mod cookie_store;
 pub mod options;
 pub mod routing;
 pub mod rpc;

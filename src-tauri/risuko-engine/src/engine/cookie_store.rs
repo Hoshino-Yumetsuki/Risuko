@@ -86,10 +86,7 @@ impl CookieStore {
                             state: RwLock::new(StoreFile::default()),
                         };
                     }
-                    log::info!(
-                        "cookie store backup created at {}",
-                        backup.display()
-                    );
+                    log::info!("cookie store backup created at {}", backup.display());
                 }
                 StoreFile::default()
             }
@@ -233,8 +230,17 @@ fn write_to_disk(path: &Path, state: &StoreFile) -> Result<(), String> {
     let tmp = path.with_extension("json.tmp");
     std::fs::write(&tmp, json).map_err(|e| format!("write cookie store failed: {e}"))?;
     if let Err(e) = std::fs::rename(&tmp, path) {
-        // On Windows rename fails if the destination exists; remove it and retry
-        std::fs::remove_file(path).map_err(|re| format!("rename cookie store failed: {e}; remove existing failed: {re}"))?;
+        // On Windows rename fails if the destination exists; remove it and retry.
+        // We remove the destination only after the first rename fails so the
+        // canonical file is never absent if the second rename also fails
+        if let Err(re) = std::fs::remove_file(path) {
+            // Clean up the temp file so we don't leave it behind, then surface
+            // the original rename error together with the remove failure
+            let _ = std::fs::remove_file(&tmp);
+            return Err(format!(
+                "rename cookie store failed: {e}; remove existing failed: {re}"
+            ));
+        }
         std::fs::rename(&tmp, path).map_err(|e2| format!("rename cookie store failed: {e2}"))?;
     }
     Ok(())
@@ -397,7 +403,10 @@ mod tests {
         // moved aside, and a sibling .corrupt-* file should now exist
         let store = CookieStore::new(dir.path());
         assert!(store.list().is_empty());
-        assert!(!path.exists(), "original corrupt file should be moved aside");
+        assert!(
+            !path.exists(),
+            "original corrupt file should be moved aside"
+        );
 
         let backups: Vec<_> = std::fs::read_dir(dir.path())
             .unwrap()

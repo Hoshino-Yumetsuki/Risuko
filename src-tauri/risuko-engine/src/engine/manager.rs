@@ -1243,9 +1243,17 @@ impl TaskManager {
                             // working so the next attempt re-prompts the
                             // user instead of replaying stale credentials
                             if code == super::error_code::ErrorCode::CLOUDFLARE_CHALLENGE {
-                                if let Some(entry) = cookie_store.find_for_url(
-                                    task.uris.first().map(|u| u.as_str()).unwrap_or(""),
-                                ) {
+                                // Prefer the host embedded in the challenge marker so
+                                // redirected URLs evict the right cookie entry
+                                let lookup_url = parse_cf_host(&e)
+                                    .map(|h| format!("https://{h}/"))
+                                    .unwrap_or_else(|| {
+                                        task.uris
+                                            .first()
+                                            .map(|u| u.as_str().to_owned())
+                                            .unwrap_or_default()
+                                    });
+                                if let Some(entry) = cookie_store.find_for_url(&lookup_url) {
                                     if let Err(err) = cookie_store.remove(&entry.host) {
                                         log::warn!(
                                             "[task:{gid_clone}] cookie store remove({}) failed: {err}",
