@@ -5,6 +5,7 @@
     <mo-engine-client :secret="rpcSecret" />
     <mo-ipc v-if="isRenderer" />
     <mo-dynamic-tray v-if="enableDynamicTray" :show-speed="traySpeedometer" />
+    <mo-cloudflare-dialog />
     <Teleport to="body">
       <Toaster
         position="top-center"
@@ -24,6 +25,7 @@ import DynamicTray from "@/components/Native/DynamicTray.vue";
 import EngineClient from "@/components/Native/EngineClient.vue";
 import Ipc from "@/components/Native/Ipc.vue";
 import TitleBar from "@/components/Native/TitleBar.vue";
+import CloudflareDialog from "@/components/Task/CloudflareDialog.vue";
 import { Toaster } from "@/components/ui/sonner";
 import is from "@/shims/platform";
 import { useAppStore } from "@/store/app";
@@ -36,6 +38,7 @@ export default {
 		[EngineClient.name]: EngineClient,
 		[Ipc.name]: Ipc,
 		[TitleBar.name]: TitleBar,
+		[CloudflareDialog.name as string]: CloudflareDialog,
 		Toaster,
 	},
 	computed: {

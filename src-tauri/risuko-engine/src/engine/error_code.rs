@@ -39,6 +39,11 @@ impl ErrorCode {
     pub const HTTP_SERVICE_UNAVAILABLE: Self = Self(306);
     pub const HTTP_REDIRECT_LOOP: Self = Self(307);
     pub const HTTP_RESPONSE_ERROR: Self = Self(308);
+    /// Cloudflare bot-protection challenge detected on a 403/503/429
+    /// response carrying cf-ray, `server: cloudflare`, or a "Just a
+    /// moment..." body. Resolved by importing browser cookies plus a
+    /// matching User-Agent
+    pub const CLOUDFLARE_CHALLENGE: Self = Self(315);
 
     // -- File system --
     pub const DISK_FULL: Self = Self(400);
@@ -106,6 +111,7 @@ impl ErrorCode {
             306 => "HTTP 503 Service Unavailable",
             307 => "Too many redirects",
             308 => "HTTP response error",
+            315 => "Cloudflare challenge detected",
 
             400 => "Disk full or quota exceeded",
             401 => "Permission denied",
@@ -182,6 +188,16 @@ pub fn classify_error(msg: &str, protocol: &str) -> ErrorCode {
 
     // -- HTTP status codes (skip for youtube: its match arm classifies these) --
     if protocol != "youtube" {
+        // Cloudflare has to beat the generic 403/503/429 catch-alls
+        // below. The HTTP downloader prefixes its message with
+        // [cloudflare-challenge] when it sniffs the response (see
+        // http.rs::looks_like_cloudflare_block)
+        if lower.contains("[cloudflare-challenge]")
+            || lower.contains("cloudflare challenge")
+            || lower.contains("cf_clearance required")
+        {
+            return ErrorCode::CLOUDFLARE_CHALLENGE;
+        }
         if lower.contains("401") || lower.contains("unauthorized") {
             return ErrorCode::HTTP_UNAUTHORIZED;
         }
@@ -332,6 +348,14 @@ mod tests {
         assert_eq!(
             classify_error("HTTP 404 Not Found", "http"),
             ErrorCode::HTTP_NOT_FOUND
+        );
+    }
+
+    #[test]
+    fn classify_cloudflare_marker_beats_403() {
+        assert_eq!(
+            classify_error("[cloudflare-challenge] host=example.com status=403", "http"),
+            ErrorCode::CLOUDFLARE_CHALLENGE
         );
     }
 

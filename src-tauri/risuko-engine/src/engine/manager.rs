@@ -6,6 +6,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 
+use super::cookie_store::CookieStore;
 use super::error_code::classify_error;
 use super::events::{EngineEvent, EventBroadcaster};
 use super::http;
@@ -31,6 +32,10 @@ struct ActiveDownload {
     connections: Arc<AtomicU32>,
     /// Split chunk completed bytes for multi-thread HTTP downloads
     chunk_completed: Vec<Arc<AtomicU64>>,
+    /// Filename adopted from Content-Disposition once the engine sees the
+    /// first response. Empty until adoption fires; the progress tick reads
+    /// it and updates `task.out` so the UI shows the real filename mid-download
+    adopted_filename: Arc<parking_lot::Mutex<Option<String>>>,
 }
 
 pub struct TaskManager {
@@ -43,6 +48,7 @@ pub struct TaskManager {
     session: SessionManager,
     torrent_engine: Arc<RwLock<Option<TorrentEngine>>>,
     global_speed_limiter: Arc<SpeedLimiter>,
+    cookie_store: Arc<CookieStore>,
 }
 
 /// Extract filename hint from the first HTTP URI by parsing URL path
@@ -79,6 +85,36 @@ fn extract_filename_from_uri(uris: &[String]) -> String {
     }
 
     String::new()
+}
+
+fn header_contains_cookie(value: &Value) -> bool {
+    let lines: Vec<&str> = if let Some(s) = value.as_str() {
+        s.split('\n').collect()
+    } else if let Some(arr) = value.as_array() {
+        arr.iter().filter_map(|v| v.as_str()).collect()
+    } else {
+        return false;
+    };
+    lines.iter().any(|l| {
+        let lower = l.trim().to_ascii_lowercase();
+        lower.starts_with("cookie:") || lower.starts_with("cookie ")
+    })
+}
+
+/// Extract `host=...` from the cloudflare-challenge marker error so the
+/// manager can evict the matching saved entry on re-detection
+#[cfg_attr(not(test), allow(dead_code))]
+fn parse_cf_host(msg: &str) -> Option<String> {
+    let key = "host=";
+    let start = msg.find(key)? + key.len();
+    let rest = &msg[start..];
+    let end = rest.find(|c: char| c.is_whitespace()).unwrap_or(rest.len());
+    let host = rest[..end].trim();
+    if host.is_empty() {
+        None
+    } else {
+        Some(host.to_lowercase())
+    }
 }
 
 impl TaskManager {
@@ -133,6 +169,7 @@ impl TaskManager {
             session,
             torrent_engine: Arc::new(RwLock::new(torrent_engine)),
             global_speed_limiter,
+            cookie_store: Arc::new(CookieStore::new(config_dir)),
         };
 
         // Restore torrent_ids mapping from persisted librqbit session
@@ -771,6 +808,7 @@ impl TaskManager {
                 speed,
                 connections,
                 chunk_completed: Vec::new(),
+                adopted_filename: Arc::new(parking_lot::Mutex::new(None)),
             };
             active_for_insert.write().await.insert(gid_for_insert, ad);
 
@@ -929,7 +967,8 @@ impl TaskManager {
             }
             if task.kind == TaskKind::Http && !task.uris.is_empty() {
                 task.status = TaskStatus::Active;
-                let merged = options_guard.merge_task_options(&task.options);
+                let mut merged = options_guard.merge_task_options(&task.options);
+                self.apply_stored_cookies(&task.uris, &mut merged);
                 self.spawn_http_download(task, merged);
                 started += 1;
             } else if task.kind == TaskKind::Youtube && !task.uris.is_empty() {
@@ -963,6 +1002,70 @@ impl TaskManager {
         }
     }
 
+    /// Inject stored browser cookies into the merged options for an HTTP
+    /// task whose URI host has a saved entry. User-supplied cookies and
+    /// User-Agent on the task itself always win; the store only fills
+    /// in fields that are absent
+    fn apply_stored_cookies(&self, uris: &[String], merged: &mut Map<String, Value>) {
+        let Some(uri) = uris.first() else {
+            return;
+        };
+        let Some(entry) = self.cookie_store.find_for_url(uri) else {
+            log::debug!("apply_stored_cookies: no entry for uri={uri}");
+            return;
+        };
+
+        // Cookie names and the destination host together leak more than
+        // we want at info level (recognizable session keys, plus what
+        // the user is downloading from). Stick to debug and elide names
+        log::debug!(
+            "apply_stored_cookies: matched stored entry (browser={}, {} cookie(s))",
+            entry.browser_id,
+            entry.cookies.len(),
+        );
+
+        let has_cookie = merged
+            .get("cookie")
+            .and_then(|v| v.as_str())
+            .is_some_and(|s| !s.is_empty())
+            || merged
+                .get("header")
+                .map(header_contains_cookie)
+                .unwrap_or(false);
+        if !has_cookie {
+            let cookie_header = super::cookie_store::cookies_to_header(&entry.cookies);
+            if !cookie_header.is_empty() {
+                log::debug!(
+                    "apply_stored_cookies: injecting cookie header ({} bytes)",
+                    cookie_header.len(),
+                );
+                merged.insert("cookie".to_string(), Value::String(cookie_header));
+            }
+        } else {
+            log::debug!(
+                "apply_stored_cookies: cookie already set on task, leaving stored entry untouched"
+            );
+        }
+
+        let has_ua = merged
+            .get("user-agent")
+            .and_then(|v| v.as_str())
+            .is_some_and(|s| !s.is_empty());
+        if !has_ua && !entry.user_agent.is_empty() {
+            merged.insert(
+                "user-agent".to_string(),
+                Value::String(entry.user_agent.clone()),
+            );
+        }
+
+        // Touch the entry so LRU eviction prefers entries actually in use
+        self.cookie_store.touch(&entry.host);
+    }
+
+    pub fn cookie_store(&self) -> &Arc<CookieStore> {
+        &self.cookie_store
+    }
+
     fn spawn_http_download(&self, task: &DownloadTask, merged_options: Map<String, Value>) {
         let gid = task.gid.clone();
         // Pass the full URI list so the engine can fail over between mirrors
@@ -973,6 +1076,7 @@ impl TaskManager {
         let events = self.events.clone();
         let tasks = self.tasks.clone();
         let active = self.active_downloads.clone();
+        let cookie_store = self.cookie_store.clone();
 
         let split: u32 = merged_options
             .get("split")
@@ -1019,6 +1123,9 @@ impl TaskManager {
 
         let active_for_insert = active.clone();
         let gid_for_insert = gid.clone();
+        let adopted_filename: Arc<parking_lot::Mutex<Option<String>>> =
+            Arc::new(parking_lot::Mutex::new(None));
+        let adopted_filename_dl = adopted_filename.clone();
         let completion_handle = tokio::spawn(async move {
             let ad = ActiveDownload {
                 cancel,
@@ -1028,6 +1135,7 @@ impl TaskManager {
                 speed,
                 connections,
                 chunk_completed,
+                adopted_filename,
             };
             active_for_insert.write().await.insert(gid_for_insert, ad);
 
@@ -1045,6 +1153,7 @@ impl TaskManager {
                 global_limiter,
                 task_speed_limiter,
                 chunk_completed_dl,
+                adopted_filename_dl,
             )
             .await;
 
@@ -1092,6 +1201,12 @@ impl TaskManager {
                             path.display()
                         );
                         task.status = TaskStatus::Complete;
+                        // Pull the final filename off disk so the task
+                        // record matches any Content-Disposition rename
+                        // that happened in http.rs
+                        if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                            task.out = name.to_string();
+                        }
                         task.files = vec![DownloadFile {
                             index: "1".to_string(),
                             path: path.to_string_lossy().to_string(),
@@ -1123,7 +1238,31 @@ impl TaskManager {
                         } else {
                             tracing::error!("Download failed for {}: {}", gid_clone, e);
                             task.status = TaskStatus::Error;
-                            task.error_code = Some(classify_error(&e, "http").to_string());
+                            let code = classify_error(&e, "http");
+                            // Drop a saved cookie entry that stopped
+                            // working so the next attempt re-prompts the
+                            // user instead of replaying stale credentials
+                            if code == super::error_code::ErrorCode::CLOUDFLARE_CHALLENGE {
+                                // Prefer the host embedded in the challenge marker so
+                                // redirected URLs evict the right cookie entry
+                                let lookup_url = parse_cf_host(&e)
+                                    .map(|h| format!("https://{h}/"))
+                                    .unwrap_or_else(|| {
+                                        task.uris
+                                            .first()
+                                            .map(|u| u.as_str().to_owned())
+                                            .unwrap_or_default()
+                                    });
+                                if let Some(entry) = cookie_store.find_for_url(&lookup_url) {
+                                    if let Err(err) = cookie_store.remove(&entry.host) {
+                                        log::warn!(
+                                            "[task:{gid_clone}] cookie store remove({}) failed: {err}",
+                                            entry.host
+                                        );
+                                    }
+                                }
+                            }
+                            task.error_code = Some(code.to_string());
                             task.error_message = Some(e);
                             events.send(EngineEvent::DownloadError {
                                 gid: gid_clone.clone(),
@@ -1180,6 +1319,7 @@ impl TaskManager {
                 speed,
                 connections,
                 chunk_completed: Vec::new(),
+                adopted_filename: Arc::new(parking_lot::Mutex::new(None)),
             };
             active_for_insert.write().await.insert(gid_for_insert, ad);
 
@@ -1334,6 +1474,7 @@ impl TaskManager {
                 speed,
                 connections,
                 chunk_completed: Vec::new(),
+                adopted_filename: Arc::new(parking_lot::Mutex::new(None)),
             };
             active_for_insert.write().await.insert(gid_for_insert, ad);
 
@@ -1471,6 +1612,7 @@ impl TaskManager {
                 speed,
                 connections,
                 chunk_completed: Vec::new(),
+                adopted_filename: Arc::new(parking_lot::Mutex::new(None)),
             };
             active_for_insert.write().await.insert(gid_for_insert, ad);
 
@@ -1597,6 +1739,7 @@ impl TaskManager {
                 speed,
                 connections,
                 chunk_completed: Vec::new(),
+                adopted_filename: Arc::new(parking_lot::Mutex::new(None)),
             };
             active_for_insert.write().await.insert(gid_for_insert, ad);
 
@@ -1707,6 +1850,19 @@ impl TaskManager {
                     task.completed_length = ad.completed.load(Ordering::Relaxed);
                     task.download_speed = ad.speed.load(Ordering::Relaxed);
                     task.connections = ad.connections.load(Ordering::Relaxed);
+
+                    // Pick up a filename the engine learned from
+                    // Content-Disposition mid-download. The UI reads task
+                    // names from files[0].path, so we sync both fields to
+                    // keep the display in step with the .part on disk
+                    if let Some(name) = ad.adopted_filename.lock().clone() {
+                        if !name.is_empty() && task.out != name {
+                            task.out = name.clone();
+                            if let Some(f) = task.files.first_mut() {
+                                f.path = format!("{}/{}", task.dir, name);
+                            }
+                        }
+                    }
 
                     // split chunk progress for multi-thread HTTP
                     // Only populate when actually using multiple connections;
@@ -2081,6 +2237,60 @@ impl TaskManager {
             self.try_start_next().await;
         }
 
+        self.events.send(EngineEvent::DownloadStart {
+            gid: gid.to_string(),
+        });
+        Ok(())
+    }
+
+    /// Replace an HTTP task's credentials with freshly imported ones and
+    /// resume it. Called from the Cloudflare-recovery flow after the user
+    /// solves a challenge in their browser. Either `cookie` or
+    /// `user_agent` may be empty to leave that field unchanged
+    pub async fn retry_with_cookies(
+        &self,
+        gid: &str,
+        cookie: Option<String>,
+        user_agent: Option<String>,
+    ) -> Result<(), String> {
+        log::info!("[task:{}] Retrying with imported cookies", gid);
+        let was_active;
+        {
+            let mut tasks = self.tasks.write().await;
+            let task = tasks
+                .iter_mut()
+                .find(|t| t.gid == gid)
+                .ok_or_else(|| format!("Task {} not found", gid))?;
+            if task.kind != TaskKind::Http {
+                return Err(format!("Task {} is not an HTTP task", gid));
+            }
+            if let Some(c) = cookie {
+                if !c.is_empty() {
+                    task.options.insert("cookie".to_string(), Value::String(c));
+                }
+            }
+            if let Some(ua) = user_agent {
+                if !ua.is_empty() {
+                    task.options
+                        .insert("user-agent".to_string(), Value::String(ua));
+                }
+            }
+            // Clear stale error state
+            task.error_code = None;
+            task.error_message = None;
+            was_active = task.status == TaskStatus::Active;
+            task.status = TaskStatus::Waiting;
+        }
+
+        if was_active {
+            // Cancel any in-flight worker so the new options take effect
+            let active = self.active_downloads.read().await;
+            if let Some(ad) = active.get(gid) {
+                ad.cancel.store(true, Ordering::Relaxed);
+                ad.cancel_token.cancel();
+            }
+        }
+        self.try_start_next().await;
         self.events.send(EngineEvent::DownloadStart {
             gid: gid.to_string(),
         });
@@ -2829,6 +3039,19 @@ fn bool_str(b: bool) -> String {
 mod tests {
     use super::*;
 
+    #[test]
+    fn parse_cf_host_extracts_host_from_marker() {
+        assert_eq!(
+            parse_cf_host("[cloudflare-challenge] host=www.spigotmc.org status=403").as_deref(),
+            Some("www.spigotmc.org")
+        );
+    }
+
+    #[test]
+    fn parse_cf_host_returns_none_when_absent() {
+        assert!(parse_cf_host("HTTP error: 403").is_none());
+    }
+
     // -- infer_m3u8_output_name --
 
     #[test]
@@ -2901,6 +3124,7 @@ mod tests {
         let options = EngineOptions::from_config(&Map::new(), &Map::new());
         let events = EventBroadcaster::new(16);
         let global_speed_limiter = Arc::new(SpeedLimiter::new(0));
+        let cookie_store = Arc::new(CookieStore::new(dir.path()));
 
         TaskManager {
             tasks: Arc::new(RwLock::new(tasks)),
@@ -2912,6 +3136,7 @@ mod tests {
             session,
             torrent_engine: Arc::new(RwLock::new(None)),
             global_speed_limiter,
+            cookie_store,
         }
     }
 

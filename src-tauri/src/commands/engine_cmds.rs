@@ -194,16 +194,38 @@ fn infer_out_from_uri_inner(uri: &str) -> String {
     let decoded_candidate = crate::commands::file_cmds::percent_decode_lossy(candidate);
     let decoded_candidate = decoded_candidate.trim();
     if decoded_candidate.is_empty() || !decoded_candidate.contains('.') {
-        return String::new();
+        // Opaque URL like /resources/foo/download?version=N has no
+        // extension to hint at a name. Drop in a placeholder so the task
+        // carries a stable display name; the engine swaps in the real
+        // filename once it sees Content-Disposition on the first response.
+        // Use a per-URL hash suffix so two distinct extensionless URLs
+        // queued together don't collide on the same `${dir}/download.part`
+        return placeholder_download_name(raw);
     }
     if decoded_candidate.contains('/') || decoded_candidate.contains('\\') {
-        return String::new();
+        return placeholder_download_name(raw);
     }
     if decoded_candidate.starts_with('.') || decoded_candidate.ends_with('.') {
-        return String::new();
+        return placeholder_download_name(raw);
     }
 
     decoded_candidate.to_string()
+}
+
+/// Build a unique-but-deterministic placeholder filename for opaque
+/// URLs. A URL hash beats a counter or UUID here: re-adding the same
+/// link yields the same name (so retries / dedup behave) while distinct
+/// URLs get distinct names (so concurrent extensionless downloads don't
+/// share `download.part`). The engine's `filename_was_url_derived`
+/// recognizes the `download-` prefix and still adopts a real
+/// Content-Disposition name when one arrives
+fn placeholder_download_name(uri: &str) -> String {
+    use sha1::{Digest, Sha1};
+    let mut hasher = Sha1::new();
+    hasher.update(uri.as_bytes());
+    let digest = hasher.finalize();
+    let hex: String = digest.iter().take(4).map(|b| format!("{b:02x}")).collect();
+    format!("download-{hex}")
 }
 
 #[tauri::command]
@@ -1368,11 +1390,24 @@ mod tests {
     }
 
     #[test]
-    fn infer_out_no_extension() {
-        assert_eq!(
-            infer_out_from_uri_inner("http://example.com/path/noext"),
-            ""
+    fn infer_out_no_extension_falls_back_to_download() {
+        // Opaque URLs with no extension hint get a generic placeholder
+        // so the task carries a stable display name; Content-Disposition
+        // takes over once the engine sees the first response
+        let r1 = infer_out_from_uri_inner("http://example.com/path/noext");
+        assert!(
+            r1.starts_with("download-"),
+            "expected download-<hex>, got {r1}"
         );
+        assert_eq!(r1.len(), "download-".len() + 8);
+        let r2 = infer_out_from_uri_inner(
+            "https://www.spigotmc.org/resources/storagepeek.134712/download?version=638562",
+        );
+        assert!(
+            r2.starts_with("download-"),
+            "expected download-<hex>, got {r2}"
+        );
+        assert_eq!(r2.len(), "download-".len() + 8);
     }
 
     #[test]

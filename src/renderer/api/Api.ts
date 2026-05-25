@@ -759,4 +759,83 @@ export default class Api {
 	vaultRemoveCredential(id: string) {
 		return invoke("vault_remove_credential", { id });
 	}
+
+	// -- Browser cookie integration --
+
+	listBrowsers() {
+		return invoke<BrowserInfo[]>("list_browsers_cmd");
+	}
+
+	importBrowserCookies(params: {
+		browser: string;
+		url: string;
+		persist?: boolean;
+		userAgent?: string;
+	}) {
+		return invoke<ImportedCookies>("import_browser_cookies", params);
+	}
+
+	listCookieEntries() {
+		return invoke<CookieEntryView[]>("list_cookie_entries");
+	}
+
+	deleteCookieEntry(host: string) {
+		return invoke<boolean>("delete_cookie_entry", { host });
+	}
+
+	clearCookieEntries() {
+		return invoke<void>("clear_cookie_entries");
+	}
+
+	retryWithCookies(params: {
+		gid: string;
+		cookie?: string;
+		userAgent?: string;
+	}) {
+		const { gid, cookie, userAgent } = params;
+		return invoke<void>("retry_with_cookies", {
+			gid,
+			payload: { cookie, userAgent },
+		});
+	}
+
+	captureUserAgent() {
+		return invoke<{ userAgent: string }>("capture_user_agent");
+	}
+}
+
+export interface BrowserInfo {
+	id: string;
+	name: string;
+	available: boolean;
+	userAgent: string;
+}
+
+export interface ImportedCookieView {
+	name: string;
+	value: string;
+	domain: string;
+	path: string;
+	secure: boolean;
+	httpOnly: boolean;
+	expires: number | null;
+}
+
+export interface ImportedCookies {
+	host: string;
+	userAgent: string;
+	cookieHeader: string;
+	count: number;
+	hasCfClearance: boolean;
+	cookieNames: string[];
+	cookies: ImportedCookieView[];
+}
+
+export interface CookieEntryView {
+	host: string;
+	browserId: string;
+	userAgent: string;
+	cookieCount: number;
+	importedAt: number;
+	lastValidatedAt: number;
 }

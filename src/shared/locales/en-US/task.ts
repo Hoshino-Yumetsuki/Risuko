@@ -56,6 +56,45 @@ export default {
 	"task-authorization": "Authorization",
 	"task-referer": "Referer",
 	"task-cookie": "Cookie",
+	"task-cookie-import": "Import from browser",
+	"task-cookie-import-no-browsers":
+		"No supported browsers detected on this machine.",
+	"task-cookie-import-success": "Imported {{count}} cookies from {{browser}}",
+	"task-cookie-import-failed": "Cookie import failed: {{error}}",
+	"task-cloudflare-title": "Cloudflare protection blocked the download",
+	"task-cloudflare-explain":
+		"This site uses Cloudflare to filter automated requests. Open the link in your browser, solve the challenge, then click Retry — Risuko will reuse your browser cookies for this download.",
+	"task-cloudflare-pick-browser":
+		"Choose the browser you'll solve the challenge in:",
+	"task-cloudflare-open-browser": "Open in browser",
+	"task-cloudflare-retry": "I've solved it, retry",
+	"task-cloudflare-cancel": "Cancel",
+	"task-cloudflare-skip": "Don't ask again for this domain",
+	"task-cloudflare-no-clearance":
+		"Imported cookies from {{browser}}, but no cf_clearance token was found. Open the link in that browser, complete the Cloudflare challenge, then retry.",
+	"task-cloudflare-tls-fingerprint":
+		"Cookies imported successfully but Cloudflare still blocked the request. This site likely also fingerprints the TLS handshake or HTTP/2 settings — Risuko's HTTP client doesn't match what your browser sends. cf_clearance alone won't pass it. Try downloading the file directly in the browser, or use a proxy that mimics a browser TLS fingerprint.",
+	"task-cloudflare-imported-names": "Cookies present",
+	"task-cloudflare-preview": "Preview cookies",
+	"task-cloudflare-preview-title": "Imported {{count}} cookie(s)",
+	"task-cloudflare-no-clearance-badge": "no cf_clearance",
+	"task-cloudflare-show-cookies": "Show cookie values ({{count}})",
+	"task-cloudflare-ua-placeholder":
+		"User-Agent — must match the browser that solved the challenge",
+	"task-cloudflare-ua-hint":
+		"cf_clearance is bound to the browser's User-Agent and IP. Open the link in your browser, copy its real User-Agent (e.g. from about:support or a dev tools header), and paste it here.",
+	"task-cloudflare-ua-required":
+		"User-Agent is required — paste the one your browser sends.",
+	"task-cloudflare-ua-detect": "Detect from browser",
+	"task-cloudflare-ua-capturing": "Waiting...",
+	"task-cloudflare-ua-capturing-hint":
+		"A browser tab is opening. Risuko will read the User-Agent it sends.",
+	"task-cloudflare-ua-captured": "User-Agent captured",
+	"task-cloudflare-ua-captured-saved":
+		"User-Agent captured and set as default for new tasks",
+	"task-cloudflare-ua-empty":
+		"Browser opened the page but didn't send a User-Agent header.",
+	"task-cloudflare-ua-failed": "User-Agent capture failed: {{error}}",
 	"task-proxy": "Proxy",
 	"task-error-info": "Error",
 	"task-piece": "Piece",
