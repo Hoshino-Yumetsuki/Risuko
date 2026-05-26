@@ -13,6 +13,7 @@ on:
 
 permissions:
   contents: write
+  id-token: write
 
 env:
   CARGO_INCREMENTAL: 0
@@ -246,47 +247,37 @@ jobs:
       - name: Publish @risuko/cli-* platform packages
         if: ${{ !inputs.dry_run }}
         shell: bash
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -euo pipefail
           for dir in packages/risuko-cli/npm/*/; do
             echo "Publishing $(basename "$dir")..."
-            (cd "$dir" && npm publish --access public) || echo "::warning::Failed to publish $(basename "$dir")"
+            (cd "$dir" && npm publish --access public --provenance) || echo "::warning::Failed to publish $(basename "$dir")"
           done
 
       - name: Publish risuko-cli main package
         if: ${{ !inputs.dry_run }}
         working-directory: packages/risuko-cli
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish --access public
+        run: npm publish --access public --provenance
 
       - name: Publish @risuko/js-* platform packages
         if: ${{ !inputs.dry_run }}
         shell: bash
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -euo pipefail
           for dir in packages/risuko-js/npm/*/; do
             echo "Publishing $(basename "$dir")..."
-            (cd "$dir" && npm publish --access public) || echo "::warning::Failed to publish $(basename "$dir")"
+            (cd "$dir" && npm publish --access public --provenance) || echo "::warning::Failed to publish $(basename "$dir")"
           done
 
       - name: Publish risuko-js main package
         if: ${{ !inputs.dry_run }}
         working-directory: packages/risuko-js
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish --access public
+        run: npm publish --access public --provenance
 
       - name: Publish @risuko/app launcher package
         if: ${{ !inputs.dry_run }}
         working-directory: packages/risuko-app
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish --access public
+        run: npm publish --access public --provenance
 
       - name: Dry run summary
         if: ${{ inputs.dry_run }}
