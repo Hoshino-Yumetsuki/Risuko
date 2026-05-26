@@ -6,6 +6,12 @@ use super::rpc_client::RpcClient;
 use super::{DownloadArgs, PauseArgs, RemoveArgs, ResumeArgs, ServeArgs, StatusArgs};
 use risuko_engine::engine::youtube::is_youtube_uri;
 
+fn resolve_rpc_secret(explicit: Option<String>) -> Option<String> {
+    explicit
+        .filter(|s| !s.is_empty())
+        .or_else(read_secret_from_config)
+}
+
 /// Read rpc-secret from the config files, returning None if empty or absent.
 /// user.json takes precedence over system.json
 fn read_secret_from_config() -> Option<String> {
@@ -40,7 +46,7 @@ fn load_config_file(path: &std::path::Path) -> serde_json::Map<String, Value> {
 }
 
 pub async fn download(args: DownloadArgs) -> Result<(), Box<dyn std::error::Error>> {
-    let mut secret = args.rpc_secret.clone().or_else(read_secret_from_config);
+    let mut secret = resolve_rpc_secret(args.rpc_secret.clone());
     let client = RpcClient::new(args.rpc_port, secret.clone());
     let mut headless_engine = None;
 
@@ -163,7 +169,7 @@ async fn do_download(
 }
 
 pub async fn status(args: StatusArgs) -> Result<(), Box<dyn std::error::Error>> {
-    let secret = args.rpc_secret.or_else(read_secret_from_config);
+    let secret = resolve_rpc_secret(args.rpc_secret);
     let client = RpcClient::new(args.rpc_port, secret);
     require_engine(&client).await?;
 
@@ -229,7 +235,7 @@ pub async fn status(args: StatusArgs) -> Result<(), Box<dyn std::error::Error>> 
 }
 
 pub async fn pause(args: PauseArgs) -> Result<(), Box<dyn std::error::Error>> {
-    let secret = args.rpc_secret.or_else(read_secret_from_config);
+    let secret = resolve_rpc_secret(args.rpc_secret);
     let client = RpcClient::new(args.rpc_port, secret);
     require_engine(&client).await?;
 
@@ -239,7 +245,7 @@ pub async fn pause(args: PauseArgs) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 pub async fn resume(args: ResumeArgs) -> Result<(), Box<dyn std::error::Error>> {
-    let secret = args.rpc_secret.or_else(read_secret_from_config);
+    let secret = resolve_rpc_secret(args.rpc_secret);
     let client = RpcClient::new(args.rpc_port, secret);
     require_engine(&client).await?;
 
@@ -249,7 +255,7 @@ pub async fn resume(args: ResumeArgs) -> Result<(), Box<dyn std::error::Error>> 
 }
 
 pub async fn remove(args: RemoveArgs) -> Result<(), Box<dyn std::error::Error>> {
-    let secret = args.rpc_secret.or_else(read_secret_from_config);
+    let secret = resolve_rpc_secret(args.rpc_secret);
     let client = RpcClient::new(args.rpc_port, secret);
     require_engine(&client).await?;
 

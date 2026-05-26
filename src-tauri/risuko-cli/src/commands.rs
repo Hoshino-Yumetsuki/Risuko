@@ -16,6 +16,12 @@ use crate::{
     RssAction, RssCommand, ServeArgs, StatusArgs,
 };
 
+fn resolve_rpc_secret(explicit: Option<String>) -> Option<String> {
+    explicit
+        .filter(|s| !s.is_empty())
+        .or_else(read_secret_from_config)
+}
+
 /// Read rpc-secret from the config files, returning None if empty or absent
 /// user.json takes precedence over system.json
 fn read_secret_from_config() -> Option<String> {
@@ -38,7 +44,7 @@ fn read_secret_from_config() -> Option<String> {
 // Download
 
 pub async fn download(args: DownloadArgs) -> Result<(), Box<dyn std::error::Error>> {
-    let secret = args.rpc_secret.clone().or_else(read_secret_from_config);
+    let secret = resolve_rpc_secret(args.rpc_secret.clone());
     let client = RpcClient::new(args.rpc_port, secret.clone());
     let mut headless_engine = None;
 
@@ -156,7 +162,7 @@ async fn do_download(
 // Status
 
 pub async fn status(args: StatusArgs) -> Result<(), Box<dyn std::error::Error>> {
-    let secret = args.rpc_secret.clone().or_else(read_secret_from_config);
+    let secret = resolve_rpc_secret(args.rpc_secret.clone());
     let client = RpcClient::new(args.rpc_port, secret);
     require_engine(&client).await?;
 
@@ -212,7 +218,7 @@ pub async fn status(args: StatusArgs) -> Result<(), Box<dyn std::error::Error>> 
 // Pause / Resume / Remove
 
 pub async fn pause(args: PauseArgs) -> Result<(), Box<dyn std::error::Error>> {
-    let secret = args.rpc_secret.clone().or_else(read_secret_from_config);
+    let secret = resolve_rpc_secret(args.rpc_secret.clone());
     let client = RpcClient::new(args.rpc_port, secret);
     require_engine(&client).await?;
     client.call("risuko.pause", vec![json!(args.gid)]).await?;
@@ -221,7 +227,7 @@ pub async fn pause(args: PauseArgs) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 pub async fn resume(args: ResumeArgs) -> Result<(), Box<dyn std::error::Error>> {
-    let secret = args.rpc_secret.clone().or_else(read_secret_from_config);
+    let secret = resolve_rpc_secret(args.rpc_secret.clone());
     let client = RpcClient::new(args.rpc_port, secret);
     require_engine(&client).await?;
     client.call("risuko.unpause", vec![json!(args.gid)]).await?;
@@ -230,7 +236,7 @@ pub async fn resume(args: ResumeArgs) -> Result<(), Box<dyn std::error::Error>> 
 }
 
 pub async fn remove(args: RemoveArgs) -> Result<(), Box<dyn std::error::Error>> {
-    let secret = args.rpc_secret.clone().or_else(read_secret_from_config);
+    let secret = resolve_rpc_secret(args.rpc_secret.clone());
     let client = RpcClient::new(args.rpc_port, secret);
     require_engine(&client).await?;
     for gid in &args.gids {
@@ -245,7 +251,7 @@ pub async fn remove(args: RemoveArgs) -> Result<(), Box<dyn std::error::Error>> 
 // Pause All / Resume All
 
 pub async fn pause_all(args: RpcArgs) -> Result<(), Box<dyn std::error::Error>> {
-    let secret = args.rpc_secret.clone().or_else(read_secret_from_config);
+    let secret = resolve_rpc_secret(args.rpc_secret.clone());
     let client = RpcClient::new(args.rpc_port, secret);
     require_engine(&client).await?;
     client.call("risuko.pauseAll", vec![]).await?;
@@ -254,7 +260,7 @@ pub async fn pause_all(args: RpcArgs) -> Result<(), Box<dyn std::error::Error>> 
 }
 
 pub async fn resume_all(args: RpcArgs) -> Result<(), Box<dyn std::error::Error>> {
-    let secret = args.rpc_secret.clone().or_else(read_secret_from_config);
+    let secret = resolve_rpc_secret(args.rpc_secret.clone());
     let client = RpcClient::new(args.rpc_port, secret);
     require_engine(&client).await?;
     client.call("risuko.unpauseAll", vec![]).await?;
@@ -265,7 +271,7 @@ pub async fn resume_all(args: RpcArgs) -> Result<(), Box<dyn std::error::Error>>
 // Global Stat
 
 pub async fn global_stat(args: RpcArgs) -> Result<(), Box<dyn std::error::Error>> {
-    let secret = args.rpc_secret.clone().or_else(read_secret_from_config);
+    let secret = resolve_rpc_secret(args.rpc_secret.clone());
     let client = RpcClient::new(args.rpc_port, secret);
     require_engine(&client).await?;
     let stat = client.call("risuko.getGlobalStat", vec![]).await?;
@@ -296,7 +302,7 @@ pub async fn global_stat(args: RpcArgs) -> Result<(), Box<dyn std::error::Error>
 // Files / Peers
 
 pub async fn files(args: GidArgs) -> Result<(), Box<dyn std::error::Error>> {
-    let secret = args.rpc_secret.clone().or_else(read_secret_from_config);
+    let secret = resolve_rpc_secret(args.rpc_secret.clone());
     let client = RpcClient::new(args.rpc_port, secret);
     require_engine(&client).await?;
     let result = client
@@ -326,7 +332,7 @@ pub async fn files(args: GidArgs) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 pub async fn peers(args: GidArgs) -> Result<(), Box<dyn std::error::Error>> {
-    let secret = args.rpc_secret.clone().or_else(read_secret_from_config);
+    let secret = resolve_rpc_secret(args.rpc_secret.clone());
     let client = RpcClient::new(args.rpc_port, secret);
     require_engine(&client).await?;
     let result = client
@@ -364,7 +370,7 @@ pub async fn peers(args: GidArgs) -> Result<(), Box<dyn std::error::Error>> {
 // Purge
 
 pub async fn purge(args: RpcArgs) -> Result<(), Box<dyn std::error::Error>> {
-    let secret = args.rpc_secret.clone().or_else(read_secret_from_config);
+    let secret = resolve_rpc_secret(args.rpc_secret.clone());
     let client = RpcClient::new(args.rpc_port, secret);
     require_engine(&client).await?;
     client.call("risuko.purgeDownloadResult", vec![]).await?;
@@ -434,7 +440,7 @@ pub async fn rss(cmd: RssCommand) -> Result<(), Box<dyn std::error::Error>> {
             rpc_port,
             rpc_secret,
         } => {
-            let secret = rpc_secret.or_else(read_secret_from_config);
+            let secret = resolve_rpc_secret(rpc_secret);
             let client = RpcClient::new(rpc_port, secret);
             require_engine(&client).await?;
             let result = client.call("risuko.addRssFeed", vec![json!(url)]).await?;
@@ -446,7 +452,7 @@ pub async fn rss(cmd: RssCommand) -> Result<(), Box<dyn std::error::Error>> {
             rpc_secret,
             json,
         } => {
-            let secret = rpc_secret.or_else(read_secret_from_config);
+            let secret = resolve_rpc_secret(rpc_secret);
             let client = RpcClient::new(rpc_port, secret);
             require_engine(&client).await?;
             let result = client.call("risuko.getRssFeeds", vec![]).await?;
@@ -470,7 +476,7 @@ pub async fn rss(cmd: RssCommand) -> Result<(), Box<dyn std::error::Error>> {
             rpc_port,
             rpc_secret,
         } => {
-            let secret = rpc_secret.or_else(read_secret_from_config);
+            let secret = resolve_rpc_secret(rpc_secret);
             let client = RpcClient::new(rpc_port, secret);
             require_engine(&client).await?;
             client.call("risuko.refreshAllRssFeeds", vec![]).await?;
@@ -482,7 +488,7 @@ pub async fn rss(cmd: RssCommand) -> Result<(), Box<dyn std::error::Error>> {
             rpc_port,
             rpc_secret,
         } => {
-            let secret = rpc_secret.or_else(read_secret_from_config);
+            let secret = resolve_rpc_secret(rpc_secret);
             let client = RpcClient::new(rpc_port, secret);
             require_engine(&client).await?;
             client.call("risuko.removeRssFeed", vec![json!(id)]).await?;
@@ -508,7 +514,7 @@ pub async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
 // Shutdown
 
 pub async fn shutdown(args: RpcArgs) -> Result<(), Box<dyn std::error::Error>> {
-    let secret = args.rpc_secret.clone().or_else(read_secret_from_config);
+    let secret = resolve_rpc_secret(args.rpc_secret.clone());
     let client = RpcClient::new(args.rpc_port, secret);
     require_engine(&client).await?;
     client.call("risuko.shutdown", vec![]).await?;
