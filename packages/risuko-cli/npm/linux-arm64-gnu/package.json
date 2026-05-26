@@ -1,20 +1,20 @@
 {
-	"name": "@risuko/cli-linux-arm64-gnu",
-	"version": "0.3.2",
-	"description": "Risuko CLI binary for Linux ARM64",
-	"repository": {
-		"type": "git",
-		"url": "git+https://github.com/YueMiyuki/Risuko.git",
-		"directory": "packages/risuko-cli/npm/linux-arm64-gnu"
-	},
-	"license": "MIT",
-	"os": [
-		"linux"
-	],
-	"cpu": [
-		"arm64"
-	],
-	"files": [
-		"risuko"
-	]
+  "name": "@risuko/cli-linux-arm64-gnu",
+  "version": "0.3.3",
+  "description": "Risuko CLI binary for Linux ARM64",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/YueMiyuki/Risuko.git",
+    "directory": "packages/risuko-cli/npm/linux-arm64-gnu"
+  },
+  "license": "MIT",
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "arm64"
+  ],
+  "files": [
+    "risuko"
+  ]
 }
