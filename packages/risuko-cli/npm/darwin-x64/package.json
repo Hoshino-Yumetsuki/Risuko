@@ -1,15 +1,15 @@
 {
-	"name": "@risuko/cli-darwin-x64",
-	"version": "0.3.1",
-	"description": "Risuko CLI binary for macOS x64",
-	"license": "MIT",
-	"os": [
-		"darwin"
-	],
-	"cpu": [
-		"x64"
-	],
-	"files": [
-		"risuko"
-	]
+  "name": "@risuko/cli-darwin-x64",
+  "version": "0.3.2",
+  "description": "Risuko CLI binary for macOS x64",
+  "license": "MIT",
+  "os": [
+    "darwin"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "files": [
+    "risuko"
+  ]
 }
