@@ -287,6 +287,14 @@
 
 <script lang="ts">
 import {
+	ChevronDown,
+	Download,
+	ExternalLink,
+	FileArchive,
+	SlidersHorizontal,
+	X,
+} from "@lucide/vue";
+import {
 	ADD_TASK_TYPE,
 	NONE_SELECTED_FILES,
 	SELECTED_ALL_FILES,
@@ -299,14 +307,6 @@ import {
 import logger from "@shared/utils/logger";
 import { readText } from "@tauri-apps/plugin-clipboard-manager";
 import { open as tauriOpen } from "@tauri-apps/plugin-dialog";
-import {
-	ChevronDown,
-	Download,
-	ExternalLink,
-	FileArchive,
-	SlidersHorizontal,
-	X,
-} from "lucide-vue-next";
 import { AnimatePresence, Motion } from "motion-v";
 import { toast } from "vue-sonner";
 import SelectDirectory from "@/components/Native/SelectDirectory.vue";

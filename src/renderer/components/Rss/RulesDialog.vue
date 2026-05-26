@@ -262,6 +262,8 @@
 
 <script lang="ts">
 // biome-ignore-all lint/correctness/noUnusedImports: Pattern/EpisodeSelector are referenced in <template> type annotations
+
+import { Plus, Trash2 } from "@lucide/vue";
 import type {
 	DryRunMatch,
 	EpisodeSelector,
@@ -269,7 +271,6 @@ import type {
 	RssRule,
 } from "@shared/types/rss";
 import { emptyRule } from "@shared/types/rss";
-import { Plus, Trash2 } from "lucide-vue-next";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {

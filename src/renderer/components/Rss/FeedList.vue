@@ -84,7 +84,6 @@
 </template>
 
 <script lang="ts">
-import type { RssFeed } from "@shared/types/rss";
 import {
 	AlertTriangle,
 	CircleDot,
@@ -94,7 +93,8 @@ import {
 	Rss,
 	Settings2,
 	Trash2,
-} from "lucide-vue-next";
+} from "@lucide/vue";
+import type { RssFeed } from "@shared/types/rss";
 import { Button } from "@/components/ui/button";
 import {
 	DropdownMenu,

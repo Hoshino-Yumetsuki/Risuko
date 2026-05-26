@@ -32,7 +32,7 @@
 </template>
 
 <script lang="ts">
-import { RefreshCw } from "lucide-vue-next";
+import { RefreshCw } from "@lucide/vue";
 import { Button } from "@/components/ui/button";
 import {
 	Dialog,

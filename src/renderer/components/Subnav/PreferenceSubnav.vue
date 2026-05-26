@@ -66,8 +66,8 @@
 </template>
 
 <script lang="ts">
+import { Cloud, SlidersHorizontal, Wrench } from "@lucide/vue";
 import logger from "@shared/utils/logger";
-import { Cloud, SlidersHorizontal, Wrench } from "lucide-vue-next";
 import { LayoutGroup, Motion } from "motion-v";
 
 export default {

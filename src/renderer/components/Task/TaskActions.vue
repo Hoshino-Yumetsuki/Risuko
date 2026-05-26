@@ -103,8 +103,6 @@
 </template>
 
 <script lang="ts">
-import { ADD_TASK_TYPE } from "@shared/constants";
-import { bytesToSize, calcProgress } from "@shared/utils";
 import {
 	ArrowDown,
 	ArrowUp,
@@ -113,7 +111,9 @@ import {
 	Play,
 	RefreshCw,
 	Trash2,
-} from "lucide-vue-next";
+} from "@lucide/vue";
+import { ADD_TASK_TYPE } from "@shared/constants";
+import { bytesToSize, calcProgress } from "@shared/utils";
 import { toast } from "vue-sonner";
 import { commands } from "@/components/CommandManager/instance";
 import {

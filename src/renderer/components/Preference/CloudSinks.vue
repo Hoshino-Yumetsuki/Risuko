@@ -789,18 +789,6 @@
 </template>
 
 <script lang="ts">
-import type { SavedCredential } from "@shared/types/credential";
-import { CREDENTIAL_SECRET_FIELDS } from "@shared/types/credential";
-import type {
-	SinkConfig,
-	UploadJob,
-	UploadJobStatus,
-	UploadProtocol,
-	UploadRule,
-	UploadSinkRecord,
-} from "@shared/types/upload";
-import { bytesToSize } from "@shared/utils";
-import logger from "@shared/utils/logger";
 import {
 	Activity,
 	AlertCircle,
@@ -821,7 +809,19 @@ import {
 	Terminal,
 	Trash2,
 	X,
-} from "lucide-vue-next";
+} from "@lucide/vue";
+import type { SavedCredential } from "@shared/types/credential";
+import { CREDENTIAL_SECRET_FIELDS } from "@shared/types/credential";
+import type {
+	SinkConfig,
+	UploadJob,
+	UploadJobStatus,
+	UploadProtocol,
+	UploadRule,
+	UploadSinkRecord,
+} from "@shared/types/upload";
+import { bytesToSize } from "@shared/utils";
+import logger from "@shared/utils/logger";
 import { defineComponent } from "vue";
 import { toast } from "vue-sonner";
 import { Button } from "@/components/ui/button";

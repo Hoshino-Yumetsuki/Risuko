@@ -71,6 +71,7 @@
   </div>
 </template>
 <script lang="ts">
+import { FileText, Headphones, Image, Video } from "@lucide/vue";
 import { NONE_SELECTED_FILES, SELECTED_ALL_FILES } from "@shared/constants";
 import {
 	bytesToSize,
@@ -82,7 +83,6 @@ import {
 	removeExtensionDot,
 } from "@shared/utils";
 import { isEmpty } from "lodash";
-import { FileText, Headphones, Image, Video } from "lucide-vue-next";
 import { Checkbox } from "@/components/ui/checkbox";
 import UiButton from "@/components/ui/compat/UiButton.vue";
 import {

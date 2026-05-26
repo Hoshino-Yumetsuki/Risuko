@@ -1,19 +1,24 @@
 {
-  "name": "@risuko/js-linux-x64-gnu",
-  "version": "0.3.2",
-  "description": "Risuko JS native module for Linux x64",
-  "license": "MIT",
-  "os": [
-    "linux"
-  ],
-  "cpu": [
-    "x64"
-  ],
-  "libc": [
-    "glibc"
-  ],
-  "main": "risuko.linux-x64-gnu.node",
-  "files": [
-    "risuko.linux-x64-gnu.node"
-  ]
+	"name": "@risuko/js-linux-x64-gnu",
+	"version": "0.3.2",
+	"description": "Risuko JS native module for Linux x64",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/YueMiyuki/Risuko.git",
+		"directory": "packages/risuko-js/npm/linux-x64-gnu"
+	},
+	"license": "MIT",
+	"os": [
+		"linux"
+	],
+	"cpu": [
+		"x64"
+	],
+	"main": "risuko.linux-x64-gnu.node",
+	"files": [
+		"risuko.linux-x64-gnu.node"
+	],
+	"libc": [
+		"glibc"
+	]
 }

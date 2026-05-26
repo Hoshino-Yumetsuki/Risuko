@@ -31,8 +31,8 @@
 </template>
 
 <script lang="ts">
+import { CircleCheck, LayoutList, Pause, Play, Square } from "@lucide/vue";
 import logger from "@shared/utils/logger";
-import { CircleCheck, LayoutList, Pause, Play, Square } from "lucide-vue-next";
 import { LayoutGroup, Motion } from "motion-v";
 import { useTaskStore } from "@/store/task";
 

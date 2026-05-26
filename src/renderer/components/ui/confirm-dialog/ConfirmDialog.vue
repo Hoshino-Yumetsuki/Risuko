@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { TriangleAlert } from "lucide-vue-next";
+import { TriangleAlert } from "@lucide/vue";
 import { ref, watch } from "vue";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";

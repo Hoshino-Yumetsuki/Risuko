@@ -53,12 +53,6 @@
 </template>
 
 <script lang="ts">
-import type {
-	HealthCategoryId,
-	HealthFix,
-	HealthStatus,
-} from "@shared/types/health";
-import { invoke } from "@tauri-apps/api/core";
 import {
 	AlertCircle,
 	AlertTriangle,
@@ -66,7 +60,13 @@ import {
 	CircleDashed,
 	RefreshCw,
 	XCircle,
-} from "lucide-vue-next";
+} from "@lucide/vue";
+import type {
+	HealthCategoryId,
+	HealthFix,
+	HealthStatus,
+} from "@shared/types/health";
+import { invoke } from "@tauri-apps/api/core";
 import { mapState } from "pinia";
 import { Button } from "@/components/ui/button";
 import { useHealthStore } from "@/store/health";

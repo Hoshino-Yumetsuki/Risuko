@@ -75,16 +75,11 @@
 </template>
 
 <script lang="ts">
+import { ArrowDownNarrowWide, ArrowUpNarrowWide, Search, X } from "@lucide/vue";
 import { ADD_TASK_TYPE } from "@shared/constants";
 import { getTaskUri, parseHeader } from "@shared/utils";
 import logger from "@shared/utils/logger";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
-import {
-	ArrowDownNarrowWide,
-	ArrowUpNarrowWide,
-	Search,
-	X,
-} from "lucide-vue-next";
 import api from "@/api";
 import { commands } from "@/components/CommandManager/instance";
 import SubnavSwitcher from "@/components/Subnav/SubnavSwitcher.vue";

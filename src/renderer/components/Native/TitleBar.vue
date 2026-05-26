@@ -20,8 +20,8 @@
 </template>
 
 <script lang="ts">
+import { Maximize2, Minus, X } from "@lucide/vue";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
-import { Maximize2, Minus, X } from "lucide-vue-next";
 
 const appWindow = getCurrentWebviewWindow();
 

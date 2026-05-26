@@ -226,14 +226,8 @@
 </template>
 
 <script lang="ts">
+import { ExternalLink, Eye, RefreshCw, ShieldAlert, Wand2 } from "@lucide/vue";
 import logger from "@shared/utils/logger";
-import {
-	ExternalLink,
-	Eye,
-	RefreshCw,
-	ShieldAlert,
-	Wand2,
-} from "lucide-vue-next";
 import { toast } from "vue-sonner";
 import api, { type BrowserInfo, type ImportedCookies } from "@/api";
 import UiButton from "@/components/ui/compat/UiButton.vue";

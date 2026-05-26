@@ -39,7 +39,7 @@
 </template>
 
 <script lang="ts">
-import { ArrowLeft, ArrowRight, X } from "lucide-vue-next";
+import { ArrowLeft, ArrowRight, X } from "@lucide/vue";
 
 export default {
 	name: "mo-rss-chip-list",

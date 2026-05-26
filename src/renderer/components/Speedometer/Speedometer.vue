@@ -22,8 +22,8 @@
 </template>
 
 <script lang="ts">
+import { CloudDownload, CloudUpload, Gauge } from "@lucide/vue";
 import { bytesToSize } from "@shared/utils";
-import { CloudDownload, CloudUpload, Gauge } from "lucide-vue-next";
 import { useAppStore } from "@/store/app";
 import { usePreferenceStore } from "@/store/preference";
 

@@ -51,8 +51,8 @@
 </template>
 
 <script lang="ts">
+import { Globe } from "@lucide/vue";
 import logger from "@shared/utils/logger";
-import { Globe } from "lucide-vue-next";
 import { toast } from "vue-sonner";
 import api, { type BrowserInfo, type ImportedCookies } from "@/api";
 import UiButton from "@/components/ui/compat/UiButton.vue";

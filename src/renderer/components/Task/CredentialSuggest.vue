@@ -53,9 +53,9 @@
 </template>
 
 <script lang="ts">
+import { ChevronDown, KeyRound } from "@lucide/vue";
 import type { SavedCredential } from "@shared/types/credential";
 import logger from "@shared/utils/logger";
-import { ChevronDown, KeyRound } from "lucide-vue-next";
 import {
 	DropdownMenu,
 	DropdownMenuContent,

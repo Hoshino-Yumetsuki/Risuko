@@ -57,8 +57,8 @@
 </template>
 
 <script lang="ts">
+import { ShieldCheck, ShieldOff, Trash2 } from "@lucide/vue";
 import type { SavedCredential } from "@shared/types/credential";
-import { ShieldCheck, ShieldOff, Trash2 } from "lucide-vue-next";
 import { usePreferenceStore } from "@/store/preference";
 
 export default {

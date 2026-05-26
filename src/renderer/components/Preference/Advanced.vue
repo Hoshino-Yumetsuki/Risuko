@@ -1190,6 +1190,33 @@
 
 <script lang="ts">
 import {
+	AlertTriangle,
+	Cable,
+	Check,
+	ChevronDown,
+	Code,
+	Cookie,
+	Copy,
+	Dices,
+	ExternalLink,
+	FileKey,
+	FileText,
+	Globe,
+	KeyRound,
+	Link,
+	Network,
+	Radio,
+	RefreshCcw,
+	RefreshCw,
+	ScrollText,
+	Server,
+	Settings,
+	Terminal,
+	UserCircle,
+	Video,
+	X,
+} from "@lucide/vue";
+import {
 	DEFAULT_ED2K_SERVERS,
 	EMPTY_STRING,
 	ENGINE_RPC_HOST,
@@ -1216,33 +1243,6 @@ import {
 import { invoke } from "@tauri-apps/api/core";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { cloneDeep, extend, isEmpty } from "lodash";
-import {
-	AlertTriangle,
-	Cable,
-	Check,
-	ChevronDown,
-	Code,
-	Cookie,
-	Copy,
-	Dices,
-	ExternalLink,
-	FileKey,
-	FileText,
-	Globe,
-	KeyRound,
-	Link,
-	Network,
-	Radio,
-	RefreshCcw,
-	RefreshCw,
-	ScrollText,
-	Server,
-	Settings,
-	Terminal,
-	UserCircle,
-	Video,
-	X,
-} from "lucide-vue-next";
 import randomize from "randomatic";
 import api, { type CookieEntryView } from "@/api";
 import ShowInFolder from "@/components/Native/ShowInFolder.vue";

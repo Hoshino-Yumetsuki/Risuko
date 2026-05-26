@@ -138,6 +138,7 @@
 </template>
 
 <script lang="ts">
+import { ChevronRight, File, Folder, Inbox, Trash } from "@lucide/vue";
 import {
 	EMPTY_STRING,
 	NONE_SELECTED_FILES,
@@ -147,7 +148,6 @@ import { bytesToSize, listTorrentFiles } from "@shared/utils";
 import logger from "@shared/utils/logger";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
-import { ChevronRight, File, Folder, Inbox, Trash } from "lucide-vue-next";
 import TaskFiles from "@/components/TaskDetail/TaskFiles.vue";
 import { Checkbox } from "@/components/ui/checkbox";
 import UiButton from "@/components/ui/compat/UiButton.vue";

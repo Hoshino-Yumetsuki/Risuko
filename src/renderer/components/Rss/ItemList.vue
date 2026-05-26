@@ -194,15 +194,9 @@
 </template>
 
 <script lang="ts">
+import { CheckCircle2, Download, ExternalLink, Eye, Trash2 } from "@lucide/vue";
 import type { RssItem } from "@shared/types/rss";
 import { invoke } from "@tauri-apps/api/core";
-import {
-	CheckCircle2,
-	Download,
-	ExternalLink,
-	Eye,
-	Trash2,
-} from "lucide-vue-next";
 import api from "@/api";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";

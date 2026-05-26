@@ -34,16 +34,9 @@
 </template>
 
 <script lang="ts">
+import { Activity, Info, ListTodo, Plus, Rss, Settings2 } from "@lucide/vue";
 import { ADD_TASK_TYPE } from "@shared/constants";
 import logger from "@shared/utils/logger";
-import {
-	Activity,
-	Info,
-	ListTodo,
-	Plus,
-	Rss,
-	Settings2,
-} from "lucide-vue-next";
 import LogoMini from "@/components/Logo/LogoMini.vue";
 import is from "@/shims/platform";
 import { useAppStore } from "@/store/app";

@@ -160,7 +160,7 @@ import {
 	Search,
 	Trash2,
 	X,
-} from "lucide-vue-next";
+} from "@lucide/vue";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {

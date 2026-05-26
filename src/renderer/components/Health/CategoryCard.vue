@@ -55,11 +55,6 @@
 </template>
 
 <script lang="ts">
-import type {
-	HealthCategory,
-	HealthFix,
-	HealthStatus,
-} from "@shared/types/health";
 import {
 	AlertTriangle,
 	CheckCircle2,
@@ -67,7 +62,12 @@ import {
 	CircleDashed,
 	RefreshCw,
 	XCircle,
-} from "lucide-vue-next";
+} from "@lucide/vue";
+import type {
+	HealthCategory,
+	HealthFix,
+	HealthStatus,
+} from "@shared/types/health";
 import type { PropType } from "vue";
 import HealthCheckRow from "./CheckRow.vue";
 

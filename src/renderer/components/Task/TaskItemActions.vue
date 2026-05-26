@@ -39,8 +39,6 @@
 </template>
 
 <script lang="ts">
-import { TASK_STATUS } from "@shared/constants";
-import { checkTaskIsSeeder, getTaskName } from "@shared/utils";
 import {
 	Folder,
 	Info,
@@ -51,7 +49,9 @@ import {
 	Square,
 	Trash,
 	Trash2,
-} from "lucide-vue-next";
+} from "@lucide/vue";
+import { TASK_STATUS } from "@shared/constants";
+import { checkTaskIsSeeder, getTaskName } from "@shared/utils";
 import { commands } from "@/components/CommandManager/instance";
 import is from "@/shims/platform";
 import { useTaskStore } from "@/store/task";

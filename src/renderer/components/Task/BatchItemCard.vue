@@ -57,7 +57,7 @@
 </template>
 
 <script lang="ts">
-import { FileArchive, Link2, Magnet, X } from "lucide-vue-next";
+import { FileArchive, Link2, Magnet, X } from "@lucide/vue";
 import MagnetFiles from "@/components/Task/MagnetFiles.vue";
 import SelectTorrent from "@/components/Task/SelectTorrent.vue";
 import {

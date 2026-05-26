@@ -67,6 +67,7 @@
   </div>
 </template>
 <script lang="ts">
+import { Link, Magnet } from "@lucide/vue";
 import { APP_THEME, TASK_STATUS } from "@shared/constants";
 import {
 	bytesToSize,
@@ -77,7 +78,6 @@ import {
 	localeDateTimeFormat,
 } from "@shared/utils";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
-import { Link, Magnet } from "lucide-vue-next";
 import ShowInFolder from "@/components/Native/ShowInFolder.vue";
 import TaskStatus from "@/components/Task/TaskStatus.vue";
 import is from "@/shims/platform";

@@ -36,6 +36,7 @@
 </template>
 
 <script lang="ts">
+import { ArrowDown, ArrowUp, Magnet, Network } from "@lucide/vue";
 import { TASK_STATUS } from "@shared/constants";
 import {
 	bytesToSize,
@@ -45,7 +46,6 @@ import {
 	timeFormat,
 	timeRemaining,
 } from "@shared/utils";
-import { ArrowDown, ArrowUp, Magnet, Network } from "lucide-vue-next";
 
 export default {
 	name: "mo-task-progress-info",

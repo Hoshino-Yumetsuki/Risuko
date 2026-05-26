@@ -590,6 +590,16 @@
 
 <script lang="ts">
 import {
+	ArrowDown,
+	ArrowUp,
+	FolderDown,
+	Gauge,
+	Globe,
+	ListTodo,
+	Palette,
+	Share2,
+} from "@lucide/vue";
+import {
 	APP_RUN_MODE,
 	EMPTY_STRING,
 	ENGINE_MAX_CONCURRENT_DOWNLOADS,
@@ -608,16 +618,6 @@ import logger from "@shared/utils/logger";
 import { reduceTrackerString } from "@shared/utils/tracker";
 import { invoke } from "@tauri-apps/api/core";
 import { cloneDeep, extend, isEmpty } from "lodash";
-import {
-	ArrowDown,
-	ArrowUp,
-	FolderDown,
-	Gauge,
-	Globe,
-	ListTodo,
-	Palette,
-	Share2,
-} from "lucide-vue-next";
 import SelectDirectory from "@/components/Native/SelectDirectory.vue";
 import HistoryDirectory from "@/components/Preference/HistoryDirectory.vue";
 import ThemeSwitcher from "@/components/Preference/ThemeSwitcher.vue";

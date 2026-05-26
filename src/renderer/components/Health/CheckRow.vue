@@ -19,17 +19,17 @@
 </template>
 
 <script lang="ts">
-import type {
-	HealthCheck,
-	HealthFix,
-	HealthStatus,
-} from "@shared/types/health";
 import {
 	AlertTriangle,
 	CheckCircle2,
 	CircleDashed,
 	XCircle,
-} from "lucide-vue-next";
+} from "@lucide/vue";
+import type {
+	HealthCheck,
+	HealthFix,
+	HealthStatus,
+} from "@shared/types/health";
 import type { PropType } from "vue";
 
 const ICON: Record<HealthStatus, unknown> = {

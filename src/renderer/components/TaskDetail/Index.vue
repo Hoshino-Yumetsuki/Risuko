@@ -73,6 +73,7 @@
 </template>
 
 <script lang="ts">
+import { Activity, Files, Info, Radar, Users } from "@lucide/vue";
 import {
 	EMPTY_STRING,
 	NONE_SELECTED_FILES,
@@ -87,7 +88,6 @@ import {
 	getFileName,
 } from "@shared/utils";
 import { debounce } from "lodash";
-import { Activity, Files, Info, Radar, Users } from "lucide-vue-next";
 import TaskItemActions from "@/components/Task/TaskItemActions.vue";
 import {
 	Sheet,

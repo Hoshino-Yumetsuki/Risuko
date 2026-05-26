@@ -42,8 +42,8 @@
 </template>
 
 <script lang="ts">
+import { Plus, X } from "@lucide/vue";
 import type { Pattern, PatternKind } from "@shared/types/rss";
-import { Plus, X } from "lucide-vue-next";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";

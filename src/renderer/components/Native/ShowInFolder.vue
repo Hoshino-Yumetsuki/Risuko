@@ -5,7 +5,7 @@
 </template>
 
 <script lang="ts">
-import { Folder } from "lucide-vue-next";
+import { Folder } from "@lucide/vue";
 import { showItemInFolder } from "@/utils/native";
 
 export default {
