@@ -7,10 +7,13 @@ use super::{DownloadArgs, PauseArgs, RemoveArgs, ResumeArgs, ServeArgs, StatusAr
 use risuko_engine::engine::youtube::is_youtube_uri;
 
 /// Read rpc-secret from the config files, returning None if empty or absent.
+/// user.json takes precedence over system.json
 fn read_secret_from_config() -> Option<String> {
     let config_dir = dirs::config_dir().map(|d| d.join("dev.risuko.app"))?;
-    let system = load_config_file(&config_dir.join("system.json"));
-    let secret = system
+    let mut merged = load_config_file(&config_dir.join("system.json"));
+    let user = load_config_file(&config_dir.join("user.json"));
+    merged.extend(user);
+    let secret = merged
         .get("rpc-secret")
         .and_then(|v| v.as_str())
         .unwrap_or("")

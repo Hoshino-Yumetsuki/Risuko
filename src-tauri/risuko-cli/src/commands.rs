@@ -16,11 +16,14 @@ use crate::{
     RssAction, RssCommand, ServeArgs, StatusArgs,
 };
 
-/// Read rpc-secret from the config files, returning None if empty or absent.
+/// Read rpc-secret from the config files, returning None if empty or absent
+/// user.json takes precedence over system.json
 fn read_secret_from_config() -> Option<String> {
     let config_dir = get_config_dir();
-    let system = load_config(&config_dir.join("system.json"), Map::new());
-    let secret = system
+    let mut merged = load_config(&config_dir.join("system.json"), Map::new());
+    let user = load_config(&config_dir.join("user.json"), Map::new());
+    merged.extend(user);
+    let secret = merged
         .get("rpc-secret")
         .and_then(|v| v.as_str())
         .unwrap_or("")
