@@ -240,7 +240,22 @@ async fn drive_handshake(
                     std::io::Error::new(std::io::ErrorKind::TimedOut, "connect timeout")
                 })??;
             stream.set_nodelay(true).ok();
-            connect_mse(stream, addr, &spawn).await
+            // Log the MSE outcome so a debug-level log captures whether the
+            // encrypted fallback ever succeeds. Without this, an operator
+            // troubleshooting "0 KB/s" only sees N "trying mse" lines and
+            // cannot tell whether (a) every peer also rejects MSE so no
+            // outbound peer ever connects, or (b) MSE works fine and the
+            // download is slow for some other reason
+            match connect_mse(stream, addr, &spawn).await {
+                Ok(v) => {
+                    log::debug!("mse handshake to {addr} succeeded");
+                    Ok(v)
+                }
+                Err(e) => {
+                    log::debug!("mse handshake to {addr} failed: {e}");
+                    Err(e)
+                }
+            }
         }
     }
 }

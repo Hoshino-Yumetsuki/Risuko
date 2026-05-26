@@ -833,7 +833,11 @@ async fn process_peer_event(
     // (Piece) or unblock requests (Unchoke, Bitfield, Have)
     let mut kick = false;
     match ev {
-        PeerEvent::Handshook { reserved, .. } => {
+        PeerEvent::Handshook {
+            reserved,
+            encrypted,
+            ..
+        } => {
             if !peers.contains_key(&pid) {
                 if let Some((cmd_tx, registry_addr)) = peer_registry::take(torrent_id, pid) {
                     // Move from pending dial to live peer. The registry is
@@ -854,6 +858,10 @@ async fn process_peer_event(
                         let _ = cmd_tx.send(PeerCommand::Disconnect).await;
                         return false;
                     }
+                    log::debug!(
+                        "peer connected: {addr} (encrypted={encrypted}, peers={}/{max_peers})",
+                        peers.len() + 1
+                    );
                     peers.insert(
                         pid,
                         Peer {
@@ -1226,7 +1234,7 @@ async fn process_peer_event(
                 _ => {}
             }
         }
-        PeerEvent::Disconnected { .. } => {
+        PeerEvent::Disconnected { reason } => {
             // Clear from either in-flight or live, and release the address
             // for future retries (otherwise a single drop permanently
             // blacklists the peer).
@@ -1234,6 +1242,12 @@ async fn process_peer_event(
                 .remove(&pid)
                 .or_else(|| peers.get(&pid).map(|p| p.addr));
             if let Some(a) = addr {
+                // Log the disconnect cause at debug so the per-peer error —
+                // typically the MSE handshake outcome for unreachable /
+                // encryption-only peers — is visible to operators
+                // troubleshooting "0 KB/s" reports without us having to
+                // re-deduce it from "trying mse" lines alone
+                log::debug!("peer {a} disconnected: {reason}");
                 known_addrs.remove(&a);
             }
             // Drop the registry slot in case the peer disconnected before

@@ -6,20 +6,57 @@ use super::rpc_client::RpcClient;
 use super::{DownloadArgs, PauseArgs, RemoveArgs, ResumeArgs, ServeArgs, StatusArgs};
 use risuko_engine::engine::youtube::is_youtube_uri;
 
+fn resolve_rpc_secret(explicit: Option<String>) -> Option<String> {
+    explicit
+        .filter(|s| !s.is_empty())
+        .or_else(read_secret_from_config)
+}
+
+/// Read rpc-secret from the config files, returning None if empty or absent.
+/// user.json takes precedence over system.json
+fn read_secret_from_config() -> Option<String> {
+    let config_dir = dirs::config_dir().map(|d| d.join("dev.risuko.app"))?;
+    let mut merged = load_config_file(&config_dir.join("system.json"));
+    let user = load_config_file(&config_dir.join("user.json"));
+    merged.extend(user);
+    let secret = merged
+        .get("rpc-secret")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    if secret.is_empty() {
+        None
+    } else {
+        Some(secret)
+    }
+}
+
+fn load_config_file(path: &std::path::Path) -> serde_json::Map<String, Value> {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|data| serde_json::from_str::<Value>(&data).ok())
+        .and_then(|v| {
+            if let Value::Object(m) = v {
+                Some(m)
+            } else {
+                None
+            }
+        })
+        .unwrap_or_default()
+}
+
 pub async fn download(args: DownloadArgs) -> Result<(), Box<dyn std::error::Error>> {
-    let mut secret = args.rpc_secret.clone();
+    let mut secret = resolve_rpc_secret(args.rpc_secret.clone());
     let client = RpcClient::new(args.rpc_port, secret.clone());
     let mut headless_engine = None;
 
     if !client.is_engine_running().await {
         eprintln!("No running Risuko instance found. Starting headless engine...");
         let engine = headless::start_headless_engine(args.rpc_port).await?;
-        // Use the engine's configured secret if no CLI secret was provided
         if secret.is_none() {
             secret = engine.rpc_secret().map(|s| s.to_string());
         }
         headless_engine = Some(engine);
-        // Wait briefly for engine to be ready
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
     }
 
@@ -132,7 +169,8 @@ async fn do_download(
 }
 
 pub async fn status(args: StatusArgs) -> Result<(), Box<dyn std::error::Error>> {
-    let client = RpcClient::new(args.rpc_port, args.rpc_secret);
+    let secret = resolve_rpc_secret(args.rpc_secret);
+    let client = RpcClient::new(args.rpc_port, secret);
     require_engine(&client).await?;
 
     if let Some(ref gid) = args.gid {
@@ -197,7 +235,8 @@ pub async fn status(args: StatusArgs) -> Result<(), Box<dyn std::error::Error>> 
 }
 
 pub async fn pause(args: PauseArgs) -> Result<(), Box<dyn std::error::Error>> {
-    let client = RpcClient::new(args.rpc_port, args.rpc_secret);
+    let secret = resolve_rpc_secret(args.rpc_secret);
+    let client = RpcClient::new(args.rpc_port, secret);
     require_engine(&client).await?;
 
     client.call("risuko.pause", vec![json!(args.gid)]).await?;
@@ -206,7 +245,8 @@ pub async fn pause(args: PauseArgs) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 pub async fn resume(args: ResumeArgs) -> Result<(), Box<dyn std::error::Error>> {
-    let client = RpcClient::new(args.rpc_port, args.rpc_secret);
+    let secret = resolve_rpc_secret(args.rpc_secret);
+    let client = RpcClient::new(args.rpc_port, secret);
     require_engine(&client).await?;
 
     client.call("risuko.unpause", vec![json!(args.gid)]).await?;
@@ -215,7 +255,8 @@ pub async fn resume(args: ResumeArgs) -> Result<(), Box<dyn std::error::Error>> 
 }
 
 pub async fn remove(args: RemoveArgs) -> Result<(), Box<dyn std::error::Error>> {
-    let client = RpcClient::new(args.rpc_port, args.rpc_secret);
+    let secret = resolve_rpc_secret(args.rpc_secret);
+    let client = RpcClient::new(args.rpc_port, secret);
     require_engine(&client).await?;
 
     client.call("risuko.remove", vec![json!(args.gid)]).await?;
