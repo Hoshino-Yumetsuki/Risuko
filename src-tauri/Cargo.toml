@@ -2,7 +2,7 @@
 members = ["risuko-engine", "risuko-bt", "risuko-cli", "risuko-napi", "risuko-http", "risuko-cookies"]
 
 [workspace.package]
-version = "0.3.0"
+version = "0.3.2"
 authors = ["YueMiyuki"]
 edition = "2021"
 rust-version = "1.82"
