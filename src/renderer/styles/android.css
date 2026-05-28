@@ -177,6 +177,8 @@
 	html.mobile-phone .task-mobile-subnav-switcher .subnav-switch-trigger {
 		width: 100%;
 		min-width: 0;
+		justify-content: flex-start;
+		max-width: none;
 	}
 	html.platform-android .task-total-progress-desktop,
 	html.mobile-phone .task-total-progress-desktop {
@@ -602,6 +604,10 @@
 
 	html.platform-android .task-header,
 	html.mobile-phone .task-header {
+		display: flex;
+		flex-direction: column;
+		align-items: stretch;
+		gap: 10px;
 		margin-bottom: 10px;
 		padding-right: 0;
 	}
@@ -690,13 +696,6 @@
 	/* On mobile: task name takes the full first row, actions sit on a
 	   dedicated row beneath it. This frees the entire row width for the
 	   task title and makes every action button easy to reach. */
-	html.platform-android .task-header,
-	html.mobile-phone .task-header {
-		display: flex;
-		flex-direction: column;
-		align-items: stretch;
-		gap: 10px;
-	}
 	html.platform-android .task-header .task-name,
 	html.mobile-phone .task-header .task-name {
 		width: 100%;
@@ -1202,11 +1201,6 @@
 		white-space: nowrap;
 		overflow: hidden;
 		text-overflow: ellipsis;
-	}
-	html.platform-android .task-mobile-subnav-switcher .subnav-switch-trigger,
-	html.mobile-phone .task-mobile-subnav-switcher .subnav-switch-trigger {
-		justify-content: flex-start;
-		max-width: none;
 	}
 	html.platform-android .task-mobile-subnav-switcher .subnav-switch-title,
 	html.mobile-phone .task-mobile-subnav-switcher .subnav-switch-title {

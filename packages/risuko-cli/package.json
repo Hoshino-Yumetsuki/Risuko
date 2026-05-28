@@ -1,37 +1,37 @@
 {
-	"name": "@risuko/cli",
-	"version": "0.3.3",
-	"description": "Risuko download engine CLI — multi-protocol downloads (HTTP, BitTorrent, ED2K, M3U8, FTP/SFTP)",
-	"license": "MIT",
-	"repository": {
-		"type": "git",
-		"url": "git+https://github.com/YueMiyuki/Risuko.git"
-	},
-	"keywords": [
-		"download",
-		"torrent",
-		"bittorrent",
-		"ed2k",
-		"m3u8",
-		"ftp",
-		"cli",
-		"download-manager"
-	],
-	"bin": {
-		"risuko": "bin.js"
-	},
-	"files": [
-		"bin.js"
-	],
-	"optionalDependencies": {
-		"@risuko/cli-darwin-arm64": "0.3.3",
-		"@risuko/cli-darwin-x64": "0.3.3",
-		"@risuko/cli-linux-arm64-gnu": "0.3.3",
-		"@risuko/cli-linux-x64-gnu": "0.3.3",
-		"@risuko/cli-win32-arm64-msvc": "0.3.3",
-		"@risuko/cli-win32-x64-msvc": "0.3.3"
-	},
-	"engines": {
-		"node": ">= 18"
-	}
+  "name": "@risuko/cli",
+  "version": "0.3.4",
+  "description": "Risuko download engine CLI — multi-protocol downloads (HTTP, BitTorrent, ED2K, M3U8, FTP/SFTP)",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/YueMiyuki/Risuko.git"
+  },
+  "keywords": [
+    "download",
+    "torrent",
+    "bittorrent",
+    "ed2k",
+    "m3u8",
+    "ftp",
+    "cli",
+    "download-manager"
+  ],
+  "bin": {
+    "risuko": "bin.js"
+  },
+  "files": [
+    "bin.js"
+  ],
+  "optionalDependencies": {
+    "@risuko/cli-darwin-arm64": "0.3.4",
+    "@risuko/cli-darwin-x64": "0.3.4",
+    "@risuko/cli-linux-arm64-gnu": "0.3.4",
+    "@risuko/cli-linux-x64-gnu": "0.3.4",
+    "@risuko/cli-win32-arm64-msvc": "0.3.4",
+    "@risuko/cli-win32-x64-msvc": "0.3.4"
+  },
+  "engines": {
+    "node": ">= 18"
+  }
 }

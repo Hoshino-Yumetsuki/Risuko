@@ -171,7 +171,7 @@ export default {
 			}
 			window.history.pushState(
 				{
-					...(window.history.state || {}),
+					...window.history.state,
 					risukoAndroidBackGuard: true,
 				},
 				"",

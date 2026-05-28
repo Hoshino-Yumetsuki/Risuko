@@ -230,7 +230,7 @@ export const useTaskStore = defineStore("task", {
 							uploadSpeed: String(upShare),
 							files: [file],
 							bittorrent: {
-								...(task.bittorrent || {}),
+								...task.bittorrent,
 								info: {},
 							},
 						});
