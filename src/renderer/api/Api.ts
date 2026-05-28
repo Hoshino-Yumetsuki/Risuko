@@ -217,6 +217,18 @@ export default class Api {
 		return invoke<DownloadTask[]>("calculate_active_task_progress", { tasks });
 	}
 
+	updateAndroidDownloadNotification(params: {
+		progress: number;
+		activeCount: number;
+		detail: string;
+	}) {
+		return invoke("update_android_download_notification", params);
+	}
+
+	clearAndroidDownloadNotification() {
+		return invoke("clear_android_download_notification");
+	}
+
 	evaluateLowSpeedTasks(
 		params: {
 			tasks?: DownloadTask[];

@@ -5,8 +5,10 @@
 //! engine and the Tauri command layer pull from here
 
 use serde::{Deserialize, Serialize};
-use tokio::task::spawn_blocking;
 use url::Url;
+
+#[cfg(not(target_os = "android"))]
+use tokio::task::spawn_blocking;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Cookie {
@@ -19,6 +21,7 @@ pub struct Cookie {
     pub expires: Option<u64>,
 }
 
+#[cfg(not(target_os = "android"))]
 impl From<rookie::enums::Cookie> for Cookie {
     fn from(c: rookie::enums::Cookie) -> Self {
         Self {
@@ -55,9 +58,17 @@ pub fn cookies_to_header(cookies: &[Cookie]) -> String {
 /// a quick probe (no domain filter) returned without an error; sandbox
 /// failures or missing profiles surface as `false`
 pub async fn list_browsers() -> Vec<BrowserInfo> {
-    spawn_blocking(list_browsers_sync).await.unwrap_or_default()
+    #[cfg(target_os = "android")]
+    {
+        Vec::new()
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        spawn_blocking(list_browsers_sync).await.unwrap_or_default()
+    }
 }
 
+#[cfg(not(target_os = "android"))]
 fn list_browsers_sync() -> Vec<BrowserInfo> {
     let mut out: Vec<BrowserInfo> = Vec::new();
 
@@ -134,13 +145,22 @@ fn list_browsers_sync() -> Vec<BrowserInfo> {
 /// Pull cookies for `host` (and parent domains) from the named browser.
 /// Returns `Err(message)` on rookie failure so callers can surface it
 pub async fn cookies_for_host(browser: &str, host: &str) -> Result<Vec<Cookie>, String> {
-    let browser = browser.to_string();
-    let host = host.to_string();
-    spawn_blocking(move || cookies_for_host_sync(&browser, &host))
-        .await
-        .map_err(|e| format!("join error: {e}"))?
+    #[cfg(target_os = "android")]
+    {
+        let _ = (browser, host);
+        Err("Browser cookie import is not supported on Android".to_string())
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let browser = browser.to_string();
+        let host = host.to_string();
+        spawn_blocking(move || cookies_for_host_sync(&browser, &host))
+            .await
+            .map_err(|e| format!("join error: {e}"))?
+    }
 }
 
+#[cfg(not(target_os = "android"))]
 fn cookies_for_host_sync(browser: &str, host: &str) -> Result<Vec<Cookie>, String> {
     // rookie does a substring match on the cookie's domain field. Passing
     // both the bare host and its eTLD+1 catches `example.com` and
@@ -198,6 +218,7 @@ fn cookies_for_host_sync(browser: &str, host: &str) -> Result<Vec<Cookie>, Strin
 /// cookie domain. Leading dots on the cookie domain (legacy form) are
 /// stripped before comparison. Hosts and domains are matched
 /// case-insensitively
+#[cfg(not(target_os = "android"))]
 fn cookie_domain_matches_host(cookie_domain: &str, host: &str) -> bool {
     let host_l = host.trim().to_ascii_lowercase();
     let domain_l = cookie_domain
@@ -231,6 +252,7 @@ pub struct HostCookies {
     pub cookies: Vec<Cookie>,
 }
 
+#[cfg(not(target_os = "android"))]
 fn call_rookie(
     browser: &str,
     domains: Option<Vec<String>>,
@@ -305,6 +327,7 @@ fn extract_host(target: &str) -> Option<String> {
 /// sites. The `cookie_domain_matches_host` post-filter in
 /// `cookies_for_host_sync` enforces correctness for whatever rookie
 /// returns
+#[cfg(not(target_os = "android"))]
 fn registrable_domain(host: &str) -> Option<String> {
     let labels: Vec<&str> = host.split('.').collect();
     if labels.len() < 2 {
@@ -321,6 +344,7 @@ fn registrable_domain(host: &str) -> Option<String> {
 /// shaped like `<role>.<cc>` (`co.uk`, `com.au`, `ac.jp`, ...). Not
 /// exhaustive; this is a conservative widening guard, not a security
 /// boundary
+#[cfg(not(target_os = "android"))]
 fn is_multi_label_public_suffix(role: &str, cc: &str) -> bool {
     if cc.len() != 2 {
         return false;

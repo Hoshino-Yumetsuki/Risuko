@@ -1,0 +1,1316 @@
+/*
+ * Android / mobile-phone styles.
+ */
+@media (max-width: 768px), (pointer: coarse) {
+	html.platform-android,
+	html.mobile-phone {
+		--android-surface: #fdf8ff;
+		--android-surface-container: #f3edf7;
+		--android-surface-container-high: #ece6f0;
+		--android-surface-container-highest: #e6e0e9;
+		--android-on-surface: #1d1b20;
+		--android-on-surface-variant: #49454f;
+		--android-primary: #6750a4;
+		--android-primary-container: #eaddff;
+		--android-on-primary-container: #21005d;
+		--android-outline: #79747e;
+		--android-outline-variant: #cac4d0;
+
+		--android-radius-xl: 28px;
+		--android-radius-lg: 20px;
+		--android-radius-md: 16px;
+		--android-radius-sm: 12px;
+		--android-radius-pill: 999px;
+
+		--android-text-display: 22px;
+		--android-text-headline: 18px;
+		--android-text-title: 16px;
+		--android-text-body: 15px;
+		--android-text-label: 13px;
+		--android-text-caption: 12px;
+
+		--android-bottom-bar: 128px;
+
+		background: var(--android-surface);
+		color: var(--android-on-surface);
+
+		/* Improve text contrast: route legacy "muted" tokens to the
+		   Material 3 on-surface-variant which stays readable on light
+		   surface backgrounds. */
+		--mo-no-task-color: var(--android-on-surface-variant);
+		--mo-task-action-color: var(--android-on-surface-variant);
+		--muted-foreground: var(--android-on-surface-variant);
+	}
+
+	html.platform-android.dark,
+	html.mobile-phone.dark {
+		--android-surface: #141218;
+		--android-surface-container: #211f26;
+		--android-surface-container-high: #2b2930;
+		--android-surface-container-highest: #36343b;
+		--android-on-surface: #e6e0e9;
+		--android-on-surface-variant: #cac4d0;
+		--android-primary: #d0bcff;
+		--android-primary-container: #4f378b;
+		--android-on-primary-container: #eaddff;
+		--android-outline: #938f99;
+		--android-outline-variant: #49454f;
+	}
+
+	html.platform-android body,
+	html.mobile-phone body {
+		background: var(--android-surface);
+		overscroll-behavior-y: contain;
+	}
+
+	html.platform-android #app,
+	html.mobile-phone #app,
+	html.platform-android #container,
+	html.mobile-phone #container {
+		min-height: 100dvh;
+		background:
+			linear-gradient(
+				180deg,
+				color-mix(in srgb, var(--android-primary) 12%, var(--android-surface)) 0,
+				var(--android-surface) 148px
+			),
+			radial-gradient(
+				circle at 20% 0%,
+				rgba(103, 80, 164, 0.14),
+				transparent 34%
+			),
+			var(--android-surface);
+	}
+
+	/* layout-root becomes a flex column with a strict viewport height
+	   so children (the .page-view) can own their own scroll regions. */
+	html.platform-android .layout-root,
+	html.mobile-phone .layout-root {
+		display: flex !important;
+		flex-direction: column;
+		height: 100dvh;
+		min-height: 0;
+		padding: env(safe-area-inset-top) 12px
+			calc(var(--android-bottom-bar) + env(safe-area-inset-bottom) + 18px);
+		overflow: hidden;
+	}
+
+	html.platform-android .aside,
+	html.mobile-phone .aside,
+	html.platform-android .mo-title-bar,
+	html.mobile-phone .mo-title-bar,
+	html.platform-android .speedometer,
+	html.mobile-phone .speedometer,
+	html.platform-android .mo-speedometer,
+	html.mobile-phone .mo-speedometer,
+	html.platform-android .dragger,
+	html.mobile-phone .dragger {
+		display: none !important;
+	}
+
+	html.platform-android .page-view,
+	html.mobile-phone .page-view {
+		flex: 1 1 auto;
+		display: flex;
+		width: 100%;
+		min-width: 0;
+		min-height: 0;
+		height: auto;
+		border-radius: 0;
+		background: transparent;
+		box-shadow: none;
+		overflow: hidden;
+	}
+
+	html.platform-android.dark .page-view,
+	html.mobile-phone.dark .page-view {
+		background: transparent;
+		box-shadow: none;
+	}
+
+	/* Make sure the .main container inside .page-view stretches and
+	   participates in the flex column layout for inner scrolling. */
+	html.platform-android .page-view > .main,
+	html.mobile-phone .page-view > .main {
+		flex: 1 1 auto;
+		width: 100%;
+		min-width: 0;
+		min-height: 0;
+		display: flex;
+		flex-direction: column;
+		overflow: hidden;
+	}
+
+	/* Strip the blue gradient under .panel-header on mobile and use a
+	   simpler material header without the accent underline. Lay out the
+	   title (or subnav switcher) on the left and the bulk-action buttons
+	   on the right -- all on the SAME row. flex-wrap stays off so the
+	   row never collapses; the title shrinks with ellipsis instead. */
+	html.platform-android .panel .panel-header,
+	html.mobile-phone .panel .panel-header {
+		flex-shrink: 0;
+		display: flex;
+		flex-wrap: nowrap;
+		align-items: center;
+		gap: 8px;
+		margin: 0;
+		padding: 6px 16px 8px;
+		border-bottom: 0;
+	}
+
+	html.platform-android .panel-header > .subnav-switch-trigger,
+	html.mobile-phone .panel-header > .subnav-switch-trigger,
+	html.platform-android .panel-header > .task-mobile-subnav-switcher,
+	html.mobile-phone .panel-header > .task-mobile-subnav-switcher,
+	html.platform-android .panel-header > .task-title,
+	html.mobile-phone .panel-header > .task-title,
+	html.platform-android .panel-header > .rss-title,
+	html.mobile-phone .panel-header > .rss-title {
+		flex: 1 1 0;
+		min-width: 0;
+	}
+	html.platform-android .task-mobile-subnav-switcher,
+	html.mobile-phone .task-mobile-subnav-switcher {
+		display: flex;
+	}
+	html.platform-android .task-mobile-subnav-switcher .subnav-switch-trigger,
+	html.mobile-phone .task-mobile-subnav-switcher .subnav-switch-trigger {
+		width: 100%;
+		min-width: 0;
+	}
+	html.platform-android .task-total-progress-desktop,
+	html.mobile-phone .task-total-progress-desktop {
+		display: none;
+	}
+	/* The bulk-action row is on the right with no wrapping; icons shrink
+	   if room is tight. */
+	html.platform-android .panel-header > .task-actions,
+	html.mobile-phone .panel-header > .task-actions {
+		flex: 0 0 auto;
+		flex-wrap: nowrap;
+		justify-content: flex-end;
+		align-items: center;
+		gap: 2px;
+		margin: 0;
+	}
+	html.platform-android .panel-header > .task-actions > *,
+	html.mobile-phone .panel-header > .task-actions > * {
+		flex: 0 0 auto;
+	}
+
+	/* The overall download progress lives on its own row right below the
+	   header so it never pushes the action icons around when transitioning
+	   between Downloading/All/etc. */
+	html.platform-android .task-total-progress-row,
+	html.mobile-phone .task-total-progress-row {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		width: 100%;
+		min-height: 32px;
+		padding: 0 12px;
+		border-radius: calc(var(--android-radius-md) - 4px);
+		background: var(--android-surface-container);
+		font-size: var(--android-text-caption);
+		color: var(--android-on-surface-variant);
+	}
+	html.platform-android .task-total-progress-row .task-total-progress-sep,
+	html.mobile-phone .task-total-progress-row .task-total-progress-sep {
+		opacity: 0.6;
+	}
+	html.platform-android .task-total-progress-row .task-total-progress-percent,
+	html.mobile-phone .task-total-progress-row .task-total-progress-percent {
+		font-weight: 600;
+		color: var(--android-on-surface);
+	}
+	html.platform-android .panel .panel-header::after,
+	html.mobile-phone .panel .panel-header::after {
+		display: none !important;
+	}
+	html.platform-android .panel .panel-header h4,
+	html.mobile-phone .panel .panel-header h4 {
+		font-size: var(--android-text-headline);
+		font-weight: 700;
+		line-height: 1.25;
+		letter-spacing: -0.01em;
+		color: var(--android-on-surface);
+	}
+
+	html.platform-android .panel-content,
+	html.mobile-phone .panel-content {
+		flex: 1 1 0;
+		min-height: 0;
+		overflow-y: auto;
+		overflow-x: hidden;
+		-webkit-overflow-scrolling: touch;
+	}
+
+	/* Tasks/RSS panel-layout--h root becomes a column on mobile because
+	   the aside is hidden. */
+	html.platform-android .main.panel-layout--h,
+	html.mobile-phone .main.panel-layout--h {
+		flex-direction: column;
+		overflow: hidden;
+	}
+	html.platform-android .main.panel-layout--h > .content.panel-layout--v,
+	html.mobile-phone .main.panel-layout--h > .content.panel-layout--v {
+		flex: 1 1 auto;
+		min-height: 0;
+		display: flex;
+		flex-direction: column;
+		overflow: hidden;
+	}
+
+	.android-bottom-nav {
+		position: fixed;
+		left: 12px;
+		right: 12px;
+		bottom: calc(env(safe-area-inset-bottom) + 28px);
+		z-index: 80;
+		display: grid;
+		grid-template-columns: 1fr 1fr 72px 1fr 1fr;
+		align-items: center;
+		min-height: 76px;
+		padding: 8px 10px;
+		border: 1px solid rgba(121, 116, 126, 0.18);
+		border-radius: var(--android-radius-xl);
+		background: rgba(243, 237, 247, 0.94);
+		box-shadow: 0 12px 40px rgba(29, 27, 32, 0.18);
+		backdrop-filter: blur(18px) saturate(1.15);
+	}
+
+	html.dark .android-bottom-nav {
+		border-color: rgba(202, 196, 208, 0.14);
+		background: rgba(33, 31, 38, 0.94);
+	}
+
+	.android-nav-item,
+	.android-fab {
+		-webkit-tap-highlight-color: transparent;
+		border: 0;
+		font: inherit;
+	}
+
+	.android-nav-item {
+		display: flex;
+		min-width: 0;
+		min-height: 56px;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		gap: 3px;
+		border-radius: 18px;
+		background: transparent;
+		color: var(--android-on-surface-variant);
+		font-size: 11px;
+		font-weight: 650;
+		letter-spacing: 0.01em;
+	}
+
+	.android-nav-item svg {
+		padding: 5px 13px;
+		box-sizing: content-box;
+		border-radius: 999px;
+	}
+
+	.android-nav-item.active {
+		color: var(--android-on-primary-container);
+	}
+
+	.android-nav-item.active svg {
+		background: var(--android-primary-container);
+	}
+
+	.android-fab {
+		display: grid;
+		place-items: center;
+		width: 64px;
+		height: 64px;
+		margin: -18px auto 0;
+		border-radius: 22px;
+		background: var(--android-primary);
+		color: #fff;
+		box-shadow: 0 12px 28px rgba(103, 80, 164, 0.34);
+	}
+
+	html.dark .android-fab {
+		color: #381e72;
+	}
+
+	/* Touch target floor for clickable controls, except interactive
+	   icons that have an explicit size (checkbox, radio, switch, etc.).
+	   The previous rule stretched the 16px shadcn checkbox into a
+	   16x44 vertical bar because the underlying element is a <button
+	   role="checkbox">. */
+	html.platform-android
+	button:not([role="checkbox"]):not([role="switch"]):not([role="radio"]):not(
+		[data-slot="checkbox"]
+	):not([data-slot="switch"]):not(.task-item-action):not(.task-action):not(
+		.task-filter-clear
+	):not(.mo-number-btn):not([data-slot="select-item"]),
+	html.mobile-phone
+		button:not([role="checkbox"]):not([role="switch"]):not([role="radio"]):not(
+			[data-slot="checkbox"]
+		):not([data-slot="switch"]):not(.task-item-action):not(.task-action):not(
+			.task-filter-clear
+		):not(.mo-number-btn):not([data-slot="select-item"]),
+	html.platform-android
+		[role="button"]:not(.task-item-action):not(.task-action),
+	html.mobile-phone [role="button"]:not(.task-item-action):not(.task-action) {
+		min-height: 44px;
+	}
+
+	/* Material 3 checkbox sizing: 22x22 with rounded corners, never
+	   stretched by parent flex containers. */
+	html.platform-android [data-slot="checkbox"],
+	html.mobile-phone [data-slot="checkbox"] {
+		width: 22px !important;
+		height: 22px !important;
+		min-width: 22px !important;
+		min-height: 22px !important;
+		flex: 0 0 22px !important;
+		border-radius: 6px !important;
+		border-width: 2px !important;
+		border-color: var(--android-outline) !important;
+	}
+	html.platform-android [data-slot="checkbox"][data-state="checked"],
+	html.mobile-phone [data-slot="checkbox"][data-state="checked"] {
+		border-color: var(--android-primary) !important;
+		background: var(--android-primary) !important;
+	}
+	html.platform-android [data-slot="checkbox-indicator"] svg,
+	html.mobile-phone [data-slot="checkbox-indicator"] svg {
+		width: 14px;
+		height: 14px;
+	}
+
+	html.platform-android input,
+	html.platform-android textarea,
+	html.platform-android select,
+	html.mobile-phone input,
+	html.mobile-phone textarea,
+	html.mobile-phone select {
+		font-size: 16px;
+	}
+
+	/* Let the wrapper size to its content. The parent .panel-content
+	   already has overflow-y: auto so once cards exceed the available
+	   area, scrolling kicks in. The previous min-height forced the
+	   wrapper to be viewport-tall and made the page feel empty-but-tall
+	   while still disabling natural sizing. */
+	html.platform-android .task-list-wrapper,
+	html.mobile-phone .task-list-wrapper {
+		height: auto;
+		min-height: 0;
+		background: transparent;
+		display: flex;
+		flex-direction: column;
+	}
+
+	html.platform-android .task-list-wrapper,
+	html.mobile-phone .task-list-wrapper,
+	html.platform-android .task-list,
+	html.mobile-phone .task-list {
+		touch-action: pan-y;
+		overscroll-behavior: contain;
+	}
+
+	html.platform-android .subnav,
+	html.mobile-phone .subnav {
+		width: 100% !important;
+		height: auto !important;
+		min-height: 0 !important;
+		background: transparent !important;
+		border: 0 !important;
+	}
+
+	html.platform-android .subnav-inner,
+	html.mobile-phone .subnav-inner {
+		margin: 0;
+		padding: 18px 14px 8px;
+	}
+
+	html.platform-android .subnav-inner h3,
+	html.mobile-phone .subnav-inner h3 {
+		margin: 0 2px 14px;
+		color: var(--android-on-surface);
+		font-size: 26px;
+		font-weight: 800;
+		letter-spacing: -0.04em;
+		line-height: 1.05;
+	}
+
+	html.platform-android .subnav-inner ul,
+	html.mobile-phone .subnav-inner ul {
+		display: flex;
+		gap: 8px;
+		overflow-x: auto;
+		padding: 2px 2px 10px;
+		scrollbar-width: none;
+	}
+
+	html.platform-android .subnav-inner ul::-webkit-scrollbar,
+	html.mobile-phone .subnav-inner ul::-webkit-scrollbar {
+		display: none;
+	}
+
+	html.platform-android .subnav-inner ul li,
+	html.mobile-phone .subnav-inner ul li {
+		flex: 0 0 auto;
+		min-height: 44px;
+		margin: 0;
+		padding: 8px 14px;
+		border-radius: 999px;
+		background: var(--android-surface-container);
+		box-shadow: none;
+		color: var(--android-on-surface-variant);
+	}
+
+	html.platform-android .subnav-inner ul li:hover,
+	html.mobile-phone .subnav-inner ul li:hover,
+	html.platform-android .subnav-inner ul li:active,
+	html.mobile-phone .subnav-inner ul li:active {
+		transform: none;
+	}
+
+	html.platform-android .subnav-inner ul li.active,
+	html.mobile-phone .subnav-inner ul li.active {
+		background: var(--android-primary-container);
+		color: var(--android-on-primary-container);
+	}
+
+	html.platform-android .subnav-active-bg,
+	html.mobile-phone .subnav-active-bg {
+		display: none;
+	}
+
+	html.platform-android .subnav-icon,
+	html.mobile-phone .subnav-icon {
+		width: 26px;
+		height: 26px;
+		min-width: 26px;
+		min-height: 26px;
+		margin-right: 7px;
+		background: transparent;
+	}
+
+	html.platform-android .subnav-badge,
+	html.mobile-phone .subnav-badge {
+		background: rgba(103, 80, 164, 0.14);
+		color: currentColor;
+	}
+
+	html.platform-android .task-toolbar,
+	html.mobile-phone .task-toolbar {
+		position: sticky;
+		top: 0;
+		z-index: 20;
+		flex-wrap: wrap;
+		gap: 8px;
+		margin: 0;
+		padding: 10px 14px 8px;
+		background: color-mix(in srgb, var(--android-surface) 86%, transparent);
+		backdrop-filter: blur(14px);
+	}
+
+	html.platform-android .task-toolbar-left,
+	html.platform-android .task-toolbar-right,
+	html.mobile-phone .task-toolbar-left,
+	html.mobile-phone .task-toolbar-right {
+		width: 100%;
+		flex-wrap: wrap;
+		gap: 8px;
+	}
+
+	html.platform-android .task-filter-input,
+	html.mobile-phone .task-filter-input {
+		width: 100%;
+		height: 48px;
+	}
+
+	html.platform-android .task-filter-field,
+	html.mobile-phone .task-filter-field {
+		width: 100% !important;
+		height: 48px;
+		border-radius: calc(var(--android-radius-md) - 4px);
+		background: var(--android-surface-container);
+		font-size: 15px;
+	}
+	html.platform-android .task-toolbar-select,
+	html.mobile-phone .task-toolbar-select,
+	html.platform-android .task-page-size,
+	html.mobile-phone .task-page-size,
+	html.platform-android .task-page-size .task-page-size-trigger,
+	html.mobile-phone .task-page-size .task-page-size-trigger {
+		border-radius: calc(var(--android-radius-md) - 4px) !important;
+	}
+
+	html.platform-android .task-list,
+	html.mobile-phone .task-list {
+		height: auto;
+		padding: 8px 14px 18px;
+		overflow: visible;
+	}
+
+	/* The card uses a single rounded outer shape with overflow:hidden so
+	   the colored status indicator (first flex child) and the content
+	   area (second flex child) are clipped to that one shape. The user
+	   then sees a unified rounded rectangle whose left slice is the
+	   colored status bar — the bar is "connected" to the card. */
+	html.platform-android .task-item,
+	html.mobile-phone .task-item {
+		min-height: 116px;
+		margin-bottom: 12px;
+		border: 0;
+		border-radius: var(--android-radius-lg);
+		background: var(--android-surface-container);
+		box-shadow: none;
+		overflow: hidden;
+		transition:
+			background-color 0.18s ease,
+			outline-color 0.18s ease;
+	}
+	/* Selected card on Android: tinted bg + 2dp outline in primary color.
+	   The class is now bound directly on .task-item itself (see
+	   TaskItem.vue), so descendant matching is no longer required and the
+	   highlight only applies to the actually selected card. */
+	html.platform-android .task-item.selected,
+	html.mobile-phone .task-item.selected {
+		background: color-mix(
+			in srgb,
+			var(--android-primary) 18%,
+			var(--android-surface-container)
+		);
+		outline: 2px solid var(--android-primary);
+		outline-offset: -2px;
+	}
+
+	/* The indicator's own border-radius is no longer needed: the parent
+	   .task-item now clips with overflow:hidden, so a flat-rect indicator
+	   inherits the parent's rounded left edge automatically. Keeping the
+	   indicator straight also simplifies the active-pulse animation. */
+	html.platform-android .task-status-indicator,
+	html.mobile-phone .task-status-indicator {
+		width: 8px;
+		border-radius: 0;
+	}
+
+	html.platform-android .task-content,
+	html.mobile-phone .task-content {
+		padding: 16px 16px 14px;
+	}
+
+	html.platform-android .task-header,
+	html.mobile-phone .task-header {
+		margin-bottom: 10px;
+		padding-right: 0;
+	}
+
+	html.platform-android .task-name > span,
+	html.mobile-phone .task-name > span {
+		font-size: 15px;
+		font-weight: 700;
+		line-height: 1.35;
+		-webkit-line-clamp: 2;
+		line-clamp: 2;
+	}
+
+	html.platform-android .task-tag,
+	html.mobile-phone .task-tag {
+		border-radius: 999px;
+		padding: 3px 8px;
+	}
+
+	html.platform-android .task-actions,
+	html.mobile-phone .task-actions {
+		position: static;
+		height: auto;
+		justify-content: flex-end;
+		align-items: center;
+		flex-wrap: nowrap;
+		gap: 2px;
+		margin-top: 0;
+	}
+	html.platform-android .task-page-header,
+	html.mobile-phone .task-page-header {
+		flex-direction: column;
+		align-items: stretch;
+		gap: 10px;
+		padding: 0 14px 8px;
+	}
+	html.platform-android .task-page-header > .task-mobile-subnav-switcher,
+	html.mobile-phone .task-page-header > .task-mobile-subnav-switcher {
+		flex: 0 0 auto;
+		width: 100%;
+	}
+	html.platform-android .task-page-header > .task-actions,
+	html.mobile-phone .task-page-header > .task-actions {
+		width: 100%;
+		justify-content: space-between;
+		flex-wrap: nowrap;
+		gap: 0;
+		margin-left: 0;
+		overflow: visible;
+	}
+
+	/* Header bulk actions are <i class="task-action"> nodes
+	   Make them 36px M3-style tap targets so six fit cleanly */
+	html.platform-android .task-actions .task-action,
+	html.mobile-phone .task-actions .task-action {
+		width: 36px;
+		height: 36px;
+		min-width: 36px;
+		min-height: 36px;
+		border-radius: var(--android-radius-pill);
+		background: transparent;
+		color: var(--android-on-surface-variant);
+	}
+	html.platform-android .task-actions .task-action:hover,
+	html.mobile-phone .task-actions .task-action:hover {
+		background: color-mix(in srgb, var(--android-primary) 10%, transparent);
+		transform: none;
+	}
+	html.platform-android .task-actions .task-action:active,
+	html.mobile-phone .task-actions .task-action:active {
+		background: color-mix(in srgb, var(--android-primary) 20%, transparent);
+		transform: scale(0.92);
+	}
+	html.platform-android .task-actions .task-action svg,
+	html.mobile-phone .task-actions .task-action svg {
+		width: 18px;
+		height: 18px;
+	}
+	html.platform-android .task-actions button,
+	html.mobile-phone .task-actions button {
+		min-width: 36px;
+		min-height: 36px;
+		border-radius: var(--android-radius-pill);
+	}
+
+	/* On mobile: task name takes the full first row, actions sit on a
+	   dedicated row beneath it. This frees the entire row width for the
+	   task title and makes every action button easy to reach. */
+	html.platform-android .task-header,
+	html.mobile-phone .task-header {
+		display: flex;
+		flex-direction: column;
+		align-items: stretch;
+		gap: 10px;
+	}
+	html.platform-android .task-header .task-name,
+	html.mobile-phone .task-header .task-name {
+		width: 100%;
+	}
+
+	/* Per-task action row: a horizontal scroll-snap strip of 36x36
+	   Material 3 round buttons. Real <button> elements (see
+	   TaskItemActions.vue) so taps register reliably on Android WebView. */
+	html.platform-android .task-item-actions,
+	html.mobile-phone .task-item-actions {
+		display: flex;
+		flex-wrap: wrap;
+		justify-content: flex-start;
+		align-items: center;
+		gap: 8px;
+		width: 100%;
+		height: auto;
+		min-height: 36px;
+		padding: 0;
+		margin: 0;
+		border: 0;
+		background: transparent;
+		overflow: visible;
+
+		direction: ltr;
+	}
+	html.platform-android .task-item-actions .task-item-action,
+	html.mobile-phone .task-item-actions .task-item-action {
+		all: unset;
+		box-sizing: border-box !important;
+		display: inline-flex !important;
+		align-items: center !important;
+		justify-content: center !important;
+		width: 40px !important;
+		height: 40px !important;
+		min-width: 40px !important;
+		min-height: 40px !important;
+		max-width: 40px !important;
+		max-height: 40px !important;
+		flex: 0 0 40px !important;
+		padding: 0 !important;
+		margin: 0 !important;
+		border: 0 !important;
+		border-radius: 999px !important;
+		background: color-mix(
+			in srgb,
+			var(--android-primary) 10%,
+			transparent
+		) !important;
+		color: var(--android-on-surface) !important;
+		cursor: pointer !important;
+		user-select: none !important;
+		-webkit-tap-highlight-color: color-mix(
+			in srgb,
+			var(--android-primary) 28%,
+			transparent
+		);
+		touch-action: manipulation !important;
+		pointer-events: auto !important;
+		position: relative;
+		z-index: 1;
+		transition:
+			background-color 0.15s ease,
+			transform 0.12s ease;
+	}
+	html.platform-android .task-item-actions .task-item-action > *,
+	html.mobile-phone .task-item-actions .task-item-action > * {
+		pointer-events: none;
+	}
+	/* No bg color change on press for the per-task action buttons; the
+	   user explicitly asked for this. We keep a subtle scale press for
+	   tactile feedback, and rely on the touch ripple drawn by the
+	   WebView's :focus-visible outline if the user keyboard-navigates. */
+	html.platform-android .task-item-actions .task-item-action:hover,
+	html.mobile-phone .task-item-actions .task-item-action:hover,
+	html.platform-android .task-item-actions .task-item-action:active,
+	html.mobile-phone .task-item-actions .task-item-action:active,
+	html.platform-android .task-item-actions .task-item-action:focus,
+	html.mobile-phone .task-item-actions .task-item-action:focus,
+	html.platform-android .task-item-actions .task-item-action:focus-visible,
+	html.mobile-phone .task-item-actions .task-item-action:focus-visible {
+		background: var(--android-surface-container-high) !important;
+	}
+	html.platform-android .task-item-actions .task-item-action:active,
+	html.mobile-phone .task-item-actions .task-item-action:active {
+		transform: scale(0.92);
+	}
+	html.platform-android .task-item-actions .task-item-action svg,
+	html.mobile-phone .task-item-actions .task-item-action svg {
+		width: 18px;
+		height: 18px;
+	}
+
+	html.platform-android .task-pagination,
+	html.mobile-phone .task-pagination {
+		border: 0;
+		background: transparent;
+		padding: 10px 14px 6px;
+	}
+
+	/* Add-task dialog: full-width rounded sheet that stays above the
+	   floating bottom navigation even when Advanced options expand. */
+	html.platform-android .add-task-dialog,
+	html.mobile-phone .add-task-dialog,
+	html.platform-android .mo-add-task,
+	html.mobile-phone .mo-add-task {
+		width: calc(100vw - 24px) !important;
+		max-width: calc(100vw - 24px) !important;
+		min-width: 0 !important;
+
+		max-height: calc(
+			100dvh -
+			var(--android-bottom-bar) -
+			env(safe-area-inset-top) -
+			env(safe-area-inset-bottom) -
+			40px
+		) !important;
+
+		border-radius: var(--android-radius-xl) !important;
+
+		top: calc(
+			env(safe-area-inset-top) +
+			(
+				100dvh -
+				env(safe-area-inset-top) -
+				env(safe-area-inset-bottom) -
+				var(--android-bottom-bar)
+			) /
+			2
+		) !important;
+	}
+
+	html.platform-android .add-task-dialog *,
+	html.mobile-phone .add-task-dialog * {
+		min-width: 0;
+	}
+
+	html.platform-android .add-task-dialog .mo-input-group,
+	html.mobile-phone .add-task-dialog .mo-input-group {
+		width: 100%;
+	}
+
+	html.platform-android [class*="add-task"] input,
+	html.platform-android [class*="add-task"] textarea,
+	html.mobile-phone [class*="add-task"] input,
+	html.mobile-phone [class*="add-task"] textarea {
+		min-height: 48px;
+		border-radius: var(--android-radius-md);
+	}
+
+	html.platform-android .mo-input-group,
+	html.mobile-phone .mo-input-group {
+		min-height: 48px;
+		border-radius: var(--android-radius-md);
+		background: var(--android-surface-container);
+	}
+
+	html.platform-android .select-directory,
+	html.mobile-phone .select-directory {
+		min-width: 48px;
+		min-height: 48px;
+		border-radius: var(--android-radius-md);
+	}
+
+	html.platform-android .preference,
+	html.mobile-phone .preference,
+	html.platform-android .preferences,
+	html.mobile-phone .preferences {
+		height: auto !important;
+		min-height: 0 !important;
+		flex: 1 1 auto;
+		display: flex;
+		flex-direction: column;
+		background: transparent !important;
+	}
+
+	html.platform-android .form-preference,
+	html.mobile-phone .form-preference {
+		padding: 16px 16px calc(var(--android-bottom-bar) + 104px);
+		max-width: 100%;
+		margin: 0;
+	}
+
+	html.platform-android .form-actions,
+	html.mobile-phone .form-actions {
+		position: fixed;
+		left: 16px;
+		right: 16px;
+		bottom: calc(
+			env(safe-area-inset-bottom) +
+			var(--android-bottom-bar) -
+			14px
+		);
+		z-index: 70;
+		margin: 0;
+		padding: 8px 0 10px;
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+		align-items: center;
+		gap: 12px;
+		background: linear-gradient(
+			to top,
+			var(--android-surface) 0%,
+			color-mix(in srgb, var(--android-surface) 96%, transparent) 72%,
+			color-mix(in srgb, var(--android-surface) 0%, transparent) 100%
+		);
+		border-top: 1px solid
+			color-mix(in srgb, var(--android-outline-variant) 58%, transparent);
+		backdrop-filter: blur(16px) saturate(1.08);
+		box-shadow: none;
+	}
+
+	html.platform-android .form-actions .ui-button,
+	html.mobile-phone .form-actions .ui-button {
+		min-height: 46px;
+		border-radius: 16px;
+		font-size: var(--android-text-label);
+		font-weight: 700;
+		box-shadow: none;
+		white-space: nowrap;
+	}
+
+	html.platform-android .form-actions .ui-button:first-child,
+	html.mobile-phone .form-actions .ui-button:first-child {
+		min-width: 88px;
+		width: 100%;
+		padding-inline: 10px;
+		color: var(--android-on-surface-variant);
+		background: transparent;
+		border-color: var(--android-outline-variant);
+	}
+
+	html.platform-android .form-actions .ui-button:last-child,
+	html.mobile-phone .form-actions .ui-button:last-child {
+		width: 100%;
+		color: var(--android-primary);
+		background: color-mix(
+			in srgb,
+			var(--android-primary) 12%,
+			var(--android-surface-container-high)
+		);
+		border-color: color-mix(
+			in srgb,
+			var(--android-primary) 24%,
+			var(--android-outline-variant)
+		);
+		box-shadow: none;
+	}
+
+	html.platform-android .form-actions .ui-button:first-child:active,
+	html.mobile-phone .form-actions .ui-button:first-child:active {
+		background: color-mix(
+			in srgb,
+			var(--android-on-surface-variant) 9%,
+			transparent
+		);
+	}
+
+	html.platform-android .form-actions .ui-button:last-child:active,
+	html.mobile-phone .form-actions .ui-button:last-child:active {
+		background: color-mix(
+			in srgb,
+			var(--android-primary) 18%,
+			var(--android-surface-container-high)
+		);
+	}
+
+	html.platform-android .settings-section,
+	html.mobile-phone .settings-section {
+		margin-bottom: 20px;
+	}
+
+	html.platform-android .settings-section-header,
+	html.mobile-phone .settings-section-header {
+		border-bottom: 0;
+		margin-bottom: 8px;
+		padding-bottom: 6px;
+	}
+
+	html.platform-android .settings-section-content,
+	html.mobile-phone .settings-section-content {
+		background: var(--android-surface-container);
+		border-radius: calc(var(--radius) - 2px);
+		padding: 14px;
+	}
+
+	html.platform-android .theme-switcher,
+	html.mobile-phone .theme-switcher {
+		gap: 12px;
+		padding-top: 6px;
+	}
+
+	html.platform-android .theme-preview,
+	html.mobile-phone .theme-preview {
+		width: 82px;
+		height: 54px;
+	}
+
+	html.platform-android .settings-row,
+	html.mobile-phone .settings-row {
+		min-height: 56px;
+		padding: 12px 0;
+		gap: 14px;
+	}
+
+	html.platform-android .settings-row-action,
+	html.mobile-phone .settings-row-action {
+		min-height: 0;
+		display: flex;
+		align-items: center;
+	}
+
+	html.platform-android .settings-row-title,
+	html.mobile-phone .settings-row-title {
+		font-size: var(--android-text-body);
+		color: var(--android-on-surface);
+	}
+
+	html.platform-android .settings-row-description,
+	html.mobile-phone .settings-row-description {
+		font-size: var(--android-text-caption);
+		color: var(--android-on-surface-variant);
+	}
+
+	html.platform-android .settings-select-item-label,
+	html.mobile-phone .settings-select-item-label {
+		color: var(--android-on-surface-variant);
+		font-size: var(--android-text-caption);
+	}
+
+	/* The .panel wraps every page's content. On mobile we want the page
+	   to feel edge-to-edge: no card background or rounded "sheet" around
+	   the list, just the body background showing through. Individual
+	   task / health / preference cards keep their own surface colors. */
+	html.platform-android .panel,
+	html.mobile-phone .panel {
+		border-radius: 0;
+		background: transparent;
+		border: 0;
+		box-shadow: none;
+	}
+
+	html.platform-android .task-detail,
+	html.mobile-phone .task-detail,
+	html.platform-android .task-detail-drawer,
+	html.mobile-phone .task-detail-drawer {
+		top: max(env(safe-area-inset-top), 14px) !important;
+		bottom: max(env(safe-area-inset-bottom), 18px) !important;
+		height: calc(
+			100dvh -
+			max(env(safe-area-inset-top), 14px) -
+			max(env(safe-area-inset-bottom), 18px)
+		) !important;
+		max-height: calc(
+			100dvh -
+			max(env(safe-area-inset-top), 14px) -
+			max(env(safe-area-inset-bottom), 18px)
+		) !important;
+		width: min(100vw, 850px) !important;
+		border-radius: var(--android-radius-xl) var(--android-radius-xl) 0 0 !important;
+	}
+	html.platform-android .task-detail-drawer .task-detail-actions,
+	html.mobile-phone .task-detail-drawer .task-detail-actions {
+		bottom: max(env(safe-area-inset-bottom), 1rem);
+	}
+
+	/* Empty state: avoid the 360px padding-top trick which clips the
+	   illustration on small viewports. Render the illustration via a
+	   pseudo-element so we can flex-center it above the label. */
+	html.platform-android .no-task,
+	html.mobile-phone .no-task {
+		height: 100%;
+		min-height: 280px;
+		padding: 32px 16px;
+		color: var(--android-on-surface-variant);
+		font-size: var(--android-text-body);
+	}
+	html.platform-android .no-task-inner,
+	html.mobile-phone .no-task-inner {
+		width: 100%;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		gap: 12px;
+		padding-top: 0;
+		background: none;
+		opacity: 1;
+	}
+	html.platform-android .no-task-inner::before,
+	html.mobile-phone .no-task-inner::before {
+		content: "";
+		display: block;
+		width: 160px;
+		height: 160px;
+		background:
+			transparent url("@/assets/no-task.svg") center / contain no-repeat;
+		opacity: 0.85;
+	}
+
+	html.platform-android .health-panel,
+	html.mobile-phone .health-panel {
+		flex: 1 1 auto;
+		display: flex;
+		flex-direction: column;
+		height: auto;
+		min-height: 0;
+		overflow: hidden;
+	}
+	/* Mobile health header: title row only. The Run button sits on the
+	   right of the title, just like Tasks/RSS. Padding is balanced with
+	   the other panel-headers so all three pages feel consistent. */
+	html.platform-android .health-header,
+	html.mobile-phone .health-header {
+		flex-shrink: 0;
+		flex-wrap: nowrap;
+		align-items: center;
+		gap: 12px;
+		padding: 0 16px 8px;
+		border-bottom: 0;
+	}
+	html.platform-android .health-header > .health-title,
+	html.mobile-phone .health-header > .health-title {
+		flex: 1 1 0;
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	html.platform-android .health-header > .health-run-btn,
+	html.mobile-phone .health-header > .health-run-btn {
+		flex: 0 0 auto;
+	}
+	/* Subtitle and meta sit below the header as separate rows so the
+	   header stays focused on title + primary action. */
+	html.platform-android .health-panel > .health-subtitle,
+	html.mobile-phone .health-panel > .health-subtitle {
+		flex-shrink: 0;
+		margin: 0;
+		padding: 0 16px 6px;
+		color: var(--android-on-surface-variant);
+		font-size: var(--android-text-caption);
+		line-height: 1.45;
+	}
+	html.platform-android .health-meta-row,
+	html.mobile-phone .health-meta-row {
+		flex-shrink: 0;
+		display: flex;
+		align-items: center;
+		flex-wrap: wrap;
+		gap: 8px;
+		padding: 0 16px 12px;
+	}
+	html.platform-android .health-body,
+	html.mobile-phone .health-body {
+		flex: 1 1 0;
+		min-height: 0;
+		overflow-y: auto;
+		overflow-x: hidden;
+		-webkit-overflow-scrolling: touch;
+	}
+	html.platform-android .health-body-inner,
+	html.mobile-phone .health-body-inner {
+		padding: 4px 16px calc(env(safe-area-inset-bottom) + 24px);
+		max-width: 100%;
+	}
+	html.platform-android .health-title,
+	html.mobile-phone .health-title {
+		font-size: var(--android-text-headline);
+		font-weight: 700;
+		color: var(--android-on-surface);
+		margin: 0;
+	}
+
+	/* SubnavSwitcher renders as the page title with a built-in chevron.
+	   Tapping anywhere on it opens the tab dropdown. */
+	html.platform-android .subnav-switch-trigger,
+	html.mobile-phone .subnav-switch-trigger {
+		height: auto;
+		min-height: 0;
+		padding: 4px 8px 4px 0;
+		border: 0;
+		background: transparent;
+		box-shadow: none;
+		color: var(--android-on-surface);
+		gap: 6px;
+		width: auto;
+		max-width: 100%;
+	}
+	html.platform-android .subnav-switch-trigger:hover,
+	html.mobile-phone .subnav-switch-trigger:hover,
+	html.platform-android .subnav-switch-trigger:focus-visible,
+	html.mobile-phone .subnav-switch-trigger:focus-visible {
+		background: var(--android-surface-container-high);
+		border-radius: var(--android-radius-pill);
+	}
+	html.platform-android .subnav-switch-trigger .subnav-switch-title,
+	html.mobile-phone .subnav-switch-trigger .subnav-switch-title {
+		font-size: var(--android-text-headline);
+		font-weight: 700;
+		letter-spacing: -0.01em;
+		color: var(--android-on-surface);
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+	html.platform-android .task-mobile-subnav-switcher .subnav-switch-trigger,
+	html.mobile-phone .task-mobile-subnav-switcher .subnav-switch-trigger {
+		justify-content: flex-start;
+		max-width: none;
+	}
+	html.platform-android .task-mobile-subnav-switcher .subnav-switch-title,
+	html.mobile-phone .task-mobile-subnav-switcher .subnav-switch-title {
+		overflow: visible;
+		text-overflow: clip;
+		white-space: normal;
+		line-height: 1.2;
+	}
+	html.platform-android .subnav-switch-trigger svg,
+	html.mobile-phone .subnav-switch-trigger svg {
+		width: 20px !important;
+		height: 20px !important;
+		opacity: 1;
+		color: var(--android-on-surface-variant);
+	}
+
+	html.platform-android .rss-title,
+	html.mobile-phone .rss-title {
+		display: block;
+		font-size: var(--android-text-headline);
+		font-weight: 700;
+		color: var(--android-on-surface);
+		margin: 0;
+	}
+
+	html.platform-android .panel-header .task-title,
+	html.mobile-phone .panel-header .task-title {
+		font-size: var(--android-text-headline);
+		font-weight: 700;
+		color: var(--android-on-surface);
+	}
+
+	html.platform-android .dev-paths-grid,
+	html.mobile-phone .dev-paths-grid {
+		grid-template-columns: 1fr;
+	}
+
+	html.platform-android .dev-log-path-group,
+	html.mobile-phone .dev-log-path-group {
+		min-height: 48px;
+		border-color: var(--android-outline-variant);
+		background: var(--android-surface-container-high);
+		border-radius: var(--android-radius-md);
+	}
+
+	html.platform-android .dev-log-path-input,
+	html.mobile-phone .dev-log-path-input {
+		height: 48px;
+		padding: 14px 12px 8px;
+		overflow-x: auto;
+		overflow-y: hidden;
+		white-space: pre;
+		font-size: 12px;
+		line-height: 18px;
+		color: var(--android-on-surface);
+		background: transparent;
+		scrollbar-width: thin;
+		scrollbar-color: color-mix(
+				in srgb,
+				var(--android-on-surface-variant) 60%,
+				transparent
+			)
+			transparent;
+		-webkit-overflow-scrolling: touch;
+	}
+
+	html.platform-android .dev-log-path-input::-webkit-scrollbar,
+	html.mobile-phone .dev-log-path-input::-webkit-scrollbar {
+		height: 4px;
+	}
+	html.platform-android .dev-log-path-input::-webkit-scrollbar-thumb,
+	html.mobile-phone .dev-log-path-input::-webkit-scrollbar-thumb {
+		background: color-mix(
+			in srgb,
+			var(--android-on-surface-variant) 60%,
+			transparent
+		);
+		border-radius: 2px;
+	}
+	html.platform-android .dev-log-path-input::-webkit-scrollbar-track,
+	html.mobile-phone .dev-log-path-input::-webkit-scrollbar-track {
+		background: transparent;
+	}
+
+	html.platform-android .dev-log-path-actions,
+	html.mobile-phone .dev-log-path-actions {
+		height: 48px;
+		border-left-color: var(--android-outline-variant);
+		background: transparent;
+	}
+
+	html.platform-android .dev-log-path-actions .select-directory.ui-button,
+	html.platform-android .dev-log-path-actions .show-in-folder,
+	html.mobile-phone .dev-log-path-actions .select-directory.ui-button,
+	html.mobile-phone .dev-log-path-actions .show-in-folder {
+		width: 48px;
+		height: 48px;
+		min-width: 48px;
+		min-height: 48px;
+		padding: 0;
+		border: 0;
+		border-radius: 0;
+		background: transparent;
+		color: var(--android-on-surface-variant);
+		box-shadow: none;
+	}
+}

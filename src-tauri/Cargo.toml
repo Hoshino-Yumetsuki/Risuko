@@ -47,7 +47,6 @@ tauri-plugin-store = "2"
 tauri-plugin-deep-link = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-shell = "2"
-tauri-plugin-autostart = "2"
 tauri-plugin-process = "2"
 tauri-plugin-fs = "2"
 tauri-plugin-notification = "2"
@@ -59,10 +58,7 @@ tokio = { workspace = true }
 log = { workspace = true }
 dirs = { workspace = true }
 open = "5"
-trash = "5"
 tauri-plugin-clipboard-manager = "2.3.2"
-tauri-plugin-nosleep = { git = "https://github.com/pevers/tauri-plugin-nosleep", rev = "6f6ab76ec171d075476b585282290fcf2e1c40b5" }
-tauri-plugin-single-instance = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-appender = "0.2"
@@ -85,5 +81,19 @@ windows-native-keyring-store = "1"
 
 [target.'cfg(all(unix, not(any(target_os = "macos", target_os = "ios", target_os = "android"))))'.dependencies]
 dbus-secret-service-keyring-store = { version = "1", features = ["crypto-rust"] }
+
+[target.'cfg(not(target_os = "android"))'.dependencies]
+trash = "5"
+tauri-plugin-nosleep = { git = "https://github.com/pevers/tauri-plugin-nosleep", rev = "6f6ab76ec171d075476b585282290fcf2e1c40b5" }
+tauri-plugin-autostart = "2"
+tauri-plugin-single-instance = "2"
+
+[target.'cfg(target_os = "android")'.dependencies]
+# JNI bridge so we can dispatch Android `Intent`s with explicit MIME types
+# and `Intent.createChooser`. `tauri-plugin-shell::open` only calls
+# `Intent(ACTION_VIEW, uri)` with no extras, which lets generic
+# wildcard-MIME apps like Messages intercept any content URI we send.
+jni = "0.21"
+ndk-context = "0.1"
 
 [dev-dependencies]

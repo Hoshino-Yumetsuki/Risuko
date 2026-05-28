@@ -1,21 +1,25 @@
 <template>
-  <i @click.stop="onFolderClick">
-    <Folder :size="10" />
-  </i>
+  <button type="button" class="show-in-folder" @click.stop="onFolderClick">
+    <FolderOpen :size="size" />
+  </button>
 </template>
 
 <script lang="ts">
-import { Folder } from "@lucide/vue";
+import { FolderOpen } from "@lucide/vue";
 import { showItemInFolder } from "@/utils/native";
 
 export default {
 	name: "mo-show-in-folder",
 	components: {
-		Folder,
+		FolderOpen,
 	},
 	props: {
 		path: {
 			type: String,
+		},
+		size: {
+			type: Number,
+			default: 10,
 		},
 	},
 	computed: {},

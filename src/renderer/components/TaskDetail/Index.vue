@@ -3,6 +3,9 @@
     <SheetContent side="right" class="task-detail-drawer">
       <SheetHeader>
         <SheetTitle>{{ $t('task.task-detail-title') }}</SheetTitle>
+        <button class="task-detail-close" type="button" :aria-label="$t('window.close')" @click="handleClose">
+          <X :size="18" />
+        </button>
       </SheetHeader>
       <Tabs v-model="activeTab" default-value="general" class="task-detail-tab">
         <TabsList>
@@ -73,7 +76,7 @@
 </template>
 
 <script lang="ts">
-import { Activity, Files, Info, Radar, Users } from "@lucide/vue";
+import { Activity, Files, Info, Radar, Users, X } from "@lucide/vue";
 import {
 	EMPTY_STRING,
 	NONE_SELECTED_FILES,
@@ -131,6 +134,7 @@ export default {
 		Info,
 		Radar,
 		Users,
+		X,
 	},
 	props: {
 		gid: {

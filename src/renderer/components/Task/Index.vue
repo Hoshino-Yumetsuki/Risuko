@@ -4,9 +4,11 @@
       <mo-task-subnav :current="status" />
     </aside>
     <div class="content panel panel-layout panel-layout--v relative">
-      <mo-enter tag="header" preset="fadeInDown" class="panel-header">
+      <mo-enter tag="header" preset="fadeInDown" class="panel-header task-page-header">
         <h4 class="task-title hidden-xs-only">{{ title }}</h4>
-        <mo-subnav-switcher :title="title" :subnavs="subnavs" class="hidden-sm-and-up" />
+        <div class="task-mobile-subnav-switcher">
+          <mo-subnav-switcher :title="title" :subnavs="subnavs" />
+        </div>
         <mo-task-actions />
       </mo-enter>
       <div class="task-toolbar">
@@ -30,13 +32,20 @@
           </div>
         </div>
         <div class="task-toolbar-right">
+          <div class="task-total-progress-row" v-if="showTotalProgress">
+            <span class="task-total-progress-size">
+              {{ formatBytes(totalCompletedLength, 1) }} / {{ formatBytes(totalLength, 1) }}
+            </span>
+            <span class="task-total-progress-sep">·</span>
+            <span class="task-total-progress-percent">{{ totalProgressPercent }}%</span>
+          </div>
           <Select
             v-if="availableTags.length > 0 || filterTag"
             :model-value="filterTag || '__all__'"
             @update:model-value="onFilterTagChange"
           >
             <SelectTrigger size="sm" class="task-toolbar-select" style="min-width: 100px">
-              <SelectValue placeholder="Tag" />
+              <SelectValue :placeholder="$t('task.filter-tag-placeholder')" />
             </SelectTrigger>
             <SelectContent align="end">
               <SelectItem value="__all__">{{ $t('task.filter-tag-all') }}</SelectItem>
@@ -64,6 +73,16 @@
             <ArrowUpNarrowWide v-if="sortOrder === 'asc'" :size="14" />
             <ArrowDownNarrowWide v-else :size="14" />
           </i>
+          <Select :model-value="`${tasksPerPage}`" @update:model-value="onTasksPerPageChange">
+            <SelectTrigger size="sm" class="task-toolbar-select">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent align="end">
+              <SelectItem v-for="size in tasksPerPageOptions" :key="size" :value="`${size}`">
+                {{ $t('task.tasks-per-page', { count: size }) }}
+              </SelectItem>
+            </SelectContent>
+          </Select>
         </div>
       </div>
       <main class="panel-content">
@@ -77,7 +96,12 @@
 <script lang="ts">
 import { ArrowDownNarrowWide, ArrowUpNarrowWide, Search, X } from "@lucide/vue";
 import { ADD_TASK_TYPE } from "@shared/constants";
-import { getTaskUri, parseHeader } from "@shared/utils";
+import {
+	bytesToSize,
+	calcProgress,
+	getTaskUri,
+	parseHeader,
+} from "@shared/utils";
 import logger from "@shared/utils/logger";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import api from "@/api";
@@ -132,7 +156,13 @@ export default {
 			return useTaskStore().selectedGidList;
 		},
 		selectedGidListCount() {
+			// Count is per-row (matches the visual selection count) so the
+			// confirmation dialog and disabled-state logic can't surprise
+			// the user by quietly deduplicating a multi-row selection.
 			return useTaskStore().selectedGidList.length;
+		},
+		selectedTaskRows() {
+			return useTaskStore().selectedTaskRows;
 		},
 		noConfirmBeforeDelete() {
 			return usePreferenceStore().config.noConfirmBeforeDeleteTask;
@@ -199,6 +229,42 @@ export default {
 				{ label: this.$t("task.sort-by-time"), value: "time" },
 			];
 		},
+		tasksPerPage() {
+			return useTaskStore().tasksPerPage;
+		},
+		tasksPerPageOptions() {
+			return [10, 20, 30, 40, 50];
+		},
+		currentList() {
+			return useTaskStore().currentList;
+		},
+		showTotalProgress() {
+			return (
+				this.currentList !== "stopped" &&
+				this.currentList !== "completed" &&
+				this.totalLength > 0
+			);
+		},
+		totalLength() {
+			return useTaskStore().taskList.reduce(
+				(sum, task) => sum + Number(task.totalLength || 0),
+				0,
+			);
+		},
+		totalCompletedLength() {
+			return useTaskStore().taskList.reduce(
+				(sum, task) => sum + Number(task.completedLength || 0),
+				0,
+			);
+		},
+		totalProgressPercent() {
+			const result = calcProgress(
+				this.totalLength,
+				this.totalCompletedLength,
+				1,
+			);
+			return `${result}`.replace(/\.0$/, "");
+		},
 	},
 	watch: {
 		status: "onStatusChange",
@@ -221,6 +287,12 @@ export default {
 		},
 		onSortByChange(value) {
 			useTaskStore().setSortBy(value);
+		},
+		onTasksPerPageChange(value) {
+			useTaskStore().setTasksPerPage(value);
+		},
+		formatBytes(value, precision = 1) {
+			return bytesToSize(value, precision);
 		},
 		onToggleSortOrder() {
 			useTaskStore().toggleSortOrder();
@@ -393,11 +465,23 @@ export default {
 			// Await file deletion so re-adding any of the same magnet links
 			// can't race the trash operation (see removeTask comment above).
 			return this.withTaskActionLoading(loadingText, async () => {
-				const gids = taskList.map((task) => task.gid);
+				// `taskList` contains per-row entries: a multi-file BT
+				// torrent shows up multiple times when the user selected
+				// several file rows. The torrent-level removal API only
+				// needs each gid once, but the per-file trash step has to
+				// run for every selected file row so each file is moved
+				// to the trash individually.
+				const gids = [...new Set(taskList.map((task) => task.gid))];
+				const fileEntries = taskList.filter((task) => task._isFileEntry);
+				const taskEntries = taskList.filter((task) => !task._isFileEntry);
 				await this.removeTaskItems(gids);
 				if (isRemoveWithFiles) {
 					try {
-						await this.batchDeleteTaskFiles(taskList);
+						// Trash each individually-selected file row first so
+						// `_isFileEntry` paths are honored, then fall through
+						// to whole-torrent trash for any non-file rows in the
+						// same selection.
+						await this.batchDeleteTaskFiles([...fileEntries, ...taskEntries]);
 					} catch (err) {
 						logger.warn("[Risuko] batch file delete failed:", err);
 						this.$msg.error(
@@ -550,19 +634,17 @@ export default {
 		},
 		async handleBatchDeleteTask(payload) {
 			const { deleteWithFiles } = payload;
-			const {
-				noConfirmBeforeDelete,
-				selectedGidList,
-				selectedGidListCount,
-				taskList,
-			} = this;
+			const { noConfirmBeforeDelete, selectedGidListCount, selectedTaskRows } =
+				this;
 			if (selectedGidListCount === 0) {
 				return;
 			}
 
-			const selectedTaskList = taskList.filter((task) => {
-				return selectedGidList.includes(task.gid);
-			});
+			// Operate on the per-row task shape (`_isFileEntry`,
+			// `files: [theFile]`, etc.) so multi-file BT torrents can
+			// have individual file rows trashed without removing the
+			// whole torrent. Each row carries its own deletion payload.
+			const selectedTaskList = selectedTaskRows;
 
 			if (noConfirmBeforeDelete) {
 				this.removeTasks(selectedTaskList, deleteWithFiles);

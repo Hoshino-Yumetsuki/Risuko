@@ -14,6 +14,8 @@ use std::time::{Duration, SystemTime};
 use serde::Serialize;
 use serde_json::Value;
 use tauri::{AppHandle, State};
+
+#[cfg(not(target_os = "android"))]
 use tauri_plugin_autostart::ManagerExt;
 
 use risuko_engine::engine::{self, options::EngineOptions, torrent::BtHealthSnapshot, youtube};
@@ -173,7 +175,7 @@ pub async fn run_health_checks(
         )
     };
     let options = EngineOptions::from_config(&system_cfg, &user_cfg);
-    let autostart_enabled = handle.autolaunch().is_enabled().unwrap_or(false);
+    let autostart_enabled = autostart_enabled(&handle);
     let prevent_sleep_while_downloading =
         parse_boolish(user_cfg.get("prevent-sleep-while-downloading"), true);
 
@@ -237,7 +239,7 @@ pub async fn run_health_checks(
     if want("logs") {
         cats.push(HealthCategory::from_checks("logs", check_logs(&log_dir)));
     }
-    if want("tools") {
+    if want("tools") && !cfg!(target_os = "android") {
         cats.push(HealthCategory::from_checks("tools", check_tools().await));
     }
 
@@ -862,6 +864,18 @@ fn check_system(autostart: bool, prevent_sleep_while_downloading: bool) -> Vec<H
         ));
     }
     out
+}
+
+fn autostart_enabled(handle: &AppHandle) -> bool {
+    #[cfg(target_os = "android")]
+    {
+        let _ = handle;
+        false
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        handle.autolaunch().is_enabled().unwrap_or(false)
+    }
 }
 
 // Config

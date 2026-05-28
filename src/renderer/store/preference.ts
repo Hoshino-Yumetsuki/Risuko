@@ -3,6 +3,7 @@ import {
 	MAX_NUM_OF_DIRECTORIES,
 	MAX_NUM_OF_SAVED_CREDENTIALS,
 } from "@shared/constants";
+import { getLanguage } from "@shared/locales";
 import type { AppConfig } from "@shared/types/config";
 import {
 	CREDENTIAL_SECRET_FIELDS,
@@ -30,13 +31,13 @@ export const usePreferenceStore = defineStore("preference", {
 		engineMode: "MAX",
 		vaultEnabled: false,
 		config: {
-			locale: "en-US",
+			locale: "auto",
 		} as AppConfig,
 	}),
 	getters: {
 		theme: (state) => state.config.theme,
 		locale: (state) => state.config.locale,
-		direction: (state) => getLangDirection(state.config.locale),
+		direction: (state) => getLangDirection(getLanguage(state.config.locale)),
 	},
 	actions: {
 		async fetchPreference(): Promise<AppConfig> {
@@ -335,7 +336,7 @@ export const usePreferenceStore = defineStore("preference", {
 			this.updatePreference({ theme });
 		},
 		updateAppLocale(locale: string) {
-			this.updatePreference({ locale: locale || "en-US" });
+			this.updatePreference({ locale: locale || "auto" });
 		},
 		updatePreference(config: Partial<AppConfig>) {
 			this.config = { ...this.config, ...config };

@@ -874,7 +874,21 @@ async fn run_single_uri_download(
     apply_netrc_auth(&mut headers, uri, options);
     let headers = headers;
     let stall = StallWatchdog::from_options(options);
-    let falloc_mode = super::falloc::Mode::from_option(options.get("file-allocation"));
+    let falloc_mode = {
+        let mode = super::falloc::Mode::from_option(options.get("file-allocation"));
+        #[cfg(target_os = "android")]
+        {
+            if mode == super::falloc::Mode::Falloc {
+                super::falloc::Mode::None
+            } else {
+                mode
+            }
+        }
+        #[cfg(not(target_os = "android"))]
+        {
+            mode
+        }
+    };
 
     // Optional integrity checks. Bad input is rejected up-front so a typo
     // doesn't silently disable verification: the user immediately sees the

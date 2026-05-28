@@ -1,12 +1,12 @@
 use serde_json::{json, Map, Value};
 
 pub fn system_defaults() -> Map<String, Value> {
-    let downloads_dir = dirs::download_dir()
-        .or_else(|| dirs::home_dir().map(|p| p.join("Downloads")))
-        .or_else(|| std::env::current_dir().ok().map(|p| p.join("Downloads")))
-        .unwrap_or_else(|| std::env::temp_dir().join("Downloads"))
-        .to_string_lossy()
-        .to_string();
+    let downloads_dir = default_download_dir().to_string_lossy().to_string();
+    let file_allocation = if cfg!(target_os = "android") {
+        "none"
+    } else {
+        "falloc"
+    };
 
     let mut m = Map::new();
     m.insert("all-proxy".into(), json!(""));
@@ -33,6 +33,7 @@ pub fn system_defaults() -> Map<String, Value> {
     m.insert("enable-dht".into(), json!(true));
     m.insert("enable-dht6".into(), json!(true));
     m.insert("enable-peer-exchange".into(), json!(true));
+    m.insert("file-allocation".into(), json!(file_allocation));
     m.insert("follow-torrent".into(), json!(true));
     m.insert("listen-port".into(), json!(21301));
     m.insert("max-concurrent-downloads".into(), json!(5));
@@ -51,6 +52,44 @@ pub fn system_defaults() -> Map<String, Value> {
         json!("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"),
     );
     m
+}
+
+fn default_download_dir() -> std::path::PathBuf {
+    #[cfg(target_os = "android")]
+    {
+        // On Android, `dirs::download_dir()` resolves to "$HOME/Downloads"
+        // which is not a valid path (HOME is typically the app's private
+        // data dir or "/"). Use the well-known shared public Downloads
+        // folder so files land somewhere the user can browse with any
+        // file manager. The app needs storage permission to write there
+        // on Android 10+; if missing, the user can pick another folder
+        // via the directory picker.
+        let public_downloads = std::path::PathBuf::from("/storage/emulated/0/Download/Risuko");
+        if let Some(parent) = public_downloads.parent() {
+            if parent.exists() {
+                return public_downloads;
+            }
+        }
+        // Fallback: app-specific external storage (no permission needed,
+        // but hidden from most file managers).
+        let app_external = std::path::PathBuf::from(
+            "/storage/emulated/0/Android/data/app.risuko.mobile/files/Download",
+        );
+        if let Some(parent) = app_external.parent() {
+            if parent.exists() {
+                return app_external;
+            }
+        }
+        // Last resort: app-private internal storage.
+        if let Some(home) = dirs::home_dir() {
+            return home.join("Download");
+        }
+    }
+
+    dirs::download_dir()
+        .or_else(|| dirs::home_dir().map(|p| p.join("Downloads")))
+        .or_else(|| std::env::current_dir().ok().map(|p| p.join("Downloads")))
+        .unwrap_or_else(|| std::env::temp_dir().join("Downloads"))
 }
 
 pub fn user_defaults() -> Map<String, Value> {
@@ -72,7 +111,8 @@ pub fn user_defaults() -> Map<String, Value> {
     m.insert("keep-window-state".into(), json!(false));
     m.insert("last-check-update-time".into(), json!(0));
     m.insert("last-sync-tracker-time".into(), json!(0));
-    m.insert("locale".into(), json!("en-US"));
+    m.insert("locale".into(), json!("auto"));
+    m.insert("log-dir-override".into(), json!(""));
     m.insert("log-level".into(), json!("warn"));
     m.insert("low-speed-threshold".into(), json!(20));
     m.insert("new-task-show-downloading".into(), json!(true));
@@ -188,7 +228,7 @@ mod tests {
     fn user_defaults_sensible_values() {
         let user = user_defaults();
         assert_eq!(user.get("theme").unwrap(), "auto");
-        assert_eq!(user.get("locale").unwrap(), "en-US");
+        assert_eq!(user.get("locale").unwrap(), "auto");
         assert_eq!(user.get("keep-seeding").unwrap(), false);
         assert_eq!(user.get("rpc-host").unwrap(), "127.0.0.1");
         assert_eq!(user.get("m3u8-output-format").unwrap(), "ts");

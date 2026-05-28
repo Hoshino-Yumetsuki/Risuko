@@ -4,8 +4,28 @@
 		max-width: 850px !important;
 	}
 	.task-detail-drawer [data-slot="sheet-header"] {
+		position: relative;
 		padding-top: 2rem;
+		padding-right: 3.25rem;
 		margin-bottom: 0;
+	}
+	.task-detail-close {
+		position: absolute;
+		top: 1.75rem;
+		right: 1.25rem;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 2rem;
+		height: 2rem;
+		border: 0;
+		border-radius: 999px;
+		background: var(--secondary);
+		color: var(--foreground);
+		cursor: pointer;
+	}
+	.task-detail-close:hover {
+		background: var(--accent);
 	}
 	.task-detail-drawer .task-detail-actions {
 		position: sticky;

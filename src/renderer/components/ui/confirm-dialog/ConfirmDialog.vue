@@ -79,10 +79,12 @@ function onOpenChange(val: boolean) {
   <Dialog :open="open" @update:open="onOpenChange">
     <DialogContent :show-close-button="false" class="sm:max-w-100 gap-0 p-0">
       <div class="flex flex-col gap-3 p-5 pb-4">
-        <DialogHeader class="gap-3">
+        <DialogHeader
+          class="flex-row! items-center text-left! gap-3 space-y-0"
+        >
           <div
             v-if="kind === 'warning'"
-            class="flex size-9 items-center justify-center rounded-md bg-amber-500/10"
+            class="flex size-9 shrink-0 items-center justify-center rounded-md bg-amber-500/10"
           >
             <TriangleAlert class="size-5 text-amber-500" />
           </div>

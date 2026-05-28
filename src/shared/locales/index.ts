@@ -7,6 +7,10 @@
  */
 export const availableLanguages = [
 	{
+		value: "auto",
+		label: "Auto",
+	},
+	{
 		value: "ar",
 		label: "عربي",
 	},
@@ -134,6 +138,11 @@ const checkLngIsAvailable = (locale) => {
  * zh, zh-CN, zh-HK, zh-TW
  */
 export const getLanguage = (locale = "en-US") => {
+	if (locale === "auto") {
+		const system = getSystemLocale();
+		return getLanguage(system === "auto" ? "en-US" : system);
+	}
+
 	if (typeof locale !== "string" || !locale) {
 		return "en-US";
 	}
@@ -181,4 +190,16 @@ export const getLanguage = (locale = "en-US") => {
 	}
 
 	return "en-US";
+};
+
+export const getSystemLocale = () => {
+	if (typeof navigator === "undefined") {
+		return "en-US";
+	}
+	const locales = Array.isArray(navigator.languages)
+		? navigator.languages
+		: [navigator.language];
+	return (
+		locales.find((locale) => typeof locale === "string" && locale) || "en-US"
+	);
 };

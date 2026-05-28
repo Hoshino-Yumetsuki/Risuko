@@ -213,6 +213,9 @@ export default {
 	"no-netrc": "禁用 .netrc",
 	"no-netrc-tips": "完全跳过 .netrc 查找。适用于该文件保存非下载用凭证的场景。",
 	"app-log-path": "应用日志路径",
+	"log-dir-override-placeholder": "自定义日志目录（留空使用默认）",
+	"log-dir-override-tips":
+		"日志当前写入 {{path}}。设为自定义目录（例如 Downloads 文件夹内）后，任意文件管理器都能查看。修改在下次启动应用后生效。",
 	"download-session-path": "下载会话路径",
 	"session-reset": "重置下载会话记录",
 	"session-reset-confirm": "你确定要重置下载会话记录吗？",

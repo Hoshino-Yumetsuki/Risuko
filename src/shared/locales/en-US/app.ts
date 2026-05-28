@@ -1,6 +1,14 @@
 export default {
 	"task-list": "Tasks",
 	"add-task": "Add Task",
+	"primary-navigation": "Primary navigation",
+	"nav-tasks": "Tasks",
+	"nav-rss": "RSS",
+	"nav-health": "Health",
+	"nav-settings": "Settings",
+	"android-back-again-to-quit": "Swipe back again to quit Risuko",
+	"android-storage-access-required":
+		"Grant all files access, then choose the download folder again.",
 	about: "About Risuko",
 	preferences: "Preferences...",
 	"check-for-updates": "Check for Updates...",

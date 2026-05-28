@@ -230,6 +230,10 @@ export default {
 	"no-netrc-tips":
 		"Skip .netrc entirely. Useful when the file holds non-download credentials.",
 	"app-log-path": "App log path",
+	"log-dir-override-placeholder":
+		"Custom log directory (leave blank for default)",
+	"log-dir-override-tips":
+		"Logs are currently written to {{path}}. Setting a custom directory (e.g. inside Downloads) makes them visible to any file manager. Changes take effect after the next app restart.",
 	"download-session-path": "Download session path",
 	"session-reset": "Reset download session",
 	"session-reset-confirm": "Are you sure you want to reset download session?",

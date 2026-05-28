@@ -316,6 +316,10 @@
 	.task-sort-order {
 		margin-left: 0;
 	}
+	.task-mobile-subnav-switcher,
+	.task-total-progress-row {
+		display: none;
+	}
 	.task-total-progress {
 		display: inline-flex;
 		align-items: center;

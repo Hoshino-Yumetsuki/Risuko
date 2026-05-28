@@ -1,8 +1,10 @@
 import { ADD_TASK_TYPE } from "@shared/constants";
-import type { EngineInfo } from "@shared/types/task";
+import type { DownloadTask, EngineInfo } from "@shared/types/task";
+import { bytesToSize } from "@shared/utils";
 import logger from "@shared/utils/logger";
 import { defineStore } from "pinia";
 import api from "@/api";
+import is from "@/shims/platform";
 import type { BatchQueueItem } from "@/store/batchQueue";
 import { useTaskStore } from "@/store/task";
 import { getSystemTheme } from "@/utils/native";
@@ -21,10 +23,7 @@ const normalizeNonNegativeNumber = (value: unknown): number => {
 };
 
 const calcRendererProgress = (
-	tasks: Pick<
-		import("@shared/types/task").DownloadTask,
-		"totalLength" | "completedLength"
-	>[] = [],
+	tasks: Pick<DownloadTask, "totalLength" | "completedLength">[] = [],
 ) => {
 	if (tasks.length === 0) {
 		return -1;
@@ -74,6 +73,7 @@ export const useAppStore = defineStore("app", {
 		addTaskQueue: [] as BatchQueueItem[],
 		addTaskOptions: {},
 		progress: 0,
+		androidDownloadNotificationVisible: false,
 		cloudflareDialog: {
 			visible: false,
 			gid: "",
@@ -265,6 +265,64 @@ export const useAppStore = defineStore("app", {
 		resetInterval() {
 			this.interval = BASE_INTERVAL;
 		},
+		async syncAndroidDownloadNotification({
+			progress,
+			tasks,
+		}: {
+			progress: number;
+			tasks: Pick<DownloadTask, "totalLength" | "completedLength">[];
+		}) {
+			if (!is.android()) {
+				return;
+			}
+			if (tasks.length === 0) {
+				if (!this.androidDownloadNotificationVisible) {
+					return;
+				}
+				try {
+					await api.clearAndroidDownloadNotification();
+					this.androidDownloadNotificationVisible = false;
+				} catch (err: unknown) {
+					logger.warn(
+						"[Risuko] clearAndroidDownloadNotification failed:",
+						(err as Error).message,
+					);
+				}
+				return;
+			}
+
+			let total = 0;
+			let completed = 0;
+			for (const task of tasks) {
+				total += normalizeNonNegativeNumber(task?.totalLength);
+				completed += normalizeNonNegativeNumber(task?.completedLength);
+			}
+
+			const normalizedProgress =
+				Number.isFinite(progress) && progress >= 0 ? progress : 0;
+			const percent = Math.max(
+				0,
+				Math.min(100, Math.round(normalizedProgress * 100)),
+			);
+			const detail =
+				total > 0
+					? `${bytesToSize(completed, 1)} / ${bytesToSize(total, 1)} · ${percent}%`
+					: `${percent}% complete`;
+
+			try {
+				await api.updateAndroidDownloadNotification({
+					progress: percent,
+					activeCount: tasks.length,
+					detail,
+				});
+				this.androidDownloadNotificationVisible = true;
+			} catch (err: unknown) {
+				logger.warn(
+					"[Risuko] updateAndroidDownloadNotification failed:",
+					(err as Error).message,
+				);
+			}
+		},
 		async fetchProgress() {
 			try {
 				const data = await api.fetchActiveTaskList({
@@ -275,6 +333,7 @@ export const useAppStore = defineStore("app", {
 
 				if (tasks.length === 0) {
 					this.progress = -1;
+					await this.syncAndroidDownloadNotification({ progress: -1, tasks });
 					return;
 				}
 
@@ -296,6 +355,10 @@ export const useAppStore = defineStore("app", {
 				}
 
 				this.progress = progress === 2 ? -1 : progress;
+				await this.syncAndroidDownloadNotification({
+					progress: this.progress,
+					tasks,
+				});
 			} catch (err: unknown) {
 				logger.warn("[Risuko] fetchProgress failed:", (err as Error).message);
 			}
