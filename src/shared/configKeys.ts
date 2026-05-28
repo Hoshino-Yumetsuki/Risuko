@@ -21,6 +21,7 @@ const userKeys = [
 	"last-check-update-time",
 	"last-sync-tracker-time",
 	"locale",
+	"log-dir-override",
 	"log-level",
 	"new-task-show-downloading",
 	"no-confirm-before-delete-task",

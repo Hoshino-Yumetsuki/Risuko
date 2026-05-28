@@ -202,6 +202,9 @@ export default {
 	"no-netrc": "停用 .netrc",
 	"no-netrc-tips": "完全跳過 .netrc 查詢。適用於該檔案保存非下載用憑證的場景。",
 	"app-log-path": "應用程式記錄檔位置",
+	"log-dir-override-placeholder": "自訂記錄檔目錄（留空使用預設）",
+	"log-dir-override-tips":
+		"記錄檔目前寫入 {{path}}。設為自訂目錄（例如 Downloads 資料夾內）後，任意檔案管理員都能讀取。變更需在下次啟動應用程式後生效。",
 	"download-session-path": "下載工作階段路徑",
 	"session-reset": "重設下載工作階段",
 	"session-reset-confirm": "您確定要重設下載工作階段嗎？",

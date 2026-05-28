@@ -1,6 +1,6 @@
 <template>
   <div id="app">
-    <mo-title-bar v-if="isRenderer" :showActions="showWindowActions" />
+    <mo-title-bar v-if="showTitleBar" :showActions="showWindowActions" />
     <router-view />
     <mo-engine-client :secret="rpcSecret" />
     <mo-ipc v-if="isRenderer" />
@@ -20,6 +20,7 @@
 import { APP_RUN_MODE, APP_THEME } from "@shared/constants";
 import { getLanguage } from "@shared/locales";
 import { parseBooleanConfig } from "@shared/utils";
+import { invoke } from "@tauri-apps/api/core";
 import { getLocaleManager } from "@/components/Locale";
 import DynamicTray from "@/components/Native/DynamicTray.vue";
 import EngineClient from "@/components/Native/EngineClient.vue";
@@ -43,12 +44,16 @@ export default {
 	},
 	computed: {
 		isMac: () => is.macOS(),
+		isAndroid: () => is.android(),
 		isRenderer: () => is.renderer(),
 		systemTheme() {
 			return useAppStore().systemTheme;
 		},
 		showWindowActions() {
 			return is.windows() || is.linux();
+		},
+		showTitleBar() {
+			return this.isRenderer && !this.isAndroid;
 		},
 		traySpeedometer() {
 			return parseBooleanConfig(usePreferenceStore().config.traySpeedometer);
@@ -76,22 +81,44 @@ export default {
 			return effectiveTheme === APP_THEME.DARK ? "dark" : "";
 		},
 		i18nClass() {
-			return `i18n-${this.locale}`;
+			return `i18n-${getLanguage(this.locale)}`;
 		},
 		directionClass() {
 			return `dir-${this.direction}`;
 		},
 		enableDynamicTray() {
 			return (
-				this.isMac && this.isRenderer && this.runMode !== APP_RUN_MODE.HIDE_TRAY
+				this.isMac &&
+				this.isRenderer &&
+				!this.isAndroid &&
+				this.runMode !== APP_RUN_MODE.HIDE_TRAY
 			);
+		},
+		platformClass() {
+			return this.isAndroid
+				? "platform-android mobile-phone"
+				: "platform-desktop";
 		},
 	},
 	methods: {
 		updateRootClassName() {
-			const { themeClass = "", i18nClass = "", directionClass = "" } = this;
-			const className = `${themeClass} ${i18nClass} ${directionClass}`;
+			const {
+				themeClass = "",
+				i18nClass = "",
+				directionClass = "",
+				platformClass = "",
+			} = this;
+			const className = `${themeClass} ${i18nClass} ${directionClass} ${platformClass}`;
 			document.documentElement.className = className;
+			this.syncAndroidSystemBars();
+		},
+		syncAndroidSystemBars() {
+			if (!this.isRenderer || !this.isAndroid) {
+				return;
+			}
+			invoke("set_android_system_bars", {
+				darkMode: this.themeClass === "dark",
+			}).catch(() => undefined);
 		},
 	},
 	beforeMount() {
@@ -116,6 +143,9 @@ export default {
 			this.updateRootClassName();
 		},
 		directionClass() {
+			this.updateRootClassName();
+		},
+		platformClass() {
 			this.updateRootClassName();
 		},
 	},

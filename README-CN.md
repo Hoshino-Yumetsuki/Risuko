@@ -86,6 +86,20 @@ pnpm run dev
 pnpm run build
 ```
 
+### Android
+
+需要 Android SDK 36、build-tools 35.0.0、NDK 27.2.12479018，以及 Rust 的 Android 目标
+
+```bash
+# Debug 包，单 ABI（快一些）
+pnpm android:build:debug
+
+# Release 拆 ABI 打包，并签名
+pnpm android:build:signed
+```
+
+签名相关的环境变量在 `scripts/sign-android-apks.mjs`：`ANDROID_SIGNING_KEYSTORE_PATH`（CI 用 `ANDROID_SIGNING_KEYSTORE_BASE64`）、`ANDROID_SIGNING_KEYSTORE_PASSWORD`、`ANDROID_SIGNING_KEY_ALIAS`，可选 `ANDROID_SIGNING_KEY_PASSWORD`
+
 ## 🛠 技术栈
 
 - [Tauri v2](https://v2.tauri.app/)

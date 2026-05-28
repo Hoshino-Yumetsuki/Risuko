@@ -56,6 +56,20 @@
 	.mo-input-append .select-directory.ui-button:active {
 		transform: translateY(0);
 	}
+	.show-in-folder {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		padding: 0;
+		border: 0;
+		background: transparent;
+		color: var(--muted-foreground);
+		cursor: pointer;
+		line-height: 0;
+	}
+	.show-in-folder:hover {
+		color: var(--foreground);
+	}
 	.mo-input-number {
 		display: block;
 		width: 100%;

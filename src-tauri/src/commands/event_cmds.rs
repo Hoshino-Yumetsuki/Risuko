@@ -11,7 +11,9 @@ use std::{
     sync::{mpsc, OnceLock},
     thread,
 };
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
+#[cfg(not(target_os = "android"))]
+use tauri::Manager;
 
 #[tauri::command]
 pub fn on_download_status_change(
@@ -42,40 +44,56 @@ pub fn on_speed_change(
     download_label: Option<String>,
     upload_label: Option<String>,
 ) -> Result<(), String> {
-    let app_name = app_name
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| "Risuko".to_string());
-    let download_label = download_label
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| "Download".to_string());
-    let upload_label = upload_label
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| "Upload".to_string());
-
-    if let Some(tray) = handle.tray_by_id("main") {
-        if !show_tray_speed {
-            let _ = tray.set_tooltip(Some(&app_name));
-            return Ok(());
-        }
-
-        let tooltip = if upload_speed > 0 || download_speed > 0 {
-            format!(
-                "{}\n{}: {}/s  {}: {}/s",
-                app_name,
-                download_label,
-                format_speed(download_speed),
-                upload_label,
-                format_speed(upload_speed)
-            )
-        } else {
-            app_name.clone()
-        };
-        let _ = tray.set_tooltip(Some(&tooltip));
+    #[cfg(target_os = "android")]
+    {
+        let _ = (
+            handle,
+            upload_speed,
+            download_speed,
+            show_tray_speed,
+            app_name,
+            download_label,
+            upload_label,
+        );
+        return Ok(());
     }
-    Ok(())
+    #[cfg(not(target_os = "android"))]
+    {
+        let app_name = app_name
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| "Risuko".to_string());
+        let download_label = download_label
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| "Download".to_string());
+        let upload_label = upload_label
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| "Upload".to_string());
+
+        if let Some(tray) = handle.tray_by_id("main") {
+            if !show_tray_speed {
+                let _ = tray.set_tooltip(Some(&app_name));
+                return Ok(());
+            }
+
+            let tooltip = if upload_speed > 0 || download_speed > 0 {
+                format!(
+                    "{}\n{}: {}/s  {}: {}/s",
+                    app_name,
+                    download_label,
+                    format_speed(download_speed),
+                    upload_label,
+                    format_speed(upload_speed)
+                )
+            } else {
+                app_name.clone()
+            };
+            let _ = tray.set_tooltip(Some(&tooltip));
+        }
+        Ok(())
+    }
 }
 
 #[tauri::command]
@@ -84,21 +102,29 @@ pub fn on_progress_change(
     progress: f64,
     show_progress_bar: bool,
 ) -> Result<(), String> {
-    if let Some(window) = handle.get_webview_window("main") {
-        let (status, prog) = if show_progress_bar && (0.0..=1.0).contains(&progress) {
-            (
-                tauri::window::ProgressBarStatus::Normal,
-                Some((progress * 100.0) as u64),
-            )
-        } else {
-            (tauri::window::ProgressBarStatus::None, None)
-        };
-        let _ = window.set_progress_bar(tauri::window::ProgressBarState {
-            status: Some(status),
-            progress: prog,
-        });
+    #[cfg(target_os = "android")]
+    {
+        let _ = (handle, progress, show_progress_bar);
+        return Ok(());
     }
-    Ok(())
+    #[cfg(not(target_os = "android"))]
+    {
+        if let Some(window) = handle.get_webview_window("main") {
+            let (status, prog) = if show_progress_bar && (0.0..=1.0).contains(&progress) {
+                (
+                    tauri::window::ProgressBarStatus::Normal,
+                    Some((progress * 100.0) as u64),
+                )
+            } else {
+                (tauri::window::ProgressBarStatus::None, None)
+            };
+            let _ = window.set_progress_bar(tauri::window::ProgressBarState {
+                status: Some(status),
+                progress: prog,
+            });
+        }
+        Ok(())
+    }
 }
 
 #[tauri::command]
@@ -114,11 +140,19 @@ pub fn update_tray(
     width: u32,
     height: u32,
 ) -> Result<(), String> {
-    if let Some(tray) = handle.tray_by_id("main") {
-        let image = tauri::image::Image::new_owned(image_data, width, height);
-        let _ = tray.set_icon(Some(image));
+    #[cfg(target_os = "android")]
+    {
+        let _ = (handle, image_data, width, height);
+        return Ok(());
     }
-    Ok(())
+    #[cfg(not(target_os = "android"))]
+    {
+        if let Some(tray) = handle.tray_by_id("main") {
+            let image = tauri::image::Image::new_owned(image_data, width, height);
+            let _ = tray.set_icon(Some(image));
+        }
+        Ok(())
+    }
 }
 
 #[tauri::command]
@@ -137,6 +171,7 @@ pub fn update_app_menu_labels(
     crate::managers::menu::update_menu_labels(&handle, &labels)
 }
 
+#[cfg(any(test, not(target_os = "android")))]
 fn format_speed(bytes: u64) -> String {
     const KB: u64 = 1024;
     const MB: u64 = 1024 * KB;

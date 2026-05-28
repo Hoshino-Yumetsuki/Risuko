@@ -1,6 +1,14 @@
 export default {
 	"task-list": "任務列表",
 	"add-task": "新增任務",
+	"primary-navigation": "主導覽",
+	"nav-tasks": "任務",
+	"nav-rss": "RSS",
+	"nav-health": "健康",
+	"nav-settings": "設定",
+	"android-back-again-to-quit": "再次返回以結束 Risuko",
+	"android-storage-access-required":
+		"請授予所有檔案存取權限，然後重新選擇下載資料夾。",
 	about: "關於 Risuko",
 	preferences: "偏好設定...",
 	"check-for-updates": "檢查更新...",

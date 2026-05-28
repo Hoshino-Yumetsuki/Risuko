@@ -7,3 +7,16 @@ allowBuilds:
   esbuild: true
   unrs-resolver: true
   vue-demi: true
+minimumReleaseAgeExclude:
+  - '@risuko/cli-darwin-arm64@0.3.3'
+  - '@risuko/cli-darwin-x64@0.3.3'
+  - '@risuko/cli-linux-arm64-gnu@0.3.3'
+  - '@risuko/cli-linux-x64-gnu@0.3.3'
+  - '@risuko/cli-win32-arm64-msvc@0.3.3'
+  - '@risuko/cli-win32-x64-msvc@0.3.3'
+  - '@risuko/js-darwin-arm64@0.3.3'
+  - '@risuko/js-darwin-x64@0.3.3'
+  - '@risuko/js-linux-arm64-gnu@0.3.3'
+  - '@risuko/js-linux-x64-gnu@0.3.3'
+  - '@risuko/js-win32-arm64-msvc@0.3.3'
+  - '@risuko/js-win32-x64-msvc@0.3.3'

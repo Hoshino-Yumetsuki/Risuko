@@ -150,3 +150,57 @@ pub fn toggle_app_menu(handle: AppHandle, hidden: bool) -> Result<(), String> {
 pub fn is_opened_at_login() -> bool {
     std::env::args().any(|arg| arg == "--opened-at-login=1")
 }
+
+#[tauri::command]
+pub fn set_android_system_bars(dark_mode: bool) -> Result<(), String> {
+    #[cfg(target_os = "android")]
+    {
+        crate::commands::android_intent::set_system_bars(dark_mode)
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = dark_mode;
+        Ok(())
+    }
+}
+
+#[tauri::command]
+pub fn ensure_android_storage_access() -> Result<bool, String> {
+    #[cfg(target_os = "android")]
+    {
+        crate::commands::android_intent::ensure_all_files_access()
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        Ok(true)
+    }
+}
+
+#[tauri::command]
+pub fn update_android_download_notification(
+    progress: u32,
+    active_count: u32,
+    detail: String,
+) -> Result<(), String> {
+    #[cfg(target_os = "android")]
+    {
+        crate::commands::android_intent::show_download_notification(progress, active_count, &detail)
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = (progress, active_count, detail);
+        Ok(())
+    }
+}
+
+#[tauri::command]
+pub fn clear_android_download_notification() -> Result<(), String> {
+    #[cfg(target_os = "android")]
+    {
+        crate::commands::android_intent::hide_download_notification()
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        Ok(())
+    }
+}

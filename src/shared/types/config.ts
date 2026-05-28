@@ -68,6 +68,7 @@ export interface AppConfig {
 	lowSpeedStrikeThreshold?: number;
 	lowSpeedCooldownMs?: number;
 	appLogPath?: string;
+	logDirOverride?: string;
 	taskRoutingRules?: TaskRoutingRule[];
 	completionScriptEnabled?: boolean;
 	completionScriptCommand?: string;

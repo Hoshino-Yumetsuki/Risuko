@@ -1,5 +1,7 @@
 use serde_json::{Map, Value};
 use tauri::{AppHandle, State};
+
+#[cfg(not(target_os = "android"))]
 use tauri_plugin_autostart::ManagerExt;
 
 use crate::{config::parse_keep_seeding_option, state::AppState};
@@ -9,7 +11,7 @@ pub fn get_app_config(handle: AppHandle, state: State<'_, AppState>) -> Result<V
     let config = state.config.lock().map_err(|e| e.to_string())?;
     let mut merged = config.get_merged_config();
 
-    if let Ok(enabled) = handle.autolaunch().is_enabled() {
+    if let Ok(enabled) = is_open_at_login_enabled(&handle) {
         if let Some(map) = merged.as_object_mut() {
             map.insert("open-at-login".into(), Value::Bool(enabled));
         }
@@ -39,12 +41,7 @@ pub fn save_preference(
         .or_else(|| config.get("open-at-login").and_then(|v| v.as_bool()));
 
     let previous_open_at_login = if open_at_login.is_some() {
-        Some(
-            handle
-                .autolaunch()
-                .is_enabled()
-                .map_err(|e| e.to_string())?,
-        )
+        Some(is_open_at_login_enabled(&handle)?)
     } else {
         None
     };
@@ -183,13 +180,33 @@ pub fn prepare_preference_patch(params: Value) -> Result<Value, String> {
 }
 
 fn apply_open_at_login(handle: &AppHandle, enabled: bool) -> Result<(), String> {
-    if enabled {
-        handle.autolaunch().enable().map_err(|e| e.to_string())?;
-    } else {
-        handle.autolaunch().disable().map_err(|e| e.to_string())?;
+    #[cfg(target_os = "android")]
+    {
+        let _ = (handle, enabled);
+        return Ok(());
     }
+    #[cfg(not(target_os = "android"))]
+    {
+        if enabled {
+            handle.autolaunch().enable().map_err(|e| e.to_string())?;
+        } else {
+            handle.autolaunch().disable().map_err(|e| e.to_string())?;
+        }
 
-    Ok(())
+        Ok(())
+    }
+}
+
+fn is_open_at_login_enabled(handle: &AppHandle) -> Result<bool, String> {
+    #[cfg(target_os = "android")]
+    {
+        let _ = handle;
+        Ok(false)
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        handle.autolaunch().is_enabled().map_err(|e| e.to_string())
+    }
 }
 
 #[cfg(test)]

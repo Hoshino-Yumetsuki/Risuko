@@ -30,5 +30,6 @@
 @import "./components/webview.css";
 @import "./components/compat.css";
 
-/* Responsive breakpoints (must come last) */
+/* Responsive */
 @import "./responsive.css";
+@import "./android.css";

@@ -1,31 +1,29 @@
 <template>
   <div class="main panel panel-layout panel-layout--v health-panel">
     <mo-enter tag="header" preset="fadeInDown" class="panel-header health-header">
-      <div class="health-header-title">
-        <h4>{{ $t('health.title') }}</h4>
-        <p class="health-subtitle">{{ $t('health.subtitle') }}</p>
-      </div>
-      <div class="health-header-actions">
-        <span v-if="report" class="health-overall" :class="`health-status-${report.overallStatus}`">
-          <component :is="iconFor(report.overallStatus)" :size="14" />
-          {{ $t(`health.statuses.${report.overallStatus}`) }}
-        </span>
-        <span v-if="report" class="health-last-run" :title="lastRunTitle">
-          {{ $t('health.last-run') }}: {{ lastRunRelative }}
-        </span>
-        <Button
-          size="sm"
-          variant="default"
-          class="health-run-btn"
-          :class="{ 'is-loading': loading }"
-          :disabled="loading"
-          @click="runAll"
-        >
-          <RefreshCw :size="14" :class="{ 'animate-spin': loading }" />
-          <span>{{ loading ? $t('health.loading') : $t('health.run-all') }}</span>
-        </Button>
-      </div>
+      <h4 class="health-title">{{ $t('health.title') }}</h4>
+      <Button
+        size="sm"
+        variant="default"
+        class="health-run-btn"
+        :class="{ 'is-loading': loading }"
+        :disabled="loading"
+        @click="runAll"
+      >
+        <RefreshCw :size="14" :class="{ 'animate-spin': loading }" />
+        <span>{{ loading ? $t('health.loading') : $t('health.run-all') }}</span>
+      </Button>
     </mo-enter>
+    <p class="health-subtitle">{{ $t('health.subtitle') }}</p>
+    <div v-if="report" class="health-meta-row">
+      <span class="health-overall" :class="`health-status-${report.overallStatus}`">
+        <component :is="iconFor(report.overallStatus)" :size="14" />
+        {{ $t(`health.statuses.${report.overallStatus}`) }}
+      </span>
+      <span class="health-last-run" :title="lastRunTitle">
+        {{ $t('health.last-run') }}: {{ lastRunRelative }}
+      </span>
+    </div>
 
     <main class="panel-content health-body">
       <div class="health-body-inner">
@@ -221,22 +219,23 @@ export default {
 	flex-wrap: wrap;
 	border-bottom: 1px solid var(--border);
 }
-.health-header-title h4 {
+.health-title {
 	margin: 0;
 	font-size: 16px;
 	font-weight: 600;
 	letter-spacing: -0.01em;
 }
 .health-subtitle {
-	margin: 4px 0 0;
+	margin: 4px 28px 0;
 	font-size: 12px;
 	color: var(--muted-foreground);
 }
-.health-header-actions {
+.health-meta-row {
 	display: flex;
 	align-items: center;
 	gap: 12px;
 	flex-wrap: wrap;
+	padding: 8px 28px 0;
 }
 .health-overall {
 	display: inline-flex;

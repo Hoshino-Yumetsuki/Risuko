@@ -5,7 +5,7 @@ import type {
 	PeerInfo,
 	SyncOrderResult,
 } from "@shared/types/task";
-import { checkTaskIsBT, getTaskName, intersection } from "@shared/utils";
+import { checkTaskIsBT, getTaskName } from "@shared/utils";
 import logger from "@shared/utils/logger";
 import { defineStore } from "pinia";
 import api from "@/api";
@@ -17,12 +17,12 @@ const TASKS_PER_PAGE_STORAGE_KEY = "risuko.tasks-per-page";
 const SORT_BY_STORAGE_KEY = "risuko.task-sort-by";
 const SORT_ORDER_STORAGE_KEY = "risuko.task-sort-order";
 
-/** Maximum number of speed samples retained per task */
+/** Max speed samples kept per task */
 export const SPEED_HISTORY_LIMIT = 60;
 
 type SpeedSample = { download: number; upload: number };
 
-/** Module cache: gid -> speed samples. */
+/** Module cache: gid -> speed samples */
 // please work please work please work
 const speedHistoryCache = new Map<string, SpeedSample[]>();
 
@@ -34,9 +34,9 @@ export function deleteSpeedHistory(gid: string): void {
 	speedHistoryCache.delete(gid);
 }
 
-/** Number of rows shown in the task list for the given backend tasks. A
- * multi-file BT torrent expands into one row per selected file (matching
- * `displayTaskList`); everything else counts as one row. */
+/** Row count for the task list
+ * Multi-file BT torrents expand to one row per selected file, matching `displayTaskList`
+ * Everything else is one row */
 function countDisplayRows(tasks: DownloadTask[]): number {
 	let count = 0;
 	for (const task of tasks) {
@@ -154,6 +154,9 @@ export const useTaskStore = defineStore("task", {
 		currentTaskPeers: [] as PeerInfo[],
 		seedingList: [] as string[],
 		taskList: [] as DownloadTask[],
+		// Selection lives at row level
+		// Single-file tasks use `<gid>`, while BT file rows use `<gid>#f<index>`
+		// Use `selectedGids` when aria2 needs the deduped torrent gid list
 		selectedGidList: [] as string[],
 		speedHistoryRev: 0,
 		taskOrderMap: {
@@ -195,12 +198,9 @@ export const useTaskStore = defineStore("task", {
 				const selectedFiles = files.filter(
 					(f: DownloadFile) => f.selected !== "false",
 				);
-				// Expand multi-file BT torrents into per-file rows whenever the
-				// torrent itself contains multiple files. Even if the user has
-				// pared down to a single selected file, keep the row in file-entry
-				// form so the title stays as the file name (not the torrent
-				// folder) and per-row delete keeps deselecting instead of
-				// removing the whole torrent.
+				// Show each selected file in a multi-file BT torrent as its own row
+				// Keep that shape even when only one file remains selected
+				// The title stays as the file name, and row delete deselects instead of removing the torrent
 				if (isBT && files.length > 1 && selectedFiles.length > 0) {
 					const parentDown = Math.max(0, Number(task.downloadSpeed || 0));
 					const parentUp = Math.max(0, Number(task.uploadSpeed || 0));
@@ -217,9 +217,8 @@ export const useTaskStore = defineStore("task", {
 							totalRemaining > 0
 								? Math.round((parentDown * remaining) / totalRemaining)
 								: 0;
-						// Upload happens at the piece level (not per-file). Only
-						// surface upload speed once on the first row to avoid
-						// triple-counting in the UI.
+						// Upload is piece-level, not file-level
+						// Show it once on the first row so the UI does not double-count it
 						const upShare = idx === 0 ? parentUp : 0;
 						result.push({
 							...task,
@@ -231,7 +230,7 @@ export const useTaskStore = defineStore("task", {
 							uploadSpeed: String(upShare),
 							files: [file],
 							bittorrent: {
-								...(task.bittorrent || {}),
+								...task.bittorrent,
 								info: {},
 							},
 						});
@@ -298,6 +297,28 @@ export const useTaskStore = defineStore("task", {
 			const start = (currentPage - 1) * state.tasksPerPage;
 			const end = start + state.tasksPerPage;
 			return this.sortedTaskList.slice(start, end);
+		},
+		// Underlying gids from the row selection
+		// Use this for aria2 calls like pause, resume, and remove
+		// Raw `selectedGidList` can include file-row suffixes
+		selectedGids(state): string[] {
+			const set = new Set<string>();
+			for (const key of state.selectedGidList) {
+				const hashIdx = key.indexOf("#");
+				set.add(hashIdx === -1 ? key : key.slice(0, hashIdx));
+			}
+			return [...set];
+		},
+		// Selected rows as `DisplayTask` objects
+		// Callers get the same shape as a clicked row, including `_isFileEntry` and per-file `files`
+		selectedTaskRows(state): DisplayTask[] {
+			if (state.selectedGidList.length === 0) {
+				return [];
+			}
+			const want = new Set(state.selectedGidList);
+			return (this.displayTaskList as DisplayTask[]).filter((task) =>
+				want.has(task._displayKey || task.gid),
+			);
 		},
 	},
 	actions: {
@@ -419,7 +440,7 @@ export const useTaskStore = defineStore("task", {
 					type: fetchType,
 				})) as DownloadTask[];
 
-				// Discard stale results when the user switched tabs mid-flight.
+				// Drop stale results if the user switched tabs mid-flight
 				if (type !== this.currentList) {
 					return [];
 				}
@@ -439,9 +460,7 @@ export const useTaskStore = defineStore("task", {
 
 				const orderedData = this.applyTaskOrder(type, data);
 				this.taskList = orderedData;
-				// Count display rows (per-file rows for multi-file BT torrents)
-				// instead of raw backend tasks so the sidebar matches what the
-				// user actually sees in the list.
+				// Count visible rows, not raw backend tasks, so the sidebar matches the list
 				this.taskCountMap = {
 					...this.taskCountMap,
 					[type]: countDisplayRows(orderedData),
@@ -452,8 +471,14 @@ export const useTaskStore = defineStore("task", {
 					orderedData.map((task) => task.gid),
 				);
 
-				const gids = orderedData.map((task) => task.gid);
-				this.selectedGidList = intersection(this.selectedGidList, gids);
+				// Keep selected rows only when their underlying gid still exists
+				// Row keys can include `#f<index>`, so strip that before checking
+				const gids = new Set(orderedData.map((task) => task.gid));
+				this.selectedGidList = this.selectedGidList.filter((key) => {
+					const hashIdx = key.indexOf("#");
+					const gid = hashIdx === -1 ? key : key.slice(0, hashIdx);
+					return gids.has(gid);
+				});
 				return orderedData;
 			} catch (err: unknown) {
 				logger.warn("[Risuko] fetchList failed:", (err as Error).message);
@@ -476,10 +501,8 @@ export const useTaskStore = defineStore("task", {
 			let stoppedCount = this.taskCountMap.stopped || 0;
 			let allCount = numActive + numWaiting + numStoppedTotal;
 
-			// Fetch lightweight projections of all three lists so the sidebar
-			// can show *display rows* (a multi-file BT torrent expands into one
-			// row per selected file) instead of raw backend task counts. Skip
-			// the fetch entirely when there is nothing to count.
+			// Fetch small projections so sidebar counts match visible rows
+			// Skip the fetch when aria2 says there is nothing to count
 			const needFetch = numActive + numWaiting + numStoppedTotal > 0;
 			if (needFetch) {
 				try {
@@ -518,7 +541,7 @@ export const useTaskStore = defineStore("task", {
 					stoppedCount = countDisplayRows(stoppedOnlyArr);
 					allCount = activeCount + waitingCount + completedCount + stoppedCount;
 				} catch {
-					// keep previous counts on failure
+					// Keep previous counts on failure
 					activeCount = this.taskCountMap.active || 0;
 					waitingCount = this.taskCountMap.waiting || 0;
 					completedCount = this.taskCountMap.completed || 0;
@@ -539,12 +562,12 @@ export const useTaskStore = defineStore("task", {
 			};
 		},
 		/**
-		 * Sample speeds for all active/seeding tasks.
-		 * Called every polling tick from EngineClient.
+		 * Sample speeds for all active/seeding tasks
+		 * Called every polling tick from EngineClient
 		 */
 		async sampleActiveSpeeds() {
 			try {
-				// If we're on the active list, taskList already has speeds
+				// The active list already has speeds
 				if (this.currentList === "active" && this.taskList.length > 0) {
 					if (sampleSpeedsFromTasks(this.taskList)) {
 						this.speedHistoryRev++;
@@ -552,7 +575,7 @@ export const useTaskStore = defineStore("task", {
 					return;
 				}
 
-				// Otherwise fetch for active tasks
+				// Other tabs fetch a small active-task projection
 				const tasks = (await api.fetchTaskList({
 					type: "active",
 					keys: [
@@ -568,14 +591,17 @@ export const useTaskStore = defineStore("task", {
 					this.speedHistoryRev++;
 				}
 			} catch {
-				// Sampling is best-effort
+				// Sampling is best effort
 			}
 		},
 		selectTasks(list: string[]) {
 			this.selectedGidList = list;
 		},
 		selectAllTask() {
-			this.selectedGidList = this.paginatedTaskList.map((task) => task.gid);
+			// Select visible row keys, including each selected file row in a BT torrent
+			this.selectedGidList = this.paginatedTaskList.map(
+				(task) => task._displayKey || task.gid,
+			);
 		},
 		async fetchItem(gid: string) {
 			try {
@@ -709,9 +735,8 @@ export const useTaskStore = defineStore("task", {
 			const { gid } = task;
 			const displayTask = task as DisplayTask;
 
-			// For per-file rows of a multi-file BT torrent, "delete" should only
-			// deselect that file rather than killing the whole torrent. Fall back
-			// to full removal when nothing remains selected.
+			// For a BT file row, delete means deselect that file
+			// If no files remain selected, fall back to removing the torrent
 			if (displayTask._isFileEntry) {
 				const fileEntry = Array.isArray(task.files) ? task.files[0] : null;
 				const parent = this.taskList.find((t: DownloadTask) => t.gid === gid);
@@ -740,9 +765,8 @@ export const useTaskStore = defineStore("task", {
 			return api
 				.removeTask({ gid })
 				.then(() =>
-					// Engine's remove() marks the task as Removed but keeps it
-					// in the list. Drop the record so it disappears from every
-					// view including "all".
+					// Engine `remove()` only marks the task as Removed
+					// Drop the record too so it disappears from every view, including all
 					api.removeTaskRecord({ gid }).catch(() => undefined),
 				)
 				.finally(() => {
@@ -852,7 +876,9 @@ export const useTaskStore = defineStore("task", {
 			}
 		},
 		batchResumeSelectedTasks() {
-			const gids: string[] = [...new Set<string>(this.selectedGidList)];
+			// `selectedGids` already dedupes per-row keys back to gid level
+			// so we don't call aria2 with the same gid twice
+			const gids: string[] = this.selectedGids;
 			if (gids.length === 0) {
 				return;
 			}
@@ -863,7 +889,7 @@ export const useTaskStore = defineStore("task", {
 			});
 		},
 		batchPauseSelectedTasks() {
-			const gids: string[] = [...new Set<string>(this.selectedGidList)];
+			const gids: string[] = this.selectedGids;
 			if (gids.length === 0) {
 				return;
 			}
@@ -883,7 +909,7 @@ export const useTaskStore = defineStore("task", {
 			return api
 				.batchRemoveTask({ gids })
 				.then(() =>
-					// Drop records so removed rows disappear from every view.
+					// Drop records so removed rows disappear from every view
 					Promise.all(
 						gids.map((gid) =>
 							api.removeTaskRecord({ gid }).catch(() => undefined),
@@ -944,7 +970,9 @@ export const useTaskStore = defineStore("task", {
 			options: { onSyncError?: (error: unknown) => void } = {},
 		) {
 			const { onSyncError } = options;
-			const selectedGids = [...this.selectedGidList];
+			// Move underlying torrent gids, not individual file rows
+			// Multiple selected files inside one torrent collapse to that one torrent
+			const selectedGids = this.selectedGids;
 			if (selectedGids.length === 0) {
 				return 0;
 			}

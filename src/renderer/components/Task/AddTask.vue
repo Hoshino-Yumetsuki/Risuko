@@ -12,7 +12,7 @@
         <button
           type="button"
           class="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
-          aria-label="Close"
+          :aria-label="$t('window.close')"
           :disabled="submitting"
           @click="handleClose"
         >
@@ -100,6 +100,9 @@
             <div>
               <label class="mb-1 block text-[11px] text-muted-foreground">{{ $t('task.task-dir') }}</label>
               <div class="mo-input-group mo-input-group--bordered">
+                <span class="mo-input-prepend">
+                  <mo-history-directory @selected="handleHistoryDirectorySelected" />
+                </span>
                 <Input
                   v-model="form.dir"
                   :readonly="isMas"
@@ -191,7 +194,7 @@
                 </a>
               </label>
               <Input
-                placeholder="[http://][USER:PASSWORD@]HOST[:PORT]"
+                :placeholder="$t('task.task-proxy-placeholder')"
                 v-model="form.allProxy"
               />
             </div>
@@ -310,6 +313,7 @@ import { open as tauriOpen } from "@tauri-apps/plugin-dialog";
 import { AnimatePresence, Motion } from "motion-v";
 import { toast } from "vue-sonner";
 import SelectDirectory from "@/components/Native/SelectDirectory.vue";
+import HistoryDirectory from "@/components/Preference/HistoryDirectory.vue";
 import BatchItemCard from "@/components/Task/BatchItemCard.vue";
 import BrowserCookiePicker from "@/components/Task/BrowserCookiePicker.vue";
 import { Accordion } from "@/components/ui/accordion";
@@ -345,6 +349,7 @@ export default {
 	name: "mo-add-task",
 	components: {
 		[BatchItemCard.name]: BatchItemCard,
+		[HistoryDirectory.name]: HistoryDirectory,
 		[SelectDirectory.name]: SelectDirectory,
 		[LoadingOverlay.name]: LoadingOverlay,
 		BrowserCookiePicker,
@@ -731,6 +736,9 @@ export default {
 		},
 		updateSelection(id: string, selectFile: string) {
 			useAppStore().updateBatchItem(id, { selectFile });
+		},
+		handleHistoryDirectorySelected(dir: string) {
+			this.form.dir = dir;
 		},
 		handleNativeDirectorySelected(dir: string) {
 			this.form.dir = dir;

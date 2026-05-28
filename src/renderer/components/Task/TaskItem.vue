@@ -2,7 +2,7 @@
   <div
     :key="task._displayKey || task.gid"
     class="task-item"
-    :class="{ 'is-active': shouldPulse, 'is-complete': isComplete }"
+    :class="{ 'is-active': shouldPulse, 'is-complete': isComplete, selected: selected }"
     v-on:dblclick="onDbClick"
   >
     <div class="task-status-indicator" :class="`status-${taskStatus}`"></div>
@@ -51,6 +51,10 @@ export default {
 	props: {
 		task: {
 			type: Object,
+		},
+		selected: {
+			type: Boolean,
+			default: false,
 		},
 	},
 	computed: {
@@ -116,6 +120,8 @@ export default {
 			}
 		},
 		async openTask() {
+			// `openItem` delegates to Rust so each platform can open the file its own way
+			// Android uses a SAF document URI plus the file MIME, then shows the normal chooser
 			const { taskName } = this;
 			this.$msg.info(this.$t("task.opening-task-message", { taskName }));
 			const fullPath = getTaskFullPath(this.task);

@@ -106,71 +106,180 @@ fn ensure_torrent_extension(path: &Path) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn reveal_in_folder(path: String) -> Result<(), String> {
-    let p = PathBuf::from(&path);
-    if !p.exists() {
-        return Err("Path does not exist".to_string());
-    }
-
-    let is_dir = p.is_dir();
-
-    #[cfg(target_os = "macos")]
+pub fn reveal_in_folder(handle: AppHandle, path: String) -> Result<(), String> {
+    #[cfg(target_os = "android")]
     {
-        if is_dir {
-            std::process::Command::new("open")
-                .arg(&path)
-                .spawn()
-                .map_err(|e| e.to_string())?;
-        } else {
-            std::process::Command::new("open")
-                .args(["-R", &path])
-                .spawn()
-                .map_err(|e| e.to_string())?;
-        }
+        // Hand the raw filesystem path to Kotlin. `MainActivity.revealFolder`
+        // builds the SAF document URI on the UI thread, tries several intent
+        // shapes (chooser/no-chooser crossed with dirmime/no-mime), and
+        // reports the first one that actually resolves. Doing this in
+        // Kotlin lets us call `queryIntentActivities` to skip hopeless
+        // attempts and catch `ActivityNotFoundException` directly. Both are
+        // awkward through raw JNI from a Tauri worker thread
+        let _ = handle;
+        return crate::commands::android_intent::reveal_folder(&path);
     }
 
-    #[cfg(target_os = "windows")]
+    #[cfg(not(target_os = "android"))]
     {
-        use std::os::windows::process::CommandExt;
-
-        // Normalize separators so explorer.exe parses the path reliably.
-        let normalized_path = path.replace('/', "\\");
-
-        if is_dir {
-            // Use ShellExecute via `open` to avoid explorer.exe quirks
-            // (e.g. non-zero exit codes, race conditions when an Explorer
-            // window is already focused on the same directory).
-            open::that(&normalized_path).map_err(|e| e.to_string())?;
-        } else {
-            // explorer.exe parses its command line manually and expects the
-            // form: /select,"<path>". Rust's standard argument escaping
-            // mangles the embedded quotes, so use raw_arg to pass the
-            // command line through verbatim.
-            let raw = format!("/select,\"{}\"", normalized_path);
-            std::process::Command::new("explorer")
-                .raw_arg(raw)
-                .spawn()
-                .map_err(|e| e.to_string())?;
+        let p = PathBuf::from(&path);
+        if !p.exists() {
+            return Err("Path does not exist".to_string());
         }
-    }
 
-    #[cfg(target_os = "linux")]
-    {
-        if is_dir {
-            open::that(path).map_err(|e| e.to_string())?;
-        } else if let Some(parent) = p.parent() {
-            open::that(parent.to_string_lossy().as_ref()).map_err(|e| e.to_string())?;
-        } else {
-            return Err("Path has no parent directory".to_string());
+        let is_dir = p.is_dir();
+
+        #[cfg(target_os = "macos")]
+        {
+            let _ = handle;
+            if is_dir {
+                std::process::Command::new("open")
+                    .arg(&path)
+                    .spawn()
+                    .map_err(|e| e.to_string())?;
+            } else {
+                std::process::Command::new("open")
+                    .args(["-R", &path])
+                    .spawn()
+                    .map_err(|e| e.to_string())?;
+            }
         }
-    }
 
-    Ok(())
+        #[cfg(target_os = "windows")]
+        {
+            use std::os::windows::process::CommandExt;
+            let _ = handle;
+
+            // Normalize separators so explorer.exe parses the path reliably.
+            let normalized_path = path.replace('/', "\\");
+
+            if is_dir {
+                // Use ShellExecute via `open` to avoid explorer.exe quirks
+                // (e.g. non-zero exit codes, race conditions when an Explorer
+                // window is already focused on the same directory).
+                open::that(&normalized_path).map_err(|e| e.to_string())?;
+            } else {
+                // explorer.exe parses its command line manually and expects the
+                // form: /select,"<path>". Rust's standard argument escaping
+                // mangles the embedded quotes, so use raw_arg to pass the
+                // command line through verbatim.
+                let raw = format!("/select,\"{}\"", normalized_path);
+                std::process::Command::new("explorer")
+                    .raw_arg(raw)
+                    .spawn()
+                    .map_err(|e| e.to_string())?;
+            }
+        }
+
+        #[cfg(target_os = "linux")]
+        {
+            let _ = handle;
+            if is_dir {
+                open::that(path).map_err(|e| e.to_string())?;
+            } else if let Some(parent) = p.parent() {
+                open::that(parent.to_string_lossy().as_ref()).map_err(|e| e.to_string())?;
+            } else {
+                return Err("Path has no parent directory".to_string());
+            }
+        }
+
+        Ok(())
+    }
 }
 
 #[tauri::command]
-pub fn open_path(path: String) -> Result<(), String> {
-    open::that(&path).map_err(|e| e.to_string())
+pub async fn select_android_directory() -> Result<Option<String>, String> {
+    #[cfg(target_os = "android")]
+    {
+        crate::commands::android_intent::pick_directory().await
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        Err("Android directory picker is only available on Android".to_string())
+    }
+}
+
+#[tauri::command]
+pub fn open_path(handle: AppHandle, path: String) -> Result<(), String> {
+    #[cfg(target_os = "android")]
+    {
+        // URI in, intent out
+        // For real file paths, guess the MIME type first so Android shows useful viewers
+        if path.starts_with("content://")
+            || path.starts_with("http://")
+            || path.starts_with("https://")
+            || path.starts_with("file://")
+        {
+            let _ = handle;
+            let mime = guess_android_mime(&path);
+            return crate::commands::android_intent::dispatch_view_with_chooser(
+                &path,
+                &mime,
+                "Open file with",
+            );
+        }
+        let _ = handle;
+        let mime = guess_android_mime(&path);
+        return crate::commands::android_intent::dispatch_file_path_with_chooser(
+            &path,
+            &mime,
+            "Open file with",
+        );
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = handle;
+        open::that(&path).map_err(|e| e.to_string())
+    }
+}
+
+/// Map a filename extension to a MIME type Android understands
+/// Fall back to `*/*` so unknown files still get a chooser
+#[cfg(target_os = "android")]
+fn guess_android_mime(path: &str) -> String {
+    let ext = std::path::Path::new(path)
+        .extension()
+        .and_then(|s| s.to_str())
+        .map(|s| s.to_ascii_lowercase())
+        .unwrap_or_default();
+    let mime: &str = match ext.as_str() {
+        // Video
+        "mp4" | "m4v" => "video/mp4",
+        "mkv" => "video/x-matroska",
+        "webm" => "video/webm",
+        "avi" => "video/x-msvideo",
+        "mov" => "video/quicktime",
+        "wmv" => "video/x-ms-wmv",
+        "flv" => "video/x-flv",
+        "ts" => "video/mp2t",
+        // Audio
+        "mp3" => "audio/mpeg",
+        "m4a" | "aac" => "audio/aac",
+        "ogg" | "opus" => "audio/ogg",
+        "wav" => "audio/wav",
+        "flac" => "audio/flac",
+        // Image
+        "jpg" | "jpeg" => "image/jpeg",
+        "png" => "image/png",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "bmp" => "image/bmp",
+        "svg" => "image/svg+xml",
+        // Documents / archives
+        "pdf" => "application/pdf",
+        "txt" | "log" | "md" => "text/plain",
+        "zip" => "application/zip",
+        "tar" => "application/x-tar",
+        "gz" | "tgz" => "application/gzip",
+        "rar" => "application/vnd.rar",
+        "7z" => "application/x-7z-compressed",
+        // Subtitles
+        "srt" => "application/x-subrip",
+        "vtt" => "text/vtt",
+        // Fallback for generic handlers
+        _ => "*/*",
+    };
+    mime.to_string()
 }
 
 #[tauri::command]
@@ -185,7 +294,7 @@ pub fn trash_item(path: String) -> Result<bool, String> {
         }
         return Ok(false);
     }
-    trash::delete(&path).map_err(|e| e.to_string())?;
+    delete_path(p)?;
     // Clean up multi-chunk resume sidecar alongside .part file
     if path.ends_with(TEMP_DOWNLOAD_SUFFIX) {
         let chunks_path = format!("{}{}", path, CHUNK_META_SUFFIX);
@@ -915,7 +1024,21 @@ fn bytes_to_lower_hex(bytes: &[u8]) -> String {
 }
 
 fn delete_file_best_effort(path: &Path) -> bool {
-    trash::delete(path).is_ok() || std::fs::remove_file(path).is_ok()
+    delete_path(path).is_ok() || std::fs::remove_file(path).is_ok()
+}
+
+#[cfg(target_os = "android")]
+fn delete_path(path: &Path) -> Result<(), String> {
+    if path.is_dir() {
+        std::fs::remove_dir_all(path).map_err(|e| e.to_string())
+    } else {
+        std::fs::remove_file(path).map_err(|e| e.to_string())
+    }
+}
+
+#[cfg(not(target_os = "android"))]
+fn delete_path(path: &Path) -> Result<(), String> {
+    trash::delete(path).map_err(|e| e.to_string())
 }
 
 fn extract_btih_token(input: &str) -> Option<String> {

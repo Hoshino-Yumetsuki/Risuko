@@ -1,13 +1,15 @@
 <template>
   <div
     ref="container"
-    style="position: relative; user-select: none; overflow-x: hidden; touch-action: none"
+    :style="containerStyle"
   >
     <slot v-bind="{ selected: intersected }" />
   </div>
 </template>
 
 <script lang="ts">
+import is from "@/shims/platform";
+
 const getCoords = (e, containerRect) => ({
 	x: e.clientX - containerRect.left,
 	y: e.clientY - containerRect.top,
@@ -46,6 +48,16 @@ export default {
 			cleanupListeners: null,
 		};
 	},
+	computed: {
+		containerStyle() {
+			// On Android, allow normal touch scrolling and synthetic click
+			// generation. The drag-rectangle gesture is a desktop-only
+			// pattern; preventing default on touchstart there blocks both
+			// page scroll and every per-card button click.
+			const touchAction = is.android() ? "auto" : "none";
+			return `position: relative; user-select: none; overflow-x: hidden; touch-action: ${touchAction};`;
+		},
+	},
 	watch: {
 		intersected(i) {
 			this.$emit("change", i);
@@ -78,7 +90,9 @@ export default {
 			end = start;
 			dragging = false;
 			document.addEventListener("mousemove", drag);
-			document.addEventListener("touchmove", touchMove);
+			if (!is.android()) {
+				document.addEventListener("touchmove", touchMove);
+			}
 
 			box.style.top = `${start.y}px`;
 			box.style.left = `${start.x}px`;
@@ -126,18 +140,28 @@ export default {
 			box.remove();
 		}
 
+		const enableTouch = !is.android();
+
 		container.addEventListener("mousedown", startDrag);
-		container.addEventListener("touchstart", touchStart);
+		if (enableTouch) {
+			container.addEventListener("touchstart", touchStart);
+		}
 
 		document.addEventListener("mouseup", endDrag);
-		document.addEventListener("touchend", endDrag);
+		if (enableTouch) {
+			document.addEventListener("touchend", endDrag);
+		}
 
 		this.cleanupListeners = () => {
 			endDrag();
 			container.removeEventListener("mousedown", startDrag);
-			container.removeEventListener("touchstart", touchStart);
+			if (enableTouch) {
+				container.removeEventListener("touchstart", touchStart);
+			}
 			document.removeEventListener("mouseup", endDrag);
-			document.removeEventListener("touchend", endDrag);
+			if (enableTouch) {
+				document.removeEventListener("touchend", endDrag);
+			}
 		};
 	},
 	beforeUnmount() {

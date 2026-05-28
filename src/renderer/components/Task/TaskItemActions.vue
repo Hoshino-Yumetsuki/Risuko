@@ -1,41 +1,24 @@
 <template>
-  <ul :key="task.gid" class="task-item-actions" @click.stop v-on:dblclick.stop="() => null">
-    <li
+  <div :key="task.gid" class="task-item-actions" @click.stop v-on:dblclick.stop="() => null">
+    <button
+      type="button"
       v-for="(action, index) in taskActions"
       :key="action"
       class="task-item-action"
       :style="{ '--stagger-index': index }"
       @click.stop="onActionClick(action, $event)"
     >
-      <i v-if="action === 'PAUSE'">
-        <Pause :size="14" />
-      </i>
-      <i v-if="action === 'STOP'">
-        <Square :size="14" />
-      </i>
-      <i v-if="action === 'RESUME'">
-        <Play :size="14" />
-      </i>
-      <i v-if="action === 'RESTART'">
-        <RotateCcw :size="14" />
-      </i>
-      <i v-if="action === 'DELETE'">
-        <Trash2 :size="14" />
-      </i>
-      <i v-if="action === 'TRASH'">
-        <Trash :size="14" />
-      </i>
-      <i v-if="action === 'FOLDER'">
-        <Folder :size="14" />
-      </i>
-      <i v-if="action === 'LINK'">
-        <Link :size="14" />
-      </i>
-      <i v-if="action === 'INFO'">
-        <Info :size="14" />
-      </i>
-    </li>
-  </ul>
+      <Pause v-if="action === 'PAUSE'" :size="14" />
+      <Square v-else-if="action === 'STOP'" :size="14" />
+      <Play v-else-if="action === 'RESUME'" :size="14" />
+      <RotateCcw v-else-if="action === 'RESTART'" :size="14" />
+      <Trash2 v-else-if="action === 'DELETE'" :size="14" />
+      <Trash v-else-if="action === 'TRASH'" :size="14" />
+      <Folder v-else-if="action === 'FOLDER'" :size="14" />
+      <Link v-else-if="action === 'LINK'" :size="14" />
+      <Info v-else-if="action === 'INFO'" :size="14" />
+    </button>
+  </div>
 </template>
 
 <script lang="ts">
@@ -55,7 +38,11 @@ import { checkTaskIsSeeder, getTaskName } from "@shared/utils";
 import { commands } from "@/components/CommandManager/instance";
 import is from "@/shims/platform";
 import { useTaskStore } from "@/store/task";
-import { getTaskFullPath, getTaskRevealPath } from "@/utils/native";
+import {
+	getTaskFullPath,
+	getTaskRevealDir,
+	getTaskRevealPath,
+} from "@/utils/native";
 
 const taskActionsMap = {
 	[TASK_STATUS.ACTIVE]: ["PAUSE", "DELETE"],
@@ -220,6 +207,21 @@ export default {
 			});
 		},
 		onFolderClick() {
+			// On Android, the user expects to land in the folder that
+			// holds the downloaded files: for a multi-file BT torrent
+			// that's the torrent root, for a single-file or magnet task
+			// that's the task's `dir`. Resolving to the directory ahead
+			// of time means the Rust reveal command builds a `tree/`
+			// SAF URI for the folder (rather than `/select`-ing the file
+			// inside the folder, which a file manager can't represent).
+			if (is.android()) {
+				const dir = getTaskRevealDir(this.task);
+				commands.emit("reveal-in-folder", {
+					path: dir,
+					fallbackPath: dir,
+				});
+				return;
+			}
 			const { path, fallbackPath } = this;
 			commands.emit("reveal-in-folder", { path, fallbackPath });
 		},
