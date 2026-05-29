@@ -25,7 +25,16 @@
 		"dialog:allow-open",
 		"dialog:allow-message",
 		"shell:default",
-		"shell:allow-open",
+		{
+			"identifier": "shell:allow-open",
+			"allow": [
+				{ "url": "file://**" },
+				{ "url": "https://**" },
+				{ "url": "http://**" },
+				{ "url": "mailto:**" },
+				{ "url": "tel:**" }
+			]
+		},
 		"store:default",
 		"fs:default",
 		{
@@ -56,10 +65,7 @@
 		"os:default",
 		"notification:default",
 		"notification:allow-notify",
-		"autostart:default",
 		"deep-link:default",
-		"nosleep:allow-block",
-		"nosleep:allow-unblock",
 		"clipboard-manager:default",
 		"clipboard-manager:allow-read-text",
 		"clipboard-manager:allow-write-text"

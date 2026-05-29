@@ -5,22 +5,10 @@
     </aside>
     <div class="content panel panel-layout panel-layout--v relative">
       <mo-enter tag="header" preset="fadeInDown" class="panel-header">
-        <h4 class="task-title hidden-xs-only">
+        <h4 class="task-title rss-title">
           {{ currentFeed ? currentFeed.title : isDownloadedView ? $t('rss.downloaded') : $t('rss.all-items') }}
         </h4>
         <div class="task-actions">
-          <div class="task-page-size">
-            <Select :model-value="`${itemsPerPage}`" @update:model-value="onItemsPerPageChange">
-              <SelectTrigger size="sm" class="task-page-size-trigger">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent align="end">
-                <SelectItem v-for="size in itemsPerPageOptions" :key="size" :value="`${size}`">
-                  {{ $t('rss.items-per-page', { count: size }) }}
-                </SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
           <i
             class="task-action"
             :class="{ disabled: selectedCount === 0 }"
@@ -111,6 +99,18 @@
           </button>
         </div>
         <div class="task-toolbar-right">
+          <div class="task-page-size">
+            <Select :model-value="`${itemsPerPage}`" @update:model-value="onItemsPerPageChange">
+              <SelectTrigger size="sm" class="task-page-size-trigger">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent align="end">
+                <SelectItem v-for="size in itemsPerPageOptions" :key="size" :value="`${size}`">
+                  {{ $t('rss.items-per-page', { count: size }) }}
+                </SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
           <div class="rss-select-all" @click="toggleSelectAll">
             <Checkbox
               :model-value="selectAllState"

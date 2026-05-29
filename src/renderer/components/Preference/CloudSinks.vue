@@ -2,7 +2,9 @@
   <div class="content panel panel-layout panel-layout--v">
     <mo-enter tag="header" preset="fadeInDown" class="panel-header">
       <h4 class="hidden-xs-only">{{ title }}</h4>
-      <mo-subnav-switcher :title="title" :subnavs="subnavs" class="hidden-sm-and-up" />
+      <div class="preference-mobile-subnav hidden-sm-and-up">
+        <mo-subnav-switcher :title="title" :subnavs="subnavs" />
+      </div>
     </mo-enter>
     <main class="panel-content">
       <div class="form-preference">

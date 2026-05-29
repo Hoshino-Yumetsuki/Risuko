@@ -321,7 +321,7 @@ mod tests {
 
         let merged = mgr.get_merged_config();
         let map = merged.as_object().unwrap();
-        assert_eq!(map.get("locale"), Some(&json!("en-US")));
+        assert_eq!(map.get("locale"), Some(&json!("auto")));
     }
 
     #[test]

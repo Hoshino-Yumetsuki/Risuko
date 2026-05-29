@@ -2,7 +2,9 @@
   <div class="content panel panel-layout panel-layout--v">
     <mo-enter tag="header" preset="fadeInDown" class="panel-header">
       <h4 class="hidden-xs-only">{{ title }}</h4>
-      <mo-subnav-switcher :title="title" :subnavs="subnavs" class="hidden-sm-and-up" />
+      <div class="preference-mobile-subnav hidden-sm-and-up">
+        <mo-subnav-switcher :title="title" :subnavs="subnavs" />
+      </div>
     </mo-enter>
     <main class="panel-content">
       <form class="form-preference" ref="basicForm" @submit.prevent>
@@ -161,8 +163,8 @@
               <Input
                 placeholder=""
                 v-model="form.dir"
-                :readonly="isMas"
-                class="flex-1 shadow-none rounded-none border-none noinput"
+                readonly
+                class="path-indicator-field flex-1 shadow-none rounded-none border-none noinput"
               />
               <span class="mo-input-append" v-if="isRenderer">
                 <mo-select-directory @selected="handleNativeDirectorySelected" />
@@ -189,17 +191,17 @@
             <div
               v-for="cat in fileCategories"
               :key="cat.key"
-              class="settings-row"
+              class="settings-row category-path-row"
               style="margin-bottom: 6px"
             >
-              <span class="settings-row-title" style="flex: 0 0 80px; min-width: 80px">{{
+              <span class="settings-row-title category-path-label" style="flex: 0 0 80px; min-width: 80px">{{
                 cat.label
               }}</span>
-              <div class="mo-input-group mo-input-group--bordered" style="flex: 1; min-width: 0">
+              <div class="mo-input-group mo-input-group--bordered category-path-group" style="flex: 1; min-width: 0">
                 <Input
-                  :placeholder="form.dir"
-                  v-model="form.fileCategoryDirs[cat.key]"
-                  class="flex-1 shadow-none rounded-none border-none noinput"
+                  :model-value="categoryDirectoryValue(cat.key)"
+                  readonly
+                  class="path-indicator-field flex-1 shadow-none rounded-none border-none noinput"
                 />
                 <span class="mo-input-append" v-if="isRenderer">
                   <mo-select-directory
@@ -249,7 +251,7 @@
                     :placeholder="$t('preferences.task-routing-rule-dir-placeholder')"
                     :model-value="form.taskRoutingRules[index].dir"
                     @update:model-value="(val) => updateRuleField(index, 'dir', val)"
-                    class="flex-1 shadow-none rounded-none border-none"
+                    class="path-indicator-field flex-1 shadow-none rounded-none border-none"
                   />
                   <span class="mo-input-append" v-if="isRenderer">
                     <mo-select-directory
@@ -914,6 +916,9 @@ export default {
 	methods: {
 		setBasicBoolean(key, enable) {
 			this.form[key] = !!enable;
+		},
+		categoryDirectoryValue(category) {
+			return this.form.fileCategoryDirs?.[category] || this.form.dir || "";
 		},
 		handleCategoryDirectorySelected(category, dir) {
 			this.form.fileCategoryDirs = {

@@ -1,23 +1,28 @@
 <template>
   <div class="task-actions">
-    <div class="task-page-size">
-      <Select :model-value="`${tasksPerPage}`" @update:model-value="onTasksPerPageChange">
-        <SelectTrigger size="sm" class="task-page-size-trigger">
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent align="end">
-          <SelectItem v-for="size in tasksPerPageOptions" :key="size" :value="`${size}`">
-            {{ $t('task.tasks-per-page', { count: size }) }}
-          </SelectItem>
-        </SelectContent>
-      </Select>
-    </div>
-    <div class="task-total-progress" v-if="showTotalProgress">
+    <div class="task-total-progress task-total-progress-desktop" v-if="showTotalProgress">
       <span class="task-total-progress-size">
         {{ formatBytes(totalCompletedLength, 1) }} / {{ formatBytes(totalLength, 1) }}
       </span>
+      <span class="task-total-progress-sep">·</span>
       <span class="task-total-progress-percent">{{ totalProgressPercent }}%</span>
     </div>
+    <ui-tooltip
+      class="item"
+      effect="dark"
+      placement="bottom"
+      :content="allVisibleTasksSelected ? $t('task.deselect-all-task') : $t('task.select-all-task')"
+    >
+      <button
+        type="button"
+        class="task-action"
+        :disabled="selectableTaskCount === 0"
+        :aria-label="allVisibleTasksSelected ? $t('task.deselect-all-task') : $t('task.select-all-task')"
+        @click="onSelectAllClick"
+      >
+        <ListChecks :size="14" />
+      </button>
+    </ui-tooltip>
     <ui-tooltip
       class="item"
       effect="dark"
@@ -107,6 +112,7 @@ import {
 	ArrowDown,
 	ArrowUp,
 	Eraser,
+	ListChecks,
 	Pause,
 	Play,
 	RefreshCw,
@@ -116,29 +122,18 @@ import { ADD_TASK_TYPE } from "@shared/constants";
 import { bytesToSize, calcProgress } from "@shared/utils";
 import { toast } from "vue-sonner";
 import { commands } from "@/components/CommandManager/instance";
-import {
-	Select,
-	SelectContent,
-	SelectItem,
-	SelectTrigger,
-	SelectValue,
-} from "@/components/ui/select";
 import { useAppStore } from "@/store/app";
 import { useTaskStore } from "@/store/task";
 
 export default {
 	name: "mo-task-actions",
 	components: {
-		Select,
-		SelectContent,
-		SelectItem,
-		SelectTrigger,
-		SelectValue,
 		Trash2,
 		RefreshCw,
 		Play,
 		Pause,
 		Eraser,
+		ListChecks,
 		ArrowUp,
 		ArrowDown,
 	},
@@ -150,12 +145,6 @@ export default {
 		};
 	},
 	computed: {
-		tasksPerPage() {
-			return useTaskStore().tasksPerPage;
-		},
-		tasksPerPageOptions() {
-			return [10, 20, 30, 40, 50];
-		},
 		currentList() {
 			return useTaskStore().currentList;
 		},
@@ -164,6 +153,19 @@ export default {
 		},
 		selectedGidListCount() {
 			return useTaskStore().selectedGidList.length;
+		},
+		selectableTaskCount() {
+			return useTaskStore().paginatedTaskList.length;
+		},
+		allVisibleTasksSelected() {
+			const taskStore = useTaskStore();
+			if (taskStore.paginatedTaskList.length === 0) {
+				return false;
+			}
+			const selectedKeys = new Set(taskStore.selectedGidList);
+			return taskStore.paginatedTaskList.every((task) =>
+				selectedKeys.has(task._displayKey || task.gid),
+			);
 		},
 		hasSelection() {
 			return this.selectedGidListCount > 0;
@@ -197,9 +199,6 @@ export default {
 		},
 	},
 	methods: {
-		onTasksPerPageChange(value) {
-			useTaskStore().setTasksPerPage(value);
-		},
 		refreshSpin() {
 			if (this.t) {
 				clearTimeout(this.t);
@@ -213,6 +212,12 @@ export default {
 		onBatchDeleteClick(event) {
 			const deleteWithFiles = !!event.shiftKey;
 			commands.emit("batch-delete-task", { deleteWithFiles });
+		},
+		onSelectAllClick() {
+			if (this.selectableTaskCount === 0) {
+				return;
+			}
+			useTaskStore().selectAllTask();
 		},
 		onRefreshClick() {
 			this.refreshSpin();
@@ -272,7 +277,7 @@ export default {
 			useTaskStore()
 				.moveSelectedTasks("up", {
 					onSyncError: () => {
-						toast.error("Syncing priority failed", {
+						toast.error(this.$t("task.sync-priority-failed"), {
 							duration: 1800,
 						});
 					},
@@ -290,7 +295,7 @@ export default {
 			useTaskStore()
 				.moveSelectedTasks("down", {
 					onSyncError: () => {
-						toast.error("Syncing priority failed", {
+						toast.error(this.$t("task.sync-priority-failed"), {
 							duration: 1800,
 						});
 					},

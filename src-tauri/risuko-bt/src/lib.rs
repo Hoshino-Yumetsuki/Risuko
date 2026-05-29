@@ -1,4 +1,4 @@
-//! BitTorrent v1 engine (in-tree replacement for librqbit)
+//! BitTorrent v1 engine
 
 pub mod api;
 pub mod bencode;
@@ -13,6 +13,7 @@ pub mod storage;
 pub mod torrent;
 pub mod tracker;
 pub mod upnp;
+pub mod utp;
 pub mod wire;
 
 pub use api::TorrentIdOrHash;

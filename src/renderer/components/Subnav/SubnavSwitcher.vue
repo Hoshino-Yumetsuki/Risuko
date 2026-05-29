@@ -1,28 +1,31 @@
 <template>
-  <div class="subnav-switch">
-    <h4 class="subnav-title">{{ title }}</h4>
-    <div class="subnav-select-wrap">
-      <select
-        class="subnav-select"
-        :value="currentRoute"
-        @change="handleRoute($event.target.value)"
-      >
-        <option v-for="sn in subnavs" :key="sn.key" :value="sn.route">
-          {{ sn.title }}
-        </option>
-      </select>
-      <ChevronDown :size="14" class="subnav-select-arrow" />
-    </div>
-  </div>
+  <Select :model-value="currentRoute" @update:model-value="handleRoute">
+    <SelectTrigger class="subnav-switch-trigger">
+      <span class="subnav-switch-title">{{ title }}</span>
+    </SelectTrigger>
+    <SelectContent align="start">
+      <SelectItem v-for="sn in subnavs" :key="sn.key" :value="sn.route">
+        {{ sn.title }}
+      </SelectItem>
+    </SelectContent>
+  </Select>
 </template>
 
 <script lang="ts">
-import { ChevronDown } from "@lucide/vue";
+import {
+	Select,
+	SelectContent,
+	SelectItem,
+	SelectTrigger,
+} from "@/components/ui/select";
 
 export default {
 	name: "mo-subnav-switcher",
 	components: {
-		ChevronDown,
+		Select,
+		SelectContent,
+		SelectItem,
+		SelectTrigger,
 	},
 	props: {
 		title: {
@@ -40,7 +43,7 @@ export default {
 		},
 	},
 	methods: {
-		handleRoute(route) {
+		handleRoute(route: string) {
 			if (!route) {
 				return;
 			}

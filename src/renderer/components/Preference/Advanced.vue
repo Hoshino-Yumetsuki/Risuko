@@ -2,7 +2,9 @@
   <div class="content panel panel-layout panel-layout--v">
     <mo-enter tag="header" preset="fadeInDown" class="panel-header">
       <h4 class="hidden-xs-only">{{ title }}</h4>
-      <mo-subnav-switcher :title="title" :subnavs="subnavs" class="hidden-sm-and-up" />
+      <div class="preference-mobile-subnav hidden-sm-and-up">
+        <mo-subnav-switcher :title="title" :subnavs="subnavs" />
+      </div>
     </mo-enter>
     <main class="panel-content">
       <form class="form-preference" ref="advancedForm" @submit.prevent>
@@ -147,7 +149,7 @@
             <div v-if="form.proxy.enable" style="margin-top: 14px">
               <div class="form-item-sub" style="margin-bottom: 10px">
                 <Input
-                  placeholder="[http://][USER:PASSWORD@]HOST[:PORT]"
+                  :placeholder="$t('task.task-proxy-placeholder')"
                   v-model="form.proxy.server"
                 />
               </div>
@@ -1100,11 +1102,23 @@
                   <span class="dev-path-card-label">{{ $t('preferences.app-log-path') }}</span>
                 </div>
                 <div class="dev-path-card-body">
-                  <div class="mo-input-group">
-                    <Input disabled :model-value="logPath" class="dev-path-input" />
-                    <span class="mo-input-append">
-                      <mo-show-in-folder v-if="isRenderer" :path="logPath" />
+                  <div class="mo-input-group mo-input-group--bordered dev-log-path-group">
+                    <textarea
+                      :value="visibleLogPath"
+                      :placeholder="$t('preferences.log-dir-override-placeholder')"
+                      autocomplete="off"
+                      class="dev-log-path-input"
+                      readonly
+                      rows="1"
+                      wrap="off"
+                    />
+                    <span class="mo-input-append dev-log-path-actions" v-if="isRenderer">
+                      <mo-select-directory @selected="handleLogDirSelected" />
+                      <mo-show-in-folder :path="visibleLogPath" :size="14" />
                     </span>
+                  </div>
+                  <div class="form-info" style="margin-top: 4px">
+                    {{ $t('preferences.log-dir-override-tips', { path: logPath }) }}
                   </div>
                 </div>
               </div>
@@ -1245,6 +1259,7 @@ import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { cloneDeep, extend, isEmpty } from "lodash";
 import randomize from "randomatic";
 import api, { type CookieEntryView } from "@/api";
+import SelectDirectory from "@/components/Native/SelectDirectory.vue";
 import ShowInFolder from "@/components/Native/ShowInFolder.vue";
 import CredentialManager from "@/components/Preference/CredentialManager.vue";
 import SubnavSwitcher from "@/components/Subnav/SubnavSwitcher.vue";
@@ -1304,6 +1319,7 @@ const initForm = (config) => {
 		lastCheckUpdateTime,
 		lastSyncTrackerTime,
 		listenPort,
+		logDirOverride,
 		logLevel,
 		protocols,
 		proxy,
@@ -1366,6 +1382,7 @@ const initForm = (config) => {
 		lastCheckUpdateTime,
 		lastSyncTrackerTime,
 		listenPort,
+		logDirOverride: typeof logDirOverride === "string" ? logDirOverride : "",
 		logLevel,
 		m3u8OutputFormat: m3u8OutputFormat || "ts",
 		proxy: cloneDeep(proxy) || {
@@ -1439,6 +1456,7 @@ export default {
 		"ui-tooltip": UiTooltip,
 		[SubnavSwitcher.name]: SubnavSwitcher,
 		[ShowInFolder.name]: ShowInFolder,
+		[SelectDirectory.name]: SelectDirectory,
 		[CredentialManager.name]: CredentialManager,
 		Input,
 		NumberInput,
@@ -1527,6 +1545,9 @@ export default {
 		logPath() {
 			return usePreferenceStore().config.appLogPath;
 		},
+		visibleLogPath() {
+			return `${this.form.logDirOverride || this.logPath || ""}`.trim();
+		},
 		currentRpcUrl() {
 			const host = this.form.externalEngineEnabled
 				? this.form.externalEngineHost
@@ -1543,6 +1564,14 @@ export default {
 	methods: {
 		setAdvancedBoolean(key, enable) {
 			this.form[key] = !!enable;
+		},
+		handleLogDirSelected(dir: string) {
+			// The native picker hands back either a filesystem path (desktop,
+			// or Android primary storage paths translated by
+			// safUriToFilesystemPath) or a raw SAF URI for SD-card/USB roots.
+			// Trim before assigning so stray whitespace from drag-and-drop
+			// into the picker doesn't end up persisted
+			this.form.logDirOverride = `${dir || ""}`.trim();
 		},
 		copyRpcUrlToClipboard() {
 			writeText(this.currentRpcUrl).catch(() => {

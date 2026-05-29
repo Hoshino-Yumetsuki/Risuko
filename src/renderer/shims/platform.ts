@@ -4,6 +4,9 @@ const isRendererProcess =
 const platform = (() => {
 	if (typeof navigator !== "undefined") {
 		const ua = navigator.userAgent.toLowerCase();
+		if (ua.includes("android")) {
+			return "android";
+		}
 		if (ua.includes("mac")) {
 			return "macos";
 		}
@@ -24,6 +27,7 @@ const fallback = {
 	macOS: () => platform === "macos",
 	windows: () => platform === "windows",
 	linux: () => platform === "linux",
+	android: () => platform === "android",
 	mas: () => false,
 };
 

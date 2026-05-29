@@ -7,7 +7,8 @@ use bytes::Bytes;
 use futures_util::StreamExt;
 use risuko_http::header::{
     HeaderMap, HeaderName, HeaderValue, ACCEPT_ENCODING, ACCEPT_RANGES, CONTENT_ENCODING,
-    CONTENT_LENGTH, CONTENT_RANGE, ETAG, IF_MATCH, LAST_MODIFIED, RANGE, TRANSFER_ENCODING,
+    CONTENT_LENGTH, CONTENT_RANGE, CONTENT_TYPE, ETAG, IF_MATCH, LAST_MODIFIED, RANGE,
+    TRANSFER_ENCODING,
 };
 use risuko_http::Client;
 use serde_json::{Map, Value};
@@ -874,7 +875,22 @@ async fn run_single_uri_download(
     apply_netrc_auth(&mut headers, uri, options);
     let headers = headers;
     let stall = StallWatchdog::from_options(options);
-    let falloc_mode = super::falloc::Mode::from_option(options.get("file-allocation"));
+    let falloc_mode = {
+        let mode = super::falloc::Mode::from_option(options.get("file-allocation"));
+        #[cfg(target_os = "android")]
+        {
+            // Android fallocate support varies by filesystem/device, so avoid blocking preallocation there
+            if mode == super::falloc::Mode::Falloc {
+                super::falloc::Mode::None
+            } else {
+                mode
+            }
+        }
+        #[cfg(not(target_os = "android"))]
+        {
+            mode
+        }
+    };
 
     // Optional integrity checks. Bad input is rejected up-front so a typo
     // doesn't silently disable verification: the user immediately sees the
@@ -934,6 +950,22 @@ async fn run_single_uri_download(
             tracing::debug!(
                 "No Content-Disposition filename available, keeping URL-derived name {filename:?}"
             );
+        }
+    }
+
+    if filename_was_url_derived {
+        if let Some(content_type) = probe_for_name
+            .as_ref()
+            .and_then(|p| p.content_type.as_deref())
+        {
+            if let Some((new_name, new_part)) =
+                adopt_content_type_extension(&filename, content_type, &part_path, dir_path)
+            {
+                tracing::info!("Adding Content-Type extension: {filename:?} -> {new_name:?}");
+                *adopted_filename.lock() = Some(new_name.clone());
+                filename = new_name;
+                part_path = new_part;
+            }
         }
     }
 
@@ -1025,6 +1057,7 @@ async fn run_single_uri_download(
         global_limiter.clone(),
         task_limiter.clone(),
         stall.clone(),
+        filename_was_url_derived,
     )
     .await;
 
@@ -1096,6 +1129,7 @@ async fn run_single_uri_download(
                 global_limiter,
                 task_limiter,
                 stall,
+                filename_was_url_derived,
             )
             .await
         }
@@ -1135,6 +1169,7 @@ struct ProbeResult {
     /// when present. Overrides URL-path inference for opaque endpoints
     /// like `download?version=N`
     suggested_filename: Option<String>,
+    content_type: Option<String>,
     /// True when the response confirms range support (206 with valid
     /// Content-Range, or 200 + Accept-Ranges + Content-Length). When
     /// false the caller must fall back to a single-connection stream;
@@ -1225,6 +1260,7 @@ async fn probe_range_support(
         .and_then(|v| v.to_str().ok())
         .map(|s| s.to_string());
     let suggested_filename = filename_from_content_disposition(resp.headers());
+    let content_type = content_type_from_headers(resp.headers());
 
     // The fallback we hand back whenever range support isn't confirmed.
     // Carries the filename / ETag / last-modified info so the streaming
@@ -1234,6 +1270,7 @@ async fn probe_range_support(
         etag: etag.clone(),
         last_modified: last_modified.clone(),
         suggested_filename: suggested_filename.clone(),
+        content_type: content_type.clone(),
         range_supported: false,
     };
 
@@ -1282,6 +1319,7 @@ async fn probe_range_support(
                         etag,
                         last_modified,
                         suggested_filename,
+                        content_type,
                         range_supported: true,
                     });
                 }
@@ -1310,6 +1348,7 @@ async fn probe_range_support(
                                 etag,
                                 last_modified,
                                 suggested_filename,
+                                content_type,
                                 range_supported: true,
                             });
                         }
@@ -1964,6 +2003,7 @@ async fn run_single_download(
     global_limiter: Arc<SpeedLimiter>,
     task_limiter: Arc<SpeedLimiter>,
     stall: StallWatchdog,
+    filename_was_url_derived: bool,
 ) -> Result<(PathBuf, Option<String>), String> {
     let existing_size = if part_path.exists() {
         fs::metadata(part_path).map(|m| m.len()).unwrap_or(0)
@@ -2007,6 +2047,15 @@ async fn run_single_download(
         .get(LAST_MODIFIED)
         .and_then(|v| v.to_str().ok())
         .map(|s| s.to_string());
+    let final_filename = if filename_was_url_derived {
+        filename_with_content_type_extension(
+            filename,
+            content_type_from_headers(resp.headers()).as_deref(),
+        )
+        .unwrap_or_else(|| filename.to_string())
+    } else {
+        filename.to_string()
+    };
 
     // Update total from Content-Length
     if let Some(cl) = resp.content_length() {
@@ -2105,7 +2154,7 @@ async fn run_single_download(
     }
 
     result?;
-    let final_path = finalize_download(part_path, filename, dir_path)?;
+    let final_path = finalize_download(part_path, &final_filename, dir_path)?;
     Ok((final_path, resp_last_modified))
 }
 
@@ -2345,6 +2394,105 @@ fn adopt_suggested_filename(
     Some((candidate, new_part))
 }
 
+fn adopt_content_type_extension(
+    current_filename: &str,
+    content_type: &str,
+    current_part_path: &Path,
+    dir_path: &Path,
+) -> Option<(String, std::path::PathBuf)> {
+    let candidate = filename_with_content_type_extension(current_filename, Some(content_type))?;
+    let new_part = dir_path.join(format!("{candidate}{PART_SUFFIX}"));
+    if new_part != current_part_path
+        && new_part.exists()
+        && fs::metadata(&new_part)
+            .map(|m| m.len() > 0)
+            .unwrap_or(false)
+    {
+        return None;
+    }
+    if current_part_path.exists()
+        && fs::metadata(current_part_path)
+            .map(|m| m.len() > 0)
+            .unwrap_or(false)
+    {
+        return Some((candidate, current_part_path.to_path_buf()));
+    }
+    Some((candidate, new_part))
+}
+
+fn filename_with_content_type_extension(
+    filename: &str,
+    content_type: Option<&str>,
+) -> Option<String> {
+    if filename_has_extension(filename) {
+        return None;
+    }
+    let ext = extension_from_content_type(content_type?)?;
+    let base = filename.strip_suffix(PART_SUFFIX).unwrap_or(filename);
+    Some(format!("{base}.{ext}"))
+}
+
+fn filename_has_extension(filename: &str) -> bool {
+    let base = filename.strip_suffix(PART_SUFFIX).unwrap_or(filename);
+    Path::new(base)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| !ext.trim().is_empty())
+        .unwrap_or(false)
+}
+
+fn content_type_from_headers(headers: &HeaderMap) -> Option<String> {
+    let value = headers.get(CONTENT_TYPE)?.to_str().ok()?;
+    let mime = value.split(';').next()?.trim().to_ascii_lowercase();
+    if mime.is_empty() {
+        None
+    } else {
+        Some(mime)
+    }
+}
+
+fn extension_from_content_type(content_type: &str) -> Option<&'static str> {
+    match content_type
+        .split(';')
+        .next()?
+        .trim()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "image/png" => Some("png"),
+        "image/jpeg" | "image/jpg" => Some("jpg"),
+        "image/gif" => Some("gif"),
+        "image/webp" => Some("webp"),
+        "image/bmp" => Some("bmp"),
+        "image/svg+xml" => Some("svg"),
+        "image/avif" => Some("avif"),
+        "video/mp4" => Some("mp4"),
+        "video/x-matroska" => Some("mkv"),
+        "video/webm" => Some("webm"),
+        "video/quicktime" => Some("mov"),
+        "video/x-msvideo" => Some("avi"),
+        "audio/mpeg" => Some("mp3"),
+        "audio/aac" => Some("aac"),
+        "audio/ogg" => Some("ogg"),
+        "audio/wav" | "audio/x-wav" => Some("wav"),
+        "audio/flac" => Some("flac"),
+        "application/pdf" => Some("pdf"),
+        "application/zip" => Some("zip"),
+        "application/gzip" => Some("gz"),
+        "application/x-7z-compressed" => Some("7z"),
+        "application/vnd.rar" => Some("rar"),
+        "application/json" => Some("json"),
+        "application/xml" | "text/xml" => Some("xml"),
+        "application/x-bittorrent" => Some("torrent"),
+        "text/plain" => Some("txt"),
+        "text/html" => Some("html"),
+        "text/css" => Some("css"),
+        "text/csv" => Some("csv"),
+        "text/vtt" => Some("vtt"),
+        _ => None,
+    }
+}
+
 pub fn infer_filename_from_uri(uri: &str) -> String {
     let without_hash = uri.split('#').next().unwrap_or(uri);
     let without_query = without_hash.split('?').next().unwrap_or(without_hash);
@@ -2534,6 +2682,34 @@ mod tests {
     fn filename_absent_returns_none() {
         let headers = h(&[("content-type", "application/zip")]);
         assert_eq!(filename_from_content_disposition(&headers), None);
+    }
+
+    #[test]
+    fn content_type_adds_extension_to_extensionless_filename() {
+        assert_eq!(
+            filename_with_content_type_extension("download", Some("image/png")).as_deref(),
+            Some("download.png")
+        );
+        assert_eq!(
+            filename_with_content_type_extension("download.part", Some("image/png")).as_deref(),
+            Some("download.png")
+        );
+    }
+
+    #[test]
+    fn content_type_does_not_replace_existing_extension() {
+        assert_eq!(
+            filename_with_content_type_extension("photo.jpg", Some("image/png")),
+            None
+        );
+    }
+
+    #[test]
+    fn content_type_ignores_unknown_mime() {
+        assert_eq!(
+            filename_with_content_type_extension("download", Some("application/octet-stream")),
+            None
+        );
     }
 
     #[test]

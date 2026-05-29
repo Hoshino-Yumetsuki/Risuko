@@ -1,15 +1,23 @@
 use std::collections::HashMap;
+#[cfg(not(target_os = "android"))]
 use std::sync::Mutex;
 
+#[cfg(not(target_os = "android"))]
 use tauri::{
     menu::{AboutMetadataBuilder, Menu, MenuBuilder, MenuItemBuilder, Submenu, SubmenuBuilder},
     App, AppHandle, Emitter, Manager,
 };
 
+#[cfg(target_os = "android")]
+use tauri::{App, AppHandle};
+
+#[cfg(not(target_os = "android"))]
 use super::{emit_command, show_and_emit};
 
+#[cfg(not(target_os = "android"))]
 static CACHED_LABELS: Mutex<Option<HashMap<String, String>>> = Mutex::new(None);
 
+#[cfg(not(target_os = "android"))]
 fn get_menu_text(labels: &HashMap<String, String>, id: &str, fallback: &str) -> String {
     labels
         .get(id)
@@ -19,6 +27,7 @@ fn get_menu_text(labels: &HashMap<String, String>, id: &str, fallback: &str) -> 
         .to_string()
 }
 
+#[cfg(not(target_os = "android"))]
 pub fn setup_menu(app: &App) -> Result<(), Box<dyn std::error::Error>> {
     let handle = app.handle();
     let menu = build_menu(handle, &HashMap::new())?;
@@ -27,6 +36,12 @@ pub fn setup_menu(app: &App) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+#[cfg(target_os = "android")]
+pub fn setup_menu(_app: &App) -> Result<(), Box<dyn std::error::Error>> {
+    Ok(())
+}
+
+#[cfg(not(target_os = "android"))]
 pub fn update_menu_labels(
     handle: &AppHandle,
     labels: &HashMap<String, String>,
@@ -40,6 +55,15 @@ pub fn update_menu_labels(
     Ok(())
 }
 
+#[cfg(target_os = "android")]
+pub fn update_menu_labels(
+    _handle: &AppHandle,
+    _labels: &HashMap<String, String>,
+) -> Result<(), String> {
+    Ok(())
+}
+
+#[cfg(not(target_os = "android"))]
 pub fn toggle_app_menu(handle: &AppHandle, hidden: bool) -> Result<(), String> {
     if hidden {
         handle.remove_menu().map_err(|e| e.to_string())?;
@@ -55,6 +79,12 @@ pub fn toggle_app_menu(handle: &AppHandle, hidden: bool) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(target_os = "android")]
+pub fn toggle_app_menu(_handle: &AppHandle, _hidden: bool) -> Result<(), String> {
+    Ok(())
+}
+
+#[cfg(not(target_os = "android"))]
 fn build_menu(
     handle: &AppHandle,
     labels: &HashMap<String, String>,
@@ -66,6 +96,7 @@ fn build_menu(
     }
 }
 
+#[cfg(not(target_os = "android"))]
 fn build_macos_menu(
     handle: &AppHandle,
     labels: &HashMap<String, String>,
@@ -137,6 +168,7 @@ fn build_macos_menu(
     Ok(menu)
 }
 
+#[cfg(not(target_os = "android"))]
 fn build_default_menu(
     handle: &AppHandle,
     labels: &HashMap<String, String>,
@@ -200,6 +232,7 @@ fn build_default_menu(
     Ok(menu)
 }
 
+#[cfg(not(target_os = "android"))]
 fn build_task_submenu(
     handle: &tauri::AppHandle,
     include_clear_recent: bool,
@@ -307,6 +340,7 @@ fn build_task_submenu(
     Ok(builder.build()?)
 }
 
+#[cfg(not(target_os = "android"))]
 fn build_edit_submenu(
     handle: &tauri::AppHandle,
     labels: &HashMap<String, String>,
@@ -324,6 +358,7 @@ fn build_edit_submenu(
     )
 }
 
+#[cfg(not(target_os = "android"))]
 fn build_help_submenu(
     handle: &tauri::AppHandle,
     labels: &HashMap<String, String>,
@@ -370,6 +405,7 @@ fn build_help_submenu(
     Ok(builder.build()?)
 }
 
+#[cfg(not(target_os = "android"))]
 fn setup_menu_event_handler(app: &App) {
     app.on_menu_event(move |app, event| {
         let id = event.id().as_ref();

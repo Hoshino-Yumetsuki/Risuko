@@ -14,6 +14,22 @@ function joinPath(...parts: string[]): string {
 	return joined.replace(/[/\\]+/g, "/");
 }
 
+function dirname(path = ""): string {
+	const value = `${path || ""}`.replace(/[/\\]+$/g, "");
+	const index = Math.max(value.lastIndexOf("/"), value.lastIndexOf("\\"));
+	if (index < 0) {
+		return value;
+	}
+	if (index === 0) {
+		return value.charAt(0) === "/" || value.charAt(0) === "\\" ? value.charAt(0) : value;
+	}
+	// Windows drive root: "C:\file.tmp" → "C:\"; the separator immediately follows the drive letter
+	if (value.charCodeAt(index - 1) === 58 /* ':' */) {
+		return value.slice(0, index + 1);
+	}
+	return value.slice(0, index);
+}
+
 const hasTempDownloadSuffix = (fullPath = ""): boolean => {
 	return `${fullPath || ""}`.toLowerCase().endsWith(TEMP_DOWNLOAD_SUFFIX);
 };
@@ -24,6 +40,46 @@ const stripTempDownloadSuffix = (fullPath = ""): string => {
 		return value;
 	}
 	return value.slice(0, value.length - TEMP_DOWNLOAD_SUFFIX.length);
+};
+
+const chunkMetaPath = (partPath = ""): string => `${partPath}.chunks`;
+
+const sleep = (ms: number): Promise<void> =>
+	new Promise((resolve) => window.setTimeout(resolve, ms));
+
+const cleanupTempSidecars = async (paths: string[]): Promise<void> => {
+	// Only retry paths that actually throw (locked/busy like a Windows file handle).
+	// If trash_item returns false the sidecar never existed and won't appear now.
+	// If it returns true the sidecar is already gone. Retrying either case just
+	// spams IPC/logs and forces unnecessary sleeps in the common no-op path
+	let pending = [
+		...new Set(paths.map((path) => `${path || ""}`.trim())),
+	].filter(Boolean);
+	for (const delay of [0, 250, 1000]) {
+		if (pending.length === 0) {
+			break;
+		}
+		if (delay > 0) {
+			await sleep(delay);
+		}
+		const retry: string[] = [];
+		for (const sidecarPath of pending) {
+			try {
+				const sidecarFound: boolean = await invoke("trash_item", {
+					path: sidecarPath,
+				});
+				if (sidecarFound) {
+					logger.info(`[Risuko] trashed temp sidecar: "${sidecarPath}"`);
+				}
+			} catch (sidecarErr) {
+				logger.warn(
+					`[Risuko] trash temp sidecar "${sidecarPath}" failed: ${sidecarErr}`,
+				);
+				retry.push(sidecarPath);
+			}
+		}
+		pending = retry;
+	}
 };
 
 export const showItemInFolder = async (
@@ -40,6 +96,9 @@ export const showItemInFolder = async (
 		`[Risuko] showItemInFolder: path="${revealPath}", fallback="${fallback}"`,
 	);
 
+	// One call for desktop and Android
+	// Rust picks the native reveal path, and Android opens the folder through ACTION_VIEW
+	// That skips the old picker detour where the user had to tap the file again
 	try {
 		await invoke("reveal_in_folder", { path: revealPath || fallback });
 	} catch (err) {
@@ -102,6 +161,37 @@ export const getTaskFullPath = (
 	}
 
 	return result;
+};
+
+/**
+ * Directory that contains the task's downloaded artifact
+ * Multi-file BT tasks use `<task.dir>/<torrent name>`
+ * Single-file and pre-resolved magnet tasks use `task.dir`
+ * Mobile callers pass this to the file picker so it opens the real download folder
+ */
+export const getTaskRevealDir = (task: DownloadTask): string => {
+	if (!task) {
+		return "";
+	}
+	const dir = `${task?.dir || ""}`.trim();
+	if (!dir || isMagnetTask(task)) {
+		return dir;
+	}
+	const { files, bittorrent } = task;
+	const file = Array.isArray(files) && files.length > 0 ? files[0] : undefined;
+	const filePath = `${file?.path || ""}`.trim();
+	if (
+		(task as DownloadTask & { _isFileEntry?: boolean })._isFileEntry &&
+		filePath
+	) {
+		return dirname(stripTempDownloadSuffix(filePath)) || dir;
+	}
+	const isBtMultiFile =
+		!!bittorrent?.info?.name && Array.isArray(files) && files.length > 1;
+	if (isBtMultiFile) {
+		return joinPath(dir, bittorrent.info.name);
+	}
+	return dir;
 };
 
 export const getTaskRevealPath = (task: DownloadTask): string => {
@@ -257,14 +347,17 @@ export const moveTaskFilesToTrash = async (
 		add(`${path}.ytdl`);
 		if (partPath) {
 			add(`${partPath}.ytdl`);
+			add(chunkMetaPath(partPath));
 		}
 
 		if (path.toLowerCase().endsWith(TEMP_DOWNLOAD_SUFFIX)) {
 			const basePath = stripTempDownloadSuffix(path);
 			add(`${basePath}.ytdl`);
 			add(`${basePath}${TEMP_DOWNLOAD_SUFFIX}.ytdl`);
+			add(chunkMetaPath(path));
 		} else {
 			add(`${path}${TEMP_DOWNLOAD_SUFFIX}.ytdl`);
+			add(chunkMetaPath(`${path}${TEMP_DOWNLOAD_SUFFIX}`));
 		}
 
 		return [...set];
@@ -308,20 +401,7 @@ export const moveTaskFilesToTrash = async (
 		return false;
 	} finally {
 		if (shouldCleanupTempSidecars) {
-			for (const sidecarPath of tempSidecarPaths) {
-				try {
-					const sidecarFound: boolean = await invoke("trash_item", {
-						path: sidecarPath,
-					});
-					if (sidecarFound) {
-						logger.info(`[Risuko] trashed yt-dlp sidecar: "${sidecarPath}"`);
-					}
-				} catch (sidecarErr) {
-					logger.warn(
-						`[Risuko] trash yt-dlp sidecar "${sidecarPath}" failed: ${sidecarErr}`,
-					);
-				}
-			}
+			await cleanupTempSidecars(tempSidecarPaths);
 		}
 	}
 

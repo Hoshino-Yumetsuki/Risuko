@@ -2,7 +2,7 @@
   <div
     :key="task._displayKey || task.gid"
     class="task-item"
-    :class="{ 'is-active': shouldPulse, 'is-complete': isComplete }"
+    :class="{ 'is-active': shouldPulse, 'is-complete': isComplete, selected: selected }"
     v-on:dblclick="onDbClick"
   >
     <div class="task-status-indicator" :class="`status-${taskStatus}`"></div>
@@ -35,6 +35,7 @@
 <script lang="ts">
 import { TASK_STATUS } from "@shared/constants";
 import { checkTaskIsSeeder, getTaskName } from "@shared/utils";
+import logger from "@shared/utils/logger";
 import { useTaskStore } from "@/store/task";
 import { getTaskFullPath, openItem } from "@/utils/native";
 import TaskItemActions from "./TaskItemActions.vue";
@@ -51,6 +52,10 @@ export default {
 	props: {
 		task: {
 			type: Object,
+		},
+		selected: {
+			type: Boolean,
+			default: false,
 		},
 	},
 	computed: {
@@ -116,12 +121,19 @@ export default {
 			}
 		},
 		async openTask() {
+			// `openItem` delegates to Rust so each platform can open the file its own way
+			// Android uses a SAF document URI plus the file MIME, then shows the normal chooser
 			const { taskName } = this;
 			this.$msg.info(this.$t("task.opening-task-message", { taskName }));
 			const fullPath = getTaskFullPath(this.task);
-			const result = await openItem(fullPath);
-			if (result) {
-				this.$msg.error(this.$t("task.file-not-exist"));
+			try {
+				const result = await openItem(fullPath);
+				if (result) {
+					this.$msg.error(this.$t("task.file-not-exist"));
+				}
+			} catch (err) {
+				logger.warn("[Risuko] open task failed:", err);
+				this.$msg.error(`${err}`);
 			}
 		},
 		toggleTask() {

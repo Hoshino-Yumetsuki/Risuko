@@ -1,3 +1,4 @@
+import { getLanguage } from "@shared/locales";
 import type { AppConfig } from "@shared/types/config";
 import logger from "@shared/utils/logger";
 import { invoke } from "@tauri-apps/api/core";
@@ -126,7 +127,7 @@ function initTrayWorker() {
 }
 
 async function init(config: AppConfig) {
-	const locale = config?.locale || "en-US";
+	const locale = getLanguage(config?.locale || "auto");
 	const localeManager = getLocaleManager();
 	await localeManager.changeLanguageByLocale(locale);
 	const i18n = localeManager.getI18n();

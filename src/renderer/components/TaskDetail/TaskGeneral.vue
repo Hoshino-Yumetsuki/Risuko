@@ -13,7 +13,7 @@
         <span class="general-card-label">{{ $t('task.task-dir') }}</span>
         <span class="general-card-value general-card-value--dir">
           <span class="dir-text">{{ path }}</span>
-          <mo-show-in-folder v-if="isRenderer" :path="path" />
+          <mo-show-in-folder v-if="isRenderer" :path="revealPath" />
         </span>
       </div>
       <div class="general-card-row">
@@ -83,7 +83,7 @@ import TaskStatus from "@/components/Task/TaskStatus.vue";
 import is from "@/shims/platform";
 import { useAppStore } from "@/store/app";
 import { usePreferenceStore } from "@/store/preference";
-import { getTaskRevealPath } from "@/utils/native";
+import { getTaskRevealDir, getTaskRevealPath } from "@/utils/native";
 
 export default {
 	name: "mo-task-general",
@@ -123,6 +123,9 @@ export default {
 		},
 		path() {
 			return getTaskRevealPath(this.task);
+		},
+		revealPath() {
+			return is.android() ? getTaskRevealDir(this.task) : this.path;
 		},
 		isBT() {
 			return checkTaskIsBT(this.task);

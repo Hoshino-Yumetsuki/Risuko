@@ -1,3 +1,5 @@
+#[cfg(target_os = "android")]
+pub mod android_intent;
 pub mod app_cmds;
 pub mod completion_script_cmds;
 pub mod config_cmds;

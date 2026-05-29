@@ -1,0 +1,11 @@
+{
+	"identifier": "desktop",
+	"description": "Desktop-only capabilities for Risuko",
+	"windows": ["main"],
+	"platforms": ["macOS", "windows", "linux"],
+	"permissions": [
+		"autostart:default",
+		"nosleep:allow-block",
+		"nosleep:allow-unblock"
+	]
+}

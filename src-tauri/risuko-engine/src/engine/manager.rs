@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 
@@ -23,6 +24,9 @@ use super::upload::UploadFileSnapshot;
 use super::youtube;
 use std::collections::HashSet;
 
+const MAGNET_METADATA_ATTEMPT_TIMEOUT_SECS: u64 = 60;
+const MAGNET_METADATA_RETRY_DELAY_SECS: u64 = 15;
+
 struct ActiveDownload {
     cancel: Arc<AtomicBool>,
     cancel_token: CancellationToken,
@@ -42,6 +46,7 @@ pub struct TaskManager {
     tasks: Arc<RwLock<Vec<DownloadTask>>>,
     active_downloads: Arc<RwLock<HashMap<String, ActiveDownload>>>,
     torrent_ids: Arc<RwLock<HashMap<String, usize>>>,
+    pending_magnets: Arc<RwLock<HashSet<String>>>,
     purged_hashes: Arc<RwLock<HashSet<String>>>,
     options: Arc<RwLock<EngineOptions>>,
     events: EventBroadcaster,
@@ -163,6 +168,7 @@ impl TaskManager {
             tasks: Arc::new(RwLock::new(saved_tasks)),
             active_downloads: Arc::new(RwLock::new(HashMap::new())),
             torrent_ids: Arc::new(RwLock::new(HashMap::new())),
+            pending_magnets: Arc::new(RwLock::new(HashSet::new())),
             purged_hashes: Arc::new(RwLock::new(purged_hashes)),
             options: Arc::new(RwLock::new(options)),
             events,
@@ -172,7 +178,6 @@ impl TaskManager {
             cookie_store: Arc::new(CookieStore::new(config_dir)),
         };
 
-        // Restore torrent_ids mapping from persisted librqbit session
         if manager.restore_torrent_mappings().await {
             manager.purged_hashes.write().await.clear();
         }
@@ -180,10 +185,6 @@ impl TaskManager {
         Ok(manager)
     }
 
-    /// restarted, match persisted librqbit torrents back to saved tasks by info_hash.
-    /// Any persisted librqbit torrent with no matching live task is purged from
-    /// the librqbit session so it does not silently resume downloading on startup.
-    /// purge provenance stays on the manager until this cleanup completes successfully.
     async fn restore_torrent_mappings(&self) -> bool {
         let te_guard = self.torrent_engine.read().await;
         let Some(ref te) = *te_guard else {
@@ -204,23 +205,21 @@ impl TaskManager {
             let mut tasks = self.tasks.write().await;
             let mut ids = self.torrent_ids.write().await;
 
-            for (librqbit_id, info_hash) in &managed {
+            for (torrent_id, info_hash) in &managed {
                 let mut matched = false;
                 for task in tasks.iter_mut() {
                     if task.kind == TaskKind::Torrent
                         && task.info_hash.as_deref() == Some(info_hash.as_str())
                         && task.status != TaskStatus::Removed
                     {
-                        ids.insert(task.gid.clone(), *librqbit_id);
-                        // Session load sets active to paused, but librqbit is still running
-                        // Restore active so update_progress can track it
+                        ids.insert(task.gid.clone(), *torrent_id);
                         if task.status == TaskStatus::Paused {
                             task.status = TaskStatus::Active;
                         }
                         log::info!(
-                            "Restored torrent mapping: gid={} -> librqbit_id={} ({})",
+                            "Restored torrent mapping: gid={} -> torrent_id={} ({})",
                             task.gid,
-                            librqbit_id,
+                            torrent_id,
                             info_hash
                         );
                         matched = true;
@@ -228,7 +227,7 @@ impl TaskManager {
                     }
                 }
                 if !matched {
-                    orphans.push((*librqbit_id, info_hash.clone()));
+                    orphans.push((*torrent_id, info_hash.clone()));
                 }
             }
 
@@ -240,24 +239,24 @@ impl TaskManager {
             );
         }
 
-        // Purge orphan librqbit torrents (persisted but no live Motrix task).
-        // Without this, librqbit auto-resumes them on startup and writes files
+        // Purge orphan torrents (persisted but no live task).
+        // Without this, the torrent engine auto-resumes them on startup and writes files
         // even though the user has deleted or never had the task in Motrix.
         // However, if the orphan came from purge_record_on_start, preserve files.
-        for (librqbit_id, info_hash) in orphans {
+        for (torrent_id, info_hash) in orphans {
             let delete_files = !purged_hashes.contains(&info_hash);
-            let removal_result = te.remove(librqbit_id, delete_files).await;
+            let removal_result = te.remove(torrent_id, delete_files).await;
             let removal_failed = removal_result.is_err();
             match removal_result {
                 Ok(()) => log::info!(
-                    "Purged orphan persisted torrent: librqbit_id={} ({}) [delete_files={}]",
-                    librqbit_id,
+                    "Purged orphan persisted torrent: torrent_id={} ({}) [delete_files={}]",
+                    torrent_id,
                     info_hash,
                     delete_files
                 ),
                 Err(e) => log::warn!(
-                    "Failed to purge orphan torrent librqbit_id={} ({}): {}",
-                    librqbit_id,
+                    "Failed to purge orphan torrent torrent_id={} ({}): {}",
+                    torrent_id,
                     info_hash,
                     e
                 ),
@@ -472,33 +471,41 @@ impl TaskManager {
         let mut task = DownloadTask::new_torrent(gid.clone(), dir.clone(), tag, options.clone());
         task.uris = vec![magnet_uri.to_string()];
 
-        let te_guard = self.torrent_engine.read().await;
-        if let Some(ref te) = *te_guard {
-            match te.add_magnet(magnet_uri, &merged).await {
-                Ok(handle) => {
-                    self.torrent_ids
-                        .write()
-                        .await
-                        .insert(gid.clone(), handle.id);
-                    task.info_hash = handle.info_hash;
-                    task.info_hash_v2 = handle.info_hash_v2;
-                    task.meta_version = handle.meta_version;
-                    task.status = TaskStatus::Active;
-                }
-                Err(e) => {
-                    task.status = TaskStatus::Error;
-                    task.error_code = Some(classify_error(&e, "torrent").to_string());
-                    task.error_message = Some(e);
-                }
+        let should_spawn_resolver = match torrent::inspect_magnet(magnet_uri) {
+            Ok(info) => {
+                task.info_hash = Some(info.info_hash);
+                task.info_hash_v2 = info.info_hash_v2;
+                task.bt_name = info.display_name;
+                task.status = TaskStatus::Active;
+                true
             }
-        } else {
+            Err(e) => {
+                task.status = TaskStatus::Error;
+                task.error_code = Some(classify_error(&e, "torrent").to_string());
+                task.error_message = Some(e);
+                false
+            }
+        };
+
+        if should_spawn_resolver && self.torrent_engine.read().await.is_none() {
             task.status = TaskStatus::Error;
             task.error_code = Some(super::error_code::ErrorCode::ENGINE_NOT_RUNNING.to_string());
             task.error_message = Some("Torrent engine not available".to_string());
         }
-        drop(te_guard);
+
+        let should_start_resolver = task.status == TaskStatus::Active;
 
         self.tasks.write().await.push(task);
+        if should_start_resolver {
+            self.spawn_magnet_metadata_resolver(
+                gid.clone(),
+                magnet_uri.to_string(),
+                merged.clone(),
+            )
+            .await;
+        } else {
+            self.pending_magnets.write().await.remove(&gid);
+        }
         self.events
             .send(EngineEvent::DownloadStart { gid: gid.clone() });
 
@@ -518,6 +525,120 @@ impl TaskManager {
         } else {
             Err("Torrent engine not available".to_string())
         }
+    }
+
+    async fn spawn_magnet_metadata_resolver(
+        &self,
+        gid: String,
+        magnet_uri: String,
+        options: Map<String, Value>,
+    ) {
+        {
+            let mut guard = self.pending_magnets.write().await;
+            if !guard.insert(gid.clone()) {
+                return;
+            }
+        }
+
+        let pending = self.pending_magnets.clone();
+        let tasks = self.tasks.clone();
+        let torrent_ids = self.torrent_ids.clone();
+        let torrent_engine = self.torrent_engine.clone();
+        let events = self.events.clone();
+
+        tokio::spawn(async move {
+            loop {
+                let still_active = {
+                    let guard = tasks.read().await;
+                    guard.iter().any(|task| {
+                        task.gid == gid
+                            && task.kind == TaskKind::Torrent
+                            && task.status == TaskStatus::Active
+                            && task.uris.iter().any(|uri| uri == &magnet_uri)
+                    })
+                };
+                if !still_active {
+                    break;
+                }
+
+                let engine = torrent_engine.read().await.clone();
+                let Some(engine) = engine else {
+                    let mut guard = tasks.write().await;
+                    if let Some(task) = guard.iter_mut().find(|task| {
+                        task.gid == gid
+                            && task.kind == TaskKind::Torrent
+                            && task.status == TaskStatus::Active
+                            && task.uris.iter().any(|uri| uri == &magnet_uri)
+                    }) {
+                        task.status = TaskStatus::Error;
+                        task.error_code =
+                            Some(super::error_code::ErrorCode::ENGINE_NOT_RUNNING.to_string());
+                        task.error_message = Some("Torrent engine not available".to_string());
+                        events.send(EngineEvent::DownloadError { gid: gid.clone() });
+                    }
+                    break;
+                };
+
+                match engine
+                    .resolve_and_add_magnet(
+                        &magnet_uri,
+                        &options,
+                        MAGNET_METADATA_ATTEMPT_TIMEOUT_SECS,
+                    )
+                    .await
+                {
+                    Ok(handle) => {
+                        let mut attached = false;
+                        {
+                            let mut guard = tasks.write().await;
+                            if let Some(task) = guard.iter_mut().find(|task| {
+                                task.gid == gid
+                                    && task.kind == TaskKind::Torrent
+                                    && task.status == TaskStatus::Active
+                                    && task.uris.iter().any(|uri| uri == &magnet_uri)
+                            }) {
+                                if let Some(info_hash) = handle.info_hash.clone() {
+                                    task.info_hash = Some(info_hash);
+                                }
+                                task.info_hash_v2 = handle.info_hash_v2.clone();
+                                task.meta_version = handle.meta_version.clone();
+                                task.error_code = None;
+                                task.error_message = None;
+                                attached = true;
+                            }
+                        }
+
+                        if attached {
+                            torrent_ids.write().await.insert(gid.clone(), handle.id);
+                        } else {
+                            let _ = engine.remove(handle.id, false).await;
+                        }
+                        break;
+                    }
+                    Err(e) => {
+                        if !is_retryable_magnet_resolution_error(&e) {
+                            let mut guard = tasks.write().await;
+                            if let Some(task) = guard.iter_mut().find(|task| {
+                                task.gid == gid
+                                    && task.kind == TaskKind::Torrent
+                                    && task.status == TaskStatus::Active
+                                    && task.uris.iter().any(|uri| uri == &magnet_uri)
+                            }) {
+                                task.status = TaskStatus::Error;
+                                task.error_code = Some(classify_error(&e, "torrent").to_string());
+                                task.error_message = Some(e);
+                                events.send(EngineEvent::DownloadError { gid: gid.clone() });
+                            }
+                            break;
+                        }
+                        tokio::time::sleep(Duration::from_secs(MAGNET_METADATA_RETRY_DELAY_SECS))
+                            .await;
+                    }
+                }
+            }
+
+            pending.write().await.remove(&gid);
+        });
     }
 
     pub async fn add_ed2k_task(
@@ -2164,7 +2285,46 @@ impl TaskManager {
             }
         }
         // Start any waiting tasks if download slots are available
+        self.ensure_active_magnet_resolvers().await;
         self.try_start_next().await;
+    }
+
+    async fn ensure_active_magnet_resolvers(&self) {
+        let jobs = {
+            // Acquire in the same order as remove() (torrent_ids -> pending_magnets -> tasks)
+            // to avoid a deadlock where remove() holds torrent_ids.write() while waiting
+            // for tasks.write() and we hold tasks.read() while waiting for torrent_ids.read().
+            let torrent_ids = self.torrent_ids.read().await;
+            let pending = self.pending_magnets.read().await;
+            let tasks = self.tasks.read().await;
+            let options = self.options.read().await;
+
+            tasks
+                .iter()
+                .filter(|task| {
+                    task.kind == TaskKind::Torrent
+                        && task.status == TaskStatus::Active
+                        && !torrent_ids.contains_key(&task.gid)
+                        && !pending.contains(&task.gid)
+                })
+                .filter_map(|task| {
+                    let uri = task
+                        .uris
+                        .iter()
+                        .find(|uri| torrent::is_magnet_uri(uri))?
+                        .clone();
+                    Some((
+                        task.gid.clone(),
+                        uri,
+                        options.merge_task_options(&task.options),
+                    ))
+                })
+                .collect::<Vec<_>>()
+        };
+
+        for (gid, uri, options) in jobs {
+            self.spawn_magnet_metadata_resolver(gid, uri, options).await;
+        }
     }
 
     pub async fn pause(&self, gid: &str) -> Result<(), String> {
@@ -2232,6 +2392,8 @@ impl TaskManager {
                 if let Some(ref te) = *te_guard {
                     te.unpause(tid).await.ok();
                 }
+            } else {
+                self.ensure_active_magnet_resolvers().await;
             }
         } else {
             self.try_start_next().await;
@@ -2319,6 +2481,7 @@ impl TaskManager {
             }
         }
         self.torrent_ids.write().await.remove(gid);
+        self.pending_magnets.write().await.remove(gid);
 
         let mut tasks = self.tasks.write().await;
         if let Some(task) = tasks.iter_mut().find(|t| t.gid == gid) {
@@ -3019,6 +3182,15 @@ fn looks_like_url(path: &str) -> bool {
         || path.starts_with("ed2k://")
 }
 
+fn is_retryable_magnet_resolution_error(err: &str) -> bool {
+    let lower = err.to_ascii_lowercase();
+    lower.contains("failed to fetch metadata")
+        || lower.contains("timed out")
+        || lower.contains("timeout")
+        || lower.contains("no peers")
+        || lower.contains("no seeds")
+}
+
 /// Lower-case hex encoding for BT bitfields. The frontend's
 /// `bitfieldToPercent` walks each hex nibble, so the format must be hex
 fn bytes_to_hex(bytes: &[u8]) -> String {
@@ -3130,6 +3302,7 @@ mod tests {
             tasks: Arc::new(RwLock::new(tasks)),
             active_downloads: Arc::new(RwLock::new(HashMap::new())),
             torrent_ids: Arc::new(RwLock::new(HashMap::new())),
+            pending_magnets: Arc::new(RwLock::new(HashSet::new())),
             purged_hashes: Arc::new(RwLock::new(HashSet::new())),
             options: Arc::new(RwLock::new(options)),
             events,
@@ -3150,6 +3323,51 @@ mod tests {
         );
         task.status = status;
         task
+    }
+
+    async fn make_test_manager_with_engine() -> (TaskManager, tempfile::TempDir) {
+        let dir = tempfile::TempDir::new().unwrap();
+        let mut system = Map::new();
+        system.insert(
+            "dir".to_string(),
+            Value::String(dir.path().join("downloads").to_string_lossy().to_string()),
+        );
+        system.insert("bt-enable-upnp".to_string(), Value::Bool(false));
+        system.insert("bt-enable-lsd".to_string(), Value::Bool(false));
+        let options = EngineOptions::from_config(&system, &Map::new());
+        let manager = TaskManager::new(dir.path(), options, EventBroadcaster::new(16))
+            .await
+            .unwrap();
+        (manager, dir)
+    }
+
+    #[tokio::test]
+    async fn add_magnet_task_returns_before_metadata_is_resolved() {
+        let (mgr, _dir) = make_test_manager_with_engine().await;
+        let uri = "magnet:?xt=urn:btih:cab507494d02ebb1178b38f2e9d7be299c86b862&dn=Metadata+Later";
+        let started = std::time::Instant::now();
+
+        let gid = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            mgr.add_magnet_task(uri, Map::new()),
+        )
+        .await
+        .expect("add_magnet_task should not wait for metadata")
+        .expect("valid magnet should create a task");
+
+        assert!(started.elapsed() < std::time::Duration::from_secs(2));
+        assert!(!mgr.torrent_ids.read().await.contains_key(&gid));
+        assert!(mgr.pending_magnets.read().await.contains(&gid));
+
+        let tasks = mgr.tasks.read().await;
+        let task = tasks.iter().find(|task| task.gid == gid).unwrap();
+        assert_eq!(task.status, TaskStatus::Active);
+        assert_eq!(
+            task.info_hash.as_deref(),
+            Some("cab507494d02ebb1178b38f2e9d7be299c86b862")
+        );
+        assert_eq!(task.bt_name.as_deref(), Some("Metadata Later"));
+        assert_eq!(task.uris, vec![uri.to_string()]);
     }
 
     #[tokio::test]

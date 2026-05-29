@@ -5,7 +5,7 @@ pub mod stats;
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -18,14 +18,16 @@ use tokio::sync::{mpsc, oneshot};
 use tokio::time::{interval, MissedTickBehavior};
 
 use super::core::{
-    Id20, Lengths, MerkleProofTable, PieceVerifier, TorrentMeta, ValidatedTorrentMetaV1Info,
+    supports_v2_wire, Id20, Lengths, MerkleProofTable, PieceVerifier, TorrentMeta,
+    ValidatedTorrentMetaV1Info,
 };
-use super::peer::{connect, PeerCommand, PeerEvent, SpawnPeer};
+use super::peer::{connect_with_utp_fallback, PeerCommand, PeerEvent, SpawnPeer};
 use super::piece::{ChunkTracker, PieceTracker};
 use super::storage::{FilesystemStorage, StorageBackend};
 use super::tracker::{announce as tracker_announce, AnnounceEvent, AnnounceRequest};
+use super::utp::UtpSocket;
 use super::wire::extended::{ut_metadata_data, ut_metadata_type, ExtHandshake, EXT_HANDSHAKE_ID};
-use super::wire::Message;
+use super::wire::{Message, MessageEncoder};
 
 pub use stats::{
     AggregatedLiveStats, LiveStats, PeerSnapshot, Snapshot, SpeedSample, TorrentStats,
@@ -89,9 +91,10 @@ const SNUB_EVICTION_TIMEOUT: Duration = Duration::from_secs(60);
 /// Peers send `Extended { ext_id: OUR_UT_METADATA_ID, .. }` to request a
 /// 16 KiB chunk of our raw `info` dict
 const OUR_UT_METADATA_ID: u8 = 3;
-/// Per-peer message id we advertise for `ut_pex`. Currently unused on the
-/// receive side (we don't accept PEX) but advertised so peers know we
-/// support BEP-10 extension negotiation
+/// Per-peer message id we advertise for `ut_pex` (BEP-11). Peers send
+/// `Extended { ext_id: OUR_UT_PEX_ID, .. }` carrying gossiped swarm members;
+/// we parse the `added`/`added6` fields and feed them into the dial path
+/// (see the Extended handler)
 const OUR_UT_PEX_ID: u8 = 4;
 /// BEP-9 metadata piece size: every ut_metadata DATA carries up to one
 /// 16 KiB block of the info dict, except possibly the last
@@ -105,6 +108,7 @@ pub struct TorrentInit {
     pub max_outstanding_per_peer: Option<usize>,
     pub max_peers: Option<usize>,
     pub encryption: super::peer::EncryptionPolicy,
+    pub advertise_v2: bool,
     /// Per-piece verifier strategy chosen at session-attach time. Hybrid
     /// and pure-v1 torrents use SHA-1; pure-v2 torrents use SHA-256
     /// Merkle subtree verification
@@ -114,6 +118,9 @@ pub struct TorrentInit {
     /// written directly under `root_dir`. Carried on `ManagedTorrent`
     /// so `Session::delete(with_files=true)` can locate the right paths
     pub create_subfolder: bool,
+    /// Shared µTP (BEP-29) endpoint for this session. When present, outbound
+    /// dials that fail over TCP retry over µTP. `None` disables µTP.
+    pub utp: Option<Arc<UtpSocket>>,
 }
 
 #[derive(Debug)]
@@ -144,6 +151,20 @@ pub struct ManagedTorrent {
     /// can target the actual output location rather than the session
     /// default `output_dir` (per-torrent `opts.output_folder` overrides).
     pub root_dir: PathBuf,
+    /// Atomically updated by `torrent_loop` after Merkle tables are built.
+    /// Starts as `init.advertise_v2`; clamped to `false` when `serve_v2_layers`
+    /// turns out to be false so inbound handshakes never assert the v2 bit
+    /// without valid Merkle proof tables
+    pub advertise_v2: Arc<AtomicBool>,
+    /// Pre-serialized BEP-10 extended handshake — encoded once at spawn
+    /// time from the torrent's `info_bytes` length and our extension ids.
+    /// Per-peer builder for the BEP-10 extended handshake bytes. Captures
+    /// this torrent's metadata size and our extension ids; takes the peer's
+    /// IP address per call so we can populate `yourip`. The accept loop
+    /// hands a clone of this builder to the connection layer so inbound
+    /// peers receive our extended handshake on the same async frame as
+    /// the BT handshake exchange completes (and with `yourip` set)
+    pub ext_handshake_builder: crate::peer::ExtHandshakeBuilder,
     pub(crate) cmd_tx: mpsc::Sender<TorrentCommand>,
     pub(crate) stats: Arc<Mutex<TorrentStats>>,
 }
@@ -200,6 +221,19 @@ pub async fn spawn(
     )));
     let meta_arc = Arc::new(init.meta.clone());
     let metadata_swap = ArcSwapOption::new(Some(meta_arc));
+    let ext_handshake_builder: crate::peer::ExtHandshakeBuilder = {
+        let metadata_size = init.meta.info_bytes.len() as u64;
+        std::sync::Arc::new(move |peer_ip: std::net::IpAddr| {
+            let hs =
+                ExtHandshake::new_outgoing(OUR_UT_METADATA_ID, OUR_UT_PEX_ID, Some(metadata_size))
+                    .with_yourip(peer_ip);
+            MessageEncoder::encode(&Message::Extended {
+                ext_id: EXT_HANDSHAKE_ID,
+                payload: hs.encode(),
+            })
+        })
+    };
+    let advertise_v2_flag = Arc::new(AtomicBool::new(init.advertise_v2));
     let handle = Arc::new(ManagedTorrent {
         id,
         info_hash,
@@ -207,6 +241,8 @@ pub async fn spawn(
         metadata: metadata_swap,
         create_subfolder: init.create_subfolder,
         root_dir: init.root_dir.clone(),
+        advertise_v2: Arc::clone(&advertise_v2_flag),
+        ext_handshake_builder,
         cmd_tx,
         stats: stats.clone(),
     });
@@ -217,6 +253,7 @@ pub async fn spawn(
         listen_port,
         cmd_rx,
         stats,
+        advertise_v2_flag,
     ));
     Ok(handle)
 }
@@ -271,10 +308,6 @@ struct Peer {
     /// (info is already loaded) but record the id so the responder can
     /// echo it back on DATA / REJECT replies
     their_ut_metadata_id: Option<u8>,
-    /// Set once we have sent our own BEP-10 extended handshake on this
-    /// connection. Guards against re-sending if the peer pings us with a
-    /// fresh handshake mid-session
-    sent_ext_handshake: bool,
 }
 
 /// Result of an off-runtime piece write + verify pass
@@ -323,6 +356,7 @@ async fn torrent_loop(
     listen_port: u16,
     mut cmd_rx: mpsc::Receiver<TorrentCommand>,
     stats: Arc<Mutex<TorrentStats>>,
+    advertise_v2_flag: Arc<AtomicBool>,
 ) {
     let info = Arc::new(init.meta.info.clone());
     let info_hash = init.meta.info_hash;
@@ -332,6 +366,14 @@ async fn torrent_loop(
     let info_bytes: Arc<Vec<u8>> = Arc::new(init.meta.info_bytes.clone());
     let lengths = init.lengths;
     let encryption = init.encryption;
+    // Shared µTP endpoint (if any), handed to every outbound dial so a failed
+    // TCP connect can retry over µTP.
+    let utp = init.utp.clone();
+    // Preliminary: whether the meta supports v2 wire. Refined below to
+    // `supports_v2_wire && hash_tables.is_some()` after table construction
+    // so a failed build never leads us to announce truncated v2 hashes
+    // or answer BEP-52 HASH_REQUEST messages without valid Merkle data
+    let supports_v2 = supports_v2_wire(&init.meta);
     let verifier = init.verifier;
     // V2 Merkle tables for serving HASH_REQUEST — built from the meta for
     // any torrent that carries v2 data (pure-v2 or hybrid). Hybrid torrents
@@ -340,33 +382,37 @@ async fn torrent_loop(
     let hash_tables: Option<Arc<Vec<MerkleProofTable>>> = {
         if let PieceVerifier::V2Merkle { ref tables, .. } = verifier {
             Some(Arc::clone(tables))
-        } else if let Some(ref v2) = init.meta.info_v2 {
-            // Hybrid torrent: build Merkle tables from the meta's piece_layers
-            let mut tbls = Vec::with_capacity(v2.files.len());
-            let mut ok = true;
-            for f in &v2.files {
-                let layer = init
-                    .meta
-                    .piece_layers
-                    .get(&f.pieces_root)
-                    .map(|v| v.as_slice())
-                    .unwrap_or(&[]);
-                match super::core::MerkleProofTable::from_layer_bytes(
-                    f.pieces_root,
-                    f.length,
-                    v2.piece_length,
-                    layer,
-                ) {
-                    Ok(t) => tbls.push(t),
-                    Err(e) => {
-                        log::warn!("hybrid torrent {info_hash}: could not build Merkle table for serving: {e}");
-                        ok = false;
-                        break;
+        } else if supports_v2 {
+            if let Some(ref v2) = init.meta.info_v2 {
+                // Hybrid torrent: build Merkle tables from the meta's piece_layers
+                let mut tbls = Vec::with_capacity(v2.files.len());
+                let mut ok = true;
+                for f in &v2.files {
+                    let layer = init
+                        .meta
+                        .piece_layers
+                        .get(&f.pieces_root)
+                        .map(|v| v.as_slice())
+                        .unwrap_or(&[]);
+                    match super::core::MerkleProofTable::from_layer_bytes(
+                        f.pieces_root,
+                        f.length,
+                        v2.piece_length,
+                        layer,
+                    ) {
+                        Ok(t) => tbls.push(t),
+                        Err(e) => {
+                            log::warn!("hybrid torrent {info_hash}: could not build Merkle table for serving: {e}");
+                            ok = false;
+                            break;
+                        }
                     }
                 }
-            }
-            if ok {
-                Some(Arc::new(tbls))
+                if ok {
+                    Some(Arc::new(tbls))
+                } else {
+                    None
+                }
             } else {
                 None
             }
@@ -374,6 +420,15 @@ async fn torrent_loop(
             None
         }
     };
+    // True only when we have valid Merkle tables: gates BEP-52 HASH_REQUEST
+    // serving AND v2/truncated info-hash announcement on trackers.
+    // A failed from_layer_bytes build leaves hash_tables = None so we must
+    // not advertise v2 capability in that case.
+    let serve_v2_layers = supports_v2 && hash_tables.is_some();
+    // Clamp to actual capability now that hash_tables is known. Updates the
+    // shared handle field so inbound connection handling sees the same value
+    let advertise_v2 = init.advertise_v2 && serve_v2_layers;
+    advertise_v2_flag.store(advertise_v2, Ordering::Relaxed);
     // Per-peer pipeline depth bounds. When the session explicitly sets
     // `max_outstanding_per_peer` we honour it as a fixed value (legacy
     // behaviour, useful for benchmarks / debugging); otherwise we use
@@ -405,13 +460,46 @@ async fn torrent_loop(
         s.finished = piece_tracker.is_complete();
     }
 
-    let mut peer_addr_rx = spawn_tracker_pollers(
+    // Truncated v2 hashes are only meaningful on trackers when we can
+    // actually serve v2 piece layers; otherwise advertise the v1 info-hash
+    // alone so peers we discover go through the v1 download path
+    let announce_hashes = if serve_v2_layers {
+        init.meta.announce_infohashes()
+    } else {
+        vec![info_hash]
+    };
+    // Unified peer-source channel: trackers and inbound PEX (ut_pex) both
+    // feed discovered peer addresses here; the main loop drains it and dials
+    // (with dedup + cap enforcement). DHT feeds peers via the AddPeer command.
+    let (peer_src_tx, mut peer_addr_rx) = mpsc::channel::<SocketAddr>(256);
+    spawn_tracker_pollers(
+        peer_src_tx.clone(),
         collect_trackers(&init.meta),
-        init.meta.announce_infohashes(),
+        announce_hashes,
         our_peer_id,
         listen_port,
         Arc::clone(&stats),
     );
+
+    // Pre-serialize the BEP-10 extended handshake once. The connection
+    // layer ships this on the wire in the same async frame that just
+    // completed the BT handshake, eliminating tokio task hops between
+    // "BT handshake done" and "ext handshake on the wire". Some peers RST
+    // the connection if our follow-up doesn't arrive within their grace
+    // window. The builder is invoked per-peer so each `yourip` field
+    // matches the dialed peer's address
+    let initial_ext_handshake_builder: crate::peer::ExtHandshakeBuilder = {
+        let metadata_size = info_bytes.len() as u64;
+        std::sync::Arc::new(move |peer_ip: std::net::IpAddr| {
+            let hs =
+                ExtHandshake::new_outgoing(OUR_UT_METADATA_ID, OUR_UT_PEX_ID, Some(metadata_size))
+                    .with_yourip(peer_ip);
+            MessageEncoder::encode(&Message::Extended {
+                ext_id: EXT_HANDSHAKE_ID,
+                payload: hs.encode(),
+            })
+        })
+    };
 
     // Large enough to not block peers: with MAX_PEERS peers each potentially
     // delivering MAX_OUTSTANDING_PER_PEER Piece events in rapid succession,
@@ -460,7 +548,18 @@ async fn torrent_loop(
                     {
                         let pid = next_pid; next_pid += 1;
                         pending_dials.insert(pid, addr);
-                        spawn_outbound_peer(torrent_id, pid, addr, info_hash, our_peer_id, peer_event_tx.clone(), encryption);
+                        spawn_outbound_peer(
+                            torrent_id,
+                            pid,
+                            addr,
+                            info_hash,
+                            our_peer_id,
+                            peer_event_tx.clone(),
+                            encryption,
+                            advertise_v2,
+                            Some(initial_ext_handshake_builder.clone()),
+                            utp.clone(),
+                        );
                     }
                 }
                 TorrentCommand::AddInboundPeer { addr, cmd_tx, event_rx } => {
@@ -506,7 +605,18 @@ async fn torrent_loop(
                 {
                     let pid = next_pid; next_pid += 1;
                     pending_dials.insert(pid, addr);
-                    spawn_outbound_peer(torrent_id, pid, addr, info_hash, our_peer_id, peer_event_tx.clone(), encryption);
+                    spawn_outbound_peer(
+                        torrent_id,
+                        pid,
+                        addr,
+                        info_hash,
+                        our_peer_id,
+                        peer_event_tx.clone(),
+                        encryption,
+                        advertise_v2,
+                        Some(initial_ext_handshake_builder.clone()),
+                        utp.clone(),
+                    );
                 }
             }
             Some((pid, ev)) = peer_event_rx.recv() => {
@@ -517,6 +627,7 @@ async fn torrent_loop(
                     &upload_tick,
                     &mut write_tasks,
                     &mut pending_dials, &mut known_addrs,
+                    &peer_src_tx,
                     &verify_tx,
                     &verifier,
                     &info_bytes,
@@ -708,6 +819,7 @@ mod peer_registry {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn spawn_outbound_peer(
     torrent_id: usize,
     pid: u32,
@@ -716,20 +828,22 @@ fn spawn_outbound_peer(
     our_peer_id: Id20,
     event_tx: mpsc::Sender<(u32, PeerEvent)>,
     encryption: crate::peer::EncryptionPolicy,
+    advertise_v2: bool,
+    ext_handshake_builder: Option<crate::peer::ExtHandshakeBuilder>,
+    utp: Option<Arc<UtpSocket>>,
 ) {
     tokio::spawn(async move {
         let spawn = SpawnPeer {
             addr,
             info_hash,
             our_peer_id,
-            // 5 s is plenty for any reachable peer; 10 s used to park dial
-            // slots for unreachable peers and starve real connections, since
-            // a single tracker batch can include many dead addresses
-            connect_timeout: Duration::from_secs(5),
+            connect_timeout: Duration::from_secs(10),
             read_timeout: Duration::from_secs(120),
             encryption,
+            advertise_v2,
+            ext_handshake_builder,
         };
-        match connect(spawn).await {
+        match connect_with_utp_fallback(spawn, utp).await {
             Ok((handle, mut rx)) => {
                 peer_registry::put(torrent_id, pid, handle.tx.clone(), handle.addr);
                 while let Some(ev) = rx.recv().await {
@@ -764,6 +878,19 @@ async fn adopt_inbound_peer(
     piece_tracker: &mut PieceTracker,
     pipeline_floor: usize,
 ) {
+    // Install the peer directly in the per-loop `peers` map. We deliberately
+    // do *not* route through the shared `peer_registry` (used for outbound
+    // dials); the registry is keyed by `(torrent_id, pid)` and torrent ids
+    // are not unique across sessions running in the same process — using it
+    // for both directions would cause cross-session take/put collisions in
+    // any environment that hosts multiple sessions (notably integration
+    // tests, but also future per-user multi-session deployments).
+    //
+    // The ext-handshake is already on the wire (the connection layer wrote
+    // it inline before pushing the `Handshook` event), so we only need to
+    // emit the optional bitfield + unchoke here. `process_peer_event`'s
+    // `Handshook` arm short-circuits on `peers.contains_key(pid)`, so the
+    // forwarded event is a benign no-op
     peers.insert(
         pid,
         Peer {
@@ -781,16 +908,15 @@ async fn adopt_inbound_peer(
             last_recv: Instant::now(),
             snub_since: None,
             their_ut_metadata_id: None,
-            sent_ext_handshake: false,
         },
     );
-    // Seed bitfield + unchoke straight away
     let bf = piece_tracker.bitfield();
-    let _ = cmd_tx
-        .send(PeerCommand::Send(Message::Bitfield(Bytes::from(bf))))
-        .await;
+    if should_send_initial_bitfield(&bf) {
+        let _ = cmd_tx
+            .send(PeerCommand::Send(Message::Bitfield(Bytes::from(bf))))
+            .await;
+    }
     let _ = cmd_tx.send(PeerCommand::Send(Message::Unchoke)).await;
-    // Mark am_choking false so Request from peer is served
     if let Some(p) = peers.get_mut(&pid) {
         p.am_choking = false;
     }
@@ -820,6 +946,7 @@ async fn process_peer_event(
     write_tasks: &mut tokio::task::JoinSet<()>,
     pending_dials: &mut HashMap<u32, SocketAddr>,
     known_addrs: &mut HashSet<SocketAddr>,
+    peer_src_tx: &mpsc::Sender<SocketAddr>,
     verify_tx: &mpsc::Sender<VerifyResult>,
     verifier: &PieceVerifier,
     info_bytes: &Arc<Vec<u8>>,
@@ -833,11 +960,7 @@ async fn process_peer_event(
     // (Piece) or unblock requests (Unchoke, Bitfield, Have)
     let mut kick = false;
     match ev {
-        PeerEvent::Handshook {
-            reserved,
-            encrypted,
-            ..
-        } => {
+        PeerEvent::Handshook { encrypted, .. } => {
             if !peers.contains_key(&pid) {
                 if let Some((cmd_tx, registry_addr)) = peer_registry::take(torrent_id, pid) {
                     // Move from pending dial to live peer. The registry is
@@ -879,41 +1002,20 @@ async fn process_peer_event(
                             last_recv: Instant::now(),
                             snub_since: None,
                             their_ut_metadata_id: None,
-                            sent_ext_handshake: false,
                         },
                     );
+                    // Extended handshake (when peer supports BEP-10) is
+                    // already on the wire — the connection layer wrote it
+                    // synchronously before the Handshook event was emitted
                     let bf = piece_tracker.bitfield();
-                    let _ = cmd_tx
-                        .send(PeerCommand::Send(Message::Bitfield(Bytes::from(bf))))
-                        .await;
+                    if should_send_initial_bitfield(&bf) {
+                        let _ = cmd_tx
+                            .send(PeerCommand::Send(Message::Bitfield(Bytes::from(bf))))
+                            .await;
+                    }
                     let _ = cmd_tx.send(PeerCommand::Send(Message::Unchoke)).await;
                     if let Some(p) = peers.get_mut(&pid) {
                         p.am_choking = false;
-                    }
-                }
-            }
-            // BEP-10: if the peer advertised the extension protocol bit
-            // in its handshake, send our extended handshake announcing
-            // the `ut_metadata` id we want them to use, plus the size of
-            // our raw info dict so they can fetch it via BEP-9. Doing
-            // this for every Handshook (inbound + outbound) lets a
-            // magnet leecher dial us and pull the info dict back
-            let supports_ext = super::wire::handshake::reserved::EXT_PROTOCOL;
-            if reserved[supports_ext.0] & supports_ext.1 != 0 {
-                if let Some(peer) = peers.get_mut(&pid) {
-                    if !peer.sent_ext_handshake {
-                        peer.sent_ext_handshake = true;
-                        let metadata_size = info_bytes.len() as u64;
-                        let hs = ExtHandshake::new_outgoing(
-                            OUR_UT_METADATA_ID,
-                            OUR_UT_PEX_ID,
-                            Some(metadata_size),
-                        );
-                        let payload = hs.encode();
-                        let _ = peer.cmd_tx.try_send(PeerCommand::Send(Message::Extended {
-                            ext_id: EXT_HANDSHAKE_ID,
-                            payload,
-                        }));
                     }
                 }
             }
@@ -928,6 +1030,32 @@ async fn process_peer_event(
             // and recycle their slot to a fresh dial \u2014 see the eviction
             // sweep in the `tick.tick()` arm
             peer.last_recv = Instant::now();
+            {
+                let kind = match &msg {
+                    Message::KeepAlive => "KeepAlive".to_string(),
+                    Message::Choke => "Choke".to_string(),
+                    Message::Unchoke => "Unchoke".to_string(),
+                    Message::Interested => "Interested".to_string(),
+                    Message::NotInterested => "NotInterested".to_string(),
+                    Message::Have { piece_index } => format!("Have({piece_index})"),
+                    Message::Bitfield(b) => {
+                        let set: u32 = b.iter().map(|x| x.count_ones()).sum();
+                        format!("Bitfield(len={} set_bits={})", b.len(), set)
+                    }
+                    Message::Piece { index, begin, data } => {
+                        format!("Piece(i={index} b={begin} len={})", data.len())
+                    }
+                    Message::Unknown { id, payload } => {
+                        format!("Unknown(id={id} len={})", payload.len())
+                    }
+                    other => format!("{other:?}"),
+                };
+                log::debug!(
+                    target: "diag",
+                    "RX {} {kind} am_interested={} peer_choking={} am_choking={}",
+                    peer.addr, peer.am_interested, peer.peer_choking, peer.am_choking
+                );
+            }
             match msg {
                 Message::Choke => peer.peer_choking = true,
                 Message::Unchoke => {
@@ -1179,15 +1307,13 @@ async fn process_peer_event(
                         });
                     }
                 }
-                // BEP 52 hash-exchange messages. We honour requests for
-                // an entire piece-layer at the piece base layer (the
-                // common shape used by the magnet resolver) by serving
-                // from the v2 verifier's `MerkleProofTable`. Other
-                // request shapes (sub-piece-layer leaf requests, partial
-                // ranges with proof_layers > 0) are answered with
-                // `HashReject` — a valid BEP 52 outcome that prompts the
-                // peer to fall back to v1 or another seeder. Inbound
-                // `Hashes` / `HashReject` we did not request are dropped
+                // BEP 52 hash-exchange messages. We honour requests for an entire
+                // piece-layer at the piece base layer (the common shape used by the
+                // magnet resolver) by serving from the v2 verifier's `MerkleProofTable`.
+                // Other request shapes (sub-piece-layer leaf requests, partial ranges
+                // with proof_layers > 0) are answered with `HashReject`—a valid BEP 52
+                // outcome that prompts the peer to fall back to v1 or another seeder.
+                // Inbound `Hashes` / `HashReject` we did not request are dropped
                 Message::HashRequest {
                     pieces_root,
                     base_layer,
@@ -1203,25 +1329,22 @@ async fn process_peer_event(
                         length,
                         proof_layers,
                     );
-                    // try_send: a `.await` here would stall the entire
-                    // torrent loop on a single peer's backed-up writer
-                    // queue. HashReject / Hashes are best-effort — if the
-                    // peer's command channel is full it will time out its
-                    // own request and either retry or fall back to v1
+                    // try_send: a `.await` here would stall the entire torrent loop on a
+                    // single peer's backed-up writer queue. HashReject / Hashes are
+                    // best-effort—if the peer's command channel is full it will time out
+                    // its own request and either retry or fall back to v1
                     let _ = peer.cmd_tx.try_send(PeerCommand::Send(response));
                 }
                 Message::Hashes { .. } | Message::HashReject { .. } => {
                     // Discard: no outstanding HASH_REQUEST to correlate
                 }
-                // BEP-10 extended messages. We respond to:
-                //  - The handshake itself (`ext_id == 0`): record the
-                //    peer's `ut_metadata` id so subsequent REQUESTs can
-                //    be validated.
-                //  - `ut_metadata` REQUESTs (`ext_id == OUR_UT_METADATA_ID`):
-                //    serve a 16 KiB block of our raw info dict, or
-                //    REJECT for out-of-range pieces.
-                // PEX (`ut_pex`) is advertised but not handled here
-                // beyond ignoring inbound payloads
+                // BEP-10 extended messages. We handle:
+                //  - The handshake itself (`ext_id == 0`): record the peer's `ut_metadata`
+                //    id so subsequent REQUESTs can be validated
+                //  - `ut_metadata` REQUESTs (`ext_id == OUR_UT_METADATA_ID`): serve a 16 KiB
+                //    block of our raw info dict, or REJECT for out-of-range pieces
+                //  - `ut_pex` (`ext_id == OUR_UT_PEX_ID`): BEP-11 peer exchange—feed gossiped
+                //    peers into the dial path
                 Message::Extended { ext_id, payload } => {
                     if ext_id == EXT_HANDSHAKE_ID {
                         if let Some(peer_ext) = ExtHandshake::decode(&payload) {
@@ -1229,15 +1352,21 @@ async fn process_peer_event(
                         }
                     } else if ext_id == OUR_UT_METADATA_ID {
                         serve_ut_metadata(peer, &payload, info_bytes);
+                    } else if ext_id == OUR_UT_PEX_ID {
+                        // A connected peer (often a seeder) gossips other swarm members
+                        if let Some((v4, v6)) = super::wire::extended::parse_ut_pex(&payload) {
+                            for addr in v4.into_iter().chain(v6) {
+                                let _ = peer_src_tx.try_send(addr);
+                            }
+                        }
                     }
                 }
                 _ => {}
             }
         }
         PeerEvent::Disconnected { reason } => {
-            // Clear from either in-flight or live, and release the address
-            // for future retries (otherwise a single drop permanently
-            // blacklists the peer).
+            // Clear from either in-flight or live, and release the address for future
+            // retries (otherwise a single drop permanently blacklists the peer)
             let addr = pending_dials
                 .remove(&pid)
                 .or_else(|| peers.get(&pid).map(|p| p.addr));
@@ -1348,12 +1477,12 @@ async fn process_verify_result(
     }
 }
 
-/// Clear the endgame flag once the working set has grown back above the
-/// activation threshold. Endgame is otherwise a one-way ratchet (set when
-/// `pending_chunks() <= 64`, never cleared), which prevents pieces re-queued
-/// via `reset_piece` after a hash/write failure from regaining the cheap
-/// sequential-scan path in `next_chunk` and forces every peer through the
-/// `choose_piece_excluding` fallback for the rest of the download
+/// Clear the endgame flag once the working set has grown back above the activation
+/// threshold. Endgame is otherwise a one-way ratchet (set when `pending_chunks() <= 64`,
+/// never cleared), which prevents pieces re-queued via `reset_piece` after a
+/// hash/write failure from regaining the cheap sequential-scan path in `next_chunk`
+/// and forces every peer through the `choose_piece_excluding` fallback for the rest
+/// of the download
 fn maybe_clear_endgame(chunk_tracker: &mut ChunkTracker) {
     if chunk_tracker.endgame() && chunk_tracker.pending_chunks() > 64 {
         chunk_tracker.set_endgame(false);
@@ -1361,7 +1490,14 @@ fn maybe_clear_endgame(chunk_tracker: &mut ChunkTracker) {
 }
 
 async fn send_interested_if_useful(peer: &mut Peer, piece_tracker: &mut PieceTracker) {
-    if !peer.am_interested && piece_tracker.choose_piece(&peer.bitfield).is_some() {
+    let useful = piece_tracker.choose_piece(&peer.bitfield).is_some();
+    let set_bits: u32 = peer.bitfield.iter().map(|x| x.count_ones()).sum();
+    log::debug!(
+        target: "diag",
+        "send_interested_if_useful {} am_interested={} useful={} my_bitfield_set={}",
+        peer.addr, peer.am_interested, useful, set_bits
+    );
+    if !peer.am_interested && useful {
         peer.am_interested = true;
         let _ = peer
             .cmd_tx
@@ -1684,6 +1820,10 @@ fn peer_bitfield_is_full(bitfield: &[u8], total_pieces: usize) -> bool {
     bitfield[full_bytes] & mask == mask
 }
 
+fn should_send_initial_bitfield(bitfield: &[u8]) -> bool {
+    bitfield.iter().any(|b| *b != 0)
+}
+
 fn collect_trackers(meta: &TorrentMeta) -> Vec<String> {
     let mut v = Vec::new();
     if let Some(a) = &meta.announce {
@@ -1700,13 +1840,13 @@ fn collect_trackers(meta: &TorrentMeta) -> Vec<String> {
 }
 
 fn spawn_tracker_pollers(
+    tx: mpsc::Sender<SocketAddr>,
     trackers: Vec<String>,
     info_hashes: Vec<Id20>,
     peer_id: Id20,
     port: u16,
     stats: Arc<Mutex<TorrentStats>>,
-) -> mpsc::Receiver<SocketAddr> {
-    let (tx, rx) = mpsc::channel(256);
+) {
     for url in trackers {
         for info_hash in &info_hashes {
             let tx = tx.clone();
@@ -1770,7 +1910,6 @@ fn spawn_tracker_pollers(
             });
         }
     }
-    rx
 }
 
 /// Build a `HASHES` / `HashReject` reply for an inbound BEP 52
@@ -1947,6 +2086,19 @@ mod tests {
             }
             other => panic!("expected Hashes, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn initial_bitfield_is_suppressed_when_empty() {
+        assert!(!should_send_initial_bitfield(&[]));
+        assert!(!should_send_initial_bitfield(&[0]));
+        assert!(!should_send_initial_bitfield(&[0, 0, 0]));
+    }
+
+    #[test]
+    fn initial_bitfield_is_sent_when_any_piece_is_local() {
+        assert!(should_send_initial_bitfield(&[0x80]));
+        assert!(should_send_initial_bitfield(&[0, 0x01]));
     }
 
     #[test]

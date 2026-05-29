@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+#[cfg(not(target_os = "android"))]
 use tauri::{
     image::Image,
     menu::{Menu, MenuBuilder, MenuItemBuilder, PredefinedMenuItem},
@@ -7,8 +8,13 @@ use tauri::{
     App, AppHandle, Emitter, Manager,
 };
 
+#[cfg(target_os = "android")]
+use tauri::{App, AppHandle};
+
+#[cfg(not(target_os = "android"))]
 use super::{emit_command, show_and_emit};
 
+#[cfg(not(target_os = "android"))]
 fn toggle_main_window(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let is_visible = window.is_visible().unwrap_or(false);
@@ -20,6 +26,7 @@ fn toggle_main_window(app: &AppHandle) {
     }
 }
 
+#[cfg(not(target_os = "android"))]
 fn get_tray_menu_text(labels: &HashMap<String, String>, id: &str, fallback: &str) -> String {
     labels
         .get(id)
@@ -29,6 +36,7 @@ fn get_tray_menu_text(labels: &HashMap<String, String>, id: &str, fallback: &str
         .to_string()
 }
 
+#[cfg(not(target_os = "android"))]
 fn build_tray_menu(
     handle: &AppHandle,
     labels: &HashMap<String, String>,
@@ -100,6 +108,7 @@ fn build_tray_menu(
     Ok(menu)
 }
 
+#[cfg(not(target_os = "android"))]
 pub fn setup_tray(app: &App) -> Result<(), Box<dyn std::error::Error>> {
     let handle = app.handle();
     let menu = build_tray_menu(handle, &HashMap::new())?;
@@ -150,6 +159,12 @@ pub fn setup_tray(app: &App) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+#[cfg(target_os = "android")]
+pub fn setup_tray(_app: &App) -> Result<(), Box<dyn std::error::Error>> {
+    Ok(())
+}
+
+#[cfg(not(target_os = "android"))]
 pub fn update_tray_menu_labels(
     handle: &AppHandle,
     labels: &HashMap<String, String>,
@@ -160,4 +175,12 @@ pub fn update_tray_menu_labels(
 
     let menu = build_tray_menu(handle, labels).map_err(|e| e.to_string())?;
     tray.set_menu(Some(menu)).map_err(|e| e.to_string())
+}
+
+#[cfg(target_os = "android")]
+pub fn update_tray_menu_labels(
+    _handle: &AppHandle,
+    _labels: &HashMap<String, String>,
+) -> Result<(), String> {
+    Ok(())
 }

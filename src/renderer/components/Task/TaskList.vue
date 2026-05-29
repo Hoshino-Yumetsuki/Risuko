@@ -8,8 +8,8 @@
       key-field="_displayKey"
     >
       <template #default="{ item }">
-        <div :attr="item.gid" :class="getItemClass(item)" @click="handleItemClick(item, $event)">
-          <mo-task-item :task="item" />
+        <div :attr="item._displayKey" @click="handleItemClick(item, $event)">
+          <mo-task-item :task="item" :selected="isItemSelected(item)" />
         </div>
       </template>
     </recycle-scroller>
@@ -20,11 +20,10 @@
         preset="fadeInUp"
         :duration="0.4"
         :delay="getStaggerDelay(index)"
-        :attr="item.gid"
-        :class="getItemClass(item)"
+        :attr="item._displayKey"
         @click="handleItemClick(item, $event)"
       >
-        <mo-task-item :task="item" />
+        <mo-task-item :task="item" :selected="isItemSelected(item)" />
       </mo-enter>
     </mo-drag-select>
     <footer class="task-pagination">
@@ -57,6 +56,7 @@
 <script lang="ts">
 import { cloneDeep } from "lodash";
 import DragSelect from "@/components/DragSelect/Index.vue";
+import is from "@/shims/platform";
 import { useTaskStore } from "@/store/task";
 import TaskItem from "./TaskItem.vue";
 
@@ -69,10 +69,11 @@ export default {
 		[TaskItem.name]: TaskItem,
 	},
 	data() {
+		// Mirror the store's row keys so selection state survives page changes and remounts
 		const selectedList = cloneDeep(useTaskStore().selectedGidList) || [];
 		return {
 			selectedList,
-			lastClickedGid: null as string | null,
+			lastClickedKey: null as string | null,
 		};
 	},
 	computed: {
@@ -121,78 +122,80 @@ export default {
 		},
 		onKeyDown(event: KeyboardEvent) {
 			if ((event.metaKey || event.ctrlKey) && event.key === "a") {
-				// Ignore if user is typing in an input/textarea
+				// Ignore shortcuts while the user is typing
 				const tag = (event.target as HTMLElement)?.tagName;
 				if (tag === "INPUT" || tag === "TEXTAREA") {
 					return;
 				}
 				event.preventDefault();
-				const allGids = [...new Set(this.paginatedTaskList.map((t) => t.gid))];
-				this.selectedList = allGids;
-				useTaskStore().selectTasks(cloneDeep(allGids));
+				const allKeys = this.paginatedTaskList.map((t) => t._displayKey);
+				this.selectedList = allKeys;
+				useTaskStore().selectTasks(cloneDeep(allKeys));
 			}
 		},
 		handleItemClick(item, event) {
-			const gid = item.gid;
-			const isMulti = event.metaKey || event.ctrlKey;
+			const key: string = item._displayKey;
+			// Android has no modifier keys, so a tap toggles this row like Cmd/Ctrl-click
+			// Keep the rest selected unless the user uses desktop-style single select
+			const isMulti = event.metaKey || event.ctrlKey || is.android();
 			const isShift = event.shiftKey;
 			let newList: string[];
 
-			if (isShift && this.lastClickedGid) {
-				const gids = this.paginatedTaskList.map((t) => t.gid);
-				const anchorIdx = gids.indexOf(this.lastClickedGid);
-				const currentIdx = gids.indexOf(gid);
+			if (isShift && this.lastClickedKey) {
+				const keys = this.paginatedTaskList.map((t) => t._displayKey);
+				const anchorIdx = keys.indexOf(this.lastClickedKey);
+				const currentIdx = keys.indexOf(key);
 				if (anchorIdx !== -1 && currentIdx !== -1) {
 					const start = Math.min(anchorIdx, currentIdx);
 					const end = Math.max(anchorIdx, currentIdx);
-					const rangeGids = gids.slice(start, end + 1);
+					const rangeKeys = keys.slice(start, end + 1);
 					if (isMulti) {
-						// Shift+Cmd: add range to existing selection
+						// Shift+Cmd adds the range to the current selection
 						const set = new Set<string>(this.selectedList);
-						for (const g of rangeGids) {
-							set.add(g);
+						for (const k of rangeKeys) {
+							set.add(k);
 						}
 						newList = [...set];
 					} else {
-						// Shift only: replace selection with range
-						newList = rangeGids;
+						// Shift alone replaces the selection with the range
+						newList = rangeKeys;
 					}
 				} else {
-					newList = [gid];
+					newList = [key];
 				}
 			} else if (isMulti) {
-				const idx = this.selectedList.indexOf(gid);
+				const idx = this.selectedList.indexOf(key);
 				newList =
 					idx === -1
-						? [...this.selectedList, gid]
-						: this.selectedList.filter((id) => id !== gid);
+						? [...this.selectedList, key]
+						: this.selectedList.filter((id) => id !== key);
 			} else {
 				newList =
-					this.selectedList.length === 1 && this.selectedList[0] === gid
+					this.selectedList.length === 1 && this.selectedList[0] === key
 						? []
-						: [gid];
+						: [key];
 			}
 
 			if (!isShift) {
-				this.lastClickedGid = gid;
+				this.lastClickedKey = key;
 			}
 
 			this.selectedList = newList;
 			useTaskStore().selectTasks(cloneDeep(newList));
 		},
 		handleDragSelectChange(selectedList) {
+			// DragSelect gives us the row key from `attr`
 			this.selectedList = selectedList;
 			useTaskStore().selectTasks(cloneDeep(selectedList));
 		},
-		getItemClass(item) {
-			const isSelected = this.selectedList.includes(item.gid);
-			return {
-				selected: isSelected,
-			};
+		isItemSelected(item): boolean {
+			const key = item._displayKey;
+			return this.selectedList.includes(key);
 		},
 	},
 	watch: {
-		selectedGidList(newVal) {
+		selectedGidList(newVal: string[]) {
+			// The store already tracks row keys, so the component just mirrors them
 			this.selectedList = newVal;
 		},
 	},

@@ -1,6 +1,6 @@
 {
 	"name": "risuko",
-	"version": "0.3.3",
+	"version": "0.3.4",
 	"description": "A full-featured download manager",
 	"homepage": "https://risuko.vercel.app",
 	"author": {
@@ -19,6 +19,11 @@
 		"build": "node scripts/build.mjs",
 		"dev:renderer": "vite --config vite.renderer.config.ts --mode development --port 9080",
 		"pack:renderer": "vite build --config vite.renderer.config.ts --mode production",
+		"android:dev": "node scripts/android-env.mjs pnpm exec tauri android dev",
+		"android:build": "node scripts/android-env.mjs pnpm exec tauri android build --apk --split-per-abi",
+		"android:build:debug": "node scripts/android-env.mjs pnpm exec tauri android build --debug --target aarch64 --apk --split-per-abi",
+		"android:build:signed": "pnpm android:build && pnpm android:sign",
+		"android:sign": "node scripts/sign-android-apks.mjs",
 		"fmt": "pnpx @biomejs/biome check --write --max-diagnostics none",
 		"typecheck": "vue-tsc --noEmit -p tsconfig.json",
 		"knip": "pnpx knip --fix",
@@ -30,6 +35,7 @@
 		"node": ">=22.0.0"
 	},
 	"dependencies": {
+		"@lucide/vue": "^1.16.0",
 		"@tauri-apps/api": "^2.11.0",
 		"@tauri-apps/plugin-clipboard-manager": "^2.3.2",
 		"@tauri-apps/plugin-dialog": "^2.7.1",
@@ -37,7 +43,6 @@
 		"class-variance-authority": "^0.7.1",
 		"clsx": "^2.1.1",
 		"eventemitter3": "^5.0.4",
-		"@lucide/vue": "^1.16.0",
 		"motion-v": "^2.2.1",
 		"reka-ui": "^2.9.8",
 		"tailwind-merge": "^3.6.0",
@@ -53,11 +58,11 @@
 		"@tauri-apps/cli": "^2.11.2",
 		"@types/node": "^25.9.1",
 		"@vitejs/plugin-vue": "^6.0.7",
-		"@vue/compiler-sfc": "^3.5.34",
+		"@vue/compiler-sfc": "^3.5.35",
 		"axios": "^1.16.1",
 		"cfonts": "^3.3.1",
 		"chalk": "^5.6.2",
-		"i18next": "^26.2.0",
+		"i18next": "^26.3.0",
 		"lodash": "^4.18.1",
 		"normalize.css": "^8.0.1",
 		"pinia": "^3.0.4",
@@ -68,9 +73,9 @@
 		"typescript": "^6.0.3",
 		"vite": "^8.0.14",
 		"vite-plugin-static-copy": "^4.1.0",
-		"vue": "^3.5.34",
+		"vue": "^3.5.35",
 		"vue-router": "^5.0.7",
-		"vue-tsc": "^3.3.1",
+		"vue-tsc": "^3.3.2",
 		"vue-virtual-scroller": "3.0.4"
 	},
 	"packageManager": "pnpm@11.3.0"

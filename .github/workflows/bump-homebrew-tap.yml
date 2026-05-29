@@ -18,6 +18,9 @@ on:
 permissions:
   contents: read
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   bump:
     name: Bump Formula/risuko-cli.rb and Casks/risuko-app.rb

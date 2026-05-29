@@ -287,6 +287,59 @@
 		font-size: 12px;
 		font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
 	}
+	.mo-input-group.dev-log-path-group {
+		align-items: stretch;
+		border: 1px solid var(--border);
+		border-radius: calc(var(--radius) - 2px);
+		background: transparent;
+		overflow: hidden;
+	}
+	.dev-log-path-input {
+		flex: 1 1 0;
+		min-width: 0;
+		height: 36px;
+		padding: 8px 10px;
+		border: 0;
+		resize: none;
+		overflow-x: auto;
+		overflow-y: hidden;
+		white-space: pre;
+		background: transparent;
+		color: var(--foreground);
+		font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
+		font-size: 12px;
+		line-height: 18px;
+		scrollbar-width: thin;
+	}
+	.dev-log-path-input:focus-visible {
+		outline: 2px solid color-mix(in srgb, var(--accent) 72%, var(--foreground));
+		outline-offset: -2px;
+		box-shadow: inset 0 0 0 1px var(--foreground);
+	}
+	.mo-input-group--bordered > .mo-input-append.dev-log-path-actions {
+		gap: 0;
+		padding: 0;
+		border-left: 1px solid var(--border);
+		background: var(--muted);
+	}
+	.mo-input-append.dev-log-path-actions .select-directory.ui-button,
+	.mo-input-append.dev-log-path-actions .show-in-folder {
+		width: 36px;
+		height: 36px;
+		min-width: 36px;
+		min-height: 36px;
+		padding: 0;
+		border: 0;
+		border-radius: 0;
+		background: transparent;
+		color: var(--muted-foreground);
+		box-shadow: none;
+	}
+	.mo-input-append.dev-log-path-actions .select-directory.ui-button:hover,
+	.mo-input-append.dev-log-path-actions .show-in-folder:hover {
+		background: color-mix(in srgb, var(--foreground) 7%, transparent);
+		transform: none;
+	}
 	.dev-danger-zone {
 		border: 1px solid rgba(239, 68, 68, 0.2);
 		border-radius: calc(var(--radius) - 2px);

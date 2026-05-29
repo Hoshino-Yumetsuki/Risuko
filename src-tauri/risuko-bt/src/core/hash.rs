@@ -31,8 +31,6 @@ impl Id20 {
         hex::encode(self.0)
     }
 
-    /// Alias of `to_hex`, kept to match the librqbit API shape that
-    /// `engine::torrent.rs` consumes
     pub fn as_string(&self) -> String {
         self.to_hex()
     }

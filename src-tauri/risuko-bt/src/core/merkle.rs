@@ -356,6 +356,21 @@ use std::sync::Arc;
 
 use super::metainfo::TorrentMeta;
 
+pub fn supports_v2_wire(meta: &TorrentMeta) -> bool {
+    let Some(v2) = meta.info_v2.as_ref() else {
+        return false;
+    };
+    v2.files.iter().all(|file| {
+        let layer = meta
+            .piece_layers
+            .get(&file.pieces_root)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[]);
+        MerkleProofTable::from_layer_bytes(file.pieces_root, file.length, v2.piece_length, layer)
+            .is_ok()
+    })
+}
+
 /// Strategy for verifying a fully-downloaded piece. Chosen once per torrent
 /// at session-attach time. v1 torrents use SHA-1 over the piece bytes
 /// (`pieces[piece_index * 20 .. + 20]`); v2 torrents collapse 16 KiB

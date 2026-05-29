@@ -33,6 +33,7 @@ pub struct BtHealthSnapshot {
 }
 
 /// BitTorrent download management via the in-tree `risuko-bt` engine
+#[derive(Clone)]
 pub struct TorrentEngine {
     session: Option<Arc<bt::Session>>,
     output_dir: PathBuf,
@@ -227,15 +228,14 @@ impl TorrentEngine {
 
         log::info!("Adding magnet to dir={}: {}", dir, magnet_uri);
 
+        // When bt-save-metadata is enabled, resolve the magnet ourselves first
+        // so we can write the synthesized .torrent file next to the payload.
+        // The resulting bytes are reused to add the torrent, so we do not pay
+        // the resolve cost twice
         let save_metadata = options
             .get("bt-save-metadata")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
-
-        // When bt-save-metadata is enabled, resolve the magnet ourselves first
-        // so we can write the synthesized .torrent file next to the payload.
-        // The resulting bytes are reused to add the torrent, so we do not pay
-        // the resolve cost twice.
         if save_metadata {
             let enc = encryption_policy_from_str(
                 options.get("bt-encryption-policy").and_then(|v| v.as_str()),
@@ -247,34 +247,7 @@ impl TorrentEngine {
                         &resolved.trackers,
                         &resolved.piece_layers,
                     );
-                    if let Ok(meta) = bt::parse_torrent(&bytes) {
-                        let name = if meta.info.name.is_empty() {
-                            format!("{:?}", meta.info_hash)
-                        } else {
-                            meta.info.name.clone()
-                        };
-                        let safe = sanitize_file_stem(&name);
-                        let path = Path::new(dir).join(format!("{}.torrent", safe));
-                        // Ensure custom `dir` values exist before writing the
-                        // synthesized .torrent file.
-                        if let Some(parent) = path.parent() {
-                            if let Err(e) = tokio::fs::create_dir_all(parent).await {
-                                log::warn!(
-                                    "Failed to create metadata dir {}: {}",
-                                    parent.display(),
-                                    e
-                                );
-                            }
-                        }
-                        match tokio::fs::write(&path, &bytes).await {
-                            Ok(()) => log::info!("Saved torrent metadata to {}", path.display()),
-                            Err(e) => log::warn!(
-                                "Failed to save torrent metadata to {}: {}",
-                                path.display(),
-                                e
-                            ),
-                        }
-                    }
+                    save_torrent_metadata_if_enabled(&bytes, options, &self.output_dir).await;
                     return self.add_torrent_bytes(&bytes, options).await;
                 }
                 Err(e) => {
@@ -295,6 +268,36 @@ impl TorrentEngine {
             handle.info_hash
         );
         Ok(handle)
+    }
+
+    pub async fn resolve_and_add_magnet(
+        &self,
+        magnet_uri: &str,
+        options: &Map<String, Value>,
+        timeout_secs: u64,
+    ) -> Result<TorrentHandle, String> {
+        let trackers = Self::parse_trackers(options);
+        let enc = encryption_policy_from_str(
+            options.get("bt-encryption-policy").and_then(|v| v.as_str()),
+        );
+        let resolved = bt::magnet::resolve(
+            magnet_uri,
+            &trackers,
+            Duration::from_secs(timeout_secs),
+            enc,
+        )
+        .await
+        .map_err(|e| format!("Failed to resolve magnet: {}", e))?;
+
+        let bytes = bt::magnet::synth_torrent_bytes(
+            &resolved.info_bytes,
+            &resolved.trackers,
+            &resolved.piece_layers,
+        );
+
+        save_torrent_metadata_if_enabled(&bytes, options, &self.output_dir).await;
+
+        self.add_torrent_bytes(&bytes, options).await
     }
 
     pub async fn resolve_magnet(
@@ -564,6 +567,12 @@ pub struct PeerSnapshot {
     pub seeder: bool,
 }
 
+pub struct MagnetInfo {
+    pub info_hash: String,
+    pub info_hash_v2: Option<String>,
+    pub display_name: Option<String>,
+}
+
 pub struct TorrentMetadataInfo {
     pub piece_length: u32,
     pub num_pieces: u32,
@@ -574,6 +583,15 @@ pub struct TorrentMetadataInfo {
 
 pub fn is_magnet_uri(uri: &str) -> bool {
     uri.trim().to_lowercase().starts_with("magnet:")
+}
+
+pub fn inspect_magnet(uri: &str) -> Result<MagnetInfo, String> {
+    let magnet = bt::Magnet::parse(uri).map_err(|e| e.to_string())?;
+    Ok(MagnetInfo {
+        info_hash: magnet.info_hash().as_string(),
+        info_hash_v2: magnet.info_hash_v2().map(|h| h.as_string()),
+        display_name: magnet.display_name.clone(),
+    })
 }
 
 /// Strip filesystem-unsafe characters from a torrent name so it can be used
@@ -593,6 +611,50 @@ fn sanitize_file_stem(name: &str) -> String {
         "torrent".to_string()
     } else {
         trimmed
+    }
+}
+
+/// Write a synthesized `.torrent` file when `bt-save-metadata` is enabled.
+/// Parses `bytes` to extract the torrent name, builds a safe stem, creates
+/// the parent directory, and writes the file via `tokio::fs::write`.
+/// All failures are logged as warnings so callers are never blocked.
+async fn save_torrent_metadata_if_enabled(
+    bytes: &[u8],
+    options: &Map<String, Value>,
+    output_dir: &Path,
+) {
+    let save_metadata = options
+        .get("bt-save-metadata")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    if !save_metadata {
+        return;
+    }
+    let dir = options
+        .get("dir")
+        .and_then(|v| v.as_str())
+        .unwrap_or_else(|| output_dir.to_str().unwrap_or("."));
+    if let Ok(meta) = bt::parse_torrent(bytes) {
+        let name = if meta.info.name.is_empty() {
+            format!("{:?}", meta.info_hash)
+        } else {
+            meta.info.name.clone()
+        };
+        let safe = sanitize_file_stem(&name);
+        let path = Path::new(dir).join(format!("{}.torrent", safe));
+        if let Some(parent) = path.parent() {
+            if let Err(e) = tokio::fs::create_dir_all(parent).await {
+                log::warn!("Failed to create metadata dir {}: {}", parent.display(), e);
+            }
+        }
+        match tokio::fs::write(&path, bytes).await {
+            Ok(()) => log::info!("Saved torrent metadata to {}", path.display()),
+            Err(e) => log::warn!(
+                "Failed to save torrent metadata to {}: {}",
+                path.display(),
+                e
+            ),
+        }
     }
 }
 

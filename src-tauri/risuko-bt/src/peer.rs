@@ -16,7 +16,8 @@ pub mod connection;
 pub mod state;
 
 pub use connection::{
-    accept, accept_with_policy, connect, EncryptionPolicy, PeerCommand, PeerEvent, PeerHandle,
-    SpawnPeer,
+    accept, accept_utp_plaintext, accept_with_policy, accept_with_policy_and_capabilities, connect,
+    connect_utp_plaintext, connect_with_utp_fallback, EncryptionPolicy, ExtHandshakeBuilder,
+    KnownInfoHash, PeerCommand, PeerEvent, PeerHandle, SpawnPeer,
 };
 pub use state::{PeerFlags, PeerState};

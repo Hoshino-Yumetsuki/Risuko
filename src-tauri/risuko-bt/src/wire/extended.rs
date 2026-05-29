@@ -6,6 +6,7 @@
 //! per-peer extension message types negotiated via the handshake's `m` dict
 
 use std::collections::HashMap;
+use std::net::IpAddr;
 
 use bytes::{BufMut, Bytes, BytesMut};
 
@@ -31,6 +32,10 @@ pub struct ExtHandshake {
     pub metadata_size: Option<u64>,
     /// Peer-advertised client string ("v" key)
     pub client: Option<String>,
+    /// BEP-10 `yourip`: the peer's public address as we observed it. Some real-world
+    /// clients (notably some CN BT implementations) only engage with a remote that
+    /// echoes their address back here
+    pub yourip: Option<IpAddr>,
 }
 
 impl ExtHandshake {
@@ -48,7 +53,15 @@ impl ExtHandshake {
                 env!("CARGO_PKG_NAME"),
                 env!("CARGO_PKG_VERSION")
             )),
+            yourip: None,
         }
+    }
+
+    /// Set `yourip` to the peer's address (compact-encoded on the wire). Builder
+    /// helper used by the connection layer per dial / accept
+    pub fn with_yourip(mut self, ip: IpAddr) -> Self {
+        self.yourip = Some(ip);
+        self
     }
 
     pub fn encode(&self) -> Bytes {
@@ -58,12 +71,22 @@ impl ExtHandshake {
             .map(|(k, v)| (k.clone(), Value::Int(*v as i64)))
             .collect();
         m_entries.sort_by(|a, b| a.0.cmp(&b.0));
+        // Bencode dictionaries must be lexicographically sorted by key. The keys we
+        // emit are `m`, `metadata_size`, `v`, `yourip`—all distinct and already in
+        // sorted order, so we just push in that fixed sequence
         let mut dict = vec![(b"m".to_vec(), Value::Dict(m_entries))];
         if let Some(sz) = self.metadata_size {
             dict.push((b"metadata_size".to_vec(), Value::Int(sz as i64)));
         }
         if let Some(v) = &self.client {
             dict.push((b"v".to_vec(), Value::Bytes(v.as_bytes().to_vec())));
+        }
+        if let Some(ip) = &self.yourip {
+            let bytes = match ip {
+                IpAddr::V4(v4) => v4.octets().to_vec(),
+                IpAddr::V6(v6) => v6.octets().to_vec(),
+            };
+            dict.push((b"yourip".to_vec(), Value::Bytes(bytes)));
         }
         Bytes::from(encode_to_vec(&Value::Dict(dict)))
     }
@@ -94,10 +117,26 @@ impl ExtHandshake {
             .iter()
             .find(|(k, _)| k == b"v")
             .and_then(|(_, v)| v.as_str().map(String::from));
+        let yourip = dict
+            .iter()
+            .find(|(k, _)| k == b"yourip")
+            .and_then(|(_, v)| v.as_bytes())
+            .and_then(|bytes| match bytes.len() {
+                4 => {
+                    let arr: [u8; 4] = bytes.try_into().ok()?;
+                    Some(IpAddr::V4(std::net::Ipv4Addr::from(arr)))
+                }
+                16 => {
+                    let arr: [u8; 16] = bytes.try_into().ok()?;
+                    Some(IpAddr::V6(std::net::Ipv6Addr::from(arr)))
+                }
+                _ => None,
+            });
         Some(Self {
             supported,
             metadata_size,
             client,
+            yourip,
         })
     }
 
@@ -270,6 +309,24 @@ mod tests {
         assert_eq!(parsed.msg_type, ut_metadata_type::REJECT);
         assert_eq!(parsed.piece, 7);
         assert!(parsed.block.is_empty());
+    }
+
+    #[test]
+    fn yourip_ipv4_round_trip() {
+        let ip = std::net::IpAddr::V4("192.168.1.42".parse().unwrap());
+        let out = ExtHandshake::new_outgoing(3, 4, None).with_yourip(ip);
+        let bytes = out.encode();
+        let parsed = ExtHandshake::decode(&bytes).unwrap();
+        assert_eq!(parsed.yourip, Some(ip));
+    }
+
+    #[test]
+    fn yourip_ipv6_round_trip() {
+        let ip = std::net::IpAddr::V6("2001:db8::1".parse().unwrap());
+        let out = ExtHandshake::new_outgoing(3, 4, None).with_yourip(ip);
+        let bytes = out.encode();
+        let parsed = ExtHandshake::decode(&bytes).unwrap();
+        assert_eq!(parsed.yourip, Some(ip));
     }
 
     #[test]

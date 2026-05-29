@@ -38,6 +38,7 @@ export default createRouter({
 					path: "/preference",
 					name: "preference",
 					component: () => import("@/components/Preference/Index.vue"),
+					redirect: "/preference/basic",
 					props: true,
 					children: [
 						{
