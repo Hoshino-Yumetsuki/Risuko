@@ -554,7 +554,7 @@ impl Session {
         // discover peers via trackers, LSD, and inbound connections. For a
         // trackerless torrent—or one with dead trackers, which is common for CN
         // Thunder/Xunlei swarms—this leaves the download with no peer source so it
-        // stalls at 0% even though the swarm is reachable over DHT 
+        // stalls at 0% even though the swarm is reachable over DHT
         if !info.private {
             if let Some(dht) = self.dht.lock().clone() {
                 let info_hash = meta.info_hash;
@@ -575,7 +575,7 @@ impl Session {
                         );
                         while let Some(addr) = rx.recv().await {
                             if cmd_tx.send(TorrentCommand::AddPeer(addr)).await.is_err() {
-                                return // torrent loop ended
+                                return; // torrent loop ended
                             }
                         }
                         // A single lookup rarely returns the whole swarm and DHT peer sets

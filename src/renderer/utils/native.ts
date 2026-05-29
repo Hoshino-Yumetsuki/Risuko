@@ -21,7 +21,9 @@ function dirname(path = ""): string {
 		return value;
 	}
 	if (index === 0) {
-		return value.charAt(0) === "/" || value.charAt(0) === "\\" ? value.charAt(0) : value;
+		return value.charAt(0) === "/" || value.charAt(0) === "\\"
+			? value.charAt(0)
+			: value;
 	}
 	// Windows drive root: "C:\file.tmp" → "C:\"; the separator immediately follows the drive letter
 	if (value.charCodeAt(index - 1) === 58 /* ':' */) {

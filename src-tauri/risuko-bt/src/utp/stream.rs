@@ -478,6 +478,8 @@ impl ConnState {
         }
         self.state = State::Closed;
         self.eof = true;
+        self.unacked.clear();
+        self.send_buf.clear();
         if let Some(tx) = self.connect_notify.take() {
             let _ = tx.send(Err(io::Error::from(kind)));
         }
@@ -841,5 +843,25 @@ mod tests {
         // Wraparound: 1 is after 65535.
         assert!(seq_after(1, 65535));
         assert!(!seq_after(65535, 1));
+    }
+
+    #[test]
+    fn fail_clears_in_flight_so_driver_stops_spinning() {
+        let shared = new_shared("127.0.0.1:1".parse().unwrap(), 2, RoleKind::Initiator);
+        let mut st = shared.state.lock();
+        st.state = State::Connected;
+        st.unacked.push_back(OutPacket {
+            packet_type: PacketType::Data,
+            seq_nr: 2,
+            payload: vec![0u8; MSS],
+            sent_at: Instant::now() - Duration::from_secs(60),
+            transmissions: MAX_RETRANSMITS,
+        });
+        st.send_buf.extend(std::iter::repeat(0u8).take(100));
+
+        st.fail(io::ErrorKind::TimedOut);
+        assert!(st.unacked.is_empty());
+        assert!(st.send_buf.is_empty());
+        assert!(st.next_deadline().is_none());
     }
 }
