@@ -205,26 +205,9 @@ pub fn open_path(handle: AppHandle, path: String) -> Result<(), String> {
     {
         // URI in, intent out
         // For real file paths, guess the MIME type first so Android shows useful viewers
-        if path.starts_with("content://")
-            || path.starts_with("http://")
-            || path.starts_with("https://")
-            || path.starts_with("file://")
-        {
-            let _ = handle;
-            let mime = guess_android_mime(&path);
-            return crate::commands::android_intent::dispatch_view_with_chooser(
-                &path,
-                &mime,
-                "Open file with",
-            );
-        }
         let _ = handle;
         let mime = guess_android_mime(&path);
-        return crate::commands::android_intent::dispatch_file_path_with_chooser(
-            &path,
-            &mime,
-            "Open file with",
-        );
+        return crate::commands::android_intent::open_file(&path, &mime);
     }
     #[cfg(not(target_os = "android"))]
     {

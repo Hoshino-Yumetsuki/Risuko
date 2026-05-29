@@ -1,21 +1,21 @@
 {
-  "name": "@risuko/js-darwin-x64",
-  "version": "0.3.4",
-  "description": "Risuko JS native module for macOS x64",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/YueMiyuki/Risuko.git",
-    "directory": "packages/risuko-js/npm/darwin-x64"
-  },
-  "license": "MIT",
-  "os": [
-    "darwin"
-  ],
-  "cpu": [
-    "x64"
-  ],
-  "main": "risuko.darwin-x64.node",
-  "files": [
-    "risuko.darwin-x64.node"
-  ]
+	"name": "@risuko/js-darwin-x64",
+	"version": "0.3.4",
+	"description": "Risuko JS native module for macOS x64",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/YueMiyuki/Risuko.git",
+		"directory": "packages/risuko-js/npm/darwin-x64"
+	},
+	"license": "MIT",
+	"os": [
+		"darwin"
+	],
+	"cpu": [
+		"x64"
+	],
+	"main": "risuko.darwin-x64.node",
+	"files": [
+		"risuko.darwin-x64.node"
+	]
 }

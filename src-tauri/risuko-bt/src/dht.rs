@@ -26,10 +26,16 @@ type GetPeersReply = (
     Option<Id20>,
     Vec<SocketAddr>,
     Vec<(Id20, SocketAddr)>,
+    Option<Vec<u8>>,
 );
 
 /// Body fields parsed from a `get_peers` response (no source addr).
-type GetPeersResponseBody = (Option<Id20>, Vec<SocketAddr>, Vec<(Id20, SocketAddr)>);
+type GetPeersResponseBody = (
+    Option<Id20>,
+    Vec<SocketAddr>,
+    Vec<(Id20, SocketAddr)>,
+    Option<Vec<u8>>,
+);
 
 const K: usize = 8;
 const ALPHA: usize = 3;
@@ -83,6 +89,24 @@ struct KrpcResponse {
 }
 
 impl Dht {
+    /// Process-wide DHT node, lazily spawned and bootstrapped on
+    /// first use
+    pub async fn shared() -> Option<Arc<Dht>> {
+        static SHARED: tokio::sync::OnceCell<Arc<Dht>> = tokio::sync::OnceCell::const_new();
+        SHARED
+            .get_or_try_init(|| async {
+                let dht = Dht::spawn(DhtConfig::default()).await?;
+                // Warm the routing table in the background so the first
+                // lookup already has live, close-ish nodes to query.
+                let warm = dht.clone();
+                tokio::spawn(async move { warm.bootstrap().await });
+                Ok::<Arc<Dht>, std::io::Error>(dht)
+            })
+            .await
+            .ok()
+            .cloned()
+    }
+
     pub async fn spawn(config: DhtConfig) -> std::io::Result<Arc<Self>> {
         let sock = UdpSocket::bind("0.0.0.0:0").await?;
         let sock = Arc::new(sock);
@@ -150,7 +174,28 @@ impl Dht {
         let (tx, rx) = mpsc::unbounded_channel::<SocketAddr>();
         let this = self.clone();
         tokio::spawn(async move {
-            let _ = tokio::time::timeout(budget, this.iterative_get_peers(info_hash, tx)).await;
+            let _ =
+                tokio::time::timeout(budget, this.iterative_get_peers(info_hash, tx, None)).await;
+        });
+        rx
+    }
+
+    /// Like [`get_peers_stream`] but also re-publishes us to the DHT (BEP-5
+    /// `announce_peer`) on the closest nodes that hand back a write token, so
+    /// other clients searching this info-hash can discover and dial us.
+    /// `port` is our BT listen port.
+    pub fn announce_and_get_peers_stream(
+        self: &Arc<Self>,
+        info_hash: Id20,
+        budget: Duration,
+        port: u16,
+    ) -> mpsc::UnboundedReceiver<SocketAddr> {
+        let (tx, rx) = mpsc::unbounded_channel::<SocketAddr>();
+        let this = self.clone();
+        tokio::spawn(async move {
+            let _ =
+                tokio::time::timeout(budget, this.iterative_get_peers(info_hash, tx, Some(port)))
+                    .await;
         });
         rx
     }
@@ -165,18 +210,21 @@ impl Dht {
         out
     }
 
-    pub async fn announce_peer(&self, _info_hash: Id20, _port: u16) {
-        // Omitted: we do not publish ourselves to the DHT. This keeps writes
-        // off the wire and avoids the token-tracking machinery
-    }
-
     async fn iterative_get_peers(
         self: Arc<Self>,
         info_hash: Id20,
         peer_tx: mpsc::UnboundedSender<SocketAddr>,
+        announce_port: Option<u16>,
     ) {
-        // Resolve bootstrap nodes to SocketAddrs concurrently
-        let mut addrs: Vec<SocketAddr> = Vec::new();
+        // Seed the lookup from our warm routing table first (Kademlia reuses
+        // known-close nodes), then augment with the public bootstrap
+        // hostnames. Without the routing-table seed every lookup restarts
+        // cold from the bootstrap servers — slow, and the reason the first
+        // magnet resolutions after launch were sluggish. Once the table is
+        // warm, subsequent lookups (resolution retries, the ongoing
+        // per-torrent get_peers poller, additional torrents) start close to
+        // the target and converge quickly.
+        let mut addrs: Vec<SocketAddr> = self.routing.lock().closest(&info_hash, K * 2);
         for host in &self.bootstrap {
             if let Ok(iter) = lookup_host(host).await {
                 addrs.extend(iter);
@@ -192,6 +240,10 @@ impl Dht {
         let mut shortlist: BTreeMap<Id20, SocketAddr> = BTreeMap::new();
         let mut queried: HashSet<SocketAddr> = HashSet::new();
         let mut peers_seen: HashSet<SocketAddr> = HashSet::new();
+        // Nodes (keyed by XOR distance to the target) that returned a write
+        // token, paired with that token. After the lookup we announce
+        // ourselves to the closest of these (BEP-5) when announce_port is set.
+        let mut announce_targets: BTreeMap<Id20, (SocketAddr, Vec<u8>)> = BTreeMap::new();
 
         // Seed: ask bootstrap nodes with a dummy id = info_hash (so their
         // responses contain nodes close to the target)
@@ -215,7 +267,7 @@ impl Dht {
             };
             let res = joined.ok().flatten();
 
-            let Some((from, responder_id, peers, nodes)) = res else {
+            let Some((from, responder_id, peers, nodes, token)) = res else {
                 continue;
             };
 
@@ -239,6 +291,12 @@ impl Dht {
             shortlist.insert(xor(&node_id, &info_hash), from);
             if responder_id.is_some() {
                 self.routing.lock().add(node_id, from);
+            }
+            if let Some(tok) = token {
+                announce_targets.insert(xor(&node_id, &info_hash), (from, tok));
+                while announce_targets.len() > K * 2 {
+                    announce_targets.pop_last();
+                }
             }
 
             // Merge any learned nodes into the shortlist
@@ -295,6 +353,29 @@ impl Dht {
             total_nodes,
             queried.len()
         );
+
+        // BEP-5 announce_peer: publish ourselves on the closest token-bearing
+        // nodes so other clients doing get_peers for this info-hash discover
+        // us and can open inbound connections. Fire-and-forget — we don't need
+        // the ack.
+        if let Some(port) = announce_port {
+            for (_d, (addr, token)) in announce_targets.into_iter().take(K) {
+                let pkt = build_announce_peer(
+                    rand::rng().random(),
+                    &self.our_id,
+                    &info_hash,
+                    port,
+                    &token,
+                );
+                let _ = match addr {
+                    SocketAddr::V4(_) => self.sock.send_to(&pkt, addr).await,
+                    SocketAddr::V6(_) => match &self.sock6 {
+                        Some(s6) => s6.send_to(&pkt, addr).await,
+                        None => continue,
+                    },
+                };
+            }
+        }
     }
 
     async fn query_get_peers(
@@ -329,7 +410,7 @@ impl Dht {
             }
         };
         parse_get_peers_response(&resp.body)
-            .map(|(rid, peers, nodes)| (resp.from, rid, peers, nodes))
+            .map(|(rid, peers, nodes, token)| (resp.from, rid, peers, nodes, token))
     }
 
     fn register_transaction(&self, target: SocketAddr) -> (u16, oneshot::Receiver<KrpcResponse>) {
@@ -478,6 +559,20 @@ impl RoutingTable {
             };
         }
     }
+
+    /// The `n` nodes whose ids are closest (by XOR) to `target`. Used to
+    /// seed an iterative lookup from the warm routing table instead of the
+    /// cold public bootstrap servers.
+    fn closest(&self, target: &Id20, n: usize) -> Vec<SocketAddr> {
+        let mut all: Vec<(Id20, SocketAddr)> = self
+            .buckets
+            .iter()
+            .flatten()
+            .map(|node| (xor(&node.id, target), node.addr))
+            .collect();
+        all.sort_by_key(|&(dist, _)| dist);
+        all.into_iter().take(n).map(|(_, addr)| addr).collect()
+    }
 }
 
 fn random_id() -> Id20 {
@@ -509,6 +604,36 @@ fn xor(a: &Id20, b: &Id20) -> Id20 {
         *slot = a.as_bytes()[i] ^ b.as_bytes()[i];
     }
     Id20::from_slice(&out).unwrap()
+}
+
+/// Build a BEP-5 `announce_peer` query. The `token` must be one we received
+/// from this node's prior `get_peers` response, otherwise it rejects us.
+fn build_announce_peer(
+    txn: u16,
+    our_id: &Id20,
+    info_hash: &Id20,
+    port: u16,
+    token: &[u8],
+) -> Vec<u8> {
+    // Dict keys must be bencode-sorted: id, implied_port, info_hash, port, token
+    let args = Value::Dict(vec![
+        (b"id".to_vec(), Value::Bytes(our_id.as_bytes().to_vec())),
+        (b"implied_port".to_vec(), Value::Int(0)),
+        (
+            b"info_hash".to_vec(),
+            Value::Bytes(info_hash.as_bytes().to_vec()),
+        ),
+        (b"port".to_vec(), Value::Int(port as i64)),
+        (b"token".to_vec(), Value::Bytes(token.to_vec())),
+    ]);
+    let tid = txn.to_be_bytes().to_vec();
+    let msg = Value::Dict(vec![
+        (b"a".to_vec(), args),
+        (b"q".to_vec(), Value::Bytes(b"announce_peer".to_vec())),
+        (b"t".to_vec(), Value::Bytes(tid)),
+        (b"y".to_vec(), Value::Bytes(b"q".to_vec())),
+    ]);
+    encode_to_vec(&msg)
 }
 
 fn build_get_peers(txn: u16, our_id: &Id20, info_hash: &Id20) -> Vec<u8> {
@@ -590,7 +715,11 @@ fn parse_get_peers_response(body: &Value) -> Option<GetPeersResponseBody> {
             nodes.push((id, SocketAddr::V6(SocketAddrV6::new(ip, port, 0, 0))));
         }
     }
-    Some((responder_id, peers, nodes))
+    let token = r_val
+        .get(b"token")
+        .and_then(|v| v.as_bytes())
+        .map(|b| b.to_vec());
+    Some((responder_id, peers, nodes, token))
 }
 
 async fn reader_loop(sock: Arc<UdpSocket>, pending: Arc<Mutex<PendingMap>>) {
@@ -702,6 +831,32 @@ mod tests {
     }
 
     #[test]
+    fn announce_peer_packet_is_bencoded_krpc_query() {
+        let our_id = Id20::from_slice(&[0u8; 20]).unwrap();
+        let info_hash = Id20::from_slice(&[1u8; 20]).unwrap();
+        let packet = build_announce_peer(0xCAFE, &our_id, &info_hash, 6881, b"tok");
+        let decoded = decode_all(&packet).unwrap();
+        assert_eq!(
+            decoded.get(b"q").and_then(|v| v.as_bytes()),
+            Some(b"announce_peer" as &[u8])
+        );
+        assert_eq!(
+            decoded.get(b"y").and_then(|v| v.as_bytes()),
+            Some(b"q" as &[u8])
+        );
+        let a = Value::Dict(decoded.get(b"a").unwrap().as_dict().unwrap().to_vec());
+        assert_eq!(a.get(b"port").and_then(|v| v.as_int()), Some(6881));
+        assert_eq!(
+            a.get(b"token").and_then(|v| v.as_bytes()),
+            Some(b"tok" as &[u8])
+        );
+        assert_eq!(
+            a.get(b"info_hash").and_then(|v| v.as_bytes()),
+            Some(&[1u8; 20][..])
+        );
+    }
+
+    #[test]
     fn parse_response_extracts_peers_and_nodes() {
         // values: [6-byte peer for 1.2.3.4:5678]
         // nodes: 26 bytes (id=0x22... ip=9.8.7.6 port=11111)
@@ -713,6 +868,7 @@ mod tests {
         let r = Value::Dict(vec![
             (b"id".to_vec(), Value::Bytes(vec![0u8; 20])),
             (b"nodes".to_vec(), Value::Bytes(node_bytes)),
+            (b"token".to_vec(), Value::Bytes(b"abcd".to_vec())),
             (
                 b"values".to_vec(),
                 Value::List(vec![Value::Bytes(peer_bytes)]),
@@ -723,7 +879,8 @@ mod tests {
             (b"t".to_vec(), Value::Bytes(b"aa".to_vec())),
             (b"y".to_vec(), Value::Bytes(b"r".to_vec())),
         ]);
-        let (_id, peers, nodes) = parse_get_peers_response(&body).unwrap();
+        let (_id, peers, nodes, token) = parse_get_peers_response(&body).unwrap();
+        assert_eq!(token.as_deref(), Some(b"abcd" as &[u8]));
         assert_eq!(peers.len(), 1);
         assert_eq!(
             peers[0],
@@ -758,7 +915,7 @@ mod tests {
             (b"t".to_vec(), Value::Bytes(b"bb".to_vec())),
             (b"y".to_vec(), Value::Bytes(b"r".to_vec())),
         ]);
-        let (_id, peers, nodes) = parse_get_peers_response(&body).unwrap();
+        let (_id, peers, nodes, _token) = parse_get_peers_response(&body).unwrap();
         assert_eq!(peers.len(), 1);
         assert_eq!(
             peers[0],

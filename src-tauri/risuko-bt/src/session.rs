@@ -13,7 +13,7 @@ use tokio::sync::mpsc;
 use super::api::TorrentIdOrHash;
 use super::core::metainfo::{parse_torrent, FileDetails};
 use super::core::{generate_peer_id, Id20, Lengths};
-use super::peer::{PeerCommand, PeerEvent};
+use super::peer::{KnownInfoHash, PeerCommand, PeerEvent};
 use super::torrent::{spawn as spawn_torrent, ManagedTorrent, TorrentCommand, TorrentInit};
 
 #[derive(Clone, Debug)]
@@ -122,9 +122,14 @@ pub struct Session {
     opts: SessionOptions,
     peer_id: Id20,
     listen_port: u16,
+    /// Shared µTP (BEP-29) endpoint, bound on the same UDP port as the TCP
+    /// listener. Threaded into every torrent so outbound dials can retry over
+    /// µTP when TCP fails. `None` when µTP could not bind (TCP-only fallback).
+    utp: Option<Arc<super::utp::UtpSocket>>,
     inner: Mutex<SessionInner>,
     accept_handle: Mutex<Option<tokio::task::JoinHandle<()>>>,
     accept6_handle: Mutex<Option<tokio::task::JoinHandle<()>>>,
+    utp_accept_handle: Mutex<Option<tokio::task::JoinHandle<()>>>,
     upnp_handle: Mutex<Option<super::upnp::UpnpHandle>>,
     lsd: Mutex<Option<Arc<super::lsd::LocalServiceDiscovery>>>,
     lsd_router_handle: Mutex<Option<tokio::task::JoinHandle<()>>>,
@@ -138,6 +143,9 @@ impl Drop for Session {
             h.abort();
         }
         if let Some(h) = self.accept6_handle.lock().take() {
+            h.abort();
+        }
+        if let Some(h) = self.utp_accept_handle.lock().take() {
             h.abort();
         }
         if let Some(h) = self.lsd_router_handle.lock().take() {
@@ -198,11 +206,37 @@ impl Session {
             upnp_handle = Some(fwd.spawn());
         }
 
+        // µTP (BEP-29) endpoint: bind UDP on the same port as the TCP listener so
+        // peers reach us at the same ip:port over either transport
+        // Outbound dials retry over µTP when TCP fails. A bind failure is non-fatal—
+        // µTP is disabled and we fall back to TCP only
+        let utp =
+            match super::utp::UtpSocket::bind(SocketAddr::from(([0, 0, 0, 0], local_port))).await {
+                Ok(s) => {
+                    log::info!("µTP listening on udp/{}", s.local_addr().port());
+                    Some(s)
+                }
+                Err(e) => {
+                    log::warn!("µTP: bind udp/{local_port} failed ({e}); trying ephemeral");
+                    match super::utp::UtpSocket::bind(SocketAddr::from(([0, 0, 0, 0], 0))).await {
+                        Ok(s) => {
+                            log::info!("µTP listening on udp/{}", s.local_addr().port());
+                            Some(s)
+                        }
+                        Err(e2) => {
+                            log::warn!("µTP: disabled (bind failed: {e2})");
+                            None
+                        }
+                    }
+                }
+            };
+
         let session = Arc::new(Self {
             output_dir,
             opts,
             peer_id,
             listen_port: local_port,
+            utp,
             inner: Mutex::new(SessionInner {
                 torrents: HashMap::new(),
                 by_hash: HashMap::new(),
@@ -210,6 +244,7 @@ impl Session {
             }),
             accept_handle: Mutex::new(None),
             accept6_handle: Mutex::new(None),
+            utp_accept_handle: Mutex::new(None),
             upnp_handle: Mutex::new(upnp_handle),
             lsd: Mutex::new(None),
             lsd_router_handle: Mutex::new(None),
@@ -237,28 +272,31 @@ impl Session {
         }
 
         if !session.opts.disable_dht {
-            let dht_cfg = session.opts.dht_config.clone().unwrap_or_default();
-            match super::dht::Dht::spawn(dht_cfg).await {
-                Ok(dht) => {
-                    let dht_for_bg = dht.clone();
-                    // Bootstrap once in the background so the routing table
-                    // becomes useful for diagnostics + future lookups
-                    let handle = tokio::spawn(async move {
-                        dht_for_bg.bootstrap().await;
-                    });
-                    *session.dht.lock() = Some(dht);
-                    *session.dht_bootstrap_handle.lock() = Some(handle);
-                }
-                Err(e) => log::warn!("dht: not started: {e}"),
+            // Reuse the process-wide warm DHT (also used by magnet resolution and each
+            // torrent's ongoing get_peers poller) rather than spawning a session-local one.
+            // shared() spawns + bootstraps a single long-lived instance on first use
+            match super::dht::Dht::shared().await {
+                Some(dht) => *session.dht.lock() = Some(dht),
+                None => log::warn!("dht: not started"),
             }
         }
 
-        // Hold a Weak reference inside the accept loop so the loop does not
-        // keep the session alive. When the last external Arc is dropped the
-        // session's Drop aborts the spawned task via `accept_handle`.
+        // Hold a Weak reference inside the accept loop so the loop does not keep the
+        // session alive. When the last external Arc is dropped the session's Drop
+        // aborts the spawned task via `accept_handle`
         let weak = Arc::downgrade(&session);
         let accept_handle = tokio::spawn(run_accept_loop(listener, weak));
         *session.accept_handle.lock() = Some(accept_handle);
+
+        // Inbound µTP (BEP-29) accept loop. Only spawned when µTP bound. This
+        // drains the µTP socket's accept queue so inbound SYNs become real
+        // peers instead of leaking queued streams + driver tasks, and gives us
+        // inbound µTP connectivity on par with the TCP listener.
+        if let Some(utp) = session.utp.clone() {
+            let weak_utp = Arc::downgrade(&session);
+            let h = tokio::spawn(run_utp_accept_loop(utp, weak_utp));
+            *session.utp_accept_handle.lock() = Some(h);
+        }
 
         // Optional v6 listener on the same port. Failure to bind is not
         // fatal: we simply log and continue with v4 only.
@@ -472,6 +510,13 @@ impl Session {
                 return Err(format!("build verifier: {e}"));
             }
         };
+        // Reserved-bit advertisement is set only for *pure-v2* torrents
+        // (no v1 hash). Hybrid torrents connect via the v1 info-hash and we
+        // intentionally do not assert the BEP-52 v2 bit there: empirically
+        // some swarms (notably CN Thunder/Xunlei clients) close the
+        // connection right after the BT handshake when v2 is asserted on a
+        // v1 info_hash
+        let advertise_v2 = matches!(meta.meta_version, crate::core::metainfo::MetaVersion::V2);
         let init = TorrentInit {
             meta: meta.clone(),
             lengths,
@@ -480,8 +525,10 @@ impl Session {
             max_outstanding_per_peer: self.opts.max_outstanding_requests_per_peer,
             max_peers: self.opts.max_peers_per_torrent,
             encryption: self.opts.encryption,
+            advertise_v2,
             verifier,
             create_subfolder,
+            utp: self.utp.clone(),
         };
         let handle = match spawn_torrent(id, init, self.peer_id, self.listen_port).await {
             Ok(h) => h,
@@ -500,6 +547,43 @@ impl Session {
         }
         if let Some(lsd) = self.lsd.lock().as_ref() {
             lsd.add_infohash(meta.info_hash);
+        }
+        // Wire DHT peer discovery into the running torrent. The session DHT is
+        // otherwise only used during one-shot magnet resolution; running downloads
+        // discover peers via trackers, LSD, and inbound connections. For a
+        // trackerless torrent—or one with dead trackers, which is common for CN
+        // Thunder/Xunlei swarms—this leaves the download with no peer source so it
+        // stalls at 0% even though the swarm is reachable over DHT 
+        if !info.private {
+            if let Some(dht) = self.dht.lock().clone() {
+                let info_hash = meta.info_hash;
+                let listen_port = self.listen_port;
+                let weak = Arc::downgrade(&handle);
+                tokio::spawn(async move {
+                    loop {
+                        // Stop polling once the torrent has been removed
+                        let Some(t) = weak.upgrade() else { return };
+                        let cmd_tx = t.cmd_tx();
+                        drop(t);
+                        // get_peers to find seeders AND announce_peer so other clients
+                        // searching this info-hash can find and dial us
+                        let mut rx = dht.announce_and_get_peers_stream(
+                            info_hash,
+                            std::time::Duration::from_secs(60),
+                            listen_port,
+                        );
+                        while let Some(addr) = rx.recv().await {
+                            if cmd_tx.send(TorrentCommand::AddPeer(addr)).await.is_err() {
+                                return // torrent loop ended
+                            }
+                        }
+                        // A single lookup rarely returns the whole swarm and DHT peer sets
+                        // churn; re-query on a steady cadence to keep the peer list topped up
+                        // (mirrors a tracker re-announce interval)
+                        tokio::time::sleep(std::time::Duration::from_secs(120)).await;
+                    }
+                });
+            }
         }
         Ok(AddTorrentResponse::Added(id, handle))
     }
@@ -664,9 +748,19 @@ async fn run_accept_loop(listener: TcpListener, weak: std::sync::Weak<Session>) 
                     return;
                 };
                 tokio::spawn(async move {
-                    let allowed: Vec<Id20> = s.inner.lock().by_hash.keys().copied().collect();
+                    let allowed: Vec<KnownInfoHash> = s
+                        .inner
+                        .lock()
+                        .torrents
+                        .values()
+                        .map(|handle| KnownInfoHash {
+                            info_hash: handle.info_hash,
+                            advertise_v2: handle.advertise_v2,
+                            ext_handshake_builder: Some(handle.ext_handshake_builder.clone()),
+                        })
+                        .collect();
                     let policy = s.opts.encryption;
-                    let res = super::peer::accept_with_policy(
+                    let res = super::peer::accept_with_policy_and_capabilities(
                         stream,
                         s.peer_id,
                         allowed,
@@ -689,5 +783,57 @@ async fn run_accept_loop(listener: TcpListener, weak: std::sync::Weak<Session>) 
                 tokio::time::sleep(std::time::Duration::from_millis(200)).await;
             }
         }
+    }
+}
+
+/// Inbound µTP (BEP-29) accept loop. Mirrors [`run_accept_loop`] but over the shared
+/// µTP endpoint: each accepted connection runs the plaintext BT responder handshake
+/// (µTP carries no MSE layer) and is routed to its torrent by info-hash. Parameterised
+/// on a `Weak<Session>` so it does not keep the session alive; the session's Drop
+/// aborts it via `utp_accept_handle`
+async fn run_utp_accept_loop(utp: Arc<super::utp::UtpSocket>, weak: std::sync::Weak<Session>) {
+    loop {
+        let stream = match utp.accept().await {
+            Ok(s) => s,
+            // The endpoint closed (last Arc dropped); nothing more to accept.
+            Err(_) => return,
+        };
+        let Some(s) = weak.upgrade() else {
+            return;
+        };
+        let addr = stream.peer_addr();
+        tokio::spawn(async move {
+            let allowed: Vec<KnownInfoHash> = s
+                .inner
+                .lock()
+                .torrents
+                .values()
+                .map(|handle| KnownInfoHash {
+                    info_hash: handle.info_hash,
+                    advertise_v2: handle.advertise_v2,
+                    ext_handshake_builder: Some(handle.ext_handshake_builder.clone()),
+                })
+                .collect();
+            // No managed torrents—nothing this peer could be after, so drop the stream
+            // (its driver tears the connection down)
+            if allowed.is_empty() {
+                return;
+            }
+            let res = super::peer::accept_utp_plaintext(
+                stream,
+                s.peer_id,
+                allowed,
+                std::time::Duration::from_secs(30),
+            )
+            .await;
+            match res {
+                Ok((handle, rx)) => {
+                    s.route_inbound_peer(addr, handle.tx, rx).await;
+                }
+                Err(e) => {
+                    log::debug!("inbound µTP peer handshake failed: {e}");
+                }
+            }
+        });
     }
 }

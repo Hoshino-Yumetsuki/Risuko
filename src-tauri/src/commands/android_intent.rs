@@ -9,15 +9,8 @@
 //! builds, the Messages app's `mimeType="*/*"` filter wins because no
 //! other app advertises a more specific match
 //!
-//! We build the `Intent` ourselves via JNI:
-//!   - We attach the file's actual MIME (e.g. `video/mp4`) via
-//!     `Intent.setDataAndType`, which narrows the candidate set
-//!   - We wrap the result in `Intent.createChooser` so even when several
-//!     apps still match, the user gets the standard "Open with" sheet
-//!     (the behavior the user expects from Android)
-//!   - We add `FLAG_GRANT_READ_URI_PERMISSION` so the receiving app can
-//!     read the URI we built ourselves (without this, our hand-built
-//!     externalstorage URIs come through as 0-byte files in the viewer)
+//! File opens are delegated to `MainActivity.openFile`, which builds and
+//! starts the Android `Intent` on the UI thread with detailed logcat output.
 //!
 //! ## JNI bootstrap
 //!
@@ -36,9 +29,6 @@ use std::time::Duration;
 use jni::objects::{JClass, JObject, JString, JValue};
 use jni::sys::{jint, jstring, JNI_VERSION_1_6};
 use jni::{JNIEnv, JavaVM};
-
-const FLAG_ACTIVITY_NEW_TASK: i32 = 0x10000000;
-const FLAG_GRANT_READ_URI_PERMISSION: i32 = 0x00000001;
 
 static JAVA_VM: OnceLock<JavaVM> = OnceLock::new();
 static DIRECTORY_PICKERS: OnceLock<
@@ -280,6 +270,47 @@ pub fn reveal_folder(path: &str) -> Result<(), String> {
     }
 }
 
+pub fn open_file(path: &str, mime: &str) -> Result<(), String> {
+    let vm = JAVA_VM
+        .get()
+        .ok_or_else(|| "JavaVM not captured (JNI_OnLoad didn't run?)".to_string())?;
+    let mut env = vm
+        .attach_current_thread()
+        .map_err(|e| format!("attach thread: {e}"))?;
+    let activity = main_activity_class(&mut env)?;
+    let path_str = env
+        .new_string(path)
+        .map_err(|e| format!("new_string path: {e}"))?;
+    let mime_str = env
+        .new_string(mime)
+        .map_err(|e| format!("new_string mime: {e}"))?;
+    let value = env
+        .call_static_method(
+            activity,
+            "openFile",
+            "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;",
+            &[JValue::Object(&path_str), JValue::Object(&mime_str)],
+        )
+        .map_err(|e| format!("MainActivity.openFile: {e}"))?
+        .l()
+        .map_err(|e| format!("openFile result not object: {e}"))?;
+    if value.is_null() {
+        return Err("openFile returned null".to_string());
+    }
+    let value_str = JString::from(value);
+    let outcome = env
+        .get_string(&value_str)
+        .map_err(|e| format!("get_string openFile: {e}"))?
+        .to_string_lossy()
+        .into_owned();
+    if outcome == "ok" {
+        Ok(())
+    } else {
+        log::warn!("[Risuko] openFile({path}, {mime}) -> {outcome}");
+        Err(outcome)
+    }
+}
+
 fn main_activity_class<'env>(env: &mut JNIEnv<'env>) -> Result<JClass<'env>, String> {
     let app = current_application(env).map_err(|e| format!("get application: {e}"))?;
     let class_loader = env
@@ -304,7 +335,7 @@ fn main_activity_class<'env>(env: &mut JNIEnv<'env>) -> Result<JClass<'env>, Str
 }
 
 /// Resolve the current `Application` through `ActivityThread`
-/// Background Rust threads do not hold an `Activity`, but the application context works with `FLAG_ACTIVITY_NEW_TASK`
+/// Background Rust threads do not hold an `Activity`, so helpers resolve the app context first
 fn current_application<'env>(env: &mut JNIEnv<'env>) -> jni::errors::Result<JObject<'env>> {
     let class = env.find_class("android/app/ActivityThread")?;
     let thread = env
@@ -319,222 +350,4 @@ fn current_application<'env>(env: &mut JNIEnv<'env>) -> jni::errors::Result<JObj
         .call_method(thread, "getApplication", "()Landroid/app/Application;", &[])?
         .l()?;
     Ok(app)
-}
-
-/// Dispatch `ACTION_VIEW` with an explicit MIME and an Android chooser
-///
-/// The `chooser_title` is shown at the top of the chooser sheet
-/// (e.g. "Open file with"). `mime` should be a concrete MIME type
-/// (`video/mp4`, `image/jpeg`, `vnd.android.document/directory`...)
-pub fn dispatch_view_with_chooser(
-    uri: &str,
-    mime: &str,
-    chooser_title: &str,
-) -> Result<(), String> {
-    dispatch_uri_with_chooser(uri, mime, chooser_title, uri.starts_with("content://"))
-}
-
-pub fn dispatch_file_path_with_chooser(
-    path: &str,
-    mime: &str,
-    chooser_title: &str,
-) -> Result<(), String> {
-    let vm = JAVA_VM
-        .get()
-        .ok_or_else(|| "JavaVM not captured (JNI_OnLoad didn't run?)".to_string())?;
-    let mut env = vm
-        .attach_current_thread()
-        .map_err(|e| format!("attach thread: {e}"))?;
-
-    let activity = current_application(&mut env).map_err(|e| format!("get application: {e}"))?;
-    let authority = package_file_provider_authority(&mut env, &activity)
-        .map_err(|e| format!("get file provider authority: {e}"))?;
-    let path_str = env
-        .new_string(path)
-        .map_err(|e| format!("new_string path: {e}"))?;
-    let authority_str = env
-        .new_string(authority)
-        .map_err(|e| format!("new_string authority: {e}"))?;
-    let file_class = env
-        .find_class("java/io/File")
-        .map_err(|e| format!("find File: {e}"))?;
-    let file = env
-        .new_object(
-            &file_class,
-            "(Ljava/lang/String;)V",
-            &[JValue::Object(&path_str)],
-        )
-        .map_err(|e| format!("new File: {e}"))?;
-    let provider_class = env
-        .find_class("androidx/core/content/FileProvider")
-        .map_err(|e| format!("find FileProvider: {e}"))?;
-    let uri = env
-        .call_static_method(
-            &provider_class,
-            "getUriForFile",
-            "(Landroid/content/Context;Ljava/lang/String;Ljava/io/File;)Landroid/net/Uri;",
-            &[
-                JValue::Object(&activity),
-                JValue::Object(&authority_str),
-                JValue::Object(&file),
-            ],
-        )
-        .map_err(|e| format!("FileProvider.getUriForFile: {e}"))?
-        .l()
-        .map_err(|e| format!("FileProvider URI not object: {e}"))?;
-
-    dispatch_jni_uri_with_chooser(&mut env, activity, uri, mime, chooser_title, true)
-}
-
-fn dispatch_uri_with_chooser(
-    uri: &str,
-    mime: &str,
-    chooser_title: &str,
-    grant_read_permission: bool,
-) -> Result<(), String> {
-    let vm = JAVA_VM
-        .get()
-        .ok_or_else(|| "JavaVM not captured (JNI_OnLoad didn't run?)".to_string())?;
-    let mut env = vm
-        .attach_current_thread()
-        .map_err(|e| format!("attach thread: {e}"))?;
-
-    let activity = current_application(&mut env).map_err(|e| format!("get application: {e}"))?;
-
-    let uri_str = env
-        .new_string(uri)
-        .map_err(|e| format!("new_string uri: {e}"))?;
-    let uri_class = env
-        .find_class("android/net/Uri")
-        .map_err(|e| format!("find Uri: {e}"))?;
-    let parsed_uri = env
-        .call_static_method(
-            &uri_class,
-            "parse",
-            "(Ljava/lang/String;)Landroid/net/Uri;",
-            &[JValue::Object(&uri_str)],
-        )
-        .map_err(|e| format!("Uri.parse: {e}"))?
-        .l()
-        .map_err(|e| format!("Uri.parse not object: {e}"))?;
-
-    dispatch_jni_uri_with_chooser(
-        &mut env,
-        activity,
-        parsed_uri,
-        mime,
-        chooser_title,
-        grant_read_permission,
-    )
-}
-
-fn dispatch_jni_uri_with_chooser(
-    env: &mut JNIEnv,
-    activity: JObject,
-    parsed_uri: JObject,
-    mime: &str,
-    chooser_title: &str,
-    grant_read_permission: bool,
-) -> Result<(), String> {
-    // Build the inner `Intent(ACTION_VIEW, uri)` with explicit MIME.
-    let action = env
-        .new_string("android.intent.action.VIEW")
-        .map_err(|e| format!("new_string action: {e}"))?;
-    let mime_str = env
-        .new_string(mime)
-        .map_err(|e| format!("new_string mime: {e}"))?;
-    let intent_class = env
-        .find_class("android/content/Intent")
-        .map_err(|e| format!("find Intent: {e}"))?;
-    let intent = env
-        .new_object(
-            &intent_class,
-            "(Ljava/lang/String;)V",
-            &[JValue::Object(&action)],
-        )
-        .map_err(|e| format!("new Intent: {e}"))?;
-
-    env.call_method(
-        &intent,
-        "setDataAndType",
-        "(Landroid/net/Uri;Ljava/lang/String;)Landroid/content/Intent;",
-        &[JValue::Object(&parsed_uri), JValue::Object(&mime_str)],
-    )
-    .map_err(|e| format!("setDataAndType: {e}"))?;
-
-    if grant_read_permission {
-        env.call_method(
-            &intent,
-            "addFlags",
-            "(I)Landroid/content/Intent;",
-            &[JValue::Int(FLAG_GRANT_READ_URI_PERMISSION)],
-        )
-        .map_err(|e| format!("addFlags grant: {e}"))?;
-    }
-
-    // Wrap in `Intent.createChooser(intent, title)` so the user sees the
-    // standard "Open with" sheet even when a single app has been set as
-    // default (matching desktop double-click semantics where the user can
-    // change the handler at any time).
-    let title = env
-        .new_string(chooser_title)
-        .map_err(|e| format!("new_string title: {e}"))?;
-    let chooser = env
-        .call_static_method(
-            &intent_class,
-            "createChooser",
-            "(Landroid/content/Intent;Ljava/lang/CharSequence;)Landroid/content/Intent;",
-            &[JValue::Object(&intent), JValue::Object(&title)],
-        )
-        .map_err(|e| format!("createChooser: {e}"))?
-        .l()
-        .map_err(|e| format!("createChooser not object: {e}"))?;
-
-    // The chooser is started from an Activity that may not be in the
-    // foreground task; mark it as a fresh task so Android grants the
-    // necessary launch context.
-    env.call_method(
-        &chooser,
-        "addFlags",
-        "(I)Landroid/content/Intent;",
-        &[JValue::Int(FLAG_ACTIVITY_NEW_TASK)],
-    )
-    .map_err(|e| format!("addFlags new_task: {e}"))?;
-
-    if grant_read_permission {
-        env.call_method(
-            &chooser,
-            "addFlags",
-            "(I)Landroid/content/Intent;",
-            &[JValue::Int(FLAG_GRANT_READ_URI_PERMISSION)],
-        )
-        .map_err(|e| format!("addFlags chooser grant: {e}"))?;
-    }
-
-    env.call_method(
-        &activity,
-        "startActivity",
-        "(Landroid/content/Intent;)V",
-        &[JValue::Object(&chooser)],
-    )
-    .map_err(|e| format!("startActivity: {e}"))?;
-
-    if env.exception_check().unwrap_or(false) {
-        let _ = env.exception_describe();
-        let _ = env.exception_clear();
-        return Err("startActivity threw".into());
-    }
-
-    Ok(())
-}
-
-fn package_file_provider_authority(
-    env: &mut JNIEnv,
-    activity: &JObject,
-) -> jni::errors::Result<String> {
-    let package_name = env
-        .call_method(activity, "getPackageName", "()Ljava/lang/String;", &[])?
-        .l()?;
-    let package_name = env.get_string((&package_name).into())?;
-    Ok(format!("{}.fileprovider", package_name.to_string_lossy()))
 }

@@ -32,7 +32,7 @@
           </div>
         </div>
         <div class="task-toolbar-right">
-          <div class="task-total-progress-row" v-if="showTotalProgress">
+          <div class="task-total-progress-row" v-if="showTotalProgress && isMobile">
             <span class="task-total-progress-size">
               {{ formatBytes(totalCompletedLength, 1) }} / {{ formatBytes(totalLength, 1) }}
             </span>
@@ -119,6 +119,7 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from "@/components/ui/select";
+import is from "@/shims/platform";
 import { useAppStore } from "@/store/app";
 import { usePreferenceStore } from "@/store/preference";
 import { useTaskStore } from "@/store/task";
@@ -237,6 +238,9 @@ export default {
 		},
 		currentList() {
 			return useTaskStore().currentList;
+		},
+		isMobile() {
+			return is.android();
 		},
 		showTotalProgress() {
 			return (

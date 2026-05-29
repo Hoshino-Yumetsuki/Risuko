@@ -95,6 +95,21 @@ fn resolve_log_dir(
         );
         return default_log_dir.to_path_buf();
     }
+    let probe = candidate.join(".risuko-log-write-test");
+    if let Err(e) = std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(&probe)
+    {
+        eprintln!(
+            "log-dir-override '{}' is not writable ({}). Falling back to default.",
+            candidate.display(),
+            e
+        );
+        return default_log_dir.to_path_buf();
+    }
+    let _ = std::fs::remove_file(probe);
     candidate
 }
 

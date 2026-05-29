@@ -6,6 +6,7 @@
 //! per-peer extension message types negotiated via the handshake's `m` dict
 
 use std::collections::HashMap;
+use std::net::IpAddr;
 
 use bytes::{BufMut, Bytes, BytesMut};
 
@@ -31,6 +32,10 @@ pub struct ExtHandshake {
     pub metadata_size: Option<u64>,
     /// Peer-advertised client string ("v" key)
     pub client: Option<String>,
+    /// BEP-10 `yourip`: the peer's public address as we observed it. Some real-world
+    /// clients (notably some CN BT implementations) only engage with a remote that
+    /// echoes their address back here
+    pub yourip: Option<IpAddr>,
 }
 
 impl ExtHandshake {
@@ -48,7 +53,15 @@ impl ExtHandshake {
                 env!("CARGO_PKG_NAME"),
                 env!("CARGO_PKG_VERSION")
             )),
+            yourip: None,
         }
+    }
+
+    /// Set `yourip` to the peer's address (compact-encoded on the wire). Builder
+    /// helper used by the connection layer per dial / accept
+    pub fn with_yourip(mut self, ip: IpAddr) -> Self {
+        self.yourip = Some(ip);
+        self
     }
 
     pub fn encode(&self) -> Bytes {
@@ -58,12 +71,22 @@ impl ExtHandshake {
             .map(|(k, v)| (k.clone(), Value::Int(*v as i64)))
             .collect();
         m_entries.sort_by(|a, b| a.0.cmp(&b.0));
+        // Bencode dictionaries must be lexicographically sorted by key. The keys we
+        // emit are `m`, `metadata_size`, `v`, `yourip`—all distinct and already in
+        // sorted order, so we just push in that fixed sequence
         let mut dict = vec![(b"m".to_vec(), Value::Dict(m_entries))];
         if let Some(sz) = self.metadata_size {
             dict.push((b"metadata_size".to_vec(), Value::Int(sz as i64)));
         }
         if let Some(v) = &self.client {
             dict.push((b"v".to_vec(), Value::Bytes(v.as_bytes().to_vec())));
+        }
+        if let Some(ip) = &self.yourip {
+            let bytes = match ip {
+                IpAddr::V4(v4) => v4.octets().to_vec(),
+                IpAddr::V6(v6) => v6.octets().to_vec(),
+            };
+            dict.push((b"yourip".to_vec(), Value::Bytes(bytes)));
         }
         Bytes::from(encode_to_vec(&Value::Dict(dict)))
     }
@@ -98,6 +121,7 @@ impl ExtHandshake {
             supported,
             metadata_size,
             client,
+            yourip: None,
         })
     }
 

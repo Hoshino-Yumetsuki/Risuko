@@ -11,6 +11,20 @@
       class="item"
       effect="dark"
       placement="bottom"
+      :content="allVisibleTasksSelected ? $t('task.deselect-all-task') : $t('task.select-all-task')"
+    >
+      <i
+        class="task-action"
+        :class="{ disabled: selectableTaskCount === 0 }"
+        @click="onSelectAllClick"
+      >
+        <ListChecks :size="14" />
+      </i>
+    </ui-tooltip>
+    <ui-tooltip
+      class="item"
+      effect="dark"
+      placement="bottom"
       :content="$t('task.delete-selected-tasks')"
       v-if="currentList !== 'stopped'"
     >
@@ -96,6 +110,7 @@ import {
 	ArrowDown,
 	ArrowUp,
 	Eraser,
+	ListChecks,
 	Pause,
 	Play,
 	RefreshCw,
@@ -116,6 +131,7 @@ export default {
 		Play,
 		Pause,
 		Eraser,
+		ListChecks,
 		ArrowUp,
 		ArrowDown,
 	},
@@ -135,6 +151,19 @@ export default {
 		},
 		selectedGidListCount() {
 			return useTaskStore().selectedGidList.length;
+		},
+		selectableTaskCount() {
+			return useTaskStore().paginatedTaskList.length;
+		},
+		allVisibleTasksSelected() {
+			const taskStore = useTaskStore();
+			if (taskStore.paginatedTaskList.length === 0) {
+				return false;
+			}
+			const selectedKeys = new Set(taskStore.selectedGidList);
+			return taskStore.paginatedTaskList.every((task) =>
+				selectedKeys.has(task._displayKey || task.gid),
+			);
 		},
 		hasSelection() {
 			return this.selectedGidListCount > 0;
@@ -181,6 +210,12 @@ export default {
 		onBatchDeleteClick(event) {
 			const deleteWithFiles = !!event.shiftKey;
 			commands.emit("batch-delete-task", { deleteWithFiles });
+		},
+		onSelectAllClick() {
+			if (this.selectableTaskCount === 0) {
+				return;
+			}
+			useTaskStore().selectAllTask();
 		},
 		onRefreshClick() {
 			this.refreshSpin();

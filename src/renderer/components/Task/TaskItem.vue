@@ -35,6 +35,7 @@
 <script lang="ts">
 import { TASK_STATUS } from "@shared/constants";
 import { checkTaskIsSeeder, getTaskName } from "@shared/utils";
+import logger from "@shared/utils/logger";
 import { useTaskStore } from "@/store/task";
 import { getTaskFullPath, openItem } from "@/utils/native";
 import TaskItemActions from "./TaskItemActions.vue";
@@ -125,9 +126,14 @@ export default {
 			const { taskName } = this;
 			this.$msg.info(this.$t("task.opening-task-message", { taskName }));
 			const fullPath = getTaskFullPath(this.task);
-			const result = await openItem(fullPath);
-			if (result) {
-				this.$msg.error(this.$t("task.file-not-exist"));
+			try {
+				const result = await openItem(fullPath);
+				if (result) {
+					this.$msg.error(this.$t("task.file-not-exist"));
+				}
+			} catch (err) {
+				logger.warn("[Risuko] open task failed:", err);
+				this.$msg.error(`${err}`);
 			}
 		},
 		toggleTask() {

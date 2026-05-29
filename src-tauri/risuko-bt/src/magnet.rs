@@ -1,8 +1,8 @@
 //! Magnet URI → info-dict resolution
 //!
-//! Discovers peers via user-supplied trackers and downloads the `info` dict
-//! from them using BEP-9 (ut_metadata).  DHT is not used (the in-tree DHT is
-//! a stub)
+//! Discovers peers via user-supplied trackers and the process-wide warm DHT
+//! (`Dht::shared`), then downloads the `info` dict from them using BEP-9
+//! (ut_metadata).
 
 use std::collections::{BTreeMap, HashSet};
 use std::net::SocketAddr;
@@ -19,13 +19,13 @@ use super::core::merkle::MerkleProofTable;
 use super::core::{
     generate_peer_id, parse_info_v2_from_bytes, Id20, Id32, Magnet, ValidatedTorrentMetaV2Info,
 };
-use super::dht::{Dht, DhtConfig};
+use super::dht::Dht;
 use super::peer::{connect, PeerCommand, PeerEvent, SpawnPeer};
 use super::tracker::{announce, AnnounceEvent, AnnounceRequest};
 use super::wire::extended::{
     parse_ut_metadata, ut_metadata_request, ut_metadata_type, ExtHandshake, EXT_HANDSHAKE_ID,
 };
-use super::wire::Message;
+use super::wire::{Message, MessageEncoder};
 
 const META_PIECE_SIZE: usize = 16 * 1024;
 const MAX_METADATA_SIZE: usize = 32 * 1024 * 1024;
@@ -82,6 +82,7 @@ pub async fn resolve_with_peers(
     let info_hash = magnet.info_hash();
     let want_v1 = magnet.info_hash_v1();
     let want_v2 = magnet.info_hash_v2();
+    let advertise_v2 = want_v1.is_none() && want_v2.is_some();
 
     let mut trackers: Vec<String> = magnet.trackers.clone();
     for t in extra_trackers {
@@ -129,27 +130,25 @@ pub async fn resolve_with_peers(
         });
     }
 
-    // Fire up DHT in parallel; it feeds the same peer channel as trackers
-    // If DHT fails to start (firewalled UDP, etc.) we just lose that source
-    let dht_handle: Option<tokio::task::JoinHandle<()>> =
-        match Dht::spawn(DhtConfig::default()).await {
-            Ok(dht) => {
-                let tx = peer_tx.clone();
-                let dht_budget = budget.min(Duration::from_secs(60));
-                let mut dht_rx = dht.get_peers_stream(info_hash, dht_budget);
-                Some(tokio::spawn(async move {
-                    while let Some(p) = dht_rx.recv().await {
-                        if tx.send(p).is_err() {
-                            break;
-                        }
+    // Fire up DHT in parallel
+    let dht_handle: Option<tokio::task::JoinHandle<()>> = match Dht::shared().await {
+        Some(dht) => {
+            let tx = peer_tx.clone();
+            let dht_budget = budget.min(Duration::from_secs(60));
+            let mut dht_rx = dht.get_peers_stream(info_hash, dht_budget);
+            Some(tokio::spawn(async move {
+                while let Some(p) = dht_rx.recv().await {
+                    if tx.send(p).is_err() {
+                        break;
                     }
-                }))
-            }
-            Err(e) => {
-                log::debug!("dht spawn failed: {e}");
-                None
-            }
-        };
+                }
+            }))
+        }
+        None => {
+            log::debug!("dht unavailable for magnet resolution");
+            None
+        }
+    };
     // Caller-supplied peers go in first so the driver can begin contacting
     // them immediately, without waiting for any tracker / DHT round-trip
     for p in extra_peers {
@@ -212,7 +211,7 @@ pub async fn resolve_with_peers(
                             let _permit = permit;
                             let fetched = tokio::time::timeout(
                                 PEER_TOTAL_TIMEOUT,
-                                try_fetch_from_peer(addr, info_hash, our_peer_id, encryption),
+                                try_fetch_from_peer(addr, info_hash, our_peer_id, encryption, advertise_v2),
                             )
                             .await
                             .ok()
@@ -246,6 +245,12 @@ pub async fn resolve_with_peers(
                             }
                             info_seen.store(true, std::sync::atomic::Ordering::Relaxed);
                             if !layers_complete {
+                                if can_use_v1_metadata_without_piece_layers(want_v1, &bytes) {
+                                    if let Some(tx) = result_tx.lock().take() {
+                                        let _ = tx.send((bytes, BTreeMap::new()));
+                                    }
+                                    return;
+                                }
                                 // Hash-validated info dict but the peer could
                                 // not serve every required piece layer; let
                                 // another peer try
@@ -312,6 +317,26 @@ pub async fn resolve_with_peers(
     }
 }
 
+fn can_use_v1_metadata_without_piece_layers(want_v1: Option<Id20>, info_bytes: &[u8]) -> bool {
+    if want_v1.is_none() {
+        return false;
+    }
+
+    let Ok(value) = crate::bencode::decode_all(info_bytes) else {
+        return false;
+    };
+    let Some(dict) = value.as_dict() else {
+        return false;
+    };
+
+    dict.iter().any(|(key, value)| {
+        key == b"pieces"
+            && value
+                .as_bytes()
+                .is_some_and(|pieces| !pieces.is_empty() && pieces.len() % Id20::LEN == 0)
+    })
+}
+
 /// Outcome of a single-peer fetch attempt: raw info dict bytes, any piece
 /// layers we managed to validate, and whether the layers cover every file
 /// that requires them. `(_, _, false)` indicates the metadata is v2 but at
@@ -322,7 +347,22 @@ async fn try_fetch_from_peer(
     info_hash: Id20,
     our_peer_id: Id20,
     encryption: crate::peer::EncryptionPolicy,
+    advertise_v2: bool,
 ) -> Option<(Vec<u8>, BTreeMap<Id32, Vec<u8>>, bool)> {
+    // Build a per-peer extended-handshake builder. The connection layer
+    // invokes it once with the peer's IP so `yourip` matches that peer —
+    // some swarms (notably CN BT clients) only engage with remotes that
+    // populate this. Metadata size is unknown until we receive the peer's
+    // reply, so we leave it `None` here
+    let ext_handshake_builder: crate::peer::ExtHandshakeBuilder =
+        std::sync::Arc::new(|peer_ip: std::net::IpAddr| {
+            let hs = ExtHandshake::new_outgoing(OUR_UT_METADATA_ID, OUR_UT_PEX_ID, None)
+                .with_yourip(peer_ip);
+            MessageEncoder::encode(&Message::Extended {
+                ext_id: EXT_HANDSHAKE_ID,
+                payload: hs.encode(),
+            })
+        });
     let (handle, rx) = connect(SpawnPeer {
         addr,
         info_hash,
@@ -330,6 +370,8 @@ async fn try_fetch_from_peer(
         connect_timeout: PEER_CONNECT_TIMEOUT,
         read_timeout: PEER_READ_TIMEOUT,
         encryption,
+        advertise_v2,
+        ext_handshake_builder: Some(ext_handshake_builder),
     })
     .await
     .ok()?;
@@ -346,18 +388,10 @@ async fn try_fetch_from_peer_inner(
     handle: &super::peer::PeerHandle,
     mut rx: tokio::sync::mpsc::Receiver<PeerEvent>,
 ) -> Option<(Vec<u8>, BTreeMap<Id32, Vec<u8>>, bool)> {
-    // Pipeline our extended handshake immediately; we'll validate that the
-    // peer actually supports extensions when we see their Handshook event
-    // This saves one async round-trip per peer
-    let our_hs = ExtHandshake::new_outgoing(OUR_UT_METADATA_ID, OUR_UT_PEX_ID, None);
-    handle
-        .tx
-        .send(PeerCommand::Send(Message::Extended {
-            ext_id: EXT_HANDSHAKE_ID,
-            payload: our_hs.encode(),
-        }))
-        .await
-        .ok()?;
+    // Our extended handshake was already shipped on the wire by the
+    // connection layer (see `try_fetch_from_peer`'s `ext_handshake_bytes`).
+    // Validate the peer's reserved bits when we observe `Handshook` and then
+    // wait for the peer's extended handshake reply
 
     // Collect Handshook and the peer's extended handshake from a single
     // receive loop. The peer's extended handshake message can arrive before
@@ -679,5 +713,67 @@ mod tests {
             meta.announce.as_deref(),
             Some("http://tracker.example/announce")
         );
+    }
+
+    #[test]
+    fn v1_info_can_be_used_without_piece_layers() {
+        use crate::bencode::{encode_to_vec, Value};
+        let pieces = vec![0u8; 20];
+        let info = Value::Dict(vec![
+            (b"length".to_vec(), Value::Int(1024)),
+            (b"name".to_vec(), Value::Bytes(b"hello".to_vec())),
+            (b"piece length".to_vec(), Value::Int(1024)),
+            (b"pieces".to_vec(), Value::Bytes(pieces)),
+        ]);
+        let info_bytes = encode_to_vec(&info);
+        let want_v1 = Some(Id20::from_slice(&[1u8; 20]).unwrap());
+
+        assert!(can_use_v1_metadata_without_piece_layers(
+            want_v1,
+            &info_bytes
+        ));
+        assert!(!can_use_v1_metadata_without_piece_layers(None, &info_bytes));
+    }
+
+    #[test]
+    fn hybrid_info_round_trips_without_piece_layers_for_v1_download() {
+        use crate::bencode::{encode_to_vec, Value};
+        let length = 64 * 1024;
+        let piece_length = 16 * 1024;
+        let file_leaf = Value::Dict(vec![(
+            Vec::new(),
+            Value::Dict(vec![
+                (b"length".to_vec(), Value::Int(length)),
+                (b"pieces root".to_vec(), Value::Bytes(vec![1u8; 32])),
+            ]),
+        )]);
+        let file_tree = Value::Dict(vec![(b"hello.bin".to_vec(), file_leaf)]);
+        let info = Value::Dict(vec![
+            (b"file tree".to_vec(), file_tree),
+            (b"length".to_vec(), Value::Int(length)),
+            (b"meta version".to_vec(), Value::Int(2)),
+            (b"name".to_vec(), Value::Bytes(b"hello".to_vec())),
+            (b"piece length".to_vec(), Value::Int(piece_length)),
+            (b"pieces".to_vec(), Value::Bytes(vec![0u8; 4 * Id20::LEN])),
+        ]);
+        let info_bytes = encode_to_vec(&info);
+        let want_v1 = Some(Id20::from_slice(&[1u8; 20]).unwrap());
+
+        assert!(can_use_v1_metadata_without_piece_layers(
+            want_v1,
+            &info_bytes
+        ));
+
+        let torrent_bytes = synth_torrent_bytes(&info_bytes, &[], &BTreeMap::new());
+        let meta = crate::parse_torrent(&torrent_bytes).unwrap();
+        assert_eq!(meta.meta_version.as_str(), "hybrid");
+        assert!(meta.piece_layers.is_empty());
+        // Wire-bit advertisement still applies because the metadata carries
+        // v2 hashes — peers that gate engagement on the V2 reserved bit will
+        // see us as a v2-aware client. Serving piece layers / announcing v2
+        // info-hashes remains gated on `supports_v2_wire`, which is false
+        // here, so the runtime falls back to the v1 download path
+        assert!(meta.info_v2.is_some());
+        assert!(!crate::core::supports_v2_wire(&meta));
     }
 }

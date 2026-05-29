@@ -19,7 +19,9 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import androidx.core.view.WindowCompat
+import java.io.File
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
@@ -243,6 +245,117 @@ class MainActivity : TauriActivity() {
     }
 
     private const val REVEAL_TAG = "RisukoReveal"
+    private const val OPEN_TAG = "RisukoOpen"
+
+    @JvmStatic
+    fun openFile(path: String, mime: String): String {
+      val activity = current ?: return "no_activity"
+      val resultRef = java.util.concurrent.atomic.AtomicReference("ok")
+      val latch = CountDownLatch(1)
+      activity.runOnUiThread {
+        try {
+          resultRef.set(tryOpenFile(activity, path, mime))
+        } catch (e: Throwable) {
+          Log.w(OPEN_TAG, "openFile threw for path=$path mime=$mime", e)
+          resultRef.set("error: ${e.javaClass.simpleName}: ${e.message ?: "(no message)"}")
+        }
+        latch.countDown()
+      }
+      val completed = try {
+        latch.await(5, TimeUnit.SECONDS)
+      } catch (_: InterruptedException) {
+        Thread.currentThread().interrupt()
+        return "interrupted"
+      }
+      if (!completed) {
+        return "timeout"
+      }
+      return resultRef.get()
+    }
+
+    private fun tryOpenFile(activity: MainActivity, path: String, mime: String): String {
+      if (path.isBlank()) {
+        return "empty_path"
+      }
+      val uri = buildOpenFileUri(activity, path)
+      val normalizedMime = mime.ifBlank { "*/*" }
+      val grantRead = uri.scheme != "http" && uri.scheme != "https"
+      val newViewIntent: (String) -> Intent = { targetMime ->
+        Intent(Intent.ACTION_VIEW).apply {
+          setDataAndType(uri, targetMime)
+          addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+          if (grantRead) {
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+          }
+        }
+      }
+      data class Attempt(
+        val label: String,
+        val probe: Intent,
+        val launchFactory: () -> Intent,
+      )
+      val attempts = mutableListOf<Attempt>()
+      fun addAttempts(label: String, targetMime: String) {
+        attempts += Attempt(
+          label = "$label+chooser",
+          probe = newViewIntent(targetMime),
+          launchFactory = {
+            Intent.createChooser(newViewIntent(targetMime), "Open file with").apply {
+              addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+              if (grantRead) {
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+              }
+            }
+          },
+        )
+        attempts += Attempt(
+          label = "$label+direct",
+          probe = newViewIntent(targetMime),
+          launchFactory = { newViewIntent(targetMime) },
+        )
+      }
+      addAttempts("mime:$normalizedMime", normalizedMime)
+      if (normalizedMime != "*/*") {
+        addAttempts("mime:*/*", "*/*")
+      }
+      val errors = mutableListOf<String>()
+      for (attempt in attempts) {
+        val resolved = activity.packageManager.queryIntentActivities(attempt.probe, 0)
+        if (resolved.isEmpty()) {
+          Log.w(OPEN_TAG, "no handler for ${attempt.label} path=$path uri=$uri mime=$mime")
+          errors.add("${attempt.label}: no_handler")
+          continue
+        }
+        try {
+          activity.startActivity(attempt.launchFactory())
+          Log.i(OPEN_TAG, "openFile ${attempt.label} succeeded path=$path uri=$uri resolved=${resolved.size}")
+          return "ok"
+        } catch (e: ActivityNotFoundException) {
+          Log.w(OPEN_TAG, "${attempt.label} dispatch failed: ActivityNotFoundException", e)
+          errors.add("${attempt.label}: ActivityNotFoundException")
+        } catch (e: SecurityException) {
+          Log.w(OPEN_TAG, "${attempt.label} dispatch failed: SecurityException", e)
+          errors.add("${attempt.label}: SecurityException: ${e.message ?: "(no message)"}")
+        } catch (e: Throwable) {
+          Log.w(OPEN_TAG, "${attempt.label} dispatch failed: ${e.javaClass.simpleName}", e)
+          errors.add("${attempt.label}: ${e.javaClass.simpleName}: ${e.message ?: "(no message)"}")
+        }
+      }
+      Log.w(OPEN_TAG, "openFile exhausted all attempts for path=$path uri=$uri mime=$mime: $errors")
+      return errors.joinToString("; ")
+    }
+
+    private fun buildOpenFileUri(activity: MainActivity, path: String): Uri {
+      if (path.startsWith("content://") || path.startsWith("http://") || path.startsWith("https://")) {
+        return Uri.parse(path)
+      }
+      val filePath = if (path.startsWith("file://")) {
+        Uri.parse(path).path ?: path.removePrefix("file://")
+      } else {
+        path
+      }
+      return FileProvider.getUriForFile(activity, "${activity.packageName}.fileprovider", File(filePath))
+    }
 
     private fun tryRevealFolder(activity: MainActivity, path: String): String {
       if (path.isBlank()) {

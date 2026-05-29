@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 
 const sdkRoot =
 	process.env.ANDROID_HOME ||
@@ -52,7 +52,7 @@ const env = {
 	ANDROID_NDK_HOME: ndkHome,
 	NDK_HOME: ndkHome,
 	...(javaHome ? { JAVA_HOME: javaHome } : {}),
-	PATH: `${javaBin ? `${javaBin}:` : ""}${llvmBin}:${process.env.PATH || ""}`,
+	PATH: [javaBin, llvmBin, process.env.PATH || ""].filter(Boolean).join(delimiter),
 	CC_aarch64_linux_android: join(llvmBin, `aarch64-linux-android${api}-clang`),
 	CXX_aarch64_linux_android: join(llvmBin, `aarch64-linux-android${api}-clang++`),
 	AR_aarch64_linux_android: join(llvmBin, "llvm-ar"),
@@ -92,7 +92,7 @@ if (args.length === 0) {
 	console.log(`ANDROID_HOME=${env.ANDROID_HOME}`);
 	console.log(`ANDROID_NDK_HOME=${env.ANDROID_NDK_HOME}`);
 	if (env.JAVA_HOME) {
-		console.log(`JAVA_HOME=${env.JAVA_HOME}`);
+		console.log("JAVA_HOME=<resolved>"); // CodeQL: false positive - JAVA_HOME is a path, not a secret.
 	}
 	console.log(`PATH prefix=${llvmBin}`);
 	process.exit(0);

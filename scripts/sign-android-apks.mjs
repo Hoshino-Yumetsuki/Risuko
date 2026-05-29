@@ -3,8 +3,9 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const projectRoot = resolve(new URL("..", import.meta.url).pathname);
+const projectRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
 
 const envFile = resolve(projectRoot, ".env");
 if (existsSync(envFile)) {
@@ -17,8 +18,7 @@ const apkRoot = resolve(
 );
 
 function fail(message) {
-	console.error(message);
-	process.exit(1);
+	throw new Error(message);
 }
 
 function run(command, args, options = {}) {
@@ -62,14 +62,25 @@ function findBuildTool(name) {
 	if (!existsSync(buildToolsRoot)) {
 		fail(`Android build-tools directory not found: ${buildToolsRoot}`);
 	}
+	const candidates =
+		process.platform === "win32"
+			? [name, `${name}.bat`, `${name}.cmd`, `${name}.exe`]
+			: [name];
 	const versions = readdirSync(buildToolsRoot)
-		.filter((entry) => existsSync(join(buildToolsRoot, entry, name)))
+		.filter((entry) =>
+			candidates.some((candidate) =>
+				existsSync(join(buildToolsRoot, entry, candidate)),
+			),
+		)
 		.sort(compareVersions)
 		.reverse();
 	if (versions.length === 0) {
 		fail(`${name} not found under ${buildToolsRoot}`);
 	}
-	return join(buildToolsRoot, versions[0], name);
+	const toolName = candidates.find((candidate) =>
+		existsSync(join(buildToolsRoot, versions[0], candidate)),
+	);
+	return join(buildToolsRoot, versions[0], toolName);
 }
 
 function findUnsignedApks(root) {
@@ -123,12 +134,13 @@ if (!process.env.ANDROID_SIGNING_KEY_PASSWORD) {
 
 const apksigner = findBuildTool("apksigner");
 const zipalign = findBuildTool("zipalign");
-const keystore = resolveKeystore();
 const unsignedApks = findUnsignedApks(apkRoot);
 
 if (unsignedApks.length === 0) {
 	fail(`No unsigned release APKs found under ${apkRoot}`);
 }
+
+const keystore = resolveKeystore();
 
 try {
 	for (const unsignedApk of unsignedApks) {

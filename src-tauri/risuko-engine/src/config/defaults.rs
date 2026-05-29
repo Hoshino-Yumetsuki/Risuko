@@ -66,7 +66,7 @@ fn default_download_dir() -> std::path::PathBuf {
         // via the directory picker.
         let public_downloads = std::path::PathBuf::from("/storage/emulated/0/Download/Risuko");
         if let Some(parent) = public_downloads.parent() {
-            if parent.exists() {
+            if is_writable_dir(parent) {
                 return public_downloads;
             }
         }
@@ -76,7 +76,7 @@ fn default_download_dir() -> std::path::PathBuf {
             "/storage/emulated/0/Android/data/app.risuko.mobile/files/Download",
         );
         if let Some(parent) = app_external.parent() {
-            if parent.exists() {
+            if is_writable_dir(parent) {
                 return app_external;
             }
         }
@@ -90,6 +90,26 @@ fn default_download_dir() -> std::path::PathBuf {
         .or_else(|| dirs::home_dir().map(|p| p.join("Downloads")))
         .or_else(|| std::env::current_dir().ok().map(|p| p.join("Downloads")))
         .unwrap_or_else(|| std::env::temp_dir().join("Downloads"))
+}
+
+#[cfg(target_os = "android")]
+fn is_writable_dir(path: &std::path::Path) -> bool {
+    if !path.is_dir() {
+        return false;
+    }
+    let probe = path.join(".risuko-write-test");
+    match std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(&probe)
+    {
+        Ok(_) => {
+            let _ = std::fs::remove_file(probe);
+            true
+        }
+        Err(_) => false,
+    }
 }
 
 pub fn user_defaults() -> Map<String, Value> {

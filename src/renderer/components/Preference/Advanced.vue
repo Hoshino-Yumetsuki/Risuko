@@ -2,7 +2,9 @@
   <div class="content panel panel-layout panel-layout--v">
     <mo-enter tag="header" preset="fadeInDown" class="panel-header">
       <h4 class="hidden-xs-only">{{ title }}</h4>
-      <mo-subnav-switcher :title="title" :subnavs="subnavs" class="hidden-sm-and-up" />
+      <div class="preference-mobile-subnav hidden-sm-and-up">
+        <mo-subnav-switcher :title="title" :subnavs="subnavs" />
+      </div>
     </mo-enter>
     <main class="panel-content">
       <form class="form-preference" ref="advancedForm" @submit.prevent>
@@ -1112,7 +1114,7 @@
                     />
                     <span class="mo-input-append dev-log-path-actions" v-if="isRenderer">
                       <mo-select-directory @selected="handleLogDirSelected" />
-                      <mo-show-in-folder :path="logPath" :size="14" />
+                      <mo-show-in-folder :path="visibleLogPath" :size="14" />
                     </span>
                   </div>
                   <div class="form-info" style="margin-top: 4px">

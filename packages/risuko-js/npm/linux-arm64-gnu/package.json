@@ -1,24 +1,24 @@
 {
-  "name": "@risuko/js-linux-arm64-gnu",
-  "version": "0.3.4",
-  "description": "Risuko JS native module for Linux ARM64",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/YueMiyuki/Risuko.git",
-    "directory": "packages/risuko-js/npm/linux-arm64-gnu"
-  },
-  "license": "MIT",
-  "os": [
-    "linux"
-  ],
-  "cpu": [
-    "arm64"
-  ],
-  "main": "risuko.linux-arm64-gnu.node",
-  "files": [
-    "risuko.linux-arm64-gnu.node"
-  ],
-  "libc": [
-    "glibc"
-  ]
+	"name": "@risuko/js-linux-arm64-gnu",
+	"version": "0.3.4",
+	"description": "Risuko JS native module for Linux ARM64",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/YueMiyuki/Risuko.git",
+		"directory": "packages/risuko-js/npm/linux-arm64-gnu"
+	},
+	"license": "MIT",
+	"os": [
+		"linux"
+	],
+	"cpu": [
+		"arm64"
+	],
+	"main": "risuko.linux-arm64-gnu.node",
+	"files": [
+		"risuko.linux-arm64-gnu.node"
+	],
+	"libc": [
+		"glibc"
+	]
 }

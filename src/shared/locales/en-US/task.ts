@@ -181,6 +181,7 @@ export default {
 	"resume-selected-tasks-success": "Successfully resumed selected tasks",
 	"resume-selected-tasks-fail": "Failed to resume selected tasks",
 	"select-all-task": "Select All Tasks",
+	"deselect-all-task": "Deselect All Tasks",
 	"clear-recent-tasks": "Clear Recent Tasks",
 	"purge-record": "Purge Task Record",
 	"purge-record-success": "Successfully purged task records",

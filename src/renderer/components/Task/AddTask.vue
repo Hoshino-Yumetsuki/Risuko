@@ -105,8 +105,8 @@
                 </span>
                 <Input
                   v-model="form.dir"
-                  :readonly="isMas"
-                  class="flex-1 shadow-none rounded-none border-none noinput"
+                  readonly
+                  class="path-indicator-field flex-1 shadow-none rounded-none border-none noinput"
                 />
                 <span class="mo-input-append" v-if="isRenderer">
                   <mo-select-directory @selected="handleNativeDirectorySelected" />

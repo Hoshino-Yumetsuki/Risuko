@@ -739,7 +739,7 @@ export default {
 			return [];
 		},
 		hasPreviewFolderSelectableRange(row: PreviewTreeRow) {
-			if (!row || row.type !== "folder") {
+			if (row?.type !== "folder") {
 				return false;
 			}
 			return this.getPreviewRowSelectableRanges(row).length > 0;
@@ -789,7 +789,7 @@ export default {
 		previewFolderSelectionState(
 			row: PreviewTreeRow,
 		): boolean | "indeterminate" {
-			if (!row || row.type !== "folder") {
+			if (row?.type !== "folder") {
 				return false;
 			}
 			const ranges = this.getPreviewRowSelectableRanges(row);
@@ -828,7 +828,7 @@ export default {
 			row: PreviewTreeRow,
 			checked: boolean | "indeterminate",
 		) {
-			if (!row || row.type !== "folder") {
+			if (row?.type !== "folder") {
 				return;
 			}
 			const ranges = this.getPreviewRowSelectableRanges(row);
@@ -838,7 +838,7 @@ export default {
 			this.runPreviewSelectionUpdate(ranges, checked);
 		},
 		isPreviewFileSelected(row: PreviewTreeRow) {
-			if (!row || row.type !== "file") {
+			if (row?.type !== "file") {
 				return false;
 			}
 			const index = this.normalizePreviewFileIndex(row.index);
@@ -894,7 +894,7 @@ export default {
 			row: PreviewTreeRow,
 			checked: boolean | "indeterminate",
 		) {
-			if (!row || row.type !== "file") {
+			if (row?.type !== "file") {
 				return;
 			}
 			const index = this.normalizePreviewFileIndex(row.index);

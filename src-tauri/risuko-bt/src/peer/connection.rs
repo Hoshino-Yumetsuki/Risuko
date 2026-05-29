@@ -1,11 +1,12 @@
 //! Per-peer async actor
 
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::pin::Pin;
+use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::Duration;
 
-use bytes::BytesMut;
+use bytes::{Bytes, BytesMut};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
@@ -63,7 +64,14 @@ pub struct PeerHandle {
     pub tx: mpsc::Sender<PeerCommand>,
 }
 
+/// Builds the BEP-10 extended handshake bytes for a peer given that peer's
+/// IP. The connection layer invokes this once per dial / accept after
+/// reading the remote BT handshake, so the resulting message can include
+/// the `yourip` field set to the peer's actual IP
+pub type ExtHandshakeBuilder = Arc<dyn Fn(IpAddr) -> Bytes + Send + Sync>;
+
 /// Parameters for spawning an outbound peer connection
+#[derive(Clone)]
 pub struct SpawnPeer {
     pub addr: SocketAddr,
     pub info_hash: Id20,
@@ -71,6 +79,34 @@ pub struct SpawnPeer {
     pub connect_timeout: Duration,
     pub read_timeout: Duration,
     pub encryption: EncryptionPolicy,
+    pub advertise_v2: bool,
+    /// Optional builder for the BEP-10 extended handshake bytes. Invoked by
+    /// the connection layer immediately after the BT handshake exchange
+    /// completes, inside the same task. Eliminates the multi-hop tokio
+    /// latency between "BT handshake done" and "ext handshake on the wire"
+    /// and lets callers populate `yourip`. The bytes are only sent when the
+    /// remote advertises the BEP-10 reserved bit
+    pub ext_handshake_builder: Option<ExtHandshakeBuilder>,
+}
+
+#[derive(Clone)]
+pub struct KnownInfoHash {
+    pub info_hash: Id20,
+    pub advertise_v2: bool,
+    /// See `SpawnPeer::ext_handshake_builder` — same builder, applied to
+    /// the inbound accept path so seeders also get our extended handshake
+    /// on the wire as quickly as possible (and with `yourip` set)
+    pub ext_handshake_builder: Option<ExtHandshakeBuilder>,
+}
+
+impl From<Id20> for KnownInfoHash {
+    fn from(info_hash: Id20) -> Self {
+        Self {
+            info_hash,
+            advertise_v2: true,
+            ext_handshake_builder: None,
+        }
+    }
 }
 
 /// Connect to a peer, perform the BEP-3 handshake, and split the socket into
@@ -79,8 +115,55 @@ pub async fn connect(spawn: SpawnPeer) -> std::io::Result<(PeerHandle, mpsc::Rec
     let stream = timeout(spawn.connect_timeout, TcpStream::connect(spawn.addr))
         .await
         .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "connect timeout"))??;
-    stream.set_nodelay(true).ok();
     drive_handshake(stream, spawn).await
+}
+
+/// Run the plaintext BT handshake over an already-established µTP (BEP-29) connection,
+/// mirroring [`connect`] for the µTP transport. The peer connection layer is
+/// transport-agnostic (see [`finish_spawn`]), so the resulting reader/writer tasks
+/// behave identically to the TCP path
+///
+/// MSE-over-µTP is intentionally not attempted: µTP peers in the swarms this client
+/// targets speak plaintext, and TCP remains the path for encrypted peers. The caller
+/// obtains `stream` from [`crate::utp::UtpSocket::connect`]
+pub async fn connect_utp_plaintext(
+    stream: crate::utp::UtpStream,
+    spawn: SpawnPeer,
+) -> std::io::Result<(PeerHandle, mpsc::Receiver<PeerEvent>)> {
+    let addr = spawn.addr;
+    let (reader, writer) = tokio::io::split(stream);
+    connect_plaintext(reader, writer, addr, &spawn).await
+}
+
+/// Dial a peer, preferring TCP and falling back to µTP (BEP-29) when the TCP attempt
+/// fails (refused, filtered, or timed out). Many peers are reachable over only one
+/// transport—notably those behind NATs/ISPs that drop inbound TCP SYNs but pass UDP—so
+/// the fallback widens connectivity. With `utp = None` this is exactly [`connect`], so
+/// callers without a µTP socket keep the unchanged TCP path
+///
+/// TCP is tried first rather than racing both at once: TCP carries our fast path today,
+/// and a pure fallback avoids opening (then cancelling) a µTP connection for every peer
+/// that TCP already reaches
+pub async fn connect_with_utp_fallback(
+    spawn: SpawnPeer,
+    utp: Option<std::sync::Arc<crate::utp::UtpSocket>>,
+) -> std::io::Result<(PeerHandle, mpsc::Receiver<PeerEvent>)> {
+    let Some(utp) = utp else {
+        return connect(spawn).await;
+    };
+    let addr = spawn.addr;
+    let utp_timeout = spawn.connect_timeout;
+    match connect(spawn.clone()).await {
+        Ok(v) => Ok(v),
+        Err(tcp_err) => match utp.connect_timeout(addr, utp_timeout).await {
+            Ok(stream) => {
+                log::debug!("tcp dial to {addr} failed ({tcp_err}); connected via µTP");
+                connect_utp_plaintext(stream, spawn).await
+            }
+            // Surface the TCP error — it's usually the more actionable one.
+            Err(_) => Err(tcp_err),
+        },
+    }
 }
 
 /// Accept an inbound peer connection: peer sends handshake first, we reply
@@ -103,6 +186,16 @@ pub async fn accept(
     .await
 }
 
+pub async fn accept_with_policy_and_capabilities(
+    stream: TcpStream,
+    our_peer_id: Id20,
+    known_hashes: Vec<KnownInfoHash>,
+    read_timeout: Duration,
+    policy: EncryptionPolicy,
+) -> std::io::Result<(PeerHandle, mpsc::Receiver<PeerEvent>)> {
+    accept_with_policy_inner(stream, our_peer_id, known_hashes, read_timeout, policy).await
+}
+
 /// Accept with an explicit encryption policy. The first byte is peeked:
 /// `0x13` means plaintext BEP-3; any other byte is treated as the start of
 /// an MSE handshake (Ya)
@@ -113,7 +206,23 @@ pub async fn accept_with_policy(
     read_timeout: Duration,
     policy: EncryptionPolicy,
 ) -> std::io::Result<(PeerHandle, mpsc::Receiver<PeerEvent>)> {
-    stream.set_nodelay(true).ok();
+    accept_with_policy_inner(
+        stream,
+        our_peer_id,
+        known_hashes.into_iter().map(Into::into).collect(),
+        read_timeout,
+        policy,
+    )
+    .await
+}
+
+async fn accept_with_policy_inner(
+    stream: TcpStream,
+    our_peer_id: Id20,
+    known_hashes: Vec<KnownInfoHash>,
+    read_timeout: Duration,
+    policy: EncryptionPolicy,
+) -> std::io::Result<(PeerHandle, mpsc::Receiver<PeerEvent>)> {
     let addr = stream.peer_addr()?;
 
     // Peek the first 20 bytes (1 pstrlen + 19-byte "BitTorrent protocol")
@@ -179,25 +288,95 @@ async fn accept_plaintext(
     stream: TcpStream,
     addr: SocketAddr,
     our_peer_id: Id20,
-    known_hashes: Vec<Id20>,
+    known_hashes: Vec<KnownInfoHash>,
     read_timeout: Duration,
 ) -> std::io::Result<(PeerHandle, mpsc::Receiver<PeerEvent>)> {
-    let (mut reader, mut writer) = stream.into_split();
+    let (reader, writer) = stream.into_split();
+    accept_plaintext_generic(
+        reader,
+        writer,
+        addr,
+        our_peer_id,
+        known_hashes,
+        read_timeout,
+    )
+    .await
+}
+
+/// Accept an inbound µTP peer: run the plaintext BEP-3 responder handshake directly
+/// over an established [`crate::utp::UtpStream`]. µTP carries no MSE layer (it is its
+/// own transport), so unlike the TCP accept path there is no first-byte probe—the BT
+/// handshake runs straight on the stream. `known_hashes` lists the
+/// info-hashes we currently host; it is used both to validate the peer's handshake and
+/// to choose the matching ext-handshake capabilities
+pub async fn accept_utp_plaintext(
+    stream: crate::utp::UtpStream,
+    our_peer_id: Id20,
+    known_hashes: Vec<KnownInfoHash>,
+    read_timeout: Duration,
+) -> std::io::Result<(PeerHandle, mpsc::Receiver<PeerEvent>)> {
+    let addr = stream.peer_addr();
+    let (reader, writer) = tokio::io::split(stream);
+    accept_plaintext_generic(
+        reader,
+        writer,
+        addr,
+        our_peer_id,
+        known_hashes,
+        read_timeout,
+    )
+    .await
+}
+
+/// Responder side of the plaintext BEP-3 handshake, generic over the transport
+/// so TCP (`into_split` halves) and µTP (`tokio::io::split` halves) share the
+/// exact same logic: read the peer's handshake, validate the info-hash against
+/// `known_hashes`, reply with ours, optionally write the ext-handshake, then
+/// hand off to `finish_spawn`.
+async fn accept_plaintext_generic<R, W>(
+    mut reader: R,
+    mut writer: W,
+    addr: SocketAddr,
+    our_peer_id: Id20,
+    known_hashes: Vec<KnownInfoHash>,
+    read_timeout: Duration,
+) -> std::io::Result<(PeerHandle, mpsc::Receiver<PeerEvent>)>
+where
+    R: AsyncRead + Unpin + Send + 'static,
+    W: AsyncWrite + Unpin + Send + 'static,
+{
     let mut buf = [0u8; HANDSHAKE_LEN];
     timeout(read_timeout, reader.read_exact(&mut buf))
         .await
         .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "hs read timeout"))??;
     let remote_hs = Handshake::parse(&buf)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, format!("{e}")))?;
-    if !known_hashes.contains(&remote_hs.info_hash) {
+    let Some(known) = known_hashes
+        .iter()
+        .find(|known| known.info_hash == remote_hs.info_hash)
+    else {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
             "unknown info hash",
         ));
-    }
-    let our_hs = Handshake::new(remote_hs.info_hash, our_peer_id);
+    };
+    let our_hs = Handshake::new_with_v2(remote_hs.info_hash, our_peer_id, known.advertise_v2);
     writer.write_all(&our_hs.to_bytes()).await?;
-    finish_spawn(addr, remote_hs, false, Box::new(reader), Box::new(writer))
+    write_ext_handshake_if_supported(
+        &mut writer,
+        &remote_hs,
+        addr.ip(),
+        known.ext_handshake_builder.as_ref(),
+    )
+    .await?;
+    finish_spawn(
+        addr,
+        our_peer_id,
+        remote_hs,
+        false,
+        Box::new(reader),
+        Box::new(writer),
+    )
 }
 
 async fn drive_handshake(
@@ -206,7 +385,10 @@ async fn drive_handshake(
 ) -> std::io::Result<(PeerHandle, mpsc::Receiver<PeerEvent>)> {
     let addr = spawn.addr;
     match spawn.encryption {
-        EncryptionPolicy::PlaintextOnly => connect_plaintext(stream, addr, &spawn).await,
+        EncryptionPolicy::PlaintextOnly => {
+            let (reader, writer) = stream.into_split();
+            connect_plaintext(reader, writer, addr, &spawn).await
+        }
         EncryptionPolicy::RequireEncryption => connect_mse(stream, addr, &spawn).await,
         EncryptionPolicy::Prefer => {
             // Try plaintext first: it's a single 68-byte exchange and
@@ -221,9 +403,10 @@ async fn drive_handshake(
             // accepts the TCP connect but never sends the handshake cannot
             // tie us up for the much longer read_timeout before we fall
             // back to MSE.
+            let (reader, writer) = stream.into_split();
             let plaintext = timeout(
                 spawn.connect_timeout,
-                connect_plaintext(stream, addr, &spawn),
+                connect_plaintext(reader, writer, addr, &spawn),
             )
             .await;
             let fallback_err: std::io::Error = match plaintext {
@@ -239,7 +422,6 @@ async fn drive_handshake(
                 .map_err(|_| {
                     std::io::Error::new(std::io::ErrorKind::TimedOut, "connect timeout")
                 })??;
-            stream.set_nodelay(true).ok();
             // Log the MSE outcome so a debug-level log captures whether the
             // encrypted fallback ever succeeds. Without this, an operator
             // troubleshooting "0 KB/s" only sees N "trying mse" lines and
@@ -260,13 +442,21 @@ async fn drive_handshake(
     }
 }
 
-async fn connect_plaintext(
-    stream: TcpStream,
+/// Run the plaintext BEP-3 handshake over an already-split byte stream and
+/// spawn the reader/writer tasks. Generic over the transport so both TCP
+/// (`OwnedReadHalf`/`OwnedWriteHalf`) and µTP (`tokio::io::split` halves) can
+/// share the exact same handshake logic.
+async fn connect_plaintext<R, W>(
+    mut reader: R,
+    mut writer: W,
     addr: SocketAddr,
     spawn: &SpawnPeer,
-) -> std::io::Result<(PeerHandle, mpsc::Receiver<PeerEvent>)> {
-    let (mut reader, mut writer) = stream.into_split();
-    let our_hs = Handshake::new(spawn.info_hash, spawn.our_peer_id);
+) -> std::io::Result<(PeerHandle, mpsc::Receiver<PeerEvent>)>
+where
+    R: AsyncRead + Unpin + Send + 'static,
+    W: AsyncWrite + Unpin + Send + 'static,
+{
+    let our_hs = Handshake::new_with_v2(spawn.info_hash, spawn.our_peer_id, spawn.advertise_v2);
     writer.write_all(&our_hs.to_bytes()).await?;
 
     let mut buf = [0u8; HANDSHAKE_LEN];
@@ -281,7 +471,21 @@ async fn connect_plaintext(
             "info hash mismatch",
         ));
     }
-    finish_spawn(addr, remote_hs, false, Box::new(reader), Box::new(writer))
+    write_ext_handshake_if_supported(
+        &mut writer,
+        &remote_hs,
+        addr.ip(),
+        spawn.ext_handshake_builder.as_ref(),
+    )
+    .await?;
+    finish_spawn(
+        addr,
+        spawn.our_peer_id,
+        remote_hs,
+        false,
+        Box::new(reader),
+        Box::new(writer),
+    )
 }
 
 /// Perform the BEP-8 MSE handshake as the initiator (A), then send the BEP-3
@@ -333,7 +537,8 @@ async fn connect_mse(
     }
     // Send IA = our BT handshake immediately so the responder can begin on
     // its very first reply packet — saves a round trip
-    let our_hs_bytes = Handshake::new(spawn.info_hash, spawn.our_peer_id).to_bytes();
+    let our_hs_bytes =
+        Handshake::new_with_v2(spawn.info_hash, spawn.our_peer_id, spawn.advertise_v2).to_bytes();
     let mut payload = mse::build_initiator_payload(crypto_provide, &pad_c, &our_hs_bytes)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, format!("{e}")))?;
     enc_out.apply_keystream(&mut payload);
@@ -493,7 +698,7 @@ async fn connect_mse(
 
     // Now read the peer's BT handshake from the still-encrypted (or now
     // plaintext) stream, starting with any leftover bytes we already buffered
-    let (reader_boxed, writer_boxed, remote_hs): (
+    let (reader_boxed, mut writer_boxed, remote_hs): (
         Box<dyn AsyncRead + Unpin + Send>,
         Box<dyn AsyncWrite + Unpin + Send>,
         Handshake,
@@ -576,7 +781,21 @@ async fn connect_mse(
         (Box::new(r), Box::new(write_h), remote_hs)
     };
 
-    finish_spawn(addr, remote_hs, use_rc4, reader_boxed, writer_boxed)
+    write_ext_handshake_if_supported(
+        &mut *writer_boxed,
+        &remote_hs,
+        addr.ip(),
+        spawn.ext_handshake_builder.as_ref(),
+    )
+    .await?;
+    finish_spawn(
+        addr,
+        spawn.our_peer_id,
+        remote_hs,
+        use_rc4,
+        reader_boxed,
+        writer_boxed,
+    )
 }
 
 /// Accept an MSE connection as responder (B)
@@ -584,7 +803,7 @@ async fn accept_mse(
     stream: TcpStream,
     addr: SocketAddr,
     our_peer_id: Id20,
-    known_hashes: Vec<Id20>,
+    known_hashes: Vec<KnownInfoHash>,
     read_timeout: Duration,
     policy: EncryptionPolicy,
 ) -> std::io::Result<(PeerHandle, mpsc::Receiver<PeerEvent>)> {
@@ -664,16 +883,17 @@ async fn accept_mse(
     let req3_s = mse::req3(&s);
     let want_req2 = mse::xor20(&req23, &req3_s);
     // Resolve SKEY by brute force over known info hashes
-    let mut skey: Option<Id20> = None;
-    for ih in &known_hashes {
-        if mse::req2(&ih.0) == want_req2 {
-            skey = Some(*ih);
+    let mut known_info: Option<KnownInfoHash> = None;
+    for known in &known_hashes {
+        if mse::req2(&known.info_hash.0) == want_req2 {
+            known_info = Some(known.clone());
             break;
         }
     }
-    let skey = skey.ok_or_else(|| {
+    let known_info = known_info.ok_or_else(|| {
         std::io::Error::new(std::io::ErrorKind::InvalidData, "mse: unknown info hash")
     })?;
+    let skey = known_info.info_hash;
 
     // Now derive RC4 keys and decrypt the rest of A's third message
     let key_a = mse::rc4_key(b"keyA", &s, &skey.0); // A writes (we decrypt with keyA)
@@ -821,7 +1041,7 @@ async fn accept_mse(
     };
 
     // Send our BT handshake, encrypted if RC4 selected
-    let our_hs = Handshake::new(skey, our_peer_id).to_bytes();
+    let our_hs = Handshake::new_with_v2(skey, our_peer_id, known_info.advertise_v2).to_bytes();
     if crypto_select == mse::crypto::RC4 {
         let mut encoded = our_hs.to_vec();
         enc_out.apply_keystream(&mut encoded);
@@ -857,8 +1077,15 @@ async fn accept_mse(
                 hs
             }
         };
-        let w = Rc4WriteHalf::new(write_h, enc_out);
-        finish_spawn(addr, remote_hs, true, Box::new(r), Box::new(w))
+        let mut w = Rc4WriteHalf::new(write_h, enc_out);
+        write_ext_handshake_if_supported(
+            &mut w,
+            &remote_hs,
+            addr.ip(),
+            known_info.ext_handshake_builder.as_ref(),
+        )
+        .await?;
+        finish_spawn(addr, our_peer_id, remote_hs, true, Box::new(r), Box::new(w))
     } else {
         write_h.write_all(&our_hs).await?;
         let r = PrefixedReadHalf::new(read_h, leftover);
@@ -871,17 +1098,65 @@ async fn accept_mse(
                 ));
             }
         };
-        finish_spawn(addr, remote_hs, false, Box::new(r), Box::new(write_h))
+        write_ext_handshake_if_supported(
+            &mut write_h,
+            &remote_hs,
+            addr.ip(),
+            known_info.ext_handshake_builder.as_ref(),
+        )
+        .await?;
+        finish_spawn(
+            addr,
+            our_peer_id,
+            remote_hs,
+            false,
+            Box::new(r),
+            Box::new(write_h),
+        )
     }
+}
+
+/// Write our BEP-10 extended handshake to the wire if the remote advertised
+/// the extension-protocol reserved bit. The bytes are produced by `builder`
+/// per-peer so the message can include the peer's IP in the `yourip` field
+/// Called inline by every connection-establishment path (plaintext + MSE,
+/// inbound + outbound) so the message ships in the same async frame that
+/// just completed the BT handshake — no event-channel hop, no writer-task
+/// hop. Some real-world peers RST the connection if our follow-up doesn't
+/// arrive promptly
+async fn write_ext_handshake_if_supported<W: AsyncWrite + Unpin + ?Sized>(
+    writer: &mut W,
+    remote_hs: &Handshake,
+    peer_ip: IpAddr,
+    builder: Option<&ExtHandshakeBuilder>,
+) -> std::io::Result<()> {
+    if !remote_hs.has_ext_protocol() {
+        return Ok(());
+    }
+    let Some(builder) = builder else {
+        return Ok(());
+    };
+    let bytes = builder(peer_ip);
+    writer.write_all(&bytes).await
 }
 
 fn finish_spawn(
     addr: SocketAddr,
+    our_peer_id: Id20,
     remote_hs: Handshake,
     encrypted: bool,
     reader: Box<dyn AsyncRead + Unpin + Send>,
     writer: Box<dyn AsyncWrite + Unpin + Send>,
 ) -> std::io::Result<(PeerHandle, mpsc::Receiver<PeerEvent>)> {
+    // Reject self-connections: the DHT can hand us our own externally-mapped
+    // address, and without this we complete a full handshake with ourselves,
+    // burning a peer slot on a connection that can never serve data
+    if remote_hs.peer_id == our_peer_id {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "self-connection (peer_id matches ours)",
+        ));
+    }
     // Sized for high-throughput pipelining: with up to ~64 outstanding
     // chunk requests and Piece replies of 16 KiB arriving back-to-back,
     // a 64-slot channel would backpressure the reader and cap throughput
@@ -1251,6 +1526,8 @@ mod tests {
             connect_timeout: Duration::from_secs(5),
             read_timeout: Duration::from_secs(5),
             encryption: EncryptionPolicy::PlaintextOnly,
+            advertise_v2: true,
+            ext_handshake_builder: None,
         })
         .await
         .unwrap();
@@ -1312,6 +1589,8 @@ mod tests {
             connect_timeout: Duration::from_secs(5),
             read_timeout: Duration::from_secs(5),
             encryption: EncryptionPolicy::PlaintextOnly,
+            advertise_v2: true,
+            ext_handshake_builder: None,
         })
         .await;
         assert!(res.is_err() || accept_fut.await.unwrap().is_err());
@@ -1345,6 +1624,8 @@ mod tests {
             connect_timeout: Duration::from_secs(5),
             read_timeout: Duration::from_secs(10),
             encryption: EncryptionPolicy::RequireEncryption,
+            advertise_v2: true,
+            ext_handshake_builder: None,
         })
         .await
         .unwrap();
@@ -1374,5 +1655,217 @@ mod tests {
             PeerEvent::Message(Message::Have { piece_index }) => assert_eq!(piece_index, 7),
             e => panic!("unexpected: {e:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn utp_plaintext_handshake_and_message_over_loopback() {
+        use crate::utp::UtpSocket;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let info_hash = Id20([7u8; 20]);
+        let client_id = Id20([1u8; 20]);
+        let server_id = Id20([2u8; 20]);
+
+        let server_sock = UtpSocket::bind("127.0.0.1:0".parse().unwrap())
+            .await
+            .unwrap();
+        let client_sock = UtpSocket::bind("127.0.0.1:0".parse().unwrap())
+            .await
+            .unwrap();
+        let server_addr = server_sock.local_addr();
+
+        // Minimal peer: accept a µTP stream, exchange BT handshakes, then push
+        // one peer message so the client's reader task surfaces it.
+        let server = tokio::spawn(async move {
+            let mut s = server_sock.accept().await.unwrap();
+            let mut buf = [0u8; HANDSHAKE_LEN];
+            s.read_exact(&mut buf).await.unwrap();
+            let remote = Handshake::parse(&buf).unwrap();
+            assert_eq!(remote.info_hash, info_hash);
+            assert_eq!(remote.peer_id, client_id);
+            let reply = Handshake::new_with_v2(remote.info_hash, server_id, false);
+            s.write_all(&reply.to_bytes()).await.unwrap();
+            s.write_all(&MessageEncoder::encode(&Message::Have { piece_index: 7 }))
+                .await
+                .unwrap();
+            s.flush().await.unwrap();
+            // Keep the connection alive until the client has read everything.
+            tokio::time::sleep(Duration::from_millis(300)).await;
+        });
+
+        let result = tokio::time::timeout(Duration::from_secs(10), async move {
+            let utp = client_sock.connect(server_addr).await.unwrap();
+            let (_handle, mut rx) = connect_utp_plaintext(
+                utp,
+                SpawnPeer {
+                    addr: server_addr,
+                    info_hash,
+                    our_peer_id: client_id,
+                    connect_timeout: Duration::from_secs(5),
+                    read_timeout: Duration::from_secs(5),
+                    encryption: EncryptionPolicy::PlaintextOnly,
+                    advertise_v2: false,
+                    ext_handshake_builder: None,
+                },
+            )
+            .await
+            .unwrap();
+
+            match rx.recv().await.unwrap() {
+                PeerEvent::Handshook {
+                    peer_id,
+                    info_hash: ih,
+                    encrypted,
+                    ..
+                } => {
+                    assert_eq!(peer_id, server_id);
+                    assert_eq!(ih, info_hash);
+                    assert!(!encrypted);
+                }
+                e => panic!("expected Handshook, got {e:?}"),
+            }
+            match rx.recv().await.unwrap() {
+                PeerEvent::Message(Message::Have { piece_index }) => assert_eq!(piece_index, 7),
+                e => panic!("expected Have over µTP, got {e:?}"),
+            }
+        })
+        .await;
+        result.expect("µTP handshake/message exchange timed out");
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn utp_fallback_engages_when_tcp_refused() {
+        use crate::utp::UtpSocket;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let info_hash = Id20([7u8; 20]);
+        let client_id = Id20([1u8; 20]);
+        let server_id = Id20([2u8; 20]);
+
+        // The peer listens on µTP only — no TCP listener exists on this UDP
+        // port number — so the client's TCP dial is refused and it must fall
+        // back to µTP to connect.
+        let server_sock = UtpSocket::bind("127.0.0.1:0".parse().unwrap())
+            .await
+            .unwrap();
+        let client_utp = UtpSocket::bind("127.0.0.1:0".parse().unwrap())
+            .await
+            .unwrap();
+        let server_addr = server_sock.local_addr();
+
+        let server = tokio::spawn(async move {
+            let mut s = server_sock.accept().await.unwrap();
+            let mut buf = [0u8; HANDSHAKE_LEN];
+            s.read_exact(&mut buf).await.unwrap();
+            let remote = Handshake::parse(&buf).unwrap();
+            let reply = Handshake::new_with_v2(remote.info_hash, server_id, false);
+            s.write_all(&reply.to_bytes()).await.unwrap();
+            s.flush().await.unwrap();
+            tokio::time::sleep(Duration::from_millis(300)).await;
+        });
+
+        let spawn = SpawnPeer {
+            addr: server_addr,
+            info_hash,
+            our_peer_id: client_id,
+            connect_timeout: Duration::from_secs(5),
+            read_timeout: Duration::from_secs(5),
+            encryption: EncryptionPolicy::PlaintextOnly,
+            advertise_v2: false,
+            ext_handshake_builder: None,
+        };
+        let (_handle, mut rx) = tokio::time::timeout(
+            Duration::from_secs(10),
+            connect_with_utp_fallback(spawn, Some(client_utp)),
+        )
+        .await
+        .expect("utp fallback timed out")
+        .expect("utp fallback connect failed");
+        match rx.recv().await.unwrap() {
+            PeerEvent::Handshook { peer_id, .. } => assert_eq!(peer_id, server_id),
+            e => panic!("expected Handshook via µTP fallback, got {e:?}"),
+        }
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn utp_inbound_accept_completes_handshake() {
+        use crate::utp::UtpSocket;
+
+        let info_hash = Id20([9u8; 20]);
+        let client_id = Id20([1u8; 20]);
+        let server_id = Id20([2u8; 20]);
+
+        let server_sock = UtpSocket::bind("127.0.0.1:0".parse().unwrap())
+            .await
+            .unwrap();
+        let client_sock = UtpSocket::bind("127.0.0.1:0".parse().unwrap())
+            .await
+            .unwrap();
+        let server_addr = server_sock.local_addr();
+
+        // Responder: accept the inbound µTP stream and run the plaintext BT
+        // handshake through the production `accept_utp_plaintext` path, then
+        // push one message so the initiator's reader surfaces it.
+        let server = tokio::spawn(async move {
+            let s = server_sock.accept().await.unwrap();
+            let known = vec![KnownInfoHash {
+                info_hash,
+                advertise_v2: false,
+                ext_handshake_builder: None,
+            }];
+            let (handle, mut rx) =
+                accept_utp_plaintext(s, server_id, known, Duration::from_secs(5))
+                    .await
+                    .unwrap();
+            match rx.recv().await.unwrap() {
+                PeerEvent::Handshook {
+                    peer_id,
+                    info_hash: ih,
+                    ..
+                } => {
+                    assert_eq!(peer_id, client_id);
+                    assert_eq!(ih, info_hash);
+                }
+                e => panic!("server expected Handshook, got {e:?}"),
+            }
+            handle
+                .tx
+                .send(PeerCommand::Send(Message::Have { piece_index: 9 }))
+                .await
+                .unwrap();
+            tokio::time::sleep(Duration::from_millis(300)).await;
+        });
+
+        let result = tokio::time::timeout(Duration::from_secs(10), async move {
+            let utp = client_sock.connect(server_addr).await.unwrap();
+            let (_handle, mut rx) = connect_utp_plaintext(
+                utp,
+                SpawnPeer {
+                    addr: server_addr,
+                    info_hash,
+                    our_peer_id: client_id,
+                    connect_timeout: Duration::from_secs(5),
+                    read_timeout: Duration::from_secs(5),
+                    encryption: EncryptionPolicy::PlaintextOnly,
+                    advertise_v2: false,
+                    ext_handshake_builder: None,
+                },
+            )
+            .await
+            .unwrap();
+            match rx.recv().await.unwrap() {
+                PeerEvent::Handshook { peer_id, .. } => assert_eq!(peer_id, server_id),
+                e => panic!("client expected Handshook, got {e:?}"),
+            }
+            match rx.recv().await.unwrap() {
+                PeerEvent::Message(Message::Have { piece_index }) => assert_eq!(piece_index, 9),
+                e => panic!("client expected Have over µTP, got {e:?}"),
+            }
+        })
+        .await;
+        result.expect("inbound µTP accept handshake timed out");
+        server.await.unwrap();
     }
 }

@@ -113,11 +113,11 @@
 	.task-item.is-complete .task-status-indicator {
 		background: linear-gradient(180deg, #22c55e, #16a34a);
 	}
-	.selected .task-item {
+	.task-item.selected {
 		border-color: var(--mo-task-item-hover-border-color);
 		box-shadow: var(--mo-task-item-hover-shadow);
 	}
-	.selected .task-item .task-status-indicator {
+	.task-item.selected .task-status-indicator {
 		width: 5px;
 	}
 	.task-status-indicator {

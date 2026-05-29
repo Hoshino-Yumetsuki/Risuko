@@ -16,7 +16,7 @@ function joinPath(...parts: string[]): string {
 
 function dirname(path = ""): string {
 	const value = `${path || ""}`.replace(/[/\\]+$/g, "");
-	const index = value.lastIndexOf("/");
+	const index = Math.max(value.lastIndexOf("/"), value.lastIndexOf("\\"));
 	if (index <= 0) {
 		return value;
 	}
@@ -41,14 +41,22 @@ const sleep = (ms: number): Promise<void> =>
 	new Promise((resolve) => window.setTimeout(resolve, ms));
 
 const cleanupTempSidecars = async (paths: string[]): Promise<void> => {
-	const uniquePaths = [
+	// Only retry paths that actually throw (locked/busy like a Windows file handle).
+	// If trash_item returns false the sidecar never existed and won't appear now.
+	// If it returns true the sidecar is already gone. Retrying either case just
+	// spams IPC/logs and forces unnecessary sleeps in the common no-op path
+	let pending = [
 		...new Set(paths.map((path) => `${path || ""}`.trim())),
 	].filter(Boolean);
 	for (const delay of [0, 250, 1000]) {
+		if (pending.length === 0) {
+			break;
+		}
 		if (delay > 0) {
 			await sleep(delay);
 		}
-		for (const sidecarPath of uniquePaths) {
+		const retry: string[] = [];
+		for (const sidecarPath of pending) {
 			try {
 				const sidecarFound: boolean = await invoke("trash_item", {
 					path: sidecarPath,
@@ -60,8 +68,10 @@ const cleanupTempSidecars = async (paths: string[]): Promise<void> => {
 				logger.warn(
 					`[Risuko] trash temp sidecar "${sidecarPath}" failed: ${sidecarErr}`,
 				);
+				retry.push(sidecarPath);
 			}
 		}
+		pending = retry;
 	}
 };
 

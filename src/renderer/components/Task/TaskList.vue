@@ -8,7 +8,7 @@
       key-field="_displayKey"
     >
       <template #default="{ item }">
-        <div :attr="item._displayKey || item.gid" @click="handleItemClick(item, $event)">
+        <div :attr="item._displayKey" @click="handleItemClick(item, $event)">
           <mo-task-item :task="item" :selected="isItemSelected(item)" />
         </div>
       </template>
@@ -20,7 +20,7 @@
         preset="fadeInUp"
         :duration="0.4"
         :delay="getStaggerDelay(index)"
-        :attr="item._displayKey || item.gid"
+        :attr="item._displayKey"
         @click="handleItemClick(item, $event)"
       >
         <mo-task-item :task="item" :selected="isItemSelected(item)" />
@@ -128,15 +128,13 @@ export default {
 					return;
 				}
 				event.preventDefault();
-				const allKeys = this.paginatedTaskList.map(
-					(t) => t._displayKey || t.gid,
-				);
+				const allKeys = this.paginatedTaskList.map((t) => t._displayKey);
 				this.selectedList = allKeys;
 				useTaskStore().selectTasks(cloneDeep(allKeys));
 			}
 		},
 		handleItemClick(item, event) {
-			const key: string = item._displayKey || item.gid;
+			const key: string = item._displayKey;
 			// Android has no modifier keys, so a tap toggles this row like Cmd/Ctrl-click
 			// Keep the rest selected unless the user uses desktop-style single select
 			const isMulti = event.metaKey || event.ctrlKey || is.android();
@@ -144,7 +142,7 @@ export default {
 			let newList: string[];
 
 			if (isShift && this.lastClickedKey) {
-				const keys = this.paginatedTaskList.map((t) => t._displayKey || t.gid);
+				const keys = this.paginatedTaskList.map((t) => t._displayKey);
 				const anchorIdx = keys.indexOf(this.lastClickedKey);
 				const currentIdx = keys.indexOf(key);
 				if (anchorIdx !== -1 && currentIdx !== -1) {
@@ -191,7 +189,7 @@ export default {
 			useTaskStore().selectTasks(cloneDeep(selectedList));
 		},
 		isItemSelected(item): boolean {
-			const key = item._displayKey || item.gid;
+			const key = item._displayKey;
 			return this.selectedList.includes(key);
 		},
 	},

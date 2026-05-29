@@ -7,6 +7,7 @@ import type {
 } from "@shared/types/task";
 import { checkTaskIsBT, getTaskName } from "@shared/utils";
 import logger from "@shared/utils/logger";
+import { getSelectableTaskKeys } from "@shared/utils/taskSelection";
 import { defineStore } from "pinia";
 import api from "@/api";
 import { useAppStore } from "@/store/app";
@@ -471,14 +472,12 @@ export const useTaskStore = defineStore("task", {
 					orderedData.map((task) => task.gid),
 				);
 
-				// Keep selected rows only when their underlying gid still exists
-				// Row keys can include `#f<index>`, so strip that before checking
-				const gids = new Set(orderedData.map((task) => task.gid));
-				this.selectedGidList = this.selectedGidList.filter((key) => {
-					const hashIdx = key.indexOf("#");
-					const gid = hashIdx === -1 ? key : key.slice(0, hashIdx);
-					return gids.has(gid);
-				});
+				const visibleKeys = new Set(
+					orderedData.map((task) => task._displayKey),
+				);
+				this.selectedGidList = this.selectedGidList.filter((key) =>
+					visibleKeys.has(key),
+				);
 				return orderedData;
 			} catch (err: unknown) {
 				logger.warn("[Risuko] fetchList failed:", (err as Error).message);
@@ -598,10 +597,12 @@ export const useTaskStore = defineStore("task", {
 			this.selectedGidList = list;
 		},
 		selectAllTask() {
-			// Select visible row keys, including each selected file row in a BT torrent
-			this.selectedGidList = this.paginatedTaskList.map(
-				(task) => task._displayKey || task.gid,
-			);
+			const selectableKeys = getSelectableTaskKeys(this.paginatedTaskList);
+			const selectedKeys = new Set(this.selectedGidList);
+			const allSelected =
+				selectableKeys.length > 0 &&
+				selectableKeys.every((key) => selectedKeys.has(key));
+			this.selectedGidList = allSelected ? [] : selectableKeys;
 		},
 		async fetchItem(gid: string) {
 			try {

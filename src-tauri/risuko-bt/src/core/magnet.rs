@@ -59,14 +59,11 @@ impl Magnet {
         }
     }
 
-    /// Kept for API compatibility with librqbit shims
     pub fn as_id20(&self) -> Option<Id20> {
         Some(self.info_hash)
     }
 
     pub fn parse(input: &str) -> Result<Self, MagnetError> {
-        // Accept a bare 40-char hex hash as a shortcut — useful for CLI use
-        // and matches librqbit's behaviour
         let input = input.trim();
         if input.len() == 40 {
             if let Ok(id) = Id20::from_str(input) {
