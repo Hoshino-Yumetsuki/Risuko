@@ -101,7 +101,11 @@
 		position: fixed;
 		left: 16px;
 		right: 16px;
-		bottom: calc(env(safe-area-inset-bottom) + var(--android-bottom-bar, 72px) - 14px);
+		bottom: calc(
+			env(safe-area-inset-bottom) +
+			var(--android-bottom-bar, 72px) -
+			14px
+		);
 		z-index: 70;
 		margin: 0;
 		padding: 8px 0 10px;

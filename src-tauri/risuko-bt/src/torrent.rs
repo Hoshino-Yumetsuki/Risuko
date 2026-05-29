@@ -1030,7 +1030,7 @@ async fn process_peer_event(
             // and recycle their slot to a fresh dial \u2014 see the eviction
             // sweep in the `tick.tick()` arm
             peer.last_recv = Instant::now();
-            {
+            if log::log_enabled!(target: "diag", log::Level::Debug) {
                 let kind = match &msg {
                     Message::KeepAlive => "KeepAlive".to_string(),
                     Message::Choke => "Choke".to_string(),
