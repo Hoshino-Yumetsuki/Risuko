@@ -92,7 +92,7 @@ if (args.length === 0) {
 	console.log(`ANDROID_HOME=${env.ANDROID_HOME}`);
 	console.log(`ANDROID_NDK_HOME=${env.ANDROID_NDK_HOME}`);
 	if (env.JAVA_HOME) {
-		console.log("JAVA_HOME=<resolved>"); // CodeQL: false positive - JAVA_HOME is a path, not a secret.
+		console.log(`JAVA_HOME=${env.JAVA_HOME}`); // CodeQL: false positive - JAVA_HOME is a path, not a secret
 	}
 	console.log(`PATH prefix=${llvmBin}`);
 	process.exit(0);

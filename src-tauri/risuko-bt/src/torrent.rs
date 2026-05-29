@@ -363,11 +363,11 @@ async fn torrent_loop(
     // Shared µTP endpoint (if any), handed to every outbound dial so a failed
     // TCP connect can retry over µTP.
     let utp = init.utp.clone();
-    // Decoupled from `advertise_v2`: wire-bit advertisement is broader (any
-    // torrent that knows v2 hashes), while `serve_v2_layers` requires that
-    // we actually have valid piece-layer Merkle tables to answer
-    // BEP-52 HASH_REQUEST messages and to announce v2/truncated info-hashes
-    let serve_v2_layers = supports_v2_wire(&init.meta);
+    // Preliminary: whether the meta supports v2 wire. Refined below to
+    // `supports_v2_wire && hash_tables.is_some()` after table construction
+    // so a failed build never leads us to announce truncated v2 hashes
+    // or answer BEP-52 HASH_REQUEST messages without valid Merkle data
+    let supports_v2 = supports_v2_wire(&init.meta);
     let verifier = init.verifier;
     // V2 Merkle tables for serving HASH_REQUEST — built from the meta for
     // any torrent that carries v2 data (pure-v2 or hybrid). Hybrid torrents
@@ -376,7 +376,7 @@ async fn torrent_loop(
     let hash_tables: Option<Arc<Vec<MerkleProofTable>>> = {
         if let PieceVerifier::V2Merkle { ref tables, .. } = verifier {
             Some(Arc::clone(tables))
-        } else if serve_v2_layers {
+        } else if supports_v2 {
             if let Some(ref v2) = init.meta.info_v2 {
                 // Hybrid torrent: build Merkle tables from the meta's piece_layers
                 let mut tbls = Vec::with_capacity(v2.files.len());
@@ -414,6 +414,11 @@ async fn torrent_loop(
             None
         }
     };
+    // True only when we have valid Merkle tables: gates BEP-52 HASH_REQUEST
+    // serving AND v2/truncated info-hash announcement on trackers.
+    // A failed from_layer_bytes build leaves hash_tables = None so we must
+    // not advertise v2 capability in that case.
+    let serve_v2_layers = supports_v2 && hash_tables.is_some();
     // Per-peer pipeline depth bounds. When the session explicitly sets
     // `max_outstanding_per_peer` we honour it as a fixed value (legacy
     // behaviour, useful for benchmarks / debugging); otherwise we use

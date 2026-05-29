@@ -473,7 +473,7 @@ export const useTaskStore = defineStore("task", {
 				);
 
 				const visibleKeys = new Set(
-					orderedData.map((task) => task._displayKey),
+					this.displayTaskList.map((row) => row._displayKey),
 				);
 				this.selectedGidList = this.selectedGidList.filter((key) =>
 					visibleKeys.has(key),

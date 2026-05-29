@@ -564,7 +564,12 @@ impl TaskManager {
                 let engine = torrent_engine.read().await.clone();
                 let Some(engine) = engine else {
                     let mut guard = tasks.write().await;
-                    if let Some(task) = guard.iter_mut().find(|task| task.gid == gid) {
+                    if let Some(task) = guard.iter_mut().find(|task| {
+                        task.gid == gid
+                            && task.kind == TaskKind::Torrent
+                            && task.status == TaskStatus::Active
+                            && task.uris.iter().any(|uri| uri == &magnet_uri)
+                    }) {
                         task.status = TaskStatus::Error;
                         task.error_code =
                             Some(super::error_code::ErrorCode::ENGINE_NOT_RUNNING.to_string());
@@ -613,7 +618,12 @@ impl TaskManager {
                     Err(e) => {
                         if !is_retryable_magnet_resolution_error(&e) {
                             let mut guard = tasks.write().await;
-                            if let Some(task) = guard.iter_mut().find(|task| task.gid == gid) {
+                            if let Some(task) = guard.iter_mut().find(|task| {
+                                task.gid == gid
+                                    && task.kind == TaskKind::Torrent
+                                    && task.status == TaskStatus::Active
+                                    && task.uris.iter().any(|uri| uri == &magnet_uri)
+                            }) {
                                 task.status = TaskStatus::Error;
                                 task.error_code = Some(classify_error(&e, "torrent").to_string());
                                 task.error_message = Some(e);
@@ -2281,10 +2291,13 @@ impl TaskManager {
 
     async fn ensure_active_magnet_resolvers(&self) {
         let jobs = {
-            let options = self.options.read().await;
-            let tasks = self.tasks.read().await;
+            // Acquire in the same order as remove() (torrent_ids -> pending_magnets -> tasks)
+            // to avoid a deadlock where remove() holds torrent_ids.write() while waiting
+            // for tasks.write() and we hold tasks.read() while waiting for torrent_ids.read().
             let torrent_ids = self.torrent_ids.read().await;
             let pending = self.pending_magnets.read().await;
+            let tasks = self.tasks.read().await;
+            let options = self.options.read().await;
 
             tasks
                 .iter()

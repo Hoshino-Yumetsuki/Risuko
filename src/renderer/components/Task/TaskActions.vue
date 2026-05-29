@@ -13,13 +13,15 @@
       placement="bottom"
       :content="allVisibleTasksSelected ? $t('task.deselect-all-task') : $t('task.select-all-task')"
     >
-      <i
+      <button
+        type="button"
         class="task-action"
-        :class="{ disabled: selectableTaskCount === 0 }"
+        :disabled="selectableTaskCount === 0"
+        :aria-label="allVisibleTasksSelected ? $t('task.deselect-all-task') : $t('task.select-all-task')"
         @click="onSelectAllClick"
       >
         <ListChecks :size="14" />
-      </i>
+      </button>
     </ui-tooltip>
     <ui-tooltip
       class="item"

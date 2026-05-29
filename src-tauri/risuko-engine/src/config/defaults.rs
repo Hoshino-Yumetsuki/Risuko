@@ -101,7 +101,7 @@ fn is_writable_dir(path: &std::path::Path) -> bool {
     match std::fs::OpenOptions::new()
         .create(true)
         .write(true)
-        .truncate(true)
+        .truncate(false)
         .open(&probe)
     {
         Ok(_) => {

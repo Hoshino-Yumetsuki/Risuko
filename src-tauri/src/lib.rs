@@ -99,7 +99,7 @@ fn resolve_log_dir(
     if let Err(e) = std::fs::OpenOptions::new()
         .create(true)
         .write(true)
-        .truncate(true)
+        .truncate(false)
         .open(&probe)
     {
         eprintln!(

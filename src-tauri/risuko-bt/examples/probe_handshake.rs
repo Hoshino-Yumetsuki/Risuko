@@ -66,21 +66,25 @@ async fn main() {
             let _ = handle.tx.send(PeerCommand::Send(Message::Unchoke)).await;
             let _ = handle.tx.send(PeerCommand::Send(Message::Interested)).await;
             eprintln!("sent Unchoke + Interested");
-            let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+            let mut idle_deadline = tokio::time::Instant::now() + Duration::from_secs(15);
             loop {
-                match tokio::time::timeout_at(deadline, rx.recv()).await {
+                match tokio::time::timeout_at(idle_deadline, rx.recv()).await {
                     Ok(Some(PeerEvent::Handshook {
                         peer_id,
                         reserved,
                         encrypted,
                         ..
                     })) => {
+                        idle_deadline = tokio::time::Instant::now() + Duration::from_secs(15);
                         eprintln!(
                             "HANDSHOOK reserved={:02x?} encrypted={encrypted} remote_peer_id={:02x?}",
                             reserved, peer_id.0
                         );
                     }
-                    Ok(Some(PeerEvent::Message(m))) => eprintln!("MSG {m:?}"),
+                    Ok(Some(PeerEvent::Message(m))) => {
+                        idle_deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+                        eprintln!("MSG {m:?}")
+                    }
                     Ok(Some(PeerEvent::Disconnected { reason })) => {
                         eprintln!("DISCONNECTED: {reason}");
                         break;

@@ -17,8 +17,11 @@ function joinPath(...parts: string[]): string {
 function dirname(path = ""): string {
 	const value = `${path || ""}`.replace(/[/\\]+$/g, "");
 	const index = Math.max(value.lastIndexOf("/"), value.lastIndexOf("\\"));
-	if (index <= 0) {
+	if (index < 0) {
 		return value;
+	}
+	if (index === 0) {
+		return value.charAt(0) === "/" || value.charAt(0) === "\\" ? value.charAt(0) : value;
 	}
 	return value.slice(0, index);
 }

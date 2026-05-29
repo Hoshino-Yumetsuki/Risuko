@@ -953,17 +953,19 @@ async fn run_single_uri_download(
         }
     }
 
-    if let Some(content_type) = probe_for_name
-        .as_ref()
-        .and_then(|p| p.content_type.as_deref())
-    {
-        if let Some((new_name, new_part)) =
-            adopt_content_type_extension(&filename, content_type, &part_path, dir_path)
+    if filename_was_url_derived {
+        if let Some(content_type) = probe_for_name
+            .as_ref()
+            .and_then(|p| p.content_type.as_deref())
         {
-            tracing::info!("Adding Content-Type extension: {filename:?} -> {new_name:?}");
-            *adopted_filename.lock() = Some(new_name.clone());
-            filename = new_name;
-            part_path = new_part;
+            if let Some((new_name, new_part)) =
+                adopt_content_type_extension(&filename, content_type, &part_path, dir_path)
+            {
+                tracing::info!("Adding Content-Type extension: {filename:?} -> {new_name:?}");
+                *adopted_filename.lock() = Some(new_name.clone());
+                filename = new_name;
+                part_path = new_part;
+            }
         }
     }
 
@@ -1055,6 +1057,7 @@ async fn run_single_uri_download(
         global_limiter.clone(),
         task_limiter.clone(),
         stall.clone(),
+        filename_was_url_derived,
     )
     .await;
 
@@ -1126,6 +1129,7 @@ async fn run_single_uri_download(
                 global_limiter,
                 task_limiter,
                 stall,
+                filename_was_url_derived,
             )
             .await
         }
@@ -1999,6 +2003,7 @@ async fn run_single_download(
     global_limiter: Arc<SpeedLimiter>,
     task_limiter: Arc<SpeedLimiter>,
     stall: StallWatchdog,
+    filename_was_url_derived: bool,
 ) -> Result<(PathBuf, Option<String>), String> {
     let existing_size = if part_path.exists() {
         fs::metadata(part_path).map(|m| m.len()).unwrap_or(0)
@@ -2042,11 +2047,15 @@ async fn run_single_download(
         .get(LAST_MODIFIED)
         .and_then(|v| v.to_str().ok())
         .map(|s| s.to_string());
-    let final_filename = filename_with_content_type_extension(
-        filename,
-        content_type_from_headers(resp.headers()).as_deref(),
-    )
-    .unwrap_or_else(|| filename.to_string());
+    let final_filename = if filename_was_url_derived {
+        filename_with_content_type_extension(
+            filename,
+            content_type_from_headers(resp.headers()).as_deref(),
+        )
+        .unwrap_or_else(|| filename.to_string())
+    } else {
+        filename.to_string()
+    };
 
     // Update total from Content-Length
     if let Some(cl) = resp.content_length() {

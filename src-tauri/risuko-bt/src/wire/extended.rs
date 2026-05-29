@@ -117,11 +117,26 @@ impl ExtHandshake {
             .iter()
             .find(|(k, _)| k == b"v")
             .and_then(|(_, v)| v.as_str().map(String::from));
+        let yourip = dict
+            .iter()
+            .find(|(k, _)| k == b"yourip")
+            .and_then(|(_, v)| v.as_bytes())
+            .and_then(|bytes| match bytes.len() {
+                4 => {
+                    let arr: [u8; 4] = bytes.try_into().ok()?;
+                    Some(IpAddr::V4(std::net::Ipv4Addr::from(arr)))
+                }
+                16 => {
+                    let arr: [u8; 16] = bytes.try_into().ok()?;
+                    Some(IpAddr::V6(std::net::Ipv6Addr::from(arr)))
+                }
+                _ => None,
+            });
         Some(Self {
             supported,
             metadata_size,
             client,
-            yourip: None,
+            yourip,
         })
     }
 

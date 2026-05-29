@@ -42,6 +42,6 @@
 		"@risuko/js-win32-arm64-msvc": "0.3.4"
 	},
 	"engines": {
-		"node": ">= 18"
+		"node": ">= 22"
 	}
 }

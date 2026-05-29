@@ -734,9 +734,13 @@ impl AsyncRead for UtpStream {
         let mut st = self.shared.state.lock();
         if !st.recv_ready.is_empty() {
             let n = st.recv_ready.len().min(buf.remaining());
-            for _ in 0..n {
-                buf.put_slice(&[st.recv_ready.pop_front().unwrap()]);
+            let (first, second) = st.recv_ready.as_slices();
+            let first_n = first.len().min(n);
+            buf.put_slice(&first[..first_n]);
+            if first_n < n {
+                buf.put_slice(&second[..n - first_n]);
             }
+            st.recv_ready.drain(..n);
             // Reading frees receive-buffer space; the peer learns the larger
             // window on our next outgoing packet, so nudge a fresh ack.
             self.shared.nudge.notify_one();
