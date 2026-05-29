@@ -5,7 +5,7 @@ pub mod stats;
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -151,7 +151,11 @@ pub struct ManagedTorrent {
     /// can target the actual output location rather than the session
     /// default `output_dir` (per-torrent `opts.output_folder` overrides).
     pub root_dir: PathBuf,
-    pub advertise_v2: bool,
+    /// Atomically updated by `torrent_loop` after Merkle tables are built.
+    /// Starts as `init.advertise_v2`; clamped to `false` when `serve_v2_layers`
+    /// turns out to be false so inbound handshakes never assert the v2 bit
+    /// without valid Merkle proof tables
+    pub advertise_v2: Arc<AtomicBool>,
     /// Pre-serialized BEP-10 extended handshake — encoded once at spawn
     /// time from the torrent's `info_bytes` length and our extension ids.
     /// Per-peer builder for the BEP-10 extended handshake bytes. Captures
@@ -229,6 +233,7 @@ pub async fn spawn(
             })
         })
     };
+    let advertise_v2_flag = Arc::new(AtomicBool::new(init.advertise_v2));
     let handle = Arc::new(ManagedTorrent {
         id,
         info_hash,
@@ -236,7 +241,7 @@ pub async fn spawn(
         metadata: metadata_swap,
         create_subfolder: init.create_subfolder,
         root_dir: init.root_dir.clone(),
-        advertise_v2: init.advertise_v2,
+        advertise_v2: Arc::clone(&advertise_v2_flag),
         ext_handshake_builder,
         cmd_tx,
         stats: stats.clone(),
@@ -248,6 +253,7 @@ pub async fn spawn(
         listen_port,
         cmd_rx,
         stats,
+        advertise_v2_flag,
     ));
     Ok(handle)
 }
@@ -350,6 +356,7 @@ async fn torrent_loop(
     listen_port: u16,
     mut cmd_rx: mpsc::Receiver<TorrentCommand>,
     stats: Arc<Mutex<TorrentStats>>,
+    advertise_v2_flag: Arc<AtomicBool>,
 ) {
     let info = Arc::new(init.meta.info.clone());
     let info_hash = init.meta.info_hash;
@@ -359,7 +366,6 @@ async fn torrent_loop(
     let info_bytes: Arc<Vec<u8>> = Arc::new(init.meta.info_bytes.clone());
     let lengths = init.lengths;
     let encryption = init.encryption;
-    let advertise_v2 = init.advertise_v2;
     // Shared µTP endpoint (if any), handed to every outbound dial so a failed
     // TCP connect can retry over µTP.
     let utp = init.utp.clone();
@@ -419,6 +425,10 @@ async fn torrent_loop(
     // A failed from_layer_bytes build leaves hash_tables = None so we must
     // not advertise v2 capability in that case.
     let serve_v2_layers = supports_v2 && hash_tables.is_some();
+    // Clamp to actual capability now that hash_tables is known. Updates the
+    // shared handle field so inbound connection handling sees the same value
+    let advertise_v2 = init.advertise_v2 && serve_v2_layers;
+    advertise_v2_flag.store(advertise_v2, Ordering::Relaxed);
     // Per-peer pipeline depth bounds. When the session explicitly sets
     // `max_outstanding_per_peer` we honour it as a fixed value (legacy
     // behaviour, useful for benchmarks / debugging); otherwise we use

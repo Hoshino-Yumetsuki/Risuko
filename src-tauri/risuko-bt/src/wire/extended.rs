@@ -312,6 +312,24 @@ mod tests {
     }
 
     #[test]
+    fn yourip_ipv4_round_trip() {
+        let ip = std::net::IpAddr::V4("192.168.1.42".parse().unwrap());
+        let out = ExtHandshake::new_outgoing(3, 4, None).with_yourip(ip);
+        let bytes = out.encode();
+        let parsed = ExtHandshake::decode(&bytes).unwrap();
+        assert_eq!(parsed.yourip, Some(ip));
+    }
+
+    #[test]
+    fn yourip_ipv6_round_trip() {
+        let ip = std::net::IpAddr::V6("2001:db8::1".parse().unwrap());
+        let out = ExtHandshake::new_outgoing(3, 4, None).with_yourip(ip);
+        let bytes = out.encode();
+        let parsed = ExtHandshake::decode(&bytes).unwrap();
+        assert_eq!(parsed.yourip, Some(ip));
+    }
+
+    #[test]
     fn ut_pex_round_trip() {
         let addrs = vec![
             SocketAddrV4::new("1.2.3.4".parse().unwrap(), 6881),

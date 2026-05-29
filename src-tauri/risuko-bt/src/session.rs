@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use bytes::Bytes;
@@ -755,7 +756,7 @@ async fn run_accept_loop(listener: TcpListener, weak: std::sync::Weak<Session>) 
                         .values()
                         .map(|handle| KnownInfoHash {
                             info_hash: handle.info_hash,
-                            advertise_v2: handle.advertise_v2,
+                            advertise_v2: handle.advertise_v2.load(Ordering::Relaxed),
                             ext_handshake_builder: Some(handle.ext_handshake_builder.clone()),
                         })
                         .collect();
@@ -810,7 +811,7 @@ async fn run_utp_accept_loop(utp: Arc<super::utp::UtpSocket>, weak: std::sync::W
                 .values()
                 .map(|handle| KnownInfoHash {
                     info_hash: handle.info_hash,
-                    advertise_v2: handle.advertise_v2,
+                    advertise_v2: handle.advertise_v2.load(Ordering::Relaxed),
                     ext_handshake_builder: Some(handle.ext_handshake_builder.clone()),
                 })
                 .collect();

@@ -616,7 +616,7 @@ fn sanitize_file_stem(name: &str) -> String {
 
 /// Write a synthesized `.torrent` file when `bt-save-metadata` is enabled.
 /// Parses `bytes` to extract the torrent name, builds a safe stem, creates
-/// the parent directory, and writes atomically via `tokio::fs::write`.
+/// the parent directory, and writes the file via `tokio::fs::write`.
 /// All failures are logged as warnings so callers are never blocked.
 async fn save_torrent_metadata_if_enabled(
     bytes: &[u8],
