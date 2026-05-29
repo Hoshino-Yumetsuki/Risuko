@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       '@lucide/vue':
-        specifier: ^1.16.0
-        version: 1.16.0(vue@3.5.35(typescript@6.0.3))
+        specifier: ^1.17.0
+        version: 1.17.0(vue@3.5.35(typescript@6.0.3))
       '@tauri-apps/api':
         specifier: ^2.11.0
         version: 2.11.0
@@ -121,8 +121,8 @@ importers:
         specifier: ^3.5.35
         version: 3.5.35(typescript@6.0.3)
       vue-router:
-        specifier: ^5.0.7
-        version: 5.0.7(@vue/compiler-sfc@3.5.35)(pinia@3.0.4(typescript@6.0.3)(vue@3.5.35(typescript@6.0.3)))(vue@3.5.35(typescript@6.0.3))
+        specifier: ^5.1.0
+        version: 5.1.0(@vue/compiler-sfc@3.5.35)(pinia@3.0.4(typescript@6.0.3)(vue@3.5.35(typescript@6.0.3)))(vite@8.0.14(@types/node@25.9.1)(jiti@2.7.0)(sass@1.100.0)(terser@5.48.0)(yaml@2.9.0))(vue@3.5.35(typescript@6.0.3))
       vue-tsc:
         specifier: ^3.3.2
         version: 3.3.2(typescript@6.0.3)
@@ -132,9 +132,47 @@ importers:
 
   packages/risuko-app: {}
 
-  packages/risuko-cli: {}
+  packages/risuko-cli:
+    optionalDependencies:
+      '@risuko/cli-darwin-arm64':
+        specifier: 0.3.4
+        version: 0.3.4
+      '@risuko/cli-darwin-x64':
+        specifier: 0.3.4
+        version: 0.3.4
+      '@risuko/cli-linux-arm64-gnu':
+        specifier: 0.3.4
+        version: 0.3.4
+      '@risuko/cli-linux-x64-gnu':
+        specifier: 0.3.4
+        version: 0.3.4
+      '@risuko/cli-win32-arm64-msvc':
+        specifier: 0.3.4
+        version: 0.3.4
+      '@risuko/cli-win32-x64-msvc':
+        specifier: 0.3.4
+        version: 0.3.4
 
-  packages/risuko-js: {}
+  packages/risuko-js:
+    optionalDependencies:
+      '@risuko/js-darwin-arm64':
+        specifier: 0.3.4
+        version: 0.3.4
+      '@risuko/js-darwin-x64':
+        specifier: 0.3.4
+        version: 0.3.4
+      '@risuko/js-linux-arm64-gnu':
+        specifier: 0.3.4
+        version: 0.3.4
+      '@risuko/js-linux-x64-gnu':
+        specifier: 0.3.4
+        version: 0.3.4
+      '@risuko/js-win32-arm64-msvc':
+        specifier: 0.3.4
+        version: 0.3.4
+      '@risuko/js-win32-x64-msvc':
+        specifier: 0.3.4
+        version: 0.3.4
 
 packages:
 
@@ -200,11 +238,11 @@ packages:
   '@floating-ui/vue@1.1.11':
     resolution: {integrity: sha512-HzHKCNVxnGS35r9fCHBc3+uCnjw9IWIlCPL683cGgM9Kgj2BiAl8x1mS7vtvP6F9S/e/q4O6MApwSHj8hNLGfw==}
 
-  '@internationalized/date@3.12.1':
-    resolution: {integrity: sha512-6IedsVWXyq4P9Tj+TxuU8WGWM70hYLl12nbYU8jkikVpa6WXapFazPUcHUMDMoWftIDE2ILDkFFte6W2nFCkRQ==}
+  '@internationalized/date@3.12.2':
+    resolution: {integrity: sha512-FY1Y+H64NDs+HAF6omlnWxm3mEpfgaCSWtL5l551ZZfImA+kGjPFgrnJrGjH6lfmLL0g8Z/mBu1R3kufeCp6Jw==}
 
-  '@internationalized/number@3.6.6':
-    resolution: {integrity: sha512-iFgmQaXHE0vytNfpLZWOC2mEJCBRzcUxt53Xf/yCXG93lRvqas237i3r7X4RKMwO3txiyZD4mQjKAByFv6UGSQ==}
+  '@internationalized/number@3.6.7':
+    resolution: {integrity: sha512-3ji1fcrT+FPAK86UqEhB/psHixYo6niWPJtt7+qRaYFynt/BaJG8GhAPimtWUpEiVSTq8ZM8L5psMxGquiB/Vg==}
 
   '@jridgewell/gen-mapping@0.3.13':
     resolution: {integrity: sha512-2kkt/7niJ6MgEPxF0bYdQ6etZaA+fQvDcLKckhy1yIQOzaoKjBBjSj63/aLVjYE3qhRt5dvM+uUyfCg6UKCBbA==}
@@ -225,8 +263,8 @@ packages:
   '@jridgewell/trace-mapping@0.3.31':
     resolution: {integrity: sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw==}
 
-  '@lucide/vue@1.16.0':
-    resolution: {integrity: sha512-kiHx0fe49DMjQuvNaEOu9Jou6u9FwdqQ8xbZIKlD47sXrOI8g59kIeeQL42NBLI4AvO+UJsbaPX0hEK/4rHSBQ==}
+  '@lucide/vue@1.17.0':
+    resolution: {integrity: sha512-6Q1ZHgr5FbmJzKWe5BxlNdjLj2lbmuH1zwDtVzUJofX0w9UREwKgq4F4jwKqFYyyIS4Rj3FiJvDi2k6djukmmw==}
     peerDependencies:
       vue: '>=3.0.1'
 
@@ -326,6 +364,68 @@ packages:
   '@parcel/watcher@2.5.6':
     resolution: {integrity: sha512-tmmZ3lQxAe/k/+rNnXQRawJ4NjxO2hqiOLTHvWchtGZULp4RyFeh6aU4XdOYBFe2KE1oShQTv4AblOs2iOrNnQ==}
     engines: {node: '>= 10.0.0'}
+
+  '@risuko/cli-darwin-arm64@0.3.4':
+    resolution: {integrity: sha512-SkBdRpIFTfynkZGujSzYHlkWPzV3kCKFoJMuVLztWP1gTwBeqO3vSmq83VceGOp1sHabk52JVPx5j9K1FghJOw==}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@risuko/cli-darwin-x64@0.3.4':
+    resolution: {integrity: sha512-SR+K3FqlM02of2WYAsN4+Y/wKbiFtaE47bjqLdiQAaHqAoX8TApwA4jDKh5SPJHEk0MLRqAvP4hFcBtSGRiw/A==}
+    cpu: [x64]
+    os: [darwin]
+
+  '@risuko/cli-linux-arm64-gnu@0.3.4':
+    resolution: {integrity: sha512-wxUl2IqRVpMTE+3zR/btFSCGLZZZBddjZh01opwo6ewYevIPCY+TZVXe+uBM3ExL1UfuuzHZj4N6JhpVtsr/RQ==}
+    cpu: [arm64]
+    os: [linux]
+
+  '@risuko/cli-linux-x64-gnu@0.3.4':
+    resolution: {integrity: sha512-fbps8uGL6tEye6rVU8gynxTEedynjVPQ0umP2SAUATfN6lsQlZIctx106rsQXNA+6yooYmlPz3B5YG7uPQhUWQ==}
+    cpu: [x64]
+    os: [linux]
+
+  '@risuko/cli-win32-arm64-msvc@0.3.4':
+    resolution: {integrity: sha512-84C5y1qpjTpKs85Z/Qi9fbQ4U681rKBAVHzXS2RFh3vJXDKSNz5vQZAT1MeFq2apNC48DNIDxa3MAAP1NjK7cA==}
+    cpu: [arm64]
+    os: [win32]
+
+  '@risuko/cli-win32-x64-msvc@0.3.4':
+    resolution: {integrity: sha512-XVdwbEIAkyQSlkNYUv1WdXzwD/TOfy+vZNaElXT2qmvLRnmZC8VY72FcBHz1lxfixIa7VJSBpb5vcxpyX5/c6g==}
+    cpu: [x64]
+    os: [win32]
+
+  '@risuko/js-darwin-arm64@0.3.4':
+    resolution: {integrity: sha512-2xO8MKjQay/CdOBriFRJEnWe4e7kv6ZgrS7rzeej3F7ANct95tAxh+Y0unlQIRkX4srpEhOM9RfjArcK9/SbcA==}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@risuko/js-darwin-x64@0.3.4':
+    resolution: {integrity: sha512-WF1SPTo5f/ShOB3BkfncG7zXdYCd7Up4yY0lP/bYaRi9cE9roaQP1zkPWq/HRdrFoonG1A2fXmk6qHX3lFEH3g==}
+    cpu: [x64]
+    os: [darwin]
+
+  '@risuko/js-linux-arm64-gnu@0.3.4':
+    resolution: {integrity: sha512-nliKyKbIQ6dxrUvIT44tMB/+9I0gxrGM3nWIEjVXxjVHwopT2kGxrNMA4LNB30M2ED4NPwVFLetZEr3rAIRG9g==}
+    cpu: [arm64]
+    os: [linux]
+    libc: [glibc]
+
+  '@risuko/js-linux-x64-gnu@0.3.4':
+    resolution: {integrity: sha512-Xd5T2D7r1JQSVnQaC+SMnPN41LwNn8Yu3xqYOGhRA8Bx8Y5l8rAWUeffItu3tOm1GG7H/ssCWopN/epYdlrIyg==}
+    cpu: [x64]
+    os: [linux]
+    libc: [glibc]
+
+  '@risuko/js-win32-arm64-msvc@0.3.4':
+    resolution: {integrity: sha512-HT0lPA7AtEfR5jApTUd2d6KfLPiSE7hF4+Mj8w+opwbaA87zetBJgGphiSGbEmp9R6qX91IveiLoe2TCKp5Shg==}
+    cpu: [arm64]
+    os: [win32]
+
+  '@risuko/js-win32-x64-msvc@0.3.4':
+    resolution: {integrity: sha512-hd9Q97HYbnSBkBq9CVFz2nbioVocTfNzR8IoSkXRIe8/MIfPJ4mf7fvtl1N/rTbmORBIAKEkAc+OA9/wM43PqQ==}
+    cpu: [x64]
+    os: [win32]
 
   '@rolldown/binding-android-arm64@1.0.2':
     resolution: {integrity: sha512-ZS4D1JPGn/MYQN/SYDWftIE/nVsM8j/AFOYEzAoOE2O3NktQOZru+/vYXGbR/qtdLdIfGCP0lcoJiYVzsEz+iQ==}
@@ -755,8 +855,8 @@ packages:
     resolution: {integrity: sha512-m1Q/RaVOnTp9JxPX+F+Zn7IcLYMzM8kZofDImfsKZd8MbR+ikdOzTeztStWqfrqIxZnYWryyI9ePm3NGjnZgGw==}
     engines: {node: '>=20.19.0'}
 
-  ast-walker-scope@0.8.3:
-    resolution: {integrity: sha512-cbdCP0PGOBq0ASG+sjnKIoYkWMKhhz+F/h9pRexUdX2Hd38+WOlBkRKlqkGOSm0YQpcFMQBJeK4WspUAkwsEdg==}
+  ast-walker-scope@0.9.0:
+    resolution: {integrity: sha512-IJdzo2vLiElBxKzwS36VsCue/62d6IdWjnPB2v3nuPKeWGynp6FF/CYoLa5i/3jXH/z97ZDdsXz6abpgM6w07A==}
     engines: {node: '>=20.19.0'}
 
   asynckit@0.4.0:
@@ -855,8 +955,8 @@ packages:
     resolution: {integrity: sha512-KIN/nDJBQRcXw0MLVhZE9iQHmG68qAVIBg9CqmUYjmQIhgij9U5MFvrqkUL5FbtyyzZuOeOt0zdeRe4UY7ct+A==}
     engines: {node: '>= 0.4'}
 
-  enhanced-resolve@5.22.0:
-    resolution: {integrity: sha512-xYcDWrpELkFzz9SpZ3PlI6Eu6eD93Yf0WLDRxikGhWJ3MAir2SNZTIVCVZqZ/NUyx8AdMc2gT9C0gPiw18kG+A==}
+  enhanced-resolve@5.22.1:
+    resolution: {integrity: sha512-6QEuw3zoX1SJQc7b87aBXke/no+mG2bTBgw29gWMQonLmpEkWoCAVkl+M49e48AZlWzxiDzDZzYdp6kobcyLww==}
     engines: {node: '>=10.13.0'}
 
   entities@7.0.1:
@@ -1447,12 +1547,13 @@ packages:
       '@vue/composition-api':
         optional: true
 
-  vue-router@5.0.7:
-    resolution: {integrity: sha512-dqfk8kvRbCutmCOCj/XLDqDEYxc1wBdAOGLuVy5M93ifYMsBd5fIjfaPN4tQAbxr5IprdBDIox1gr4wYyOx/SA==}
+  vue-router@5.1.0:
+    resolution: {integrity: sha512-HAbiLzLEHQwxPgvsbOJDAwtavszEgLwri6XfyrsPECIFez8+59xc9LofWVdc/HEaSRT822lJ8H9Ns38VVond5g==}
     peerDependencies:
       '@pinia/colada': '>=0.21.2'
       '@vue/compiler-sfc': ^3.5.34
       pinia: ^3.0.4
+      vite: ^7.0.0 || ^8.0.0
       vue: ^3.5.34
     peerDependenciesMeta:
       '@pinia/colada':
@@ -1460,6 +1561,8 @@ packages:
       '@vue/compiler-sfc':
         optional: true
       pinia:
+        optional: true
+      vite:
         optional: true
 
   vue-sonner@2.0.9:
@@ -1585,11 +1688,11 @@ snapshots:
       - '@vue/composition-api'
       - vue
 
-  '@internationalized/date@3.12.1':
+  '@internationalized/date@3.12.2':
     dependencies:
       '@swc/helpers': 0.5.23
 
-  '@internationalized/number@3.6.6':
+  '@internationalized/number@3.6.7':
     dependencies:
       '@swc/helpers': 0.5.23
 
@@ -1617,7 +1720,7 @@ snapshots:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.5.5
 
-  '@lucide/vue@1.16.0(vue@3.5.35(typescript@6.0.3))':
+  '@lucide/vue@1.17.0(vue@3.5.35(typescript@6.0.3))':
     dependencies:
       vue: 3.5.35(typescript@6.0.3)
 
@@ -1691,6 +1794,42 @@ snapshots:
       '@parcel/watcher-win32-x64': 2.5.6
     optional: true
 
+  '@risuko/cli-darwin-arm64@0.3.4':
+    optional: true
+
+  '@risuko/cli-darwin-x64@0.3.4':
+    optional: true
+
+  '@risuko/cli-linux-arm64-gnu@0.3.4':
+    optional: true
+
+  '@risuko/cli-linux-x64-gnu@0.3.4':
+    optional: true
+
+  '@risuko/cli-win32-arm64-msvc@0.3.4':
+    optional: true
+
+  '@risuko/cli-win32-x64-msvc@0.3.4':
+    optional: true
+
+  '@risuko/js-darwin-arm64@0.3.4':
+    optional: true
+
+  '@risuko/js-darwin-x64@0.3.4':
+    optional: true
+
+  '@risuko/js-linux-arm64-gnu@0.3.4':
+    optional: true
+
+  '@risuko/js-linux-x64-gnu@0.3.4':
+    optional: true
+
+  '@risuko/js-win32-arm64-msvc@0.3.4':
+    optional: true
+
+  '@risuko/js-win32-x64-msvc@0.3.4':
+    optional: true
+
   '@rolldown/binding-android-arm64@1.0.2':
     optional: true
 
@@ -1749,7 +1888,7 @@ snapshots:
   '@tailwindcss/node@4.3.0':
     dependencies:
       '@jridgewell/remapping': 2.3.5
-      enhanced-resolve: 5.22.0
+      enhanced-resolve: 5.22.1
       jiti: 2.7.0
       lightningcss: 1.32.0
       magic-string: 0.30.21
@@ -2076,9 +2215,10 @@ snapshots:
       '@babel/parser': 7.29.7
       pathe: 2.0.3
 
-  ast-walker-scope@0.8.3:
+  ast-walker-scope@0.9.0:
     dependencies:
       '@babel/parser': 7.29.7
+      '@babel/types': 7.29.7
       ast-kit: 2.2.0
 
   asynckit@0.4.0: {}
@@ -2173,7 +2313,7 @@ snapshots:
       es-errors: 1.3.0
       gopd: 1.2.0
 
-  enhanced-resolve@5.22.0:
+  enhanced-resolve@5.22.1:
     dependencies:
       graceful-fs: 4.2.11
       tapable: 2.3.3
@@ -2513,8 +2653,8 @@ snapshots:
     dependencies:
       '@floating-ui/dom': 1.7.6
       '@floating-ui/vue': 1.1.11(vue@3.5.35(typescript@6.0.3))
-      '@internationalized/date': 3.12.1
-      '@internationalized/number': 3.6.6
+      '@internationalized/date': 3.12.2
+      '@internationalized/number': 3.6.7
       '@tanstack/vue-virtual': 3.13.26(vue@3.5.35(typescript@6.0.3))
       '@vueuse/core': 14.3.0(vue@3.5.35(typescript@6.0.3))
       '@vueuse/shared': 14.3.0(vue@3.5.35(typescript@6.0.3))
@@ -2672,12 +2812,12 @@ snapshots:
     dependencies:
       vue: 3.5.35(typescript@6.0.3)
 
-  vue-router@5.0.7(@vue/compiler-sfc@3.5.35)(pinia@3.0.4(typescript@6.0.3)(vue@3.5.35(typescript@6.0.3)))(vue@3.5.35(typescript@6.0.3)):
+  vue-router@5.1.0(@vue/compiler-sfc@3.5.35)(pinia@3.0.4(typescript@6.0.3)(vue@3.5.35(typescript@6.0.3)))(vite@8.0.14(@types/node@25.9.1)(jiti@2.7.0)(sass@1.100.0)(terser@5.48.0)(yaml@2.9.0))(vue@3.5.35(typescript@6.0.3)):
     dependencies:
       '@babel/generator': 8.0.0-rc.6
       '@vue-macros/common': 3.1.2(vue@3.5.35(typescript@6.0.3))
       '@vue/devtools-api': 8.1.2
-      ast-walker-scope: 0.8.3
+      ast-walker-scope: 0.9.0
       chokidar: 5.0.0
       json5: 2.2.3
       local-pkg: 1.2.1
@@ -2695,6 +2835,7 @@ snapshots:
     optionalDependencies:
       '@vue/compiler-sfc': 3.5.35
       pinia: 3.0.4(typescript@6.0.3)(vue@3.5.35(typescript@6.0.3))
+      vite: 8.0.14(@types/node@25.9.1)(jiti@2.7.0)(sass@1.100.0)(terser@5.48.0)(yaml@2.9.0)
 
   vue-sonner@2.0.9: {}
 
