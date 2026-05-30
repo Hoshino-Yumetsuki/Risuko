@@ -198,6 +198,10 @@ mod tests {
             "user-agent",
             "enable-dht",
             "listen-port",
+            "doh-enable",
+            "doh-url",
+            "doh-bootstrap",
+            "doh-fallback",
         ];
         for key in required {
             assert!(sys.contains_key(key), "missing system key: {key}");
@@ -218,6 +222,11 @@ mod tests {
         assert_eq!(sys.get("bt-enable-lsd").unwrap(), true);
         assert_eq!(sys.get("bt-encryption-policy").unwrap(), "prefer");
         assert_eq!(sys.get("bt-listen-v6").unwrap(), false);
+        // DoH defaults
+        assert_eq!(sys.get("doh-enable").unwrap(), false);
+        assert_eq!(sys.get("doh-url").unwrap(), "");
+        assert_eq!(sys.get("doh-bootstrap").unwrap(), "");
+        assert_eq!(sys.get("doh-fallback").unwrap(), true);
     }
 
     #[test]
@@ -243,6 +252,7 @@ mod tests {
             "m3u8-output-format",
             "tray-theme",
             "log-level",
+            "doh-provider",
         ];
         for key in required {
             assert!(user.contains_key(key), "missing user key: {key}");
@@ -259,6 +269,8 @@ mod tests {
         assert_eq!(user.get("m3u8-output-format").unwrap(), "ts");
         // Regression: purge-record-on-start defaults to false
         assert_eq!(user.get("purge-record-on-start").unwrap(), false);
+        // DoH provider default
+        assert_eq!(user.get("doh-provider").unwrap(), "cloudflare");
     }
 
     #[cfg(target_os = "macos")]

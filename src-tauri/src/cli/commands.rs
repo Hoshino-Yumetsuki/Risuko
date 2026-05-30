@@ -92,7 +92,11 @@ async fn do_download(
     }
     // DoH is a process-wide thing via the engine's global resolver, not a
     // per-task option, so push it through changeGlobalOption before we add the
-    // task instead of stuffing it into the per-task options map
+    // task instead of stuffing it into the per-task options map.
+    // We save the previous DoH settings so we can restore them after the
+    // download completes (success or failure), preventing a CLI invocation from
+    // permanently altering a shared running engine's DNS behavior
+    let mut previous_doh: Option<serde_json::Map<String, Value>> = None;
     let mut doh_global = serde_json::Map::new();
     if let Some(ref doh_url) = args.doh_url {
         doh_global.insert("doh-enable".into(), json!(true));
@@ -100,12 +104,49 @@ async fn do_download(
     }
     if let Some(ref doh_bootstrap) = args.doh_bootstrap {
         doh_global.insert("doh-bootstrap".into(), json!(doh_bootstrap));
+    } else if args.doh_url.is_some() {
+        // Explicitly clear bootstrap when a new URL is provided without one,
+        // so stale bootstrap IPs from a previous config don't persist
+        doh_global.insert("doh-bootstrap".into(), json!(""));
     }
     if !doh_global.is_empty() {
+        // Fetch current DoH settings to restore later
+        let global_opts = client
+            .call("risuko.getGlobalOption", vec![])
+            .await
+            .ok()
+            .and_then(|v| v.as_object().cloned());
+        if let Some(opts) = global_opts {
+            let mut saved = serde_json::Map::new();
+            for key in ["doh-enable", "doh-url", "doh-bootstrap", "doh-fallback", "doh-provider"] {
+                if let Some(val) = opts.get(key) {
+                    saved.insert(key.to_string(), val.clone());
+                }
+            }
+            previous_doh = Some(saved);
+        }
         client
             .call("risuko.changeGlobalOption", vec![json!(doh_global)])
             .await?;
     }
+
+    // Ensure DoH settings are restored after download completes or fails
+    let result = do_download_inner(client, args, &mut options).await;
+
+    if let Some(ref saved) = previous_doh {
+        let _ = client
+            .call("risuko.changeGlobalOption", vec![json!(saved)])
+            .await;
+    }
+
+    result
+}
+
+async fn do_download_inner(
+    client: &RpcClient,
+    args: &DownloadArgs,
+    options: &mut serde_json::Map<String, Value>,
+) -> Result<(), Box<dyn std::error::Error>> {
     if let Some(ref referer) = args.referer {
         options.insert("referer".into(), json!(referer));
     }

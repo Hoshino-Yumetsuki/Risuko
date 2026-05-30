@@ -126,19 +126,28 @@ impl DohResolver {
     }
 
     /// Look up `host` in the cache. The returned IPs may be empty, which means
-    /// we've got a cached failure. `None` means nothing fresh is cached
+    /// we've got a cached failure. `None` means nothing fresh is cached.
+    /// Expired entries are removed when discovered
     fn cache_get(&self, host: &str) -> Option<Vec<IpAddr>> {
         let cache = self.inner.cache.read().ok()?;
         let entry = cache.get(host)?;
         if entry.expires > Instant::now() {
-            Some(entry.addrs.clone())
-        } else {
-            None
+            return Some(entry.addrs.clone());
         }
+        // Expired - drop the read lock and acquire write lock to remove it
+        drop(cache);
+        if let Ok(mut cache) = self.inner.cache.write() {
+            cache.remove(host);
+        }
+        None
     }
 
     fn cache_put(&self, host: &str, addrs: Vec<IpAddr>, ttl: Duration) {
         if let Ok(mut cache) = self.inner.cache.write() {
+            // Opportunistic prune: remove expired entries to prevent unbounded growth
+            let now = Instant::now();
+            cache.retain(|_, entry| entry.expires > now);
+
             cache.insert(
                 host.to_string(),
                 CacheEntry {
@@ -197,10 +206,9 @@ impl DohResolver {
         if addrs.is_empty() {
             // Both families came back empty or errored. If at least one query
             // errored, surface that; an empty-but-successful answer
-            // (NXDOMAIN-ish) becomes a connect error
-            return Err(
-                last_err.unwrap_or_else(|| Error::Connect(format!("no DoH records for {host}")))
-            );
+            // (NXDOMAIN/SERVFAIL with no records) is a definitive DNS miss
+            // and should not fall back to system DNS
+            return Err(last_err.unwrap_or(Error::NoRecords));
         }
 
         Ok((addrs, ttl.clamp(MIN_TTL, MAX_TTL)))
@@ -212,6 +220,11 @@ impl Resolve for DohResolver {
         let this = self.clone();
         let host = host.to_string();
         Box::pin(async move {
+            // Fast path: IP-literal hosts don't need DNS resolution
+            if let Ok(ip) = host.parse::<IpAddr>() {
+                return Ok(ips_to_addrs(vec![ip]));
+            }
+
             // Fast path: hand back a fresh cached answer, hit or miss
             if let Some(cached) = this.cache_get(&host) {
                 if cached.is_empty() {
@@ -219,7 +232,7 @@ impl Resolve for DohResolver {
                     if this.inner.fallback {
                         return this.inner.gai.resolve(&host).await;
                     }
-                    return Err(Error::Connect(format!("DoH: no address for {host}")));
+                    return Err(Error::NoRecords);
                 }
                 return Ok(ips_to_addrs(cached));
             }

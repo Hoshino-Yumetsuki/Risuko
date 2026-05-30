@@ -85,17 +85,25 @@ fn bool_opt(v: Option<&Value>, default: bool) -> bool {
 /// touch DoH leave the resolver (and its cache) alone
 static APPLIED: Mutex<Option<DohSettings>> = Mutex::new(None);
 
+/// Extract just the host part of a URL for logging
+fn redacted_url_host(url: &str) -> String {
+    url::Url::parse(url)
+        .ok()
+        .and_then(|u| u.host_str().map(|h| h.to_string()))
+        .unwrap_or_else(|| "<invalid-url>".to_string())
+}
+
 /// Apply DoH settings to the global HTTP resolver. Idempotent, so it no-ops when
 /// nothing changed since the last call
 ///
 /// If the endpoint URL is bad the resolver won't build; we log it and leave the
 /// previous resolver alone rather than quietly dropping back to system DNS
 pub fn apply_settings(settings: &DohSettings) {
-    {
-        let guard = APPLIED.lock().unwrap_or_else(|e| e.into_inner());
-        if guard.as_ref() == Some(settings) {
-            return;
-        }
+    let mut guard = APPLIED.lock().unwrap_or_else(|e| e.into_inner());
+
+    // Check if settings are unchanged while holding the lock to prevent races
+    if guard.as_ref() == Some(settings) {
+        return;
     }
 
     if settings.is_active() {
@@ -109,7 +117,7 @@ pub fn apply_settings(settings: &DohSettings) {
                 risuko_http::set_global_resolver(Some(std::sync::Arc::new(resolver)));
                 log::info!(
                     "DoH enabled: endpoint={} bootstrap={} fallback={}",
-                    settings.url,
+                    redacted_url_host(&settings.url),
                     settings.bootstrap.len(),
                     settings.fallback,
                 );
@@ -128,7 +136,6 @@ pub fn apply_settings(settings: &DohSettings) {
         }
     }
 
-    let mut guard = APPLIED.lock().unwrap_or_else(|e| e.into_inner());
     *guard = Some(settings.clone());
 }
 

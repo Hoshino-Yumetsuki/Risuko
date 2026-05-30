@@ -239,9 +239,14 @@
                 class="form-item-sub"
                 style="margin-bottom: 10px"
               >
+                <label class="settings-select-item-label" for="doh-url-input" style="margin-bottom: 6px; display: block;">
+                  {{ $t('preferences.doh-url') }}
+                </label>
                 <Input
+                  id="doh-url-input"
                   :placeholder="$t('preferences.doh-url-placeholder')"
                   v-model="form.dohUrl"
+                  aria-label="DoH endpoint URL"
                 />
               </div>
               <div class="form-item-sub" style="margin-bottom: 10px">
@@ -258,7 +263,7 @@
                   <div class="settings-row-title">
                     {{ $t('preferences.doh-fallback') }}
                   </div>
-                  <div class="settings-row-desc">
+                  <div class="settings-row-description">
                     {{ $t('preferences.doh-fallback-tips') }}
                   </div>
                 </div>
@@ -1371,7 +1376,11 @@ import { useTaskStore } from "@/store/task";
 
 // Map a stored DoH endpoint URL back to its provider preset so the dropdown
 // shows what's actually saved. Falls back to an explicit stored provider, then
-// to "custom" when the URL doesn't match any preset
+// to "custom" when the URL doesn't match any preset.
+// Priority: 1) URL matches a preset -> use that preset
+//           2) storedProvider is valid -> use storedProvider
+//           3) URL exists but doesn't match -> "custom"
+//           4) nothing stored -> default "cloudflare"
 const resolveDohProvider = (storedProvider, storedUrl) => {
 	const url = `${storedUrl || ""}`.trim();
 	if (url) {
@@ -1380,8 +1389,13 @@ const resolveDohProvider = (storedProvider, storedUrl) => {
 				return name;
 			}
 		}
+		// URL exists but doesn't match any preset - check if storedProvider is valid first
+		if (storedProvider && storedProvider in DOH_PROVIDERS && storedProvider !== "custom") {
+			return storedProvider;
+		}
 		return "custom";
 	}
+	// No URL stored - use storedProvider if valid, otherwise default
 	if (storedProvider && storedProvider in DOH_PROVIDERS) {
 		return storedProvider;
 	}
@@ -2013,7 +2027,8 @@ export default {
 			// `doh-url` / `doh-bootstrap` values. For "custom" we keep whatever
 			// the user typed. These have to be written even when only
 			// `dohProvider` shows up in the diff, hence reading `this.form`
-			// rather than `data`
+			// rather than `data`. For presets, only use the preset bootstrap
+			// if the user hasn't provided a custom one.
 			if (
 				"dohProvider" in data ||
 				"dohEnable" in data ||
@@ -2024,7 +2039,14 @@ export default {
 				if (provider && provider !== "custom" && provider in DOH_PROVIDERS) {
 					const preset = DOH_PROVIDERS[provider];
 					data.dohUrl = preset.url;
-					data.dohBootstrap = preset.bootstrap;
+					const userBootstrap = `${this.form.dohBootstrap || ""}`.trim();
+					// Only use preset bootstrap if user hasn't provided one
+					// or if their value matches the preset (indicating they didn't customize)
+					if (!userBootstrap || userBootstrap === preset.bootstrap) {
+						data.dohBootstrap = preset.bootstrap;
+					} else {
+						data.dohBootstrap = userBootstrap;
+					}
 				} else {
 					data.dohUrl = `${this.form.dohUrl || ""}`.trim();
 					data.dohBootstrap = `${this.form.dohBootstrap || ""}`.trim();

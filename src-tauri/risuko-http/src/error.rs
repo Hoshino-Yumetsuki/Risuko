@@ -20,6 +20,8 @@ pub enum Error {
     Decode(String),
     #[error("encode error: {0}")]
     Encode(String),
+    #[error("dns error: no records found")]
+    NoRecords,
     #[error("timeout")]
     Timeout,
     #[error("HTTP status {0}")]

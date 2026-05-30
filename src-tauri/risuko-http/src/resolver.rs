@@ -91,7 +91,10 @@ impl Resolve for GlobalResolver {
 mod tests {
     use super::*;
 
+    // Tests that mutate GLOBAL_RESOLVER must run serially to avoid flaky failures
+    // when cargo test runs them in parallel
     #[test]
+    #[serial_test::serial]
     fn global_resolver_defaults_to_system() {
         // With nothing installed, GlobalResolver falls through to GaiResolver.
         // Just check the slot is empty rather than hitting the network
@@ -108,6 +111,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial_test::serial]
     async fn global_resolver_uses_override() {
         let addr: SocketAddr = "203.0.113.7:0".parse().unwrap();
         set_global_resolver(Some(Arc::new(StaticResolver(addr))));
