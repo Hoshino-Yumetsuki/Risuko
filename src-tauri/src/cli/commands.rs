@@ -118,7 +118,13 @@ async fn do_download(
             .and_then(|v| v.as_object().cloned());
         if let Some(opts) = global_opts {
             let mut saved = serde_json::Map::new();
-            for key in ["doh-enable", "doh-url", "doh-bootstrap", "doh-fallback", "doh-provider"] {
+            for key in [
+                "doh-enable",
+                "doh-url",
+                "doh-bootstrap",
+                "doh-fallback",
+                "doh-provider",
+            ] {
                 if let Some(val) = opts.get(key) {
                     saved.insert(key.to_string(), val.clone());
                 }

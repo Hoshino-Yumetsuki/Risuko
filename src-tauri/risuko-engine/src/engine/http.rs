@@ -1216,6 +1216,49 @@ fn looks_like_cloudflare_block(headers: &HeaderMap, status: u16) -> bool {
     false
 }
 
+fn log_cloudflare_diagnostic(req_headers: &HeaderMap, resp_headers: &HeaderMap, uri: &str) {
+    use risuko_http::header::{COOKIE, USER_AGENT};
+
+    let (cookie_names, cookie_len, has_cf_clearance) =
+        match req_headers.get(COOKIE).and_then(|v| v.to_str().ok()) {
+            Some(raw) => {
+                let names: Vec<&str> = raw
+                    .split(';')
+                    .filter_map(|kv| kv.split('=').next())
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .collect();
+                let has_clearance = names.iter().any(|n| n.eq_ignore_ascii_case("cf_clearance"));
+                (names.join(","), raw.len(), has_clearance)
+            }
+            None => ("<none>".to_string(), 0, false),
+        };
+
+    let sent_ua = req_headers
+        .get(USER_AGENT)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("<client-level>");
+
+    let resp_str = |name: &str| -> String {
+        resp_headers
+            .get(name)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("<absent>")
+            .to_string()
+    };
+
+    tracing::warn!(
+        "cloudflare-diagnostic uri={uri} \
+         sent[cf_clearance={has_cf_clearance} cookie_names={cookie_names} \
+         cookie_len={cookie_len} req_ua={sent_ua}] \
+         resp[cf-ray={} cf-mitigated={} cf-cache-status={} server={}]",
+        resp_str("cf-ray"),
+        resp_str("cf-mitigated"),
+        resp_str("cf-cache-status"),
+        resp_str("server"),
+    );
+}
+
 /// Build a cloudflare-marker error message the classifier maps to
 /// `CLOUDFLARE_CHALLENGE` and the renderer can scan for the host
 fn cloudflare_error(uri: &str, status: u16) -> String {
@@ -1246,6 +1289,7 @@ async fn probe_range_support(
     let status = resp.status().as_u16();
 
     if looks_like_cloudflare_block(resp.headers(), status) {
+        log_cloudflare_diagnostic(headers, resp.headers(), uri);
         return Err(cloudflare_error(uri, status));
     }
 
@@ -1728,6 +1772,7 @@ async fn download_piece_stream(
     let status = resp.status().as_u16();
 
     if looks_like_cloudflare_block(resp.headers(), status) {
+        log_cloudflare_diagnostic(headers, resp.headers(), uri);
         return StreamOutcome {
             error: Some(cloudflare_error(uri, status)),
         };
@@ -2029,6 +2074,7 @@ async fn run_single_download(
     let status = resp.status().as_u16();
 
     if looks_like_cloudflare_block(resp.headers(), status) {
+        log_cloudflare_diagnostic(headers, resp.headers(), uri);
         return Err(cloudflare_error(uri, status));
     }
 

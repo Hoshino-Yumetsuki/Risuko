@@ -8,6 +8,8 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::Duration;
 
+use futures_util::stream::{FuturesUnordered, StreamExt};
+
 use base64::engine::general_purpose::STANDARD as B64_STANDARD;
 use base64::Engine as _;
 use http::Uri;
@@ -227,26 +229,79 @@ impl Connector {
 
     async fn direct(&self, host: &str, port: u16) -> Result<TcpStream, Error> {
         let addrs = self.resolver.resolve(host).await?;
-        let mut last: Option<io::Error> = None;
+        // RFC 8305 (Happy Eyeballs v2)
+        let ordered = interleave_by_family(addrs.map(|a| SocketAddr::new(a.ip(), port)));
+        if ordered.is_empty() {
+            return Err(Error::Connect(format!("no addresses for {host}")));
+        }
+        self.happy_eyeballs(host, ordered).await
+    }
+
+    /// Staggered-parallel connect over a family-interleaved address list
+    /// Each address gets its own attempt started `ATTEMPT_DELAY` after the
+    /// previous one; the first stream to connect wins and the rest are dropped
+    async fn happy_eyeballs(&self, host: &str, addrs: Vec<SocketAddr>) -> Result<TcpStream, Error> {
+        /// Connection Attempt Delay
+        const ATTEMPT_DELAY: Duration = Duration::from_millis(300);
+
         let timeout = self.connect_timeout;
-        for addr in addrs {
-            let addr = SocketAddr::new(addr.ip(), port);
-            let fut = TcpStream::connect(addr);
-            let res = match timeout {
-                Some(d) => match tokio::time::timeout(d, fut).await {
-                    Ok(r) => r,
-                    Err(_) => Err(io::Error::new(io::ErrorKind::TimedOut, "connect timeout")),
-                },
-                None => fut.await,
-            };
-            match res {
-                Ok(s) => {
-                    self.tune(&s)?;
-                    return Ok(s);
+        let mut in_flight = FuturesUnordered::new();
+        let mut remaining = addrs.into_iter();
+        let mut last: Option<io::Error> = None;
+
+        // Prime the first attempt
+        if let Some(addr) = remaining.next() {
+            in_flight.push(connect_one(addr, timeout));
+        }
+
+        loop {
+            // Wait for either the next in-flight attempt to finish or the
+            // stagger timer to fire, whichever comes first
+            let stagger = tokio::time::sleep(ATTEMPT_DELAY);
+            tokio::select! {
+                biased;
+                finished = in_flight.next(), if !in_flight.is_empty() => {
+                    match finished {
+                        Some(Ok((stream, addr))) => {
+                            self.tune(&stream)?;
+                            tracing::debug!(
+                                "connected host={host} peer={addr} family={}",
+                                if addr.is_ipv6() { "v6" } else { "v4" },
+                            );
+                            return Ok(stream);
+                        }
+                        Some(Err(e)) => {
+                            last = Some(e);
+                            // That attempt failed
+                            if in_flight.is_empty() {
+                                if let Some(addr) = remaining.next() {
+                                    in_flight.push(connect_one(addr, timeout));
+                                } else {
+                                    break;
+                                }
+                            }
+                        }
+                        None => {
+                            // No attempts in flight and the stream drained
+                            if let Some(addr) = remaining.next() {
+                                in_flight.push(connect_one(addr, timeout));
+                            } else {
+                                break;
+                            }
+                        }
+                    }
                 }
-                Err(e) => last = Some(e),
+                _ = stagger => {
+                    // Stagger elapsed without a winner
+                    if let Some(addr) = remaining.next() {
+                        in_flight.push(connect_one(addr, timeout));
+                    } else if in_flight.is_empty() {
+                        break;
+                    }
+                }
             }
         }
+
         Err(Error::Connect(
             last.map(|e| e.to_string())
                 .unwrap_or_else(|| format!("no addresses for {host}")),
@@ -411,6 +466,45 @@ async fn http_connect_inner(
     Ok(())
 }
 
+/// Connect to a single address with the optional per-attempt timeout
+async fn connect_one(
+    addr: SocketAddr,
+    timeout: Option<Duration>,
+) -> Result<(TcpStream, SocketAddr), io::Error> {
+    let fut = TcpStream::connect(addr);
+    let stream = match timeout {
+        Some(d) => tokio::time::timeout(d, fut)
+            .await
+            .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "connect timeout"))??,
+        None => fut.await?,
+    };
+    Ok((stream, addr))
+}
+
+/// Interleave addresses by family with IPv6 first
+fn interleave_by_family(addrs: impl Iterator<Item = SocketAddr>) -> Vec<SocketAddr> {
+    let mut v6: std::collections::VecDeque<SocketAddr> = std::collections::VecDeque::new();
+    let mut v4: std::collections::VecDeque<SocketAddr> = std::collections::VecDeque::new();
+    for a in addrs {
+        if a.is_ipv6() {
+            v6.push_back(a);
+        } else {
+            v4.push_back(a);
+        }
+    }
+    let mut out = Vec::with_capacity(v6.len() + v4.len());
+    // IPv6 first, then alternate families
+    while !v6.is_empty() || !v4.is_empty() {
+        if let Some(a) = v6.pop_front() {
+            out.push(a);
+        }
+        if let Some(a) = v4.pop_front() {
+            out.push(a);
+        }
+    }
+    out
+}
+
 /// Percent-decode a URL component (lossy: invalid UTF-8 is replaced).
 /// `url::Url::username()` / `password()` return the raw encoded form, but
 /// proxy auth needs the decoded bytes
@@ -432,6 +526,98 @@ fn percent_decode_str(s: &str) -> String {
         i += 1;
     }
     String::from_utf8_lossy(&out).into_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::{Ipv4Addr, Ipv6Addr};
+
+    fn v4(n: u8) -> SocketAddr {
+        SocketAddr::new(std::net::IpAddr::V4(Ipv4Addr::new(10, 0, 0, n)), 443)
+    }
+    fn v6(n: u16) -> SocketAddr {
+        SocketAddr::new(
+            std::net::IpAddr::V6(Ipv6Addr::new(0x2606, 0, 0, 0, 0, 0, 0, n)),
+            443,
+        )
+    }
+
+    #[test]
+    fn interleave_puts_ipv6_first() {
+        let input = vec![v4(1), v4(2), v6(1), v6(2)];
+        let out = interleave_by_family(input.into_iter());
+        // v6, v4, v6, v4
+        assert_eq!(out, vec![v6(1), v4(1), v6(2), v4(2)]);
+    }
+
+    #[test]
+    fn interleave_v4_only_preserves_order() {
+        let input = vec![v4(1), v4(2), v4(3)];
+        let out = interleave_by_family(input.into_iter());
+        assert_eq!(out, vec![v4(1), v4(2), v4(3)]);
+    }
+
+    #[test]
+    fn interleave_v6_only_preserves_order() {
+        let input = vec![v6(1), v6(2)];
+        let out = interleave_by_family(input.into_iter());
+        assert_eq!(out, vec![v6(1), v6(2)]);
+    }
+
+    #[test]
+    fn interleave_uneven_drains_remainder() {
+        // More v6 than v4: after the pair runs out, remaining v6 trail
+        let input = vec![v6(1), v6(2), v6(3), v4(1)];
+        let out = interleave_by_family(input.into_iter());
+        assert_eq!(out, vec![v6(1), v4(1), v6(2), v6(3)]);
+    }
+
+    fn test_connector() -> Connector {
+        let roots = rustls::RootCertStore::empty();
+        let tls = rustls::ClientConfig::builder()
+            .with_root_certificates(roots)
+            .with_no_client_auth();
+        Connector {
+            tls: Arc::new(tls),
+            resolver: Arc::new(crate::resolver::GaiResolver),
+            proxy: None,
+            connect_timeout: Some(Duration::from_secs(2)),
+            tcp_nodelay: true,
+            tcp_keepalive: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn happy_eyeballs_connects_to_listener() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let c = test_connector();
+        let stream = c.happy_eyeballs("localhost", vec![addr]).await.unwrap();
+        assert_eq!(stream.peer_addr().unwrap(), addr);
+    }
+
+    #[tokio::test]
+    async fn happy_eyeballs_fails_over_to_second_address() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let live = listener.local_addr().unwrap();
+        let dead: SocketAddr = "127.0.0.1:1".parse().unwrap();
+        let c = test_connector();
+        let stream = c
+            .happy_eyeballs("localhost", vec![dead, live])
+            .await
+            .unwrap();
+        assert_eq!(stream.peer_addr().unwrap(), live);
+    }
+
+    #[tokio::test]
+    async fn happy_eyeballs_all_fail_returns_error() {
+        let dead1: SocketAddr = "127.0.0.1:1".parse().unwrap();
+        let dead2: SocketAddr = "127.0.0.1:2".parse().unwrap();
+        let c = test_connector();
+        let res = c.happy_eyeballs("localhost", vec![dead1, dead2]).await;
+        assert!(res.is_err());
+    }
 }
 
 /// SOCKS5 connect with optional local DNS and optional username/password
