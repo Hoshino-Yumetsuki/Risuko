@@ -1216,7 +1216,12 @@ fn looks_like_cloudflare_block(headers: &HeaderMap, status: u16) -> bool {
     false
 }
 
-fn log_cloudflare_diagnostic(req_headers: &HeaderMap, resp_headers: &HeaderMap, uri: &str) {
+fn log_cloudflare_diagnostic(
+    client: &Client,
+    req_headers: &HeaderMap,
+    resp_headers: &HeaderMap,
+    uri: &str,
+) {
     use risuko_http::header::{COOKIE, USER_AGENT};
 
     let sanitized_uri = match url::Url::parse(uri) {
@@ -1239,20 +1244,30 @@ fn log_cloudflare_diagnostic(req_headers: &HeaderMap, resp_headers: &HeaderMap, 
         }
     };
 
-    let (cookie_names, cookie_len, has_cf_clearance) =
-        match req_headers.get(COOKIE).and_then(|v| v.to_str().ok()) {
-            Some(raw) => {
-                let names: Vec<&str> = raw
-                    .split(';')
-                    .filter_map(|kv| kv.split('=').next())
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty())
-                    .collect();
-                let has_clearance = names.iter().any(|n| n.eq_ignore_ascii_case("cf_clearance"));
-                (names.join(","), raw.len(), has_clearance)
-            }
-            None => ("<none>".to_string(), 0, false),
-        };
+    let manual_cookie = req_headers
+        .get(COOKIE)
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_owned);
+    let effective_cookie = manual_cookie.or_else(|| {
+        url::Url::parse(uri)
+            .ok()
+            .and_then(|u| client.jar_cookies(&u))
+            .and_then(|v| v.to_str().ok().map(str::to_owned))
+    });
+
+    let (cookie_names, cookie_len, has_cf_clearance) = match effective_cookie {
+        Some(raw) => {
+            let names: Vec<&str> = raw
+                .split(';')
+                .filter_map(|kv| kv.split('=').next())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .collect();
+            let has_clearance = names.iter().any(|n| n.eq_ignore_ascii_case("cf_clearance"));
+            (names.join(","), raw.len(), has_clearance)
+        }
+        None => ("<none>".to_string(), 0, false),
+    };
 
     let sent_ua = req_headers
         .get(USER_AGENT)
@@ -1309,7 +1324,7 @@ async fn probe_range_support(
     let status = resp.status().as_u16();
 
     if looks_like_cloudflare_block(resp.headers(), status) {
-        log_cloudflare_diagnostic(headers, resp.headers(), uri);
+        log_cloudflare_diagnostic(client, headers, resp.headers(), uri);
         return Err(cloudflare_error(uri, status));
     }
 
@@ -1792,7 +1807,7 @@ async fn download_piece_stream(
     let status = resp.status().as_u16();
 
     if looks_like_cloudflare_block(resp.headers(), status) {
-        log_cloudflare_diagnostic(headers, resp.headers(), uri);
+        log_cloudflare_diagnostic(client, headers, resp.headers(), uri);
         return StreamOutcome {
             error: Some(cloudflare_error(uri, status)),
         };
@@ -2094,7 +2109,7 @@ async fn run_single_download(
     let status = resp.status().as_u16();
 
     if looks_like_cloudflare_block(resp.headers(), status) {
-        log_cloudflare_diagnostic(headers, resp.headers(), uri);
+        log_cloudflare_diagnostic(client, headers, resp.headers(), uri);
         return Err(cloudflare_error(uri, status));
     }
 
