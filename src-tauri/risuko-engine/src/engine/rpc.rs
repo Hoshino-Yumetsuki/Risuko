@@ -678,14 +678,14 @@ fn dispatch_method<'a>(
 
             "risuko.tellWaiting" => {
                 let offset = params.first().and_then(|v| v.as_i64()).unwrap_or(0);
-                let num = params.get(1).and_then(|v| v.as_u64()).unwrap_or(1000) as usize;
+                let num = params.get(1).and_then(|v| v.as_u64()).unwrap_or(5000) as usize;
                 let keys = get_keys(&params, 2);
                 Ok(state.manager.tell_waiting(offset, num, &keys).await)
             }
 
             "risuko.tellStopped" => {
                 let offset = params.first().and_then(|v| v.as_i64()).unwrap_or(0);
-                let num = params.get(1).and_then(|v| v.as_u64()).unwrap_or(1000) as usize;
+                let num = params.get(1).and_then(|v| v.as_u64()).unwrap_or(5000) as usize;
                 let keys = get_keys(&params, 2);
                 Ok(state.manager.tell_stopped(offset, num, &keys).await)
             }
