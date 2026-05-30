@@ -1390,7 +1390,11 @@ const resolveDohProvider = (storedProvider, storedUrl) => {
 			}
 		}
 		// URL exists but doesn't match any preset - check if storedProvider is valid first
-		if (storedProvider && storedProvider in DOH_PROVIDERS && storedProvider !== "custom") {
+		if (
+			storedProvider &&
+			storedProvider in DOH_PROVIDERS &&
+			storedProvider !== "custom"
+		) {
 			return storedProvider;
 		}
 		return "custom";
