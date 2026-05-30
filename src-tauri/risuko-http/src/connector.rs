@@ -254,10 +254,12 @@ impl Connector {
             in_flight.push(connect_one(addr, timeout));
         }
 
+        let stagger = tokio::time::sleep(ATTEMPT_DELAY);
+        tokio::pin!(stagger);
+
         loop {
             // Wait for either the next in-flight attempt to finish or the
             // stagger timer to fire, whichever comes first
-            let stagger = tokio::time::sleep(ATTEMPT_DELAY);
             tokio::select! {
                 biased;
                 finished = in_flight.next(), if !in_flight.is_empty() => {
@@ -291,13 +293,14 @@ impl Connector {
                         }
                     }
                 }
-                _ = stagger => {
+                _ = &mut stagger => {
                     // Stagger elapsed without a winner
                     if let Some(addr) = remaining.next() {
                         in_flight.push(connect_one(addr, timeout));
                     } else if in_flight.is_empty() {
                         break;
                     }
+                    stagger.as_mut().reset(tokio::time::Instant::now() + ATTEMPT_DELAY);
                 }
             }
         }

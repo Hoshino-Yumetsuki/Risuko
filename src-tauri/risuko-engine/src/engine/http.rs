@@ -1219,6 +1219,26 @@ fn looks_like_cloudflare_block(headers: &HeaderMap, status: u16) -> bool {
 fn log_cloudflare_diagnostic(req_headers: &HeaderMap, resp_headers: &HeaderMap, uri: &str) {
     use risuko_http::header::{COOKIE, USER_AGENT};
 
+    let sanitized_uri = match url::Url::parse(uri) {
+        Ok(mut u) => {
+            u.set_query(None);
+            u.set_fragment(None);
+            let _ = u.set_username("");
+            let _ = u.set_password(None);
+            u.to_string()
+        }
+        Err(_) => {
+            let mut s = uri;
+            if let Some(pos) = s.find('?') {
+                s = &s[..pos];
+            }
+            if let Some(pos) = s.find('#') {
+                s = &s[..pos];
+            }
+            s.to_string()
+        }
+    };
+
     let (cookie_names, cookie_len, has_cf_clearance) =
         match req_headers.get(COOKIE).and_then(|v| v.to_str().ok()) {
             Some(raw) => {
@@ -1248,7 +1268,7 @@ fn log_cloudflare_diagnostic(req_headers: &HeaderMap, resp_headers: &HeaderMap, 
     };
 
     tracing::warn!(
-        "cloudflare-diagnostic uri={uri} \
+        "cloudflare-diagnostic uri={sanitized_uri} \
          sent[cf_clearance={has_cf_clearance} cookie_names={cookie_names} \
          cookie_len={cookie_len} req_ua={sent_ua}] \
          resp[cf-ray={} cf-mitigated={} cf-cache-status={} server={}]",
