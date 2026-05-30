@@ -1642,6 +1642,13 @@ export default {
 			cookieEntries: [] as CookieEntryView[],
 		};
 	},
+	watch: {
+		"form.dohProvider"(provider: string) {
+			if (provider && provider !== "custom" && provider in DOH_PROVIDERS) {
+				this.form.dohBootstrap = DOH_PROVIDERS[provider].bootstrap || "";
+			}
+		},
+	},
 	computed: {
 		isRenderer: () => is.renderer(),
 		title() {
