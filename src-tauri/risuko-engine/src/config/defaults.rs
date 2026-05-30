@@ -29,6 +29,10 @@ pub fn system_defaults() -> Map<String, Value> {
     m.insert("continue".into(), json!(true));
     m.insert("dht-listen-port".into(), json!(26701));
     m.insert("dir".into(), json!(downloads_dir));
+    m.insert("doh-enable".into(), json!(false));
+    m.insert("doh-url".into(), json!(""));
+    m.insert("doh-bootstrap".into(), json!(""));
+    m.insert("doh-fallback".into(), json!(true));
     m.insert("ed2k-server".into(), json!("176.123.5.89:4725,45.82.80.155:5687,85.239.33.123:4232,91.208.162.87:4232,145.239.2.134:4661"));
     m.insert("enable-dht".into(), json!(true));
     m.insert("enable-dht6".into(), json!(true));
@@ -124,6 +128,7 @@ pub fn user_defaults() -> Map<String, Value> {
     m.insert("auto-retry-interval".into(), json!(5));
     m.insert("auto-retry-strategy".into(), json!("static"));
     m.insert("auto-sync-tracker".into(), json!(true));
+    m.insert("doh-provider".into(), json!("cloudflare"));
     m.insert("favorite-directories".into(), json!([]));
     m.insert("hide-app-menu".into(), json!(is_not_macos));
     m.insert("history-directories".into(), json!([]));

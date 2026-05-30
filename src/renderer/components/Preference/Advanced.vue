@@ -191,6 +191,88 @@
           </div>
         </div>
 
+        <!-- DNS over HTTPS Section -->
+        <div class="settings-section">
+          <div class="settings-section-header">
+            <div class="section-icon"><Globe :size="16" /></div>
+            <div class="section-title">
+              <h3>{{ $t('preferences.doh') }}</h3>
+              <p>{{ $t('preferences.doh-tips') }}</p>
+            </div>
+          </div>
+          <div class="settings-section-content">
+            <div class="settings-row">
+              <div class="settings-row-content">
+                <div class="settings-row-title">
+                  {{ $t('preferences.doh-enable') }}
+                </div>
+              </div>
+              <div class="settings-row-action">
+                <ui-checkbox
+                  :model-value="!!form.dohEnable"
+                  @change="(val) => setAdvancedBoolean('dohEnable', val)"
+                />
+              </div>
+            </div>
+            <div v-if="form.dohEnable" style="margin-top: 14px">
+              <div class="settings-select-item" style="margin-bottom: 10px">
+                <label class="settings-select-item-label">{{
+                  $t('preferences.doh-provider')
+                }}</label>
+                <Select v-model="form.dohProvider" class="settings-select-control">
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem
+                      v-for="p in dohProviderOptions"
+                      :key="p"
+                      :value="p"
+                    >
+                      {{ $t(`preferences.doh-provider-${p}`) }}
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div
+                v-if="form.dohProvider === 'custom'"
+                class="form-item-sub"
+                style="margin-bottom: 10px"
+              >
+                <Input
+                  :placeholder="$t('preferences.doh-url-placeholder')"
+                  v-model="form.dohUrl"
+                />
+              </div>
+              <div class="form-item-sub" style="margin-bottom: 10px">
+                <label class="settings-select-item-label" style="margin-bottom: 6px">{{
+                  $t('preferences.doh-bootstrap')
+                }}</label>
+                <Input
+                  :placeholder="$t('preferences.doh-bootstrap-placeholder')"
+                  v-model="form.dohBootstrap"
+                />
+              </div>
+              <div class="settings-row">
+                <div class="settings-row-content">
+                  <div class="settings-row-title">
+                    {{ $t('preferences.doh-fallback') }}
+                  </div>
+                  <div class="settings-row-desc">
+                    {{ $t('preferences.doh-fallback-tips') }}
+                  </div>
+                </div>
+                <div class="settings-row-action">
+                  <ui-checkbox
+                    :model-value="!!form.dohFallback"
+                    @change="(val) => setAdvancedBoolean('dohFallback', val)"
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <!-- BT Tracker Section -->
         <div class="settings-section">
           <div class="settings-section-header">
@@ -1232,6 +1314,8 @@ import {
 } from "@lucide/vue";
 import {
 	DEFAULT_ED2K_SERVERS,
+	DOH_PROVIDER_OPTIONS,
+	DOH_PROVIDERS,
 	EMPTY_STRING,
 	ENGINE_RPC_HOST,
 	ENGINE_RPC_PORT,
@@ -1285,6 +1369,25 @@ import is from "@/shims/platform";
 import { usePreferenceStore } from "@/store/preference";
 import { useTaskStore } from "@/store/task";
 
+// Map a stored DoH endpoint URL back to its provider preset so the dropdown
+// shows what's actually saved. Falls back to an explicit stored provider, then
+// to "custom" when the URL doesn't match any preset
+const resolveDohProvider = (storedProvider, storedUrl) => {
+	const url = `${storedUrl || ""}`.trim();
+	if (url) {
+		for (const [name, preset] of Object.entries(DOH_PROVIDERS)) {
+			if (preset.url && preset.url === url) {
+				return name;
+			}
+		}
+		return "custom";
+	}
+	if (storedProvider && storedProvider in DOH_PROVIDERS) {
+		return storedProvider;
+	}
+	return "cloudflare";
+};
+
 const initForm = (config) => {
 	const {
 		autoCheckUpdate,
@@ -1313,6 +1416,11 @@ const initForm = (config) => {
 		netrcPath,
 		noNetrc,
 		dhtListenPort,
+		dohEnable,
+		dohUrl,
+		dohBootstrap,
+		dohFallback,
+		dohProvider,
 		ed2KPort: ed2kPort,
 		ed2KServer: ed2kServer,
 		hideAppMenu,
@@ -1371,6 +1479,11 @@ const initForm = (config) => {
 		netrcPath: netrcPath || "",
 		noNetrc: parseBooleanConfig(noNetrc, false),
 		dhtListenPort,
+		dohEnable: parseBooleanConfig(dohEnable, false),
+		dohUrl: dohUrl || "",
+		dohBootstrap: dohBootstrap || "",
+		dohFallback: parseBooleanConfig(dohFallback, true),
+		dohProvider: resolveDohProvider(dohProvider, dohUrl),
 		ed2kPort: ed2kPort || 4662,
 		ed2kServer: convertCommaToLine(ed2kServer || DEFAULT_ED2K_SERVERS),
 		ftpUser: config.ftpUser || "",
@@ -1506,6 +1619,7 @@ export default {
 			hideRpcSecret: true,
 			hideExternalRpcSecret: true,
 			proxyScopeOptions: PROXY_SCOPE_OPTIONS,
+			dohProviderOptions: DOH_PROVIDER_OPTIONS,
 			trackerSourceOptions: TRACKER_SOURCE_OPTIONS,
 			trackerSourceOpen: false,
 			trackerSyncing: false,
@@ -1892,6 +2006,39 @@ export default {
 
 			if (btTracker) {
 				data.btTracker = reduceTrackerString(convertLineToComma(btTracker));
+			}
+
+			// DoH: when a preset provider is picked, pull the endpoint URL and
+			// bootstrap IPs from that preset so the engine gets concrete
+			// `doh-url` / `doh-bootstrap` values. For "custom" we keep whatever
+			// the user typed. These have to be written even when only
+			// `dohProvider` shows up in the diff, hence reading `this.form`
+			// rather than `data`
+			if (
+				"dohProvider" in data ||
+				"dohEnable" in data ||
+				"dohUrl" in data ||
+				"dohBootstrap" in data
+			) {
+				const provider = this.form.dohProvider;
+				if (provider && provider !== "custom" && provider in DOH_PROVIDERS) {
+					const preset = DOH_PROVIDERS[provider];
+					data.dohUrl = preset.url;
+					data.dohBootstrap = preset.bootstrap;
+				} else {
+					data.dohUrl = `${this.form.dohUrl || ""}`.trim();
+					data.dohBootstrap = `${this.form.dohBootstrap || ""}`.trim();
+				}
+				// Catch an enabled custom config with a non-https endpoint here,
+				// before it hits the engine, which would just reject it anyway
+				if (
+					this.form.dohEnable &&
+					provider === "custom" &&
+					!/^https:\/\//i.test(data.dohUrl)
+				) {
+					this.$msg.error(this.$t("preferences.doh-url-invalid"));
+					return;
+				}
 			}
 
 			for (const key of [

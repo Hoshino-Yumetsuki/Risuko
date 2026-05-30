@@ -1,7 +1,7 @@
 use std::future::Future;
 use std::net::SocketAddr;
 use std::pin::Pin;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use crate::error::{Error, Result};
 
@@ -31,7 +31,7 @@ pub trait Resolve: Send + Sync {
 }
 
 #[derive(Clone, Default)]
-pub(crate) struct GaiResolver;
+pub struct GaiResolver;
 
 impl Resolve for GaiResolver {
     fn resolve(&self, host: &str) -> Resolving {
@@ -47,3 +47,76 @@ impl Resolve for GaiResolver {
 }
 
 pub(crate) type SharedResolver = Arc<dyn Resolve>;
+
+/// Process-wide resolver override.
+///
+/// Clients built without an explicit `.resolver(...)` use [`GlobalResolver`],
+/// which reads this slot on every single `resolve()` call. So a swap takes hold
+/// right away, even for clients that get built once and then cached for the
+/// life of the process (think the `OnceLock` clients in the RSS, UPnP and
+/// BitTorrent-tracker code). `None` means fall back to system DNS
+static GLOBAL_RESOLVER: RwLock<Option<SharedResolver>> = RwLock::new(None);
+
+/// Install the process-wide resolver, or clear it with `None`. From then on any
+/// client that didn't pin its own resolver uses it. This is how DNS-over-HTTPS
+/// gets wired in from the engine's config layer
+pub fn set_global_resolver(resolver: Option<SharedResolver>) {
+    if let Ok(mut slot) = GLOBAL_RESOLVER.write() {
+        *slot = resolver;
+    }
+}
+
+/// Grab a snapshot of the current global resolver, if one is set
+fn global_resolver() -> Option<SharedResolver> {
+    GLOBAL_RESOLVER.read().ok().and_then(|s| s.clone())
+}
+
+/// Default resolver for clients that don't pin one. Uses the
+/// [`set_global_resolver`] override when it's set, otherwise system DNS. It
+/// re-reads the slot every call, which is what lets a runtime config change
+/// reach clients that were already built
+#[derive(Clone, Default)]
+pub(crate) struct GlobalResolver;
+
+impl Resolve for GlobalResolver {
+    fn resolve(&self, host: &str) -> Resolving {
+        match global_resolver() {
+            Some(r) => r.resolve(host),
+            None => GaiResolver.resolve(host),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn global_resolver_defaults_to_system() {
+        // With nothing installed, GlobalResolver falls through to GaiResolver.
+        // Just check the slot is empty rather than hitting the network
+        set_global_resolver(None);
+        assert!(global_resolver().is_none());
+    }
+
+    struct StaticResolver(SocketAddr);
+    impl Resolve for StaticResolver {
+        fn resolve(&self, _host: &str) -> Resolving {
+            let a = self.0;
+            Box::pin(async move { Ok(Box::new(std::iter::once(a)) as Addrs) })
+        }
+    }
+
+    #[tokio::test]
+    async fn global_resolver_uses_override() {
+        let addr: SocketAddr = "203.0.113.7:0".parse().unwrap();
+        set_global_resolver(Some(Arc::new(StaticResolver(addr))));
+        let got: Vec<SocketAddr> = GlobalResolver
+            .resolve("anything.invalid")
+            .await
+            .unwrap()
+            .collect();
+        set_global_resolver(None); // put it back for the other tests
+        assert_eq!(got, vec![addr]);
+    }
+}

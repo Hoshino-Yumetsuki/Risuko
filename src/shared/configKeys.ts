@@ -49,6 +49,7 @@ const userKeys = [
 	"completion-script-command",
 	"completion-script-args",
 	"completion-script-timeout-ms",
+	"doh-provider",
 ];
 
 const systemKeys = [
@@ -72,6 +73,10 @@ const systemKeys = [
 	"connect-timeout",
 	"dht-listen-port",
 	"dir",
+	"doh-enable",
+	"doh-url",
+	"doh-bootstrap",
+	"doh-fallback",
 	"ed2k-port",
 	"ed2k-server",
 	"adc-hub",

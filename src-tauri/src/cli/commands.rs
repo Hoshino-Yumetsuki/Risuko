@@ -90,6 +90,22 @@ async fn do_download(
     if let Some(ref proxy) = args.proxy {
         options.insert("all-proxy".into(), json!(proxy));
     }
+    // DoH is a process-wide thing via the engine's global resolver, not a
+    // per-task option, so push it through changeGlobalOption before we add the
+    // task instead of stuffing it into the per-task options map
+    let mut doh_global = serde_json::Map::new();
+    if let Some(ref doh_url) = args.doh_url {
+        doh_global.insert("doh-enable".into(), json!(true));
+        doh_global.insert("doh-url".into(), json!(doh_url));
+    }
+    if let Some(ref doh_bootstrap) = args.doh_bootstrap {
+        doh_global.insert("doh-bootstrap".into(), json!(doh_bootstrap));
+    }
+    if !doh_global.is_empty() {
+        client
+            .call("risuko.changeGlobalOption", vec![json!(doh_global)])
+            .await?;
+    }
     if let Some(ref referer) = args.referer {
         options.insert("referer".into(), json!(referer));
     }

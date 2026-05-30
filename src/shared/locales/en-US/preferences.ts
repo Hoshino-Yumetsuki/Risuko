@@ -124,6 +124,23 @@ export default {
 	"proxy-scope-update-trackers-desc":
 		"Fetch BT tracker lists through the proxy",
 	"proxy-tips": "View Proxy Manual",
+	doh: "DNS over HTTPS",
+	"doh-tips":
+		"Resolve hostnames through an encrypted DNS endpoint instead of your system resolver",
+	"doh-enable": "Enable DNS over HTTPS",
+	"doh-provider": "Provider",
+	"doh-provider-cloudflare": "Cloudflare",
+	"doh-provider-google": "Google",
+	"doh-provider-quad9": "Quad9",
+	"doh-provider-custom": "Custom",
+	"doh-url-placeholder": "https://example.com/dns-query",
+	"doh-url-invalid": "DoH endpoint must start with https://",
+	"doh-bootstrap": "Bootstrap IPs",
+	"doh-bootstrap-placeholder":
+		"IPs to reach the endpoint, comma separated (optional)",
+	"doh-fallback": "Fall back to system DNS",
+	"doh-fallback-tips":
+		"If a DoH query fails, resolve via the system resolver instead of failing the download",
 	"bt-tracker": "Tracker Servers",
 	"bt-tracker-input-tips": "Tracker servers, one per line",
 	"bt-tracker-tips": "Recommended: ",
