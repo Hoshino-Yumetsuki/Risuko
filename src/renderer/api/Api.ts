@@ -32,8 +32,8 @@ const ENGINE_RESTART_USER_KEYS: string[] = [
 	"external-engine-secret",
 	"engine-overrides",
 ];
-const DEFAULT_TASK_LIST_FETCH_SIZE = 1000;
-const MAX_TASK_LIST_FETCH_SIZE = 2000;
+const DEFAULT_TASK_LIST_FETCH_SIZE = 5000;
+const MAX_TASK_LIST_FETCH_SIZE = 10000;
 
 const parseConfiguredTaskListFetchSize = () => {
 	const meta = import.meta as unknown as Record<

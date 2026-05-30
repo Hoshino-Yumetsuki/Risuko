@@ -2521,39 +2521,38 @@ impl TaskManager {
             .iter()
             .filter(|t| t.status == TaskStatus::Waiting || t.status == TaskStatus::Paused)
             .collect();
-
-        let start = if offset >= 0 {
-            offset as usize
-        } else {
-            waiting.len().saturating_sub((-offset) as usize)
-        };
-
-        let slice: Vec<Value> = waiting
-            .iter()
-            .skip(start)
-            .take(num)
-            .map(|t| t.to_rpc_status(keys))
-            .collect();
-        Value::Array(slice)
+        let num = num.min(10_000);
+        Value::Array(Self::paginate_newest_first(&waiting, offset, num, keys))
     }
 
     pub async fn tell_stopped(&self, offset: i64, num: usize, keys: &[String]) -> Value {
         let tasks = self.tasks.read().await;
         let stopped: Vec<&DownloadTask> = tasks.iter().filter(|t| t.status.is_stopped()).collect();
+        let num = num.min(10_000);
+        Value::Array(Self::paginate_newest_first(&stopped, offset, num, keys))
+    }
 
-        let start = if offset >= 0 {
-            offset as usize
+    fn paginate_newest_first(
+        items: &[&DownloadTask],
+        offset: i64,
+        num: usize,
+        keys: &[String],
+    ) -> Vec<Value> {
+        let len = items.len();
+        let (start, end) = if offset >= 0 {
+            let end = len.saturating_sub(offset as usize);
+            let start = end.saturating_sub(num);
+            (start, end)
         } else {
-            stopped.len().saturating_sub((-offset) as usize)
+            let back = usize::try_from(offset.unsigned_abs()).unwrap_or(usize::MAX);
+            let start = len.saturating_sub(back);
+            let end = start.saturating_add(num).min(len);
+            (start, end)
         };
-
-        let slice: Vec<Value> = stopped
+        items[start..end]
             .iter()
-            .skip(start)
-            .take(num)
             .map(|t| t.to_rpc_status(keys))
-            .collect();
-        Value::Array(slice)
+            .collect()
     }
 
     pub async fn get_global_stat(&self) -> Value {
@@ -3394,18 +3393,34 @@ mod tests {
             make_task("a1", TaskStatus::Active),
         ]);
 
-        // offset=0, num=2 → first two waiting/paused
+        // offset=0, num=2 → the two NEWEST waiting/paused, in chronological order
         let result = mgr.tell_waiting(0, 2, &[]).await;
+        let arr = result.as_array().unwrap();
+        assert_eq!(arr.len(), 2);
+        assert_eq!(arr[0].get("gid").unwrap(), "w2");
+        assert_eq!(arr[1].get("gid").unwrap(), "w3");
+
+        // offset=1, num=10 → skip the newest, get the rest from the start
+        let result = mgr.tell_waiting(1, 10, &[]).await;
         let arr = result.as_array().unwrap();
         assert_eq!(arr.len(), 2);
         assert_eq!(arr[0].get("gid").unwrap(), "w1");
         assert_eq!(arr[1].get("gid").unwrap(), "w2");
+    }
 
-        // offset=1, num=10 → skip first, get rest
-        let result = mgr.tell_waiting(1, 10, &[]).await;
+    #[tokio::test]
+    async fn tell_waiting_newest_visible_past_cap() {
+        let mut tasks = Vec::new();
+        for i in 0..1005 {
+            tasks.push(make_task(&format!("w{i}"), TaskStatus::Waiting));
+        }
+        let mgr = make_test_manager(tasks);
+
+        let result = mgr.tell_waiting(0, 1000, &[]).await;
         let arr = result.as_array().unwrap();
-        assert_eq!(arr.len(), 2);
-        assert_eq!(arr[0].get("gid").unwrap(), "w2");
+        assert_eq!(arr.len(), 1000);
+        assert_eq!(arr.last().unwrap().get("gid").unwrap(), "w1004");
+        assert_eq!(arr.first().unwrap().get("gid").unwrap(), "w5");
     }
 
     #[tokio::test]

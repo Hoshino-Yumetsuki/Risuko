@@ -999,7 +999,7 @@ pub async fn tell_waiting(
     Ok(manager
         .tell_waiting(
             offset.unwrap_or(0),
-            num.unwrap_or(1000),
+            num.unwrap_or(5000),
             &keys.unwrap_or_default(),
         )
         .await)
@@ -1015,7 +1015,7 @@ pub async fn tell_stopped(
     Ok(manager
         .tell_stopped(
             offset.unwrap_or(0),
-            num.unwrap_or(1000),
+            num.unwrap_or(5000),
             &keys.unwrap_or_default(),
         )
         .await)
