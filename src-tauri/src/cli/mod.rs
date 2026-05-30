@@ -67,6 +67,14 @@ pub struct DownloadArgs {
     #[arg(long)]
     pub proxy: Option<String>,
 
+    /// DNS-over-HTTPS endpoint URL (e.g. https://cloudflare-dns.com/dns-query)
+    #[arg(long)]
+    pub doh_url: Option<String>,
+
+    /// Bootstrap IPs for the DoH endpoint, comma separated (optional)
+    #[arg(long)]
+    pub doh_bootstrap: Option<String>,
+
     /// HTTP referer
     #[arg(long)]
     pub referer: Option<String>,

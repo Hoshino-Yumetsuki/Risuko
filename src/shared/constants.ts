@@ -194,6 +194,38 @@ export const PROXY_SCOPE_OPTIONS = [
 	PROXY_SCOPES.UPDATE_TRACKERS,
 ];
 
+// DNS over HTTPS providers. `url` is the RFC 8484 endpoint; `bootstrap` is a
+// comma-separated set of IPs for reaching that endpoint without leaking the
+// lookup to system DNS. `custom` ships empty, the user fills in the URL (and
+// bootstrap IPs if they want them)
+export const DOH_PROVIDERS = {
+	cloudflare: {
+		url: "https://cloudflare-dns.com/dns-query",
+		bootstrap: "1.1.1.1,1.0.0.1,2606:4700:4700::1111,2606:4700:4700::1001",
+	},
+	google: {
+		url: "https://dns.google/dns-query",
+		bootstrap: "8.8.8.8,8.8.4.4,2001:4860:4860::8888,2001:4860:4860::8844",
+	},
+	quad9: {
+		url: "https://dns.quad9.net/dns-query",
+		bootstrap: "9.9.9.9,149.112.112.112,2620:fe::fe,2620:fe::9",
+	},
+	custom: {
+		url: "",
+		bootstrap: "",
+	},
+} as const;
+
+export type DohProvider = keyof typeof DOH_PROVIDERS;
+
+export const DOH_PROVIDER_OPTIONS: DohProvider[] = [
+	"cloudflare",
+	"google",
+	"quad9",
+	"custom",
+];
+
 export const NONE_SELECTED_FILES = "none";
 export const SELECTED_ALL_FILES = "all";
 

@@ -164,6 +164,11 @@ impl TaskManager {
         let global_speed_limiter =
             Arc::new(SpeedLimiter::new(options.max_overall_download_limit()));
 
+        // Set up the DNS-over-HTTPS resolver (or system DNS) before any task
+        // can open a connection. This applies process-wide to every
+        // risuko-http client through the global resolver hook
+        super::dns::apply_from_options(&options.global);
+
         let manager = Self {
             tasks: Arc::new(RwLock::new(saved_tasks)),
             active_downloads: Arc::new(RwLock::new(HashMap::new())),
@@ -2736,9 +2741,18 @@ impl TaskManager {
             self.global_speed_limiter.set_limit(parse_speed_limit(v));
         }
 
-        let mut options = self.options.write().await;
-        for (k, v) in opts {
-            options.set(k, v);
+        // Does this patch touch DoH config? If so, re-apply once we've merged
+        // so the change lands on the next connection without a restart
+        let touches_doh = opts.keys().any(|k| k.starts_with("doh-"));
+
+        {
+            let mut options = self.options.write().await;
+            for (k, v) in opts {
+                options.set(k, v);
+            }
+            if touches_doh {
+                super::dns::apply_from_options(&options.global);
+            }
         }
     }
 

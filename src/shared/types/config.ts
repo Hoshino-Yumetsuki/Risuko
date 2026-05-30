@@ -74,5 +74,11 @@ export interface AppConfig {
 	completionScriptCommand?: string;
 	completionScriptArgs?: string;
 	completionScriptTimeoutMs?: number;
+	// DNS over HTTPS
+	dohEnable?: boolean;
+	dohUrl?: string;
+	dohBootstrap?: string;
+	dohFallback?: boolean;
+	dohProvider?: string;
 	[key: string]: unknown;
 }

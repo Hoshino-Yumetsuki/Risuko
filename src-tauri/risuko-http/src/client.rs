@@ -21,7 +21,7 @@ use crate::into_url::IntoUrl;
 use crate::proxy::Proxy;
 use crate::redirect::Policy;
 use crate::request::RequestBuilder;
-use crate::resolver::{GaiResolver, Resolve, SharedResolver};
+use crate::resolver::{GlobalResolver, Resolve, SharedResolver};
 use crate::response::Response;
 
 #[derive(Clone)]
@@ -509,6 +509,14 @@ impl ClientBuilder {
         self
     }
 
+    /// Pin a resolver that's already shared. Unlike [`resolver`](Self::resolver),
+    /// this skips re-wrapping in a fresh `Arc`, so callers can share one
+    /// resolver instance, and its cache, across several clients
+    pub fn resolver_arc(mut self, r: SharedResolver) -> Self {
+        self.resolver = Some(r);
+        self
+    }
+
     pub fn add_root_certificate(mut self, der: impl Into<Vec<u8>>) -> Self {
         self.extra_root_certs.push(der.into());
         self
@@ -519,7 +527,7 @@ impl ClientBuilder {
 
         let connector = Connector {
             tls: Arc::new(tls),
-            resolver: self.resolver.unwrap_or_else(|| Arc::new(GaiResolver)),
+            resolver: self.resolver.unwrap_or_else(|| Arc::new(GlobalResolver)),
             proxy: self.proxy.map(Arc::new),
             connect_timeout: self.connect_timeout,
             tcp_nodelay: self.tcp_nodelay,
