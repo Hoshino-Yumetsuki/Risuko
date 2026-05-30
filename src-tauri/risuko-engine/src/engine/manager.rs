@@ -2521,12 +2521,14 @@ impl TaskManager {
             .iter()
             .filter(|t| t.status == TaskStatus::Waiting || t.status == TaskStatus::Paused)
             .collect();
+        let num = num.min(10_000);
         Value::Array(Self::paginate_newest_first(&waiting, offset, num, keys))
     }
 
     pub async fn tell_stopped(&self, offset: i64, num: usize, keys: &[String]) -> Value {
         let tasks = self.tasks.read().await;
         let stopped: Vec<&DownloadTask> = tasks.iter().filter(|t| t.status.is_stopped()).collect();
+        let num = num.min(10_000);
         Value::Array(Self::paginate_newest_first(&stopped, offset, num, keys))
     }
 
@@ -2542,7 +2544,8 @@ impl TaskManager {
             let start = end.saturating_sub(num);
             (start, end)
         } else {
-            let start = len.saturating_sub((-offset) as usize);
+            let back = usize::try_from(offset.unsigned_abs()).unwrap_or(usize::MAX);
+            let start = len.saturating_sub(back);
             let end = start.saturating_add(num).min(len);
             (start, end)
         };
