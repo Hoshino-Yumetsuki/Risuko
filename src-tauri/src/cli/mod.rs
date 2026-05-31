@@ -83,9 +83,14 @@ pub struct DownloadArgs {
     #[arg(long)]
     pub cookie: Option<String>,
 
-    /// YouTube format selector passed to yt-dlp
-    #[arg(long)]
-    pub youtube_format: Option<String>,
+    /// Media format selector passed to yt-dlp (YouTube, Vimeo, etc.)
+    #[arg(long, alias = "youtube-format")]
+    pub media_format: Option<String>,
+
+    /// Force the URL through the yt-dlp media engine even if its host is not
+    /// in the built-in allowlist
+    #[arg(long = "ytdlp")]
+    pub force_ytdlp: bool,
 
     /// BT seed ratio (e.g. 1.0)
     #[arg(long)]

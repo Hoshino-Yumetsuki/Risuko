@@ -749,26 +749,26 @@
           </div>
         </div>
 
-        <!-- YouTube Section -->
+        <!-- Media (yt-dlp) Section -->
         <div class="settings-section">
           <div class="settings-section-header">
             <div class="section-icon"><Video :size="16" /></div>
             <div class="section-title">
-              <h3>{{ $t('preferences.youtube-settings') }}</h3>
-              <p>{{ $t('preferences.youtube-settings-tips') }}</p>
+              <h3>{{ $t('preferences.media-settings') }}</h3>
+              <p>{{ $t('preferences.media-settings-tips') }}</p>
             </div>
           </div>
           <div class="settings-section-content">
             <div class="settings-select-group settings-select-group--stack">
               <div class="settings-select-item">
-                <label class="settings-select-item-label">{{ $t('preferences.youtube-format') }}</label>
+                <label class="settings-select-item-label">{{ $t('preferences.media-format') }}</label>
                 <Input
-                  :placeholder="$t('preferences.youtube-format-placeholder')"
-                  v-model="form.youtubeFormat"
+                  :placeholder="$t('preferences.media-format-placeholder')"
+                  v-model="form.mediaFormat"
                 />
               </div>
               <div class="form-info" style="margin-top: 4px">
-                {{ $t('preferences.youtube-format-tips') }}
+                {{ $t('preferences.media-format-tips') }}
               </div>
             </div>
           </div>
@@ -1508,7 +1508,12 @@ const initForm = (config) => {
 		ftpPasswd: config.ftpPasswd || "",
 		sftpPrivateKey: config.sftpPrivateKey || "",
 		sftpKeyPassphrase: config.sftpPrivateKeyPassphrase || "",
-		youtubeFormat: config.youtubeFormat ?? config["youtube-format"] ?? "",
+		mediaFormat:
+			config.mediaFormat ??
+			config["media-format"] ??
+			config.youtubeFormat ??
+			config["youtube-format"] ??
+			"",
 		hideAppMenu,
 		lastCheckUpdateTime,
 		lastSyncTrackerTime,
@@ -2023,10 +2028,12 @@ export default {
 				delete data.sftpKeyPassphrase;
 			}
 
-			// Remap YouTube form keys to kebab-case config keys
-			if ("youtubeFormat" in data) {
-				data["youtube-format"] = data.youtubeFormat;
-				delete data.youtubeFormat;
+			// Remap media-format form key to its kebab-case config key. Also
+			// clear the legacy youtube-format key so the two don't diverge.
+			if ("mediaFormat" in data) {
+				data["media-format"] = data.mediaFormat;
+				data["youtube-format"] = data.mediaFormat;
+				delete data.mediaFormat;
 			}
 
 			if (btTracker) {

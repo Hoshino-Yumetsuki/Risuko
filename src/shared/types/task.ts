@@ -94,7 +94,7 @@ export interface SyncOrderResult {
 	partialError: boolean;
 }
 
-export interface YouTubeFormat {
+export interface MediaFormat {
 	format_id: string;
 	ext: string;
 	resolution: string;
@@ -111,7 +111,7 @@ export interface YouTubeFormat {
 	video_only: boolean;
 }
 
-export interface YouTubeVideoInfo {
+export interface MediaInfo {
 	id: string;
 	title: string;
 	description: string | null;
@@ -122,7 +122,7 @@ export interface YouTubeVideoInfo {
 	view_count: number | null;
 	channel: string | null;
 	webpage_url: string;
-	formats: YouTubeFormat[];
+	formats: MediaFormat[];
 	is_playlist: boolean;
 	playlist_count: number | null;
 }

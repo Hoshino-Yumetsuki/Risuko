@@ -4,10 +4,13 @@ use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
-use tokio::sync::watch;
+use tokio::sync::{watch, OnceCell};
 use tokio_util::sync::CancellationToken;
 
 use super::speed_limiter::parse_speed_limit;
+
+// Cached ffmpeg lookup
+static FFMPEG_PATH: OnceCell<Option<PathBuf>> = OnceCell::const_new();
 
 pub fn is_youtube_uri(uri: &str) -> bool {
     let trimmed = uri.trim();
@@ -37,6 +40,79 @@ pub fn is_youtube_uri(uri: &str) -> bool {
         || host == "youtu.be"
 }
 
+const MEDIA_HOST_SUFFIXES: &[&str] = &[
+    "youtube.com",
+    "youtu.be",
+    "youtube-nocookie.com",
+    "twitch.tv",
+    "vimeo.com",
+    "dailymotion.com",
+    "dai.ly",
+    "bilibili.com",
+    "b23.tv",
+    "nicovideo.jp",
+    "tiktok.com",
+    "twitter.com",
+    "x.com",
+    "instagram.com",
+    "facebook.com",
+    "fb.watch",
+    "reddit.com",
+    "redd.it",
+    "soundcloud.com",
+    "bandcamp.com",
+    "streamable.com",
+    "rumble.com",
+    "odysee.com",
+    "bitchute.com",
+    "ted.com",
+    "vk.com",
+];
+
+pub fn is_media_uri(uri: &str) -> bool {
+    let trimmed = uri.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+
+    // Bare-host shorthand for youtu.be (kept parity with is_youtube_uri)
+    if trimmed.starts_with("https://youtu.be/") || trimmed.starts_with("http://youtu.be/") {
+        return true;
+    }
+
+    let parsed = match url::Url::parse(trimmed) {
+        Ok(url) => url,
+        Err(_) => return false,
+    };
+
+    // Only http(s) URLs are candidates; other schemes belong to dedicated
+    // protocol handlers (magnet, ed2k, ftp, ...)
+    match parsed.scheme() {
+        "http" | "https" => {}
+        _ => return false,
+    }
+
+    let host = match parsed.host_str() {
+        Some(h) => h.to_ascii_lowercase(),
+        None => return false,
+    };
+
+    MEDIA_HOST_SUFFIXES
+        .iter()
+        .any(|suffix| host == *suffix || host.ends_with(&format!(".{suffix}")))
+}
+
+/// Read the per-task `force-ytdlp` flag (accepts bool or "true"/"false" case-insensitive).
+pub fn is_force_ytdlp(options: &Map<String, Value>) -> bool {
+    options
+        .get("force-ytdlp")
+        .map(|v| {
+            v.as_bool()
+                .unwrap_or_else(|| v.as_str().map(|s| s.eq_ignore_ascii_case("true")).unwrap_or(false))
+        })
+        .unwrap_or(false)
+}
+
 pub async fn check_yt_dlp_available() -> Result<(), String> {
     let output = Command::new("yt-dlp")
         .arg("--version")
@@ -51,11 +127,38 @@ pub async fn check_yt_dlp_available() -> Result<(), String> {
     }
 }
 
+/// Probe for an ffmpeg binary on PATH, returning its path if usable. The
+/// result is cached for the process lifetime.
+pub async fn find_ffmpeg() -> Option<PathBuf> {
+    FFMPEG_PATH
+        .get_or_init(|| async {
+            let candidate = PathBuf::from("ffmpeg");
+            let ok = Command::new(&candidate)
+                .arg("-version")
+                .output()
+                .await
+                .map(|o| o.status.success())
+                .unwrap_or(false);
+            if ok {
+                Some(candidate)
+            } else {
+                None
+            }
+        })
+        .await
+        .clone()
+}
+
+/// True when ffmpeg is available to merge/remux yt-dlp output
+pub async fn ffmpeg_available() -> bool {
+    find_ffmpeg().await.is_some()
+}
+
 fn parse_na_u64(s: &str) -> Option<u64> {
     if s == "NA" || s.is_empty() {
         return None;
     }
-    // yt-dlp may emit floats (e.g. speed as 1234567.89)
+    // yt-dlp may emit floats
     s.parse::<f64>().ok().map(|f| f.max(0.0) as u64)
 }
 
@@ -98,7 +201,7 @@ fn apply_yt_dlp_network_options(cmd: &mut Command, options: &Map<String, Value>)
     }
 }
 
-pub async fn run_youtube_download(
+pub async fn run_media_download(
     url: &str,
     dir: &str,
     out: &str,
@@ -118,9 +221,6 @@ pub async fn run_youtube_download(
     let mut cmd = Command::new("yt-dlp");
     cmd.arg("--newline")
         .arg("--no-color")
-        // Force the web player client to avoid "not available on this app" errors
-        .arg("--extractor-args")
-        .arg("youtube:player_client=web,default")
         // Print the planned output path before each file download starts
         .arg("--print")
         .arg("before_dl:__YTDEST__%(filename)s")
@@ -132,21 +232,40 @@ pub async fn run_youtube_download(
         .arg("--progress-template")
         .arg("download:__YTPROG__%(progress.downloaded_bytes)s %(progress.total_bytes,progress.total_bytes_estimate)s %(progress.speed)s");
 
+    // The web player client avoids "not available on this app" errors
+    if is_youtube_uri(url) {
+        cmd.arg("--extractor-args")
+            .arg("youtube:player_client=web,default");
+    }
+
     apply_yt_dlp_network_options(&mut cmd, options);
 
+    // ffmpeg is required to merge separate video+audio streams
+    let ffmpeg = find_ffmpeg().await;
+    if let Some(ffmpeg_path) = ffmpeg.as_ref() {
+        cmd.arg("--ffmpeg-location").arg(ffmpeg_path);
+        let merge_fmt = option_non_empty_str(options, "media-merge-format")
+            .or_else(|| option_non_empty_str(options, "youtube-merge-format"))
+            .unwrap_or("mp4");
+        cmd.arg("--merge-output-format").arg(merge_fmt);
+    }
+
     let format_opt = options
-        .get("youtube-format")
+        .get("media-format")
+        .or_else(|| options.get("youtube-format"))
         .or_else(|| options.get("yt-format"))
         .and_then(|v| v.as_str())
         .map(|s| s.trim())
         .filter(|s| !s.is_empty());
     if let Some(fmt) = format_opt {
+        // Honour an explicit user format selector even without ffmpeg
         cmd.arg("--format").arg(fmt);
+    } else if ffmpeg.is_none() {
+        // No explicit format and no merger
+        cmd.arg("--format")
+            .arg("best[ext=mp4]/best[ext=webm]/best/b");
     }
 
-    // yt-dlp runs out-of-process, so the shared Rust byte-bucket cannot
-    // throttle it directly. Use the most restrictive configured launch-time
-    // limit so YouTube downloads still respect the current app cap
     let task_rate_limit = options
         .get("max-download-limit")
         .map(parse_speed_limit)
@@ -164,7 +283,7 @@ pub async fn run_youtube_download(
         cmd.arg("-o").arg(out);
     }
 
-    // Restrict to the single matched video; do not expand playlists
+    // Restrict to the single matched video
     cmd.arg("--no-playlist");
 
     cmd.arg(url);
@@ -201,10 +320,6 @@ pub async fn run_youtube_download(
     let mut last_path: Option<PathBuf> = None;
 
     // Multi-stage progress accumulation
-    // yt-dlp downloads video then audio separately when merging; each stage
-    // starts its byte counter from zero. We detect a stage boundary when
-    // downloaded_bytes drops below the last observed value and accumulate the
-    // previous stage's total into base_bytes
     let mut base_bytes: u64 = 0;
     let mut last_stage_total: u64 = 0;
     let mut last_dl_bytes: u64 = 0;
@@ -237,7 +352,7 @@ pub async fn run_youtube_download(
                                 last_path = Some(PathBuf::from(path_str));
                             }
                         } else if let Some(rest) = trimmed.strip_prefix("__YTPROG__") {
-                            // Raw progress: downloaded_bytes total_bytes_estimate speed
+                            // downloaded_bytes total_bytes_estimate speed
                             let parts: Vec<&str> = rest.split_ascii_whitespace().collect();
                             if parts.len() >= 2 {
                                 let dl_bytes = parse_na_u64(parts[0]);
@@ -249,7 +364,6 @@ pub async fn run_youtube_download(
                                 };
 
                                 if let Some(dl) = dl_bytes {
-                                    // Detect new stage, bytes counter reset
                                     if dl < last_dl_bytes && last_dl_bytes > 65536 {
                                         base_bytes += last_stage_total;
                                     }
@@ -266,8 +380,6 @@ pub async fn run_youtube_download(
                                 }
                             }
                         }
-                        // Fallback: old-style "[download] Destination:" line in case
-                        // the before_dl print isn't available in an older yt-dlp
                         else if let Some(rest) = trimmed.strip_prefix("[download] Destination: ") {
                             let path_str = rest.trim().to_string();
                             if !path_str.is_empty() {
@@ -327,9 +439,7 @@ pub async fn run_youtube_download(
         Path::new(dir).to_path_buf()
     };
 
-    // Only sync completed to total if total is known; if yt-dlp never reported a
-    // total size (all fields were NA), total stays 0 and we must not overwrite the
-    // last valid completed counter with 0.
+    // Only sync completed to total if total is known
     let total_val = total.load(Ordering::Relaxed);
     if total_val > 0 {
         completed.store(total_val, Ordering::Relaxed);
@@ -339,7 +449,7 @@ pub async fn run_youtube_download(
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
-pub struct YouTubeFormat {
+pub struct MediaFormat {
     pub format_id: String,
     pub ext: String,
     pub resolution: String,
@@ -357,7 +467,7 @@ pub struct YouTubeFormat {
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
-pub struct YouTubeVideoInfo {
+pub struct MediaInfo {
     pub id: String,
     pub title: String,
     pub description: Option<String>,
@@ -368,12 +478,12 @@ pub struct YouTubeVideoInfo {
     pub view_count: Option<u64>,
     pub channel: Option<String>,
     pub webpage_url: String,
-    pub formats: Vec<YouTubeFormat>,
+    pub formats: Vec<MediaFormat>,
     pub is_playlist: bool,
     pub playlist_count: Option<u64>,
 }
 
-fn extract_format(obj: &serde_json::Value) -> Option<YouTubeFormat> {
+fn extract_format(obj: &serde_json::Value) -> Option<MediaFormat> {
     let format_id = obj.get("format_id")?.as_str()?.to_string();
     let ext = obj
         .get("ext")
@@ -416,7 +526,7 @@ fn extract_format(obj: &serde_json::Value) -> Option<YouTubeFormat> {
     let audio_only = vcodec == "none";
     let video_only = acodec == "none";
 
-    Some(YouTubeFormat {
+    Some(MediaFormat {
         format_id,
         ext,
         resolution,
@@ -434,20 +544,24 @@ fn extract_format(obj: &serde_json::Value) -> Option<YouTubeFormat> {
     })
 }
 
-pub async fn get_youtube_video_info(
+pub async fn get_media_info(
     url: &str,
     options: &Map<String, Value>,
-) -> Result<YouTubeVideoInfo, String> {
+) -> Result<MediaInfo, String> {
     check_yt_dlp_available().await?;
 
     let mut cmd = Command::new("yt-dlp");
     cmd.arg("--dump-json")
         .arg("--no-playlist")
         .arg("--flat-playlist")
-        .arg("--extractor-args")
-        .arg("youtube:player_client=web,default")
         .arg(url)
         .kill_on_drop(true);
+
+    // YouTube-specific extractor arg
+    if is_youtube_uri(url) {
+        cmd.arg("--extractor-args")
+            .arg("youtube:player_client=web,default");
+    }
 
     apply_yt_dlp_network_options(&mut cmd, options);
 
@@ -483,7 +597,7 @@ pub async fn get_youtube_video_info(
     let json: serde_json::Value = serde_json::from_str(first_line)
         .map_err(|e| format!("failed to parse yt-dlp JSON: {e}"))?;
 
-    let formats: Vec<YouTubeFormat> = json
+    let formats: Vec<MediaFormat> = json
         .get("formats")
         .and_then(|v| v.as_array())
         .map(|arr| arr.iter().filter_map(extract_format).collect())
@@ -499,7 +613,7 @@ pub async fn get_youtube_video_info(
                 .map(|a| a.len() as u64)
         });
 
-    Ok(YouTubeVideoInfo {
+    Ok(MediaInfo {
         id: json
             .get("id")
             .and_then(|v| v.as_str())
@@ -542,4 +656,61 @@ pub async fn get_youtube_video_info(
         is_playlist,
         playlist_count,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn youtube_uris_detected() {
+        assert!(is_youtube_uri("https://www.youtube.com/watch?v=abc"));
+        assert!(is_youtube_uri("https://youtu.be/abc"));
+        assert!(is_youtube_uri("https://music.youtube.com/watch?v=abc"));
+        assert!(!is_youtube_uri("https://vimeo.com/12345"));
+    }
+
+    #[test]
+    fn media_allowlist_matches_known_hosts() {
+        assert!(is_media_uri("https://www.youtube.com/watch?v=abc"));
+        assert!(is_media_uri("https://youtu.be/abc"));
+        assert!(is_media_uri("https://vimeo.com/12345"));
+        assert!(is_media_uri("https://www.bilibili.com/video/BV1"));
+        assert!(is_media_uri("https://m.bilibili.com/video/BV1"));
+        assert!(is_media_uri("https://vm.tiktok.com/xyz"));
+        assert!(is_media_uri("https://x.com/user/status/1"));
+        assert!(is_media_uri("https://twitter.com/user/status/1"));
+    }
+
+    #[test]
+    fn media_allowlist_rejects_non_media() {
+        // Plain file links and other protocols must stay on native handlers
+        assert!(!is_media_uri("https://example.com/file.zip"));
+        assert!(!is_media_uri("magnet:?xt=urn:btih:abc"));
+        assert!(!is_media_uri("ftp://example.com/file.bin"));
+        assert!(!is_media_uri("ed2k://|file|x|1|H|/"));
+        assert!(!is_media_uri(""));
+        // Suffix matching must not be fooled by lookalike domains
+        assert!(!is_media_uri("https://notyoutube.com/watch"));
+        assert!(!is_media_uri("https://youtube.com.evil.test/watch"));
+    }
+
+    #[test]
+    fn force_ytdlp_option_parsed() {
+        let mut bool_opt = Map::new();
+        bool_opt.insert("force-ytdlp".into(), json!(true));
+        assert!(is_force_ytdlp(&bool_opt));
+
+        let mut str_opt = Map::new();
+        str_opt.insert("force-ytdlp".into(), json!("true"));
+        assert!(is_force_ytdlp(&str_opt));
+
+        let empty = Map::new();
+        assert!(!is_force_ytdlp(&empty));
+
+        let mut false_opt = Map::new();
+        false_opt.insert("force-ytdlp".into(), json!(false));
+        assert!(!is_force_ytdlp(&false_opt));
+    }
 }

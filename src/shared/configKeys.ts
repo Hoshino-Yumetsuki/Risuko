@@ -43,6 +43,7 @@ const userKeys = [
 	"rss-auto-update",
 	"rss-update-interval",
 	"saved-credentials",
+	"media-format",
 	"youtube-format",
 	"task-routing-rules",
 	"completion-script-enabled",

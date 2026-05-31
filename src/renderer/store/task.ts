@@ -692,9 +692,9 @@ export const useTaskStore = defineStore("task", {
 				appStore.updateAddTaskOptions({});
 			});
 		},
-		addYouTube(data: { url: string; options?: Record<string, unknown> }) {
+		addMedia(data: { url: string; options?: Record<string, unknown> }) {
 			const { url, options } = data;
-			return api.addYouTube({ url, options }).then(() => {
+			return api.addMedia({ url, options }).then(() => {
 				this.fetchList();
 				const appStore = useAppStore();
 				appStore.updateAddTaskOptions({});

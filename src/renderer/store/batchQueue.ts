@@ -1,4 +1,6 @@
 import { SELECTED_ALL_FILES } from "@shared/constants";
+import type { MediaFormat } from "@shared/types/task";
+import { isMediaUri } from "@shared/utils";
 
 type BatchItemKind = "torrent" | "uri" | "magnet";
 
@@ -35,6 +37,18 @@ export interface BatchQueueItem {
 	// uri / magnet
 	uri?: string;
 	magnetFiles?: BatchItemFileSummary[];
+
+	// media (yt-dlp): set when the host is in the media allowlist or the user
+	// forces yt-dlp. `mediaFormatId` is the chosen yt-dlp format selector
+	isMedia?: boolean;
+	forceYtdlp?: boolean;
+	mediaFormatId?: string;
+	mediaFormatLabel?: string;
+	mediaFormats?: MediaFormat[];
+	mediaInfoState?: BatchItemResolveState;
+	mediaInfoError?: string;
+	mediaTitle?: string;
+	mediaThumbnail?: string;
 
 	// shared
 	selectFile: string;
@@ -74,6 +88,7 @@ export const createUriBatchItem = (uri: string): BatchQueueItem => {
 	const trimmed = uri.trim();
 	const isMagnet = trimmed.toLowerCase().startsWith("magnet:");
 	const label = trimmed.length > 80 ? `${trimmed.slice(0, 77)}…` : trimmed;
+	const media = !isMagnet && isMediaUri(trimmed);
 	return {
 		id: createBatchItemId(),
 		kind: isMagnet ? "magnet" : "uri",
@@ -82,5 +97,7 @@ export const createUriBatchItem = (uri: string): BatchQueueItem => {
 		resolveState: isMagnet ? "idle" : "ready",
 		selectFile: SELECTED_ALL_FILES,
 		status: "queued",
+		isMedia: media,
+		mediaInfoState: "idle",
 	};
 };

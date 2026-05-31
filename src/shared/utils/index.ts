@@ -288,21 +288,59 @@ const YOUTUBE_HOSTS = new Set([
 	"youtube-nocookie.com",
 ]);
 
-export const isYoutubeUri = (uri: string): boolean => {
-	if (!uri || typeof uri !== "string") {
-		return false;
-	}
+// Registrable-domain suffixes that route to the yt-dlp media engine. Keep this
+// in sync with MEDIA_HOST_SUFFIXES in
+// src-tauri/risuko-engine/src/engine/media.rs.
+const MEDIA_HOST_SUFFIXES = [
+	"youtube.com",
+	"youtu.be",
+	"youtube-nocookie.com",
+	"twitch.tv",
+	"vimeo.com",
+	"dailymotion.com",
+	"dai.ly",
+	"bilibili.com",
+	"b23.tv",
+	"nicovideo.jp",
+	"tiktok.com",
+	"twitter.com",
+	"x.com",
+	"instagram.com",
+	"facebook.com",
+	"fb.watch",
+	"reddit.com",
+	"redd.it",
+	"soundcloud.com",
+	"bandcamp.com",
+	"streamable.com",
+	"rumble.com",
+	"odysee.com",
+	"bitchute.com",
+	"ted.com",
+	"vk.com",
+];
+
+const hostnameOf = (uri: string): string | null => {
 	const trimmed = uri.trim();
 	if (!trimmed) {
-		return false;
+		return null;
 	}
 	const withScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed)
 		? trimmed
 		: `https://${trimmed}`;
-	let hostname: string;
 	try {
-		hostname = new URL(withScheme).hostname.toLowerCase();
+		return new URL(withScheme).hostname.toLowerCase();
 	} catch {
+		return null;
+	}
+};
+
+export const isYoutubeUri = (uri: string): boolean => {
+	if (!uri || typeof uri !== "string") {
+		return false;
+	}
+	const hostname = hostnameOf(uri);
+	if (!hostname) {
 		return false;
 	}
 	if (YOUTUBE_HOSTS.has(hostname)) {
@@ -311,6 +349,26 @@ export const isYoutubeUri = (uri: string): boolean => {
 	return (
 		hostname.endsWith(".youtube.com") ||
 		hostname.endsWith(".youtube-nocookie.com")
+	);
+};
+
+// True when the URL's host is in the media allowlist. Mirrors the engine's
+// is_media_uri; URLs outside the list can still be forced via the add-task
+// "Download with yt-dlp" toggle.
+export const isMediaUri = (uri: string): boolean => {
+	if (!uri || typeof uri !== "string") {
+		return false;
+	}
+	// Enforce HTTP(S) protocol to match engine behavior
+	if (!uri.startsWith("http://") && !uri.startsWith("https://")) {
+		return false;
+	}
+	const hostname = hostnameOf(uri);
+	if (!hostname) {
+		return false;
+	}
+	return MEDIA_HOST_SUFFIXES.some(
+		(suffix) => hostname === suffix || hostname.endsWith(`.${suffix}`),
 	);
 };
 
@@ -367,6 +425,9 @@ export const detectUriProtocol = (uri: string): string | null => {
 	}
 	if (isYoutubeUri(trimmed)) {
 		return "YouTube";
+	}
+	if (isMediaUri(trimmed)) {
+		return "Media (yt-dlp)";
 	}
 	if (isM3u8Uri(trimmed)) {
 		return "M3U8 / HLS";
@@ -429,7 +490,7 @@ export const checkTaskIsBT = (task: Partial<DownloadTask> = {}) => {
 // Task kinds (engine-side `TaskKind`, lowercase) where force-pause + resume
 // is a useful recovery for a stalled connection: a single TCP socket gets
 // stuck and reopening it kicks the download free. HTTP/HTTPS, FTP/SFTP
-// (both folded into `ftp`), HTTP-segment streams (`youtube`, `m3u8`) all
+// (both folded into `ftp`), HTTP-segment streams (`media`, `m3u8`) all
 // fit that mould
 //
 // Peer-swarm protocols (`torrent`, `ed2k`, `adc`, `gnutella`, `g2`, `gift`)
@@ -437,7 +498,7 @@ export const checkTaskIsBT = (task: Partial<DownloadTask> = {}) => {
 // announces and choke-unchoke negotiations; the swarm just spent minutes
 // warming up and is wiped in 500 ms. The recovery cooldown then refires
 // before the swarm can rebuild, leaving speed permanently at zero
-const LOW_SPEED_RECOVERABLE_KINDS = new Set(["http", "ftp", "youtube", "m3u8"]);
+const LOW_SPEED_RECOVERABLE_KINDS = new Set(["http", "ftp", "media", "m3u8"]);
 
 export const taskBenefitsFromLowSpeedRecovery = (
 	task: Partial<DownloadTask> = {},

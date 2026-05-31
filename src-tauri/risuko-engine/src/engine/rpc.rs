@@ -563,12 +563,16 @@ fn dispatch_method<'a>(
                 Ok(Value::String(gid))
             }
 
-            "risuko.addYouTube" => {
+            "risuko.addMedia" => {
                 let uri = params
                     .first()
                     .and_then(|v| v.as_str())
-                    .ok_or_else(|| RpcError::from("YouTube URL required".to_string()))?
+                    .ok_or_else(|| RpcError::from("Media URL required".to_string()))?
                     .trim();
+
+                if uri.is_empty() {
+                    return Err(RpcError::from("Media URL required".to_string()));
+                }
 
                 let options = params
                     .get(1)
@@ -576,13 +580,13 @@ fn dispatch_method<'a>(
                     .cloned()
                     .unwrap_or_default();
 
-                if !super::youtube::is_youtube_uri(uri) {
-                    return Err(RpcError::from("Not a valid YouTube URL".to_string()));
+                if !super::media::is_media_uri(uri) && !super::media::is_force_ytdlp(&options) {
+                    return Err(RpcError::from("Not a supported media URL".to_string()));
                 }
 
                 let gid = state
                     .manager
-                    .add_youtube_task(uri, options)
+                    .add_media_task(uri, options)
                     .await
                     .map_err(RpcError::from)?;
                 Ok(Value::String(gid))
@@ -915,7 +919,7 @@ fn dispatch_method<'a>(
 fn list_methods() -> Value {
     let risuko_methods = [
         "addUri",
-        "addYouTube",
+        "addMedia",
         "addTorrent",
         "addEd2k",
         "remove",

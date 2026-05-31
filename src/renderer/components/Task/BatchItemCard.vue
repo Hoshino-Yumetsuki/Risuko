@@ -46,9 +46,96 @@
             @change="onMagnetSelectionChange"
           />
         </div>
+        <div v-else-if="showMediaPicker" class="flex flex-col gap-3">
+          <!-- yt-dlp toggle -->
+          <div
+            v-if="!item.isMedia"
+            class="flex items-center justify-between rounded-md border border-border/60 px-3 py-2"
+          >
+            <div class="min-w-0">
+              <div class="text-xs font-medium">{{ $t('task.media-force-ytdlp') }}</div>
+              <div class="mt-0.5 text-[11px] text-muted-foreground">
+                {{ $t('task.media-force-ytdlp-tips') }}
+              </div>
+            </div>
+            <Switch
+              :model-value="!!item.forceYtdlp"
+              :disabled="disabled"
+              @update:model-value="onToggleForce"
+            />
+          </div>
+
+          <!-- Format picker -->
+          <div class="rounded-md border border-border/60 px-3 py-2.5">
+            <div class="flex items-center gap-2">
+              <Video :size="13" class="shrink-0 text-muted-foreground" />
+              <span class="text-xs font-medium">{{ $t('task.media-format-picker') }}</span>
+              <Button
+                v-if="item.mediaInfoState !== 'loading'"
+                variant="outline"
+                size="sm"
+                class="ml-auto h-6 px-2 text-[11px]"
+                :disabled="disabled || !canFetchFormats"
+                @click.stop="fetchFormats"
+              >
+                {{ item.mediaInfoState === 'ready' ? $t('task.media-format-refresh') : $t('task.media-format-fetch') }}
+              </Button>
+              <span v-else class="ml-auto text-[11px] text-muted-foreground">
+                {{ $t('task.media-format-loading') }}
+              </span>
+            </div>
+
+            <div v-if="item.mediaInfoError" class="mt-2 text-[11px] text-destructive">
+              {{ item.mediaInfoError }}
+            </div>
+
+            <div v-if="item.mediaTitle" class="mt-2 truncate text-[11px] text-muted-foreground" :title="item.mediaTitle">
+              {{ item.mediaTitle }}
+            </div>
+
+            <div v-if="hasFormats" class="mt-2">
+              <Select
+                :model-value="item.mediaFormatId === '' ? '__auto__' : item.mediaFormatId"
+                @update:model-value="onSelectFormat"
+              >
+                <SelectTrigger class="h-8 w-full text-xs">
+                  <SelectValue :placeholder="$t('task.media-format-auto')" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__auto__">{{ $t('task.media-format-auto') }}</SelectItem>
+                  <SelectItem
+                    v-for="opt in formatOptions"
+                    :key="opt.value"
+                    :value="opt.value"
+                  >
+                    {{ opt.label }}
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div v-else class="mt-2 text-[11px] text-muted-foreground">
+              {{ $t('task.media-format-hint') }}
+            </div>
+          </div>
+        </div>
         <div v-else class="rounded-md border border-dashed border-border/60 px-3 py-4 text-xs text-muted-foreground">
           <div class="break-all font-mono">{{ item.uri }}</div>
           <div class="mt-2">{{ $t('task.batch-uri-body') }}</div>
+          <!-- Let users force any plain URL through yt-dlp. -->
+          <div
+            v-if="canOfferYtdlp"
+            class="mt-3 flex items-center justify-between rounded-md border border-border/60 px-3 py-2"
+          >
+            <div class="min-w-0">
+              <div class="font-medium text-foreground">{{ $t('task.media-force-ytdlp') }}</div>
+              <div class="mt-0.5 text-[11px]">{{ $t('task.media-force-ytdlp-tips') }}</div>
+            </div>
+            <Switch
+              :model-value="!!item.forceYtdlp"
+              :disabled="disabled"
+              @update:model-value="onToggleForce"
+            />
+          </div>
         </div>
         <div v-if="item.error" class="mt-2 text-xs text-destructive">{{ item.error }}</div>
       </AccordionContent>
@@ -57,7 +144,10 @@
 </template>
 
 <script lang="ts">
-import { FileArchive, Link2, Magnet, X } from "@lucide/vue";
+import { FileArchive, Link2, Magnet, Video, X } from "@lucide/vue";
+import type { MediaFormat } from "@shared/types/task";
+import { bytesToSize } from "@shared/utils";
+import api from "@/api";
 import MagnetFiles from "@/components/Task/MagnetFiles.vue";
 import SelectTorrent from "@/components/Task/SelectTorrent.vue";
 import {
@@ -65,6 +155,15 @@ import {
 	AccordionItem,
 	AccordionTrigger,
 } from "@/components/ui/accordion";
+import { Button } from "@/components/ui/button";
+import {
+	Select,
+	SelectContent,
+	SelectItem,
+	SelectTrigger,
+	SelectValue,
+} from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import type { BatchQueueItem } from "@/store/batchQueue";
 
 export default {
@@ -75,6 +174,14 @@ export default {
 		AccordionItem,
 		AccordionTrigger,
 		AccordionContent,
+		Button,
+		Select,
+		SelectContent,
+		SelectItem,
+		SelectTrigger,
+		SelectValue,
+		Switch,
+		Video,
 		X,
 	},
 	props: {
@@ -87,7 +194,7 @@ export default {
 			default: false,
 		},
 	},
-	emits: ["remove", "update:selectFile"],
+	emits: ["remove", "update:selectFile", "update:media"],
 	computed: {
 		kindIcon() {
 			if (this.item.kind === "torrent") {
@@ -96,7 +203,43 @@ export default {
 			if (this.item.kind === "magnet") {
 				return Magnet;
 			}
+			if (this.item.isMedia || this.item.forceYtdlp) {
+				return Video;
+			}
 			return Link2;
+		},
+		// Show the full picker for allowlisted media hosts or any URL the user
+		// has explicitly forced through yt-dlp
+		showMediaPicker(): boolean {
+			return (
+				this.item.kind === "uri" &&
+				!!this.item.uri &&
+				!!(this.item.isMedia || this.item.forceYtdlp)
+			);
+		},
+		// Offer the "download with yt-dlp" toggle on plain http(s) URLs that
+		// aren't already recognised as media
+		canOfferYtdlp(): boolean {
+			if (this.item.kind !== "uri" || !this.item.uri || this.item.isMedia) {
+				return false;
+			}
+			return /^https?:\/\//i.test(this.item.uri.trim());
+		},
+		// Formats can be fetched once the item is treated as media
+		canFetchFormats(): boolean {
+			return !!(this.item.isMedia || this.item.forceYtdlp);
+		},
+		hasFormats(): boolean {
+			return (this.item.mediaFormats?.length ?? 0) > 0;
+		},
+		formatOptions(): Array<{ value: string; label: string }> {
+			const formats = this.item.mediaFormats ?? [];
+			return formats
+				.filter((f) => !f.audio_only || formats.every((x) => x.audio_only))
+				.map((f) => ({
+					value: f.format_id,
+					label: this.describeFormat(f),
+				}));
 		},
 		statusChip(): string {
 			switch (this.item.status) {
@@ -129,6 +272,88 @@ export default {
 		},
 		onMagnetSelectionChange(selectFile: string) {
 			this.$emit("update:selectFile", this.item.id, selectFile);
+		},
+		onToggleForce(value: boolean) {
+			this.$emit("update:media", this.item.id, {
+				forceYtdlp: value,
+				// Clear all stale media metadata when toggling off
+				...(value ? {} : {
+					mediaFormatId: "",
+					mediaFormats: [],
+					mediaFormatLabel: "",
+					mediaInfoState: "idle",
+					mediaInfoError: "",
+					mediaTitle: "",
+					mediaThumbnail: "",
+				}),
+			});
+		},
+		onSelectFormat(value: string) {
+			// Map sentinel back to empty string for Auto selection
+			const formatId = value === "__auto__" ? "" : value;
+			const fmt = (this.item.mediaFormats ?? []).find(
+				(f) => f.format_id === formatId,
+			);
+			this.$emit("update:media", this.item.id, {
+				mediaFormatId: formatId,
+				mediaFormatLabel: fmt ? this.describeFormat(fmt) : "",
+			});
+		},
+		describeFormat(f: MediaFormat): string {
+			const parts: string[] = [];
+			if (f.audio_only) {
+				parts.push("Audio");
+				if (f.abr) {
+					parts.push(`${Math.round(f.abr)}kbps`);
+				}
+			} else {
+				parts.push(f.resolution || "video");
+				if (f.fps) {
+					parts.push(`${Math.round(f.fps)}fps`);
+				}
+				if (f.video_only) {
+					parts.push("video-only");
+				}
+			}
+			if (f.ext) {
+				parts.push(f.ext);
+			}
+			const size = f.filesize ?? f.filesize_approx;
+			if (size) {
+				parts.push(bytesToSize(size));
+			}
+			return parts.join(" · ");
+		},
+		async fetchFormats() {
+			if (!this.item.uri || !this.canFetchFormats) {
+				return;
+			}
+			this.$emit("update:media", this.item.id, {
+				mediaInfoState: "loading",
+				mediaInfoError: "",
+			});
+			try {
+				const info = await api.getMediaInfo({
+					url: this.item.uri,
+					options: this.item.forceYtdlp ? { forceYtdlp: true } : {},
+				});
+				this.$emit("update:media", this.item.id, {
+					mediaInfoState: "ready",
+					mediaFormats: info.formats || [],
+					mediaTitle: info.title || "",
+					mediaThumbnail: info.thumbnail || "",
+				});
+			} catch (err: unknown) {
+				const message =
+					typeof err === "string"
+						? err
+						: (err as { message?: string })?.message ||
+							this.$t("task.media-format-error");
+				this.$emit("update:media", this.item.id, {
+					mediaInfoState: "error",
+					mediaInfoError: message,
+				});
+			}
 		},
 	},
 };

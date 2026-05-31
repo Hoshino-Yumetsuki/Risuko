@@ -102,8 +102,11 @@ async fn do_download(
             }
         }
     }
-    if let Some(ref youtube_format) = args.youtube_format {
-        options.insert("youtube-format".into(), json!(youtube_format));
+    if let Some(ref media_format) = args.media_format {
+        options.insert("media-format".into(), json!(media_format));
+    }
+    if args.force_ytdlp {
+        options.insert("force-ytdlp".into(), json!(true));
     }
     if let Some(ratio) = args.seed_ratio {
         options.insert("seed-ratio".into(), json!(ratio.to_string()));
@@ -136,9 +139,9 @@ async fn do_download(
             )
             .await?;
         result.as_str().unwrap_or("").to_string()
-    } else if risuko_engine::engine::youtube::is_youtube_uri(&args.url) {
+    } else if risuko_engine::engine::media::is_media_uri(&args.url) || args.force_ytdlp {
         let result = client
-            .call("risuko.addYouTube", vec![json!(&args.url), json!(options)])
+            .call("risuko.addMedia", vec![json!(&args.url), json!(options)])
             .await?;
         result.as_str().unwrap_or("").to_string()
     } else {

@@ -88,6 +88,7 @@
                   :disabled="submitting"
                   @remove="removeItem"
                   @update:select-file="updateSelection"
+                  @update:media="updateMedia"
                 />
               </Motion>
             </AnimatePresence>
@@ -737,6 +738,9 @@ export default {
 		updateSelection(id: string, selectFile: string) {
 			useAppStore().updateBatchItem(id, { selectFile });
 		},
+		updateMedia(id: string, patch: Record<string, unknown>) {
+			useAppStore().updateBatchItem(id, patch);
+		},
 		handleHistoryDirectorySelected(dir: string) {
 			this.form.dir = dir;
 		},
@@ -871,6 +875,14 @@ export default {
 						sel !== NONE_SELECTED_FILES
 					) {
 						sharedOpts.selectFile = sel;
+					}
+					// Media (yt-dlp) per-item options: force routing for URLs the
+					// allowlist doesn't cover, and pass the chosen format selector.
+					if (it.forceYtdlp) {
+						sharedOpts.forceYtdlp = true;
+					}
+					if ((it.isMedia || it.forceYtdlp) && it.mediaFormatId) {
+						sharedOpts.mediaFormat = it.mediaFormatId;
 					}
 					const outs = it.out ? [it.out] : [];
 					await taskStore.addUri({

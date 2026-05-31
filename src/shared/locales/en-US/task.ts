@@ -240,12 +240,22 @@ export default {
 	"download-pause-message": "Paused downloading {{taskName}}",
 	"download-stop-message": "Stopped downloading {{taskName}}",
 	"download-error-message": "Error occurred when downloading {{taskName}}",
-	"youtube-tool-required":
-		'Task "{{taskName}}": yt-dlp is required for YouTube downloads. Please install yt-dlp and ensure it is available in PATH.',
-	"youtube-auth-required":
-		'Task "{{taskName}}": YouTube authentication is required. Please sign in or check age-restricted access.',
-	"youtube-format-unavailable":
-		'Task "{{taskName}}": The requested YouTube format is not available for this video.',
+	"media-tool-required":
+		'Task "{{taskName}}": yt-dlp is required for media-site downloads. Please install yt-dlp and ensure it is available in PATH.',
+	"media-auth-required":
+		'Task "{{taskName}}": Authentication is required. Please sign in or check age-restricted access.',
+	"media-format-unavailable":
+		'Task "{{taskName}}": The requested format is not available for this video.',
+	"media-force-ytdlp": "Download with yt-dlp",
+	"media-force-ytdlp-tips":
+		"Route this URL through the yt-dlp media engine even though its site isn't in the built-in list.",
+	"media-format-picker": "Quality / Format",
+	"media-format-fetch": "Fetch formats",
+	"media-format-refresh": "Refresh",
+	"media-format-loading": "Loading…",
+	"media-format-auto": "Best available (auto)",
+	"media-format-hint": "Fetch formats to choose a specific quality.",
+	"media-format-error": "Could not load formats for this URL.",
 	"download-complete-message": "Completed downloading {{taskName}}",
 	"download-complete-notify": "Download Completed",
 	"bt-download-complete-message": "Completed downloading {{taskName}}, seeding",
