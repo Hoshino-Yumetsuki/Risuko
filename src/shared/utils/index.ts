@@ -359,6 +359,10 @@ export const isMediaUri = (uri: string): boolean => {
 	if (!uri || typeof uri !== "string") {
 		return false;
 	}
+	// Enforce HTTP(S) protocol to match engine behavior
+	if (!uri.startsWith("http://") && !uri.startsWith("https://")) {
+		return false;
+	}
 	const hostname = hostnameOf(uri);
 	if (!hostname) {
 		return false;

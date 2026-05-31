@@ -102,11 +102,14 @@ pub fn is_media_uri(uri: &str) -> bool {
         .any(|suffix| host == *suffix || host.ends_with(&format!(".{suffix}")))
 }
 
-/// Read the per-task `force-ytdlp` flag (accepts bool or "true"/"false").
+/// Read the per-task `force-ytdlp` flag (accepts bool or "true"/"false" case-insensitive).
 pub fn is_force_ytdlp(options: &Map<String, Value>) -> bool {
     options
         .get("force-ytdlp")
-        .map(|v| v.as_bool().unwrap_or_else(|| v.as_str() == Some("true")))
+        .map(|v| {
+            v.as_bool()
+                .unwrap_or_else(|| v.as_str().map(|s| s.eq_ignore_ascii_case("true")).unwrap_or(false))
+        })
         .unwrap_or(false)
 }
 

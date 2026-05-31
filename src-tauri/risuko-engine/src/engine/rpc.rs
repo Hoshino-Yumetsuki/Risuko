@@ -570,6 +570,10 @@ fn dispatch_method<'a>(
                     .ok_or_else(|| RpcError::from("Media URL required".to_string()))?
                     .trim();
 
+                if uri.is_empty() {
+                    return Err(RpcError::from("Media URL required".to_string()));
+                }
+
                 let options = params
                     .get(1)
                     .and_then(|v| v.as_object())

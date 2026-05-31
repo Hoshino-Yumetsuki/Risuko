@@ -39,6 +39,7 @@ impl std::fmt::Display for TaskStatus {
 #[serde(rename_all = "lowercase")]
 pub enum TaskKind {
     Http,
+    #[serde(alias = "youtube")]
     Media,
     Torrent,
     Ed2k,

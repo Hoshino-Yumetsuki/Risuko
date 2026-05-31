@@ -207,7 +207,7 @@ pub fn classify_error(msg: &str, protocol: &str) -> ErrorCode {
     }
     if lower.contains("404") || lower.contains("not found") {
         // Distinguish HTTP 404 from file-not-found on disk
-        if protocol == "http" || protocol == "m3u8" {
+        if protocol == "http" || protocol == "m3u8" || protocol == "media" {
             return ErrorCode::HTTP_NOT_FOUND;
         }
     }

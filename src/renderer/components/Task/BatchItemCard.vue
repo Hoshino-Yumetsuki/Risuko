@@ -276,8 +276,16 @@ export default {
 		onToggleForce(value: boolean) {
 			this.$emit("update:media", this.item.id, {
 				forceYtdlp: value,
-				// Clear any stale format selection/list when toggling off
-				...(value ? {} : { mediaFormatId: "", mediaFormats: [] }),
+				// Clear all stale media metadata when toggling off
+				...(value ? {} : {
+					mediaFormatId: "",
+					mediaFormats: [],
+					mediaFormatLabel: "",
+					mediaInfoState: "idle",
+					mediaInfoError: "",
+					mediaTitle: "",
+					mediaThumbnail: "",
+				}),
 			});
 		},
 		onSelectFormat(value: string) {

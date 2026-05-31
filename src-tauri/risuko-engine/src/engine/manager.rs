@@ -352,9 +352,9 @@ impl TaskManager {
             .unwrap_or("")
             .to_string();
 
-        // Use a video extension as hint if out is empty
+        // Use a neutral hint if out is empty to avoid misclassifying audio-only tasks
         let filename_hint = if out.is_empty() {
-            "video.mp4".to_string()
+            String::new()
         } else {
             out.clone()
         };
