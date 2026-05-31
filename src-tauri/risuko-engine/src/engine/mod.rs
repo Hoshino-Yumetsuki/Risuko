@@ -9,6 +9,7 @@ pub mod hasher;
 pub mod http;
 pub mod m3u8;
 pub mod manager;
+pub mod media;
 pub mod netrc;
 pub mod options;
 pub mod routing;
@@ -19,7 +20,6 @@ pub mod speed_limiter;
 pub mod ssh_known_hosts;
 pub mod task;
 pub mod torrent;
-pub mod media;
 pub mod upload;
 pub mod uri_selector;
 

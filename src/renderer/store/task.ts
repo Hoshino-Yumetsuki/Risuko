@@ -36,22 +36,9 @@ export function deleteSpeedHistory(gid: string): void {
 }
 
 /** Row count for the task list
- * Multi-file BT torrents expand to one row per selected file, matching `displayTaskList`
- * Everything else is one row */
+ * Each task renders as a single card, including multi-file BT torrents */
 function countDisplayRows(tasks: DownloadTask[]): number {
-	let count = 0;
-	for (const task of tasks) {
-		const files = Array.isArray(task.files) ? task.files : [];
-		if (!checkTaskIsBT(task) || files.length <= 1) {
-			count += 1;
-			continue;
-		}
-		const selected = files.filter(
-			(f: DownloadFile) => f.selected !== "false",
-		).length;
-		count += selected > 0 ? selected : 1;
-	}
-	return count;
+	return tasks.length;
 }
 
 function sampleSpeedsFromTasks(tasks: DownloadTask[]): boolean {
@@ -192,58 +179,11 @@ export const useTaskStore = defineStore("task", {
 			return state.currentPageMap[state.currentList] || 1;
 		},
 		displayTaskList(state) {
-			const result: DisplayTask[] = [];
-			for (const task of state.taskList) {
-				const isBT = checkTaskIsBT(task);
-				const files = Array.isArray(task.files) ? task.files : [];
-				const selectedFiles = files.filter(
-					(f: DownloadFile) => f.selected !== "false",
-				);
-				// Show each selected file in a multi-file BT torrent as its own row
-				// Keep that shape even when only one file remains selected
-				// The title stays as the file name, and row delete deselects instead of removing the torrent
-				if (isBT && files.length > 1 && selectedFiles.length > 0) {
-					const parentDown = Math.max(0, Number(task.downloadSpeed || 0));
-					const parentUp = Math.max(0, Number(task.uploadSpeed || 0));
-					const remainingPerFile = selectedFiles.map((f: DownloadFile) =>
-						Math.max(0, Number(f.length || 0) - Number(f.completedLength || 0)),
-					);
-					const totalRemaining = remainingPerFile.reduce(
-						(sum: number, v: number) => sum + v,
-						0,
-					);
-					selectedFiles.forEach((file: DownloadFile, idx: number) => {
-						const remaining = remainingPerFile[idx];
-						const downShare =
-							totalRemaining > 0
-								? Math.round((parentDown * remaining) / totalRemaining)
-								: 0;
-						// Upload is piece-level, not file-level
-						// Show it once on the first row so the UI does not double-count it
-						const upShare = idx === 0 ? parentUp : 0;
-						result.push({
-							...task,
-							_displayKey: `${task.gid}#f${file.index}`,
-							_isFileEntry: true,
-							totalLength: file.length,
-							completedLength: file.completedLength,
-							downloadSpeed: String(downShare),
-							uploadSpeed: String(upShare),
-							files: [file],
-							bittorrent: {
-								...task.bittorrent,
-								info: {},
-							},
-						});
-					});
-				} else {
-					result.push({
-						...task,
-						_displayKey: task.gid,
-					});
-				}
-			}
-			return result;
+			// One card per task
+			return state.taskList.map((task) => ({
+				...task,
+				_displayKey: task.gid,
+			}));
 		},
 		filteredTaskList(state) {
 			const filter = state.filterText.trim().toLowerCase();

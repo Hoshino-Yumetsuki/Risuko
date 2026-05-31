@@ -28,13 +28,52 @@
         />
         <mo-task-progress-info :task="task" />
       </div>
+      <div v-if="isMultiFileBT" class="task-files">
+        <button
+          type="button"
+          class="task-files-toggle"
+          @click.stop="toggleFiles"
+        >
+          <ChevronDown v-if="filesExpanded" :size="12" />
+          <ChevronRight v-else :size="12" />
+          <span>{{ $t('task.bt-files-count', { count: displayFiles.length }) }}</span>
+        </button>
+        <div v-show="filesExpanded" class="task-files-list">
+          <div
+            v-for="file in displayFiles"
+            :key="file.index"
+            class="task-file-row"
+            :class="{ 'is-complete': file.isComplete }"
+          >
+            <div class="task-file-head">
+              <span class="task-file-name" :title="file.path">{{ file.name }}</span>
+              <span class="task-file-pct">{{ file.percent }}%</span>
+            </div>
+            <mo-task-progress
+              :completed="file.completed"
+              :total="file.total"
+              :status="file.status"
+            />
+            <div class="task-file-meta">
+              <span>{{ formatBytes(file.completed) }} / {{ formatBytes(file.total) }}</span>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 </template>
 
 <script lang="ts">
+import { ChevronDown, ChevronRight } from "@lucide/vue";
 import { TASK_STATUS } from "@shared/constants";
-import { checkTaskIsSeeder, getTaskName } from "@shared/utils";
+import {
+	bytesToSize,
+	calcProgress,
+	checkTaskIsBT,
+	checkTaskIsSeeder,
+	getTaskName,
+} from "@shared/utils";
 import logger from "@shared/utils/logger";
 import { useTaskStore } from "@/store/task";
 import { getTaskFullPath, openItem } from "@/utils/native";
@@ -48,6 +87,8 @@ export default {
 		[TaskItemActions.name]: TaskItemActions,
 		[TaskProgress.name]: TaskProgress,
 		[TaskProgressInfo.name]: TaskProgressInfo,
+		ChevronDown,
+		ChevronRight,
 	},
 	props: {
 		task: {
@@ -57,6 +98,11 @@ export default {
 			type: Boolean,
 			default: false,
 		},
+	},
+	data() {
+		return {
+			filesExpanded: true,
+		};
 	},
 	computed: {
 		taskFullName() {
@@ -72,6 +118,38 @@ export default {
 		},
 		isSeeder() {
 			return checkTaskIsSeeder(this.task);
+		},
+		isMultiFileBT() {
+			const files = Array.isArray(this.task.files) ? this.task.files : [];
+			return checkTaskIsBT(this.task) && files.length > 1;
+		},
+		// Selected files of a multi-file BT torrent, each with its own
+		// progress so the grouped card can show per-file status
+		displayFiles() {
+			const files = Array.isArray(this.task.files) ? this.task.files : [];
+			return files
+				.filter((f) => f.selected !== "false")
+				.map((f) => {
+					const total = Number(f.length || 0);
+					const completed = Number(f.completedLength || 0);
+					const isComplete = total > 0 && completed >= total;
+					const segs = `${f.path || ""}`.split(/[/\\]/);
+					const name = segs[segs.length - 1] || f.path || "";
+					const percent = `${calcProgress(total, completed, 1)}`.replace(
+						/\.0$/,
+						"",
+					);
+					return {
+						index: f.index,
+						path: f.path,
+						name,
+						total,
+						completed,
+						percent,
+						isComplete,
+						status: isComplete ? TASK_STATUS.COMPLETE : this.taskStatus,
+					};
+				});
 		},
 		taskStatus() {
 			const { task, isSeeder } = this;
@@ -138,6 +216,12 @@ export default {
 		},
 		toggleTask() {
 			useTaskStore().toggleTask(this.task);
+		},
+		toggleFiles() {
+			this.filesExpanded = !this.filesExpanded;
+		},
+		formatBytes(value) {
+			return bytesToSize(value);
 		},
 	},
 };

@@ -33,6 +33,7 @@ export default {
 	"file-completed-size": "已完成",
 	"selected-files-sum":
 		"已选：{{selectedFilesCount}}个文件，共 {{selectedFilesTotalSize}}",
+	"bt-files-count": "{{count}} 个文件",
 	"select-at-least-one": "请选择至少一个文件",
 	"task-gid": "GID",
 	"task-name": "任务名称",
@@ -219,8 +220,7 @@ export default {
 		'任务"{{taskName}}"：媒体站点下载依赖 yt-dlp。请先安装 yt-dlp，并确保其已加入 PATH。',
 	"media-auth-required":
 		'任务"{{taskName}}"：需要登录验证。请检查是否需要登录或年龄限制访问。',
-	"media-format-unavailable":
-		'任务"{{taskName}}"：该视频不支持所请求的格式。',
+	"media-format-unavailable": '任务"{{taskName}}"：该视频不支持所请求的格式。',
 	"media-force-ytdlp": "使用 yt-dlp 下载",
 	"media-force-ytdlp-tips":
 		"即使该站点不在内置列表中，也通过 yt-dlp 媒体引擎下载此链接。",

@@ -277,15 +277,17 @@ export default {
 			this.$emit("update:media", this.item.id, {
 				forceYtdlp: value,
 				// Clear all stale media metadata when toggling off
-				...(value ? {} : {
-					mediaFormatId: "",
-					mediaFormats: [],
-					mediaFormatLabel: "",
-					mediaInfoState: "idle",
-					mediaInfoError: "",
-					mediaTitle: "",
-					mediaThumbnail: "",
-				}),
+				...(value
+					? {}
+					: {
+							mediaFormatId: "",
+							mediaFormats: [],
+							mediaFormatLabel: "",
+							mediaInfoState: "idle",
+							mediaInfoError: "",
+							mediaTitle: "",
+							mediaThumbnail: "",
+						}),
 			});
 		},
 		onSelectFormat(value: string) {

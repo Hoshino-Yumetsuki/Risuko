@@ -107,8 +107,11 @@ pub fn is_force_ytdlp(options: &Map<String, Value>) -> bool {
     options
         .get("force-ytdlp")
         .map(|v| {
-            v.as_bool()
-                .unwrap_or_else(|| v.as_str().map(|s| s.eq_ignore_ascii_case("true")).unwrap_or(false))
+            v.as_bool().unwrap_or_else(|| {
+                v.as_str()
+                    .map(|s| s.eq_ignore_ascii_case("true"))
+                    .unwrap_or(false)
+            })
         })
         .unwrap_or(false)
 }
@@ -544,10 +547,7 @@ fn extract_format(obj: &serde_json::Value) -> Option<MediaFormat> {
     })
 }
 
-pub async fn get_media_info(
-    url: &str,
-    options: &Map<String, Value>,
-) -> Result<MediaInfo, String> {
+pub async fn get_media_info(url: &str, options: &Map<String, Value>) -> Result<MediaInfo, String> {
     check_yt_dlp_available().await?;
 
     let mut cmd = Command::new("yt-dlp");

@@ -130,6 +130,24 @@ impl FilesystemStorage {
         }
         Ok(arc)
     }
+
+    /// Flush buffered writes and drop every cached file handle,
+    pub async fn close_handles(&self) -> Result<(), StorageError> {
+        let snapshot: Vec<Arc<std::fs::File>> = {
+            let mut guard = self.handles.lock();
+            let snap = guard.iter().filter_map(|h| h.clone()).collect();
+            for slot in guard.iter_mut() {
+                *slot = None;
+            }
+            snap
+        };
+        for handle in snapshot {
+            task::spawn_blocking(move || handle.sync_data())
+                .await
+                .map_err(|e| io::Error::other(e.to_string()))??;
+        }
+        Ok(())
+    }
 }
 
 #[async_trait::async_trait]
@@ -329,6 +347,37 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(b, payload[10..]);
+    }
+
+    #[tokio::test]
+    async fn close_handles_releases_cached_descriptors() {
+        let bytes = build_multi_file_torrent();
+        let meta = parse_torrent(&bytes).unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let root = torrent_root(tmp.path(), &meta.info);
+
+        let storage = FilesystemStorage::new(&meta.info, &root);
+        storage.preallocate().await.unwrap();
+
+        // Writing both files lazily opens and caches a handle per file
+        let payload: Vec<u8> = (0u8..30).collect();
+        storage.write_at(0, &payload).await.unwrap();
+        assert!(
+            storage.handles.lock().iter().any(|h| h.is_some()),
+            "expected at least one cached handle after a write"
+        );
+
+        // Releasing must drop every cached descriptor
+        storage.close_handles().await.unwrap();
+        assert!(
+            storage.handles.lock().iter().all(|h| h.is_none()),
+            "close_handles must clear all cached file handles"
+        );
+
+        // Data persisted and reads transparently reopen handles afterwards
+        let mut out = vec![0u8; 30];
+        storage.read_at(0, &mut out).await.unwrap();
+        assert_eq!(out, payload);
     }
 
     #[tokio::test]

@@ -578,6 +578,10 @@ async fn torrent_loop(
                     }
                     pending_dials.clear();
                     known_addrs.clear();
+                    // Release the cached file descriptors
+                    if let Err(e) = storage.close_handles().await {
+                        log::warn!("failed to close storage handles on pause: {e}");
+                    }
                     let _ = ack.send(());
                 }
                 TorrentCommand::Unpause(ack) => {

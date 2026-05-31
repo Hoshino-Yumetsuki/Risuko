@@ -54,6 +54,7 @@
 </template>
 
 <script lang="ts">
+import { checkTaskIsBT } from "@shared/utils";
 import { cloneDeep } from "lodash";
 import DragSelect from "@/components/DragSelect/Index.vue";
 import is from "@/shims/platform";
@@ -93,7 +94,16 @@ export default {
 			return useTaskStore().totalPages;
 		},
 		useVirtualList() {
-			return this.taskList.length >= VIRTUAL_LIST_THRESHOLD;
+			if (this.taskList.length < VIRTUAL_LIST_THRESHOLD) {
+				return false;
+			}
+			// Grouped multi-file BT cards render a variable-height per-file
+			// list, which breaks the recycler's fixed `item-size`. Fall back
+			// to the flexible renderer whenever a visible card is multi-file.
+			return !this.paginatedTaskList.some((task) => {
+				const files = Array.isArray(task.files) ? task.files : [];
+				return checkTaskIsBT(task) && files.length > 1;
+			});
 		},
 	},
 	mounted() {

@@ -11,6 +11,7 @@ use super::cookie_store::CookieStore;
 use super::error_code::classify_error;
 use super::events::{EngineEvent, EventBroadcaster};
 use super::http;
+use super::media;
 use super::options::EngineOptions;
 use super::routing::{resolve_routing, TaskRoutingRule};
 use super::session::SessionManager;
@@ -21,7 +22,6 @@ use super::task::{
 };
 use super::torrent::{self, TorrentEngine};
 use super::upload::UploadFileSnapshot;
-use super::media;
 use std::collections::HashSet;
 
 const MAGNET_METADATA_ATTEMPT_TIMEOUT_SECS: u64 = 60;
