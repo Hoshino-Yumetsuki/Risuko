@@ -39,7 +39,7 @@ impl std::fmt::Display for TaskStatus {
 #[serde(rename_all = "lowercase")]
 pub enum TaskKind {
     Http,
-    Youtube,
+    Media,
     Torrent,
     Ed2k,
     M3u8,
@@ -230,7 +230,7 @@ impl DownloadTask {
         }
     }
 
-    pub fn new_youtube(
+    pub fn new_media(
         gid: String,
         uri: String,
         dir: String,
@@ -264,7 +264,7 @@ impl DownloadTask {
         Self {
             gid,
             status: TaskStatus::Waiting,
-            kind: TaskKind::Youtube,
+            kind: TaskKind::Media,
             uris: vec![uri],
             dir,
             out,
@@ -659,7 +659,7 @@ impl DownloadTask {
             "status".into(),
             Value::String(self.status.as_str().to_string()),
         );
-        // Lowercase task kind (http/ftp/torrent/ed2k/m3u8/youtube/adc/gnutella/g2/gift).
+        // Lowercase task kind (http/ftp/torrent/ed2k/m3u8/media/adc/gnutella/g2/gift).
         // Surfaces protocol family to the frontend so policy decisions (e.g. skipping
         // peer-swarm tasks from low-speed pause/resume recovery) don't have to infer
         // it from optional sentinel fields
@@ -1087,16 +1087,16 @@ mod tests {
         assert!(obj.contains_key("ed2kLink"));
     }
 
-    // -- new_youtube --
+    // -- new_media --
 
     #[test]
-    fn new_youtube_with_out() {
+    fn new_media_with_out() {
         let mut opts = Map::new();
         opts.insert("out".into(), json!("video.mp4"));
         let uri = "https://www.youtube.com/watch?v=test123".to_string();
-        let task = DownloadTask::new_youtube("ygid1".into(), uri.clone(), "/dl".into(), None, opts);
+        let task = DownloadTask::new_media("ygid1".into(), uri.clone(), "/dl".into(), None, opts);
 
-        assert_eq!(task.kind, TaskKind::Youtube);
+        assert_eq!(task.kind, TaskKind::Media);
         assert_eq!(task.status, TaskStatus::Waiting);
         assert_eq!(task.uris, vec![uri.clone()]);
         assert_eq!(task.files[0].path, "/dl/video.mp4");
@@ -1105,12 +1105,12 @@ mod tests {
     }
 
     #[test]
-    fn new_youtube_without_out() {
+    fn new_media_without_out() {
         let opts = Map::new();
         let uri = "https://www.youtube.com/watch?v=abc".to_string();
-        let task = DownloadTask::new_youtube("ygid2".into(), uri.clone(), "/dl".into(), None, opts);
+        let task = DownloadTask::new_media("ygid2".into(), uri.clone(), "/dl".into(), None, opts);
 
-        assert_eq!(task.kind, TaskKind::Youtube);
+        assert_eq!(task.kind, TaskKind::Media);
         assert_eq!(task.status, TaskStatus::Waiting);
         assert_eq!(task.uris, vec![uri.clone()]);
         // When no out is given, initial path falls back to the URI itself

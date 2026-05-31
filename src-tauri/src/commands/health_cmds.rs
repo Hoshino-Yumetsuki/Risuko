@@ -18,7 +18,7 @@ use tauri::{AppHandle, State};
 #[cfg(not(target_os = "android"))]
 use tauri_plugin_autostart::ManagerExt;
 
-use risuko_engine::engine::{self, options::EngineOptions, torrent::BtHealthSnapshot, youtube};
+use risuko_engine::engine::{self, media, options::EngineOptions, torrent::BtHealthSnapshot};
 
 use crate::commands::event_cmds::sleep_inhibit_active;
 use crate::state::AppState;
@@ -1000,7 +1000,7 @@ fn check_logs(log_dir: &Path) -> Vec<HealthCheck> {
 async fn check_tools() -> Vec<HealthCheck> {
     let mut out = Vec::new();
 
-    match youtube::check_yt_dlp_available().await {
+    match media::check_yt_dlp_available().await {
         Ok(()) => {
             // Capture the version string for display
             let version = tokio::process::Command::new("yt-dlp")
@@ -1019,10 +1019,34 @@ async fn check_tools() -> Vec<HealthCheck> {
         Err(_) => {
             out.push(HealthCheck::fail(
                 "yt-dlp",
-                "yt-dlp not found in PATH — YouTube downloads will fail",
+                "yt-dlp not found in PATH — media-site downloads will fail",
                 None,
             ));
         }
+    }
+
+    // ffmpeg is optional but enables merging of separate video+audio streams
+    // Without it, media downloads fall back to a single pre-muxed stream
+    if let Some(ffmpeg_path) = media::find_ffmpeg().await {
+        let version = tokio::process::Command::new(&ffmpeg_path)
+            .arg("-version")
+            .output()
+            .await
+            .ok()
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .and_then(|s| s.lines().next().map(|l| l.trim().to_string()))
+            .unwrap_or_else(|| "unknown".to_string());
+        out.push(
+            HealthCheck::ok("ffmpeg", format!("ffmpeg available ({version})"))
+                .with_details(serde_json::json!({ "version": version })),
+        );
+    } else {
+        out.push(HealthCheck::warn(
+            "ffmpeg",
+            "ffmpeg not found in PATH — media downloads fall back to single-file \
+             quality (no video+audio merge)",
+            None,
+        ));
     }
 
     out

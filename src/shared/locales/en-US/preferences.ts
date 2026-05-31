@@ -186,13 +186,13 @@ export default {
 	"sftp-key-passphrase-tips": "Leave empty if the key has no passphrase",
 	"m3u8-output-format": "M3U8 / HLS",
 	"m3u8-output-format-label": "Output Format",
-	"youtube-settings": "YouTube (yt-dlp)",
-	"youtube-settings-tips":
-		"Default settings for YouTube downloads. Requires yt-dlp to be installed and available in PATH.",
-	"youtube-format": "Preferred Format",
-	"youtube-format-placeholder":
+	"media-settings": "Media Sites (yt-dlp)",
+	"media-settings-tips":
+		"Default settings for media-site downloads (YouTube, Vimeo, Bilibili, and more). Requires yt-dlp in PATH; ffmpeg is needed to merge separate video and audio streams.",
+	"media-format": "Preferred Format",
+	"media-format-placeholder":
 		"e.g. bestvideo+bestaudio/best (yt-dlp format string)",
-	"youtube-format-tips":
+	"media-format-tips":
 		"yt-dlp format selector. Leave empty for best quality. Examples: bestvideo[height<=1080]+bestaudio/best, 137+140",
 	port: "Listen Ports",
 	"bt-port": "BT Listen Port",

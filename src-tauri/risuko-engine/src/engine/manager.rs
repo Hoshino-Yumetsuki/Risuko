@@ -21,7 +21,7 @@ use super::task::{
 };
 use super::torrent::{self, TorrentEngine};
 use super::upload::UploadFileSnapshot;
-use super::youtube;
+use super::media;
 use std::collections::HashSet;
 
 const MAGNET_METADATA_ATTEMPT_TIMEOUT_SECS: u64 = 60;
@@ -339,20 +339,20 @@ impl TaskManager {
         Ok(gid)
     }
 
-    pub async fn add_youtube_task(
+    pub async fn add_media_task(
         &self,
         uri: &str,
         options: Map<String, Value>,
     ) -> Result<String, String> {
         let gid = generate_gid();
-        log::info!("[task:{}] Adding YouTube task, uri={}", gid, uri);
+        log::info!("[task:{}] Adding media task, uri={}", gid, uri);
         let out = options
             .get("out")
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
 
-        // Use YouTube extension as hint if out is empty
+        // Use a video extension as hint if out is empty
         let filename_hint = if out.is_empty() {
             "video.mp4".to_string()
         } else {
@@ -368,7 +368,7 @@ impl TaskManager {
             .and_then(|v| v.as_bool().or_else(|| v.as_str().map(|s| s == "true")))
             .unwrap_or(false);
 
-        let task = DownloadTask::new_youtube(gid.clone(), uri.to_string(), dir, tag, options);
+        let task = DownloadTask::new_media(gid.clone(), uri.to_string(), dir, tag, options);
         self.tasks.write().await.push(task);
 
         if !pause {
@@ -1097,10 +1097,10 @@ impl TaskManager {
                 self.apply_stored_cookies(&task.uris, &mut merged);
                 self.spawn_http_download(task, merged);
                 started += 1;
-            } else if task.kind == TaskKind::Youtube && !task.uris.is_empty() {
+            } else if task.kind == TaskKind::Media && !task.uris.is_empty() {
                 task.status = TaskStatus::Active;
                 let merged = options_guard.merge_task_options(&task.options);
-                self.spawn_youtube_download(task, merged);
+                self.spawn_media_download(task, merged);
                 started += 1;
             } else if task.kind == TaskKind::M3u8 && !task.uris.is_empty() {
                 task.status = TaskStatus::Active;
@@ -1538,7 +1538,7 @@ impl TaskManager {
         drop(completion_handle);
     }
 
-    fn spawn_youtube_download(&self, task: &DownloadTask, merged_options: Map<String, Value>) {
+    fn spawn_media_download(&self, task: &DownloadTask, merged_options: Map<String, Value>) {
         let gid = task.gid.clone();
         let uri = task.uris.first().cloned().unwrap_or_default();
         let dir = task.dir.clone();
@@ -1606,10 +1606,10 @@ impl TaskManager {
 
             // Snapshot the global limit at launch time for this yt-dlp child
             // Runtime max-overall-download-limit changes do not reconfigure
-            // already-running YouTube subprocesses
+            // already-running media subprocesses
             let global_rate_limit = global_limiter.limit_bps();
 
-            let download_result = youtube::run_youtube_download(
+            let download_result = media::run_media_download(
                 &uri,
                 &dir,
                 &out,
@@ -1641,7 +1641,7 @@ impl TaskManager {
                             }
                         }
                         log::info!(
-                            "[task:{}] YouTube download complete: {}",
+                            "[task:{}] Media download complete: {}",
                             gid_clone,
                             path.display()
                         );
@@ -1674,9 +1674,9 @@ impl TaskManager {
                                 gid: gid_clone.clone(),
                             });
                         } else {
-                            tracing::error!("[youtube] Download failed for {}: {}", gid_clone, e);
+                            tracing::error!("[media] Download failed for {}: {}", gid_clone, e);
                             task.status = TaskStatus::Error;
-                            task.error_code = Some(classify_error(&e, "youtube").to_string());
+                            task.error_code = Some(classify_error(&e, "media").to_string());
                             task.error_message = Some(e);
                             events.send(EngineEvent::DownloadError {
                                 gid: gid_clone.clone(),
@@ -2856,7 +2856,7 @@ impl TaskManager {
         let task = tasks.iter().find(|t| t.gid == gid)?;
         let kind = match task.kind {
             super::task::TaskKind::Http => "http",
-            super::task::TaskKind::Youtube => "youtube",
+            super::task::TaskKind::Media => "media",
             super::task::TaskKind::Torrent => "torrent",
             super::task::TaskKind::Ed2k => "ed2k",
             super::task::TaskKind::M3u8 => "m3u8",

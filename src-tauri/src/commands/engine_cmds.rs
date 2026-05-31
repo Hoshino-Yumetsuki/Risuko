@@ -678,7 +678,10 @@ pub async fn add_uri(
             })
             .unwrap_or_else(|| infer_out_from_uri_inner(uri));
 
-        let is_youtube = engine::youtube::is_youtube_uri(uri);
+        // Route to the yt-dlp media engine for allowlisted sites, or any URL
+        // the user explicitly forced via the `force-ytdlp` option
+        let is_media = engine::media::is_media_uri(uri)
+            || engine::media::is_force_ytdlp(&task_options);
         // M3u8 uses a temp directory for segments, not a .part file
         let is_m3u8 = engine::m3u8::is_m3u8_uri(uri);
         let legacy_kind = if engine::adc::is_adc_uri(uri) {
@@ -693,7 +696,7 @@ pub async fn add_uri(
             None
         };
         let is_legacy_p2p = legacy_kind.is_some();
-        if !is_m3u8 && !is_youtube && !is_legacy_p2p {
+        if !is_m3u8 && !is_media && !is_legacy_p2p {
             let temp_out = ensure_temp_download_suffix(&preferred_out);
             if !temp_out.is_empty() {
                 task_options.insert("out".to_string(), Value::String(temp_out));
@@ -723,8 +726,8 @@ pub async fn add_uri(
                 Ok(gid) => results.push(Value::Array(vec![Value::String(gid)])),
                 Err(e) => results.push(json!({"code": 1, "message": e})),
             }
-        } else if is_youtube {
-            match manager.add_youtube_task(uri, task_options).await {
+        } else if is_media {
+            match manager.add_media_task(uri, task_options).await {
                 Ok(gid) => results.push(Value::Array(vec![Value::String(gid)])),
                 Err(e) => results.push(json!({"code": 1, "message": e})),
             }
@@ -774,23 +777,26 @@ pub async fn add_uri(
 }
 
 #[tauri::command]
-pub async fn get_youtube_video_info(
+pub async fn get_media_info(
     _state: tauri::State<'_, crate::state::AppState>,
     url: String,
     options: Option<Value>,
-) -> Result<engine::youtube::YouTubeVideoInfo, String> {
+) -> Result<engine::media::MediaInfo, String> {
     let normalized = url.trim().to_string();
     if normalized.is_empty() {
         return Err("URL is required".to_string());
-    }
-    if !engine::youtube::is_youtube_uri(&normalized) {
-        return Err("Not a valid YouTube URL".to_string());
     }
 
     let task_options = match options {
         Some(Value::Object(map)) => map,
         _ => Map::new(),
     };
+    if !engine::media::is_media_uri(&normalized)
+        && !engine::media::is_force_ytdlp(&task_options)
+    {
+        return Err("Not a supported media URL".to_string());
+    }
+
     let mut merged_options = match engine::get_manager().await {
         Some(manager) => match manager.get_global_option().await {
             Value::Object(map) => map,
@@ -804,14 +810,14 @@ pub async fn get_youtube_video_info(
 
     tokio::time::timeout(
         std::time::Duration::from_secs(30),
-        engine::youtube::get_youtube_video_info(&normalized, &merged_options),
+        engine::media::get_media_info(&normalized, &merged_options),
     )
     .await
     .map_err(|_| "yt-dlp timed out".to_string())?
 }
 
 #[tauri::command]
-pub async fn add_youtube(
+pub async fn add_media(
     _state: tauri::State<'_, crate::state::AppState>,
     url: String,
     options: Option<Value>,
@@ -820,18 +826,20 @@ pub async fn add_youtube(
     if normalized_url.is_empty() {
         return Err("task.new-task-uris-required".to_string());
     }
-    if !engine::youtube::is_youtube_uri(&normalized_url) {
-        return Err("Not a valid YouTube URL".to_string());
-    }
 
     let task_options = match options {
         Some(Value::Object(map)) => map,
         _ => Map::new(),
     };
+    if !engine::media::is_media_uri(&normalized_url)
+        && !engine::media::is_force_ytdlp(&task_options)
+    {
+        return Err("Not a supported media URL".to_string());
+    }
 
     let manager = engine::get_manager().await.ok_or("Engine not running")?;
     manager
-        .add_youtube_task(&normalized_url, task_options)
+        .add_media_task(&normalized_url, task_options)
         .await
 }
 

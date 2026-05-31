@@ -173,12 +173,12 @@ export default {
 	"sftp-key-passphrase-tips": "无口令则留空",
 	"m3u8-output-format": "M3U8 / HLS",
 	"m3u8-output-format-label": "输出格式",
-	"youtube-settings": "YouTube (yt-dlp)",
-	"youtube-settings-tips":
-		"YouTube 下载的默认设置，需要在 PATH 中安装 yt-dlp。",
-	"youtube-format": "首选格式",
-	"youtube-format-placeholder": "如 bestvideo+bestaudio/best",
-	"youtube-format-tips": "yt-dlp 格式选择器，留空则选择最佳质量。",
+	"media-settings": "媒体站点 (yt-dlp)",
+	"media-settings-tips":
+		"媒体站点下载的默认设置（YouTube、Vimeo、哔哩哔哩等）。需要在 PATH 中安装 yt-dlp；合并独立的视频与音频流需要 ffmpeg。",
+	"media-format": "首选格式",
+	"media-format-placeholder": "如 bestvideo+bestaudio/best",
+	"media-format-tips": "yt-dlp 格式选择器，留空则选择最佳质量。",
 	port: "监听端口",
 	"bt-port": "BT 监听端口",
 	"dht-port": "DHT 监听端口",

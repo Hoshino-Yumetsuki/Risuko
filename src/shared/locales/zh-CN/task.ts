@@ -215,12 +215,22 @@ export default {
 	"download-pause-message": "暂停下载 {{taskName}}",
 	"download-stop-message": "{{taskName}} 下载中止",
 	"download-error-message": "{{taskName}} 下载发生错误",
-	"youtube-tool-required":
-		'任务"{{taskName}}"：YouTube 下载依赖 yt-dlp。请先安装 yt-dlp，并确保其已加入 PATH。',
-	"youtube-auth-required":
-		'任务"{{taskName}}"：YouTube 需要登录验证。请检查是否需要登录或年龄限制访问。',
-	"youtube-format-unavailable":
-		'任务"{{taskName}}"：该视频不支持所请求的 YouTube 格式。',
+	"media-tool-required":
+		'任务"{{taskName}}"：媒体站点下载依赖 yt-dlp。请先安装 yt-dlp，并确保其已加入 PATH。',
+	"media-auth-required":
+		'任务"{{taskName}}"：需要登录验证。请检查是否需要登录或年龄限制访问。',
+	"media-format-unavailable":
+		'任务"{{taskName}}"：该视频不支持所请求的格式。',
+	"media-force-ytdlp": "使用 yt-dlp 下载",
+	"media-force-ytdlp-tips":
+		"即使该站点不在内置列表中，也通过 yt-dlp 媒体引擎下载此链接。",
+	"media-format-picker": "画质 / 格式",
+	"media-format-fetch": "获取格式",
+	"media-format-refresh": "刷新",
+	"media-format-loading": "加载中…",
+	"media-format-auto": "最佳质量（自动）",
+	"media-format-hint": "获取格式后可选择特定画质。",
+	"media-format-error": "无法获取该链接的格式。",
 	"download-complete-message": "{{taskName}} 下载完成",
 	"download-complete-notify": "下载完成",
 	"bt-download-complete-message": "{{taskName}} 下载完成，正在做种...",

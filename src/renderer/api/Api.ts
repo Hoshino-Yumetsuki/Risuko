@@ -309,27 +309,21 @@ export default class Api {
 		});
 	}
 
-	addYouTube(params: { url: string; options?: Record<string, unknown> }) {
+	addMedia(params: { url: string; options?: Record<string, unknown> }) {
 		const { url, options } = params;
 		const engineOptions = formatOptionsForEngine(options);
-		return invoke<string>("add_youtube", {
+		return invoke<string>("add_media", {
 			url,
 			options: engineOptions,
 		});
 	}
 
-	getYouTubeVideoInfo(params: {
-		url: string;
-		options?: Record<string, unknown>;
-	}) {
+	getMediaInfo(params: { url: string; options?: Record<string, unknown> }) {
 		const engineOptions = formatOptionsForEngine(params.options);
-		return invoke<import("@shared/types/task").YouTubeVideoInfo>(
-			"get_youtube_video_info",
-			{
-				url: params.url,
-				options: engineOptions,
-			},
-		);
+		return invoke<import("@shared/types/task").MediaInfo>("get_media_info", {
+			url: params.url,
+			options: engineOptions,
+		});
 	}
 
 	addTorrent(params: {

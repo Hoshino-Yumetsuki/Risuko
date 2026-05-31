@@ -680,11 +680,11 @@ export default {
 
 				let message: string;
 				if (isMissingYtDlp) {
-					message = this.$t("task.youtube-tool-required", { taskName });
+					message = this.$t("task.media-tool-required", { taskName });
 				} else if (normalizedErrorCode === "541") {
-					message = this.$t("task.youtube-auth-required", { taskName });
+					message = this.$t("task.media-auth-required", { taskName });
 				} else if (normalizedErrorCode === "542") {
-					message = this.$t("task.youtube-format-unavailable", { taskName });
+					message = this.$t("task.media-format-unavailable", { taskName });
 				} else {
 					message = this.$t("task.download-error-message", { taskName });
 				}
