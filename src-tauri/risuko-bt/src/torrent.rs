@@ -597,6 +597,10 @@ async fn torrent_loop(
                     // don't return Stop while a write_at is still pending.
                     // shutdown() aborts then joins all handles
                     write_tasks.shutdown().await;
+                    // Flush and release cached file descriptors
+                    if let Err(e) = storage.close_handles().await {
+                        log::warn!("failed to close storage handles on stop: {e}");
+                    }
                     let _ = ack.send(());
                     break;
                 }

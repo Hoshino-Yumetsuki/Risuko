@@ -592,9 +592,6 @@ export const useTaskStore = defineStore("task", {
 			}
 		},
 		showTaskDetail(task: DisplayTask) {
-			if (task._isFileEntry) {
-				return this.showTaskDetailByGid(task.gid);
-			}
 			this.updateCurrentTaskItem(task);
 			this.currentTaskGid = task.gid;
 			this.taskDetailVisible = true;
@@ -674,30 +671,6 @@ export const useTaskStore = defineStore("task", {
 		},
 		removeTask(task: DownloadTask) {
 			const { gid } = task;
-			const displayTask = task as DisplayTask;
-
-			// For a BT file row, delete means deselect that file
-			// If no files remain selected, fall back to removing the torrent
-			if (displayTask._isFileEntry) {
-				const fileEntry = Array.isArray(task.files) ? task.files[0] : null;
-				const parent = this.taskList.find((t: DownloadTask) => t.gid === gid);
-				if (fileEntry && parent) {
-					const fileIndex = Number(fileEntry.index);
-					const remaining = (Array.isArray(parent.files) ? parent.files : [])
-						.filter((f: DownloadFile) => f.selected !== "false")
-						.map((f: DownloadFile) => Number(f.index))
-						.filter((i: number) => Number.isFinite(i) && i !== fileIndex);
-					if (remaining.length > 0) {
-						const selectFile = remaining.sort((a, b) => a - b).join(",");
-						return api
-							.changeOption({ gid, options: { "select-file": selectFile } })
-							.finally(() => {
-								this.fetchList();
-								this.saveSession();
-							});
-					}
-				}
-			}
 
 			if (gid === this.currentTaskGid) {
 				this.hideTaskDetail();

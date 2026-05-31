@@ -141,12 +141,22 @@ impl FilesystemStorage {
             }
             snap
         };
+        let mut first_error: Option<io::Error> = None;
         for handle in snapshot {
-            task::spawn_blocking(move || handle.sync_data())
+            if let Err(e) = task::spawn_blocking(move || handle.sync_data())
                 .await
-                .map_err(|e| io::Error::other(e.to_string()))??;
+                .map_err(|e| io::Error::other(e.to_string()))
+            {
+                if first_error.is_none() {
+                    first_error = Some(e);
+                }
+            }
         }
-        Ok(())
+        if let Some(e) = first_error {
+            Err(StorageError::Io(e))
+        } else {
+            Ok(())
+        }
     }
 }
 
