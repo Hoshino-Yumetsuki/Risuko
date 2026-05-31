@@ -95,14 +95,14 @@
 
             <div v-if="hasFormats" class="mt-2">
               <Select
-                :model-value="item.mediaFormatId || ''"
+                :model-value="item.mediaFormatId === '' ? '__auto__' : item.mediaFormatId"
                 @update:model-value="onSelectFormat"
               >
                 <SelectTrigger class="h-8 w-full text-xs">
                   <SelectValue :placeholder="$t('task.media-format-auto')" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">{{ $t('task.media-format-auto') }}</SelectItem>
+                  <SelectItem value="__auto__">{{ $t('task.media-format-auto') }}</SelectItem>
                   <SelectItem
                     v-for="opt in formatOptions"
                     :key="opt.value"
@@ -289,11 +289,13 @@ export default {
 			});
 		},
 		onSelectFormat(value: string) {
+			// Map sentinel back to empty string for Auto selection
+			const formatId = value === "__auto__" ? "" : value;
 			const fmt = (this.item.mediaFormats ?? []).find(
-				(f) => f.format_id === value,
+				(f) => f.format_id === formatId,
 			);
 			this.$emit("update:media", this.item.id, {
-				mediaFormatId: value,
+				mediaFormatId: formatId,
 				mediaFormatLabel: fmt ? this.describeFormat(fmt) : "",
 			});
 		},

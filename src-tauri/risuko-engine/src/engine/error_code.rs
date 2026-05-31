@@ -198,16 +198,16 @@ pub fn classify_error(msg: &str, protocol: &str) -> ErrorCode {
         {
             return ErrorCode::CLOUDFLARE_CHALLENGE;
         }
-        if lower.contains("401") || lower.contains("unauthorized") {
-            return ErrorCode::HTTP_UNAUTHORIZED;
-        }
-        if lower.contains("403") || lower.contains("forbidden") {
-            return ErrorCode::HTTP_FORBIDDEN;
-        }
+    }
+    if lower.contains("401") || lower.contains("unauthorized") {
+        return ErrorCode::HTTP_UNAUTHORIZED;
+    }
+    if lower.contains("403") || lower.contains("forbidden") {
+        return ErrorCode::HTTP_FORBIDDEN;
     }
     if lower.contains("404") || lower.contains("not found") {
         // Distinguish HTTP 404 from file-not-found on disk
-        if protocol == "http" || protocol == "m3u8" || protocol == "media" {
+        if protocol == "http" || protocol == "m3u8" {
             return ErrorCode::HTTP_NOT_FOUND;
         }
     }
@@ -308,6 +308,9 @@ pub fn classify_error(msg: &str, protocol: &str) -> ErrorCode {
             }
             if lower.contains("requested format") || lower.contains("format is not available") {
                 return ErrorCode::MEDIA_FORMAT_UNAVAILABLE;
+            }
+            if lower.contains("http error 404") || (lower.contains("404") && lower.contains("http")) {
+                return ErrorCode::HTTP_NOT_FOUND;
             }
         }
         _ => {}

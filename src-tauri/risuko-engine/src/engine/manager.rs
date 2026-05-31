@@ -1099,7 +1099,8 @@ impl TaskManager {
                 started += 1;
             } else if task.kind == TaskKind::Media && !task.uris.is_empty() {
                 task.status = TaskStatus::Active;
-                let merged = options_guard.merge_task_options(&task.options);
+                let mut merged = options_guard.merge_task_options(&task.options);
+                self.apply_stored_cookies(&task.uris, &mut merged);
                 self.spawn_media_download(task, merged);
                 started += 1;
             } else if task.kind == TaskKind::M3u8 && !task.uris.is_empty() {
