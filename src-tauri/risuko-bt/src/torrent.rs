@@ -579,9 +579,10 @@ async fn torrent_loop(
                     pending_dials.clear();
                     known_addrs.clear();
                     // Wait for in-flight piece write tasks before closing handles
-                    let mut handles = Vec::new();
-                    while let Some(handle) = write_tasks.join_next().await {
-                        handles.push(handle);
+                    while let Some(result) = write_tasks.join_next().await {
+                        if let Err(e) = result {
+                            log::warn!("write task failed during pause: {e}");
+                        }
                     }
                     // Release the cached file descriptors
                     if let Err(e) = storage.close_handles().await {
