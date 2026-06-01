@@ -74,7 +74,7 @@ impl Client {
     pub fn request<U: IntoUrl>(&self, method: Method, url: U) -> RequestBuilder {
         RequestBuilder::new(self.clone(), method, url.into_url())
     }
-    
+
     pub fn jar_cookies(&self, url: &Url) -> Option<HeaderValue> {
         self.inner.cookie_jar.as_ref()?.cookies(url)
     }

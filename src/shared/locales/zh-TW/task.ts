@@ -33,6 +33,7 @@ export default {
 	"file-completed-size": "已下載",
 	"selected-files-sum":
 		"已選取：{{selectedFilesCount}}個檔案，總計 {{selectedFilesTotalSize}}",
+	"bt-files-count": "{{count}} 個檔案",
 	"select-at-least-one": "請選擇至少一個檔案",
 	"task-gid": "GID",
 	"task-name": "任務名稱",
@@ -219,8 +220,7 @@ export default {
 		'任務"{{taskName}}"：媒體站點下載需要 yt-dlp。請先安裝 yt-dlp，並確認已加入 PATH。',
 	"media-auth-required":
 		'任務"{{taskName}}"：需要登入驗證。請檢查是否需要登入或年齡限制存取。',
-	"media-format-unavailable":
-		'任務"{{taskName}}"：此影片不支援所請求的格式。',
+	"media-format-unavailable": '任務"{{taskName}}"：此影片不支援所請求的格式。',
 	"media-force-ytdlp": "使用 yt-dlp 下載",
 	"media-force-ytdlp-tips":
 		"即使該站點不在內建清單中，也透過 yt-dlp 媒體引擎下載此連結。",

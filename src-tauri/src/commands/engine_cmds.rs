@@ -680,8 +680,8 @@ pub async fn add_uri(
 
         // Route to the yt-dlp media engine for allowlisted sites, or any URL
         // the user explicitly forced via the `force-ytdlp` option
-        let is_media = engine::media::is_media_uri(uri)
-            || engine::media::is_force_ytdlp(&task_options);
+        let is_media =
+            engine::media::is_media_uri(uri) || engine::media::is_force_ytdlp(&task_options);
         // M3u8 uses a temp directory for segments, not a .part file
         let is_m3u8 = engine::m3u8::is_m3u8_uri(uri);
         let legacy_kind = if engine::adc::is_adc_uri(uri) {
@@ -791,9 +791,7 @@ pub async fn get_media_info(
         Some(Value::Object(map)) => map,
         _ => Map::new(),
     };
-    if !engine::media::is_media_uri(&normalized)
-        && !engine::media::is_force_ytdlp(&task_options)
-    {
+    if !engine::media::is_media_uri(&normalized) && !engine::media::is_force_ytdlp(&task_options) {
         return Err("Not a supported media URL".to_string());
     }
 
@@ -838,9 +836,7 @@ pub async fn add_media(
     }
 
     let manager = engine::get_manager().await.ok_or("Engine not running")?;
-    manager
-        .add_media_task(&normalized_url, task_options)
-        .await
+    manager.add_media_task(&normalized_url, task_options).await
 }
 
 const RESOLVE_MAGNET_TIMEOUT_SECS: u64 = 60;

@@ -43,6 +43,7 @@ export default {
 	"file-completed-size": "Completed",
 	"selected-files-sum":
 		"Selected: {{selectedFilesCount}} files, total size {{selectedFilesTotalSize}}",
+	"bt-files-count": "{{count}} files",
 	"select-at-least-one": "Please select at least one file",
 	"task-gid": "GID",
 	"task-name": "Task Name",

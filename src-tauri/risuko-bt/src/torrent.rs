@@ -578,6 +578,16 @@ async fn torrent_loop(
                     }
                     pending_dials.clear();
                     known_addrs.clear();
+                    // Wait for in-flight piece write tasks before closing handles
+                    while let Some(result) = write_tasks.join_next().await {
+                        if let Err(e) = result {
+                            log::warn!("write task failed during pause: {e}");
+                        }
+                    }
+                    // Release the cached file descriptors
+                    if let Err(e) = storage.close_handles().await {
+                        log::warn!("failed to close storage handles on pause: {e}");
+                    }
                     let _ = ack.send(());
                 }
                 TorrentCommand::Unpause(ack) => {
@@ -593,6 +603,10 @@ async fn torrent_loop(
                     // don't return Stop while a write_at is still pending.
                     // shutdown() aborts then joins all handles
                     write_tasks.shutdown().await;
+                    // Flush and release cached file descriptors
+                    if let Err(e) = storage.close_handles().await {
+                        log::warn!("failed to close storage handles on stop: {e}");
+                    }
                     let _ = ack.send(());
                     break;
                 }

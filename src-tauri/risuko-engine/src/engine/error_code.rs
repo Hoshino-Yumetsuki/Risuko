@@ -309,7 +309,8 @@ pub fn classify_error(msg: &str, protocol: &str) -> ErrorCode {
             if lower.contains("requested format") || lower.contains("format is not available") {
                 return ErrorCode::MEDIA_FORMAT_UNAVAILABLE;
             }
-            if lower.contains("http error 404") || (lower.contains("404") && lower.contains("http")) {
+            if lower.contains("http error 404") || (lower.contains("404") && lower.contains("http"))
+            {
                 return ErrorCode::HTTP_NOT_FOUND;
             }
         }
