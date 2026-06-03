@@ -217,15 +217,7 @@ pub async fn shutdown_system(handle: AppHandle) -> Result<(), String> {
 
     #[cfg(not(target_os = "android"))]
     {
-        // Set quit flag and stop engine before shutdown
-        handle
-            .state::<crate::state::AppState>()
-            .is_quitting
-            .store(true, Ordering::SeqCst);
-        risuko_engine::engine::stop_engine()
-            .await
-            .map_err(|e| e.to_string())?;
-
+        // Attempt OS shutdown first; only set quit flag and stop engine on success
         #[cfg(target_os = "windows")]
         {
             let status = std::process::Command::new("shutdown")
@@ -247,6 +239,15 @@ pub async fn shutdown_system(handle: AppHandle) -> Result<(), String> {
                 return Err(format!("shutdown command failed: {:?}", status));
             }
         }
+
+        // OS shutdown succeeded; set quit flag and stop engine
+        handle
+            .state::<crate::state::AppState>()
+            .is_quitting
+            .store(true, Ordering::SeqCst);
+        risuko_engine::engine::stop_engine()
+            .await
+            .map_err(|e| e.to_string())?;
 
         Ok(())
     }

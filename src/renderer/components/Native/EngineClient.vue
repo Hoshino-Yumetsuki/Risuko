@@ -951,6 +951,7 @@ export default {
 				toast.dismiss(this.shutdownToastId);
 				this.shutdownToastId = null;
 			}
+			await usePreferenceStore().save({ shutdownWhenComplete: false });
 			try {
 				await invoke("shutdown_system");
 			} catch (err) {
