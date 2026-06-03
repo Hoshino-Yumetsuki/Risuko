@@ -22,6 +22,11 @@ const PART_SUFFIX: &str = ".part";
 const DEFAULT_MIN_SPLIT_SIZE: u64 = 1024 * 1024;
 /// Max retries per piece on transient errors
 const CHUNK_MAX_RETRIES: u32 = 5;
+/// Max auto-retries for the single-connection path on transient network
+/// errors. Each retry resumes in place from the partial `.part` file, so a
+/// flaky link recovers without dropping the task to Error / needing a manual
+/// resume. Mirrors the per-piece retry budget of the multi-chunk path.
+const SINGLE_MAX_RETRIES: u32 = 5;
 /// Resume granularity: every multi-chunk download is divided into 1 MiB pieces.
 /// Workers pull pieces off a shared queue (work-stealing for free) and resume
 /// preserves per-piece byte progress so a SIGKILL never loses more than the
@@ -1042,24 +1047,72 @@ async fn run_single_uri_download(
         delete_chunk_meta(&part_path);
     }
     connections.store(1, Ordering::Relaxed);
-    let result = run_single_download(
-        &client,
-        uri,
-        &part_path,
-        &headers,
-        total.clone(),
-        completed.clone(),
-        speed.clone(),
-        cancelled.clone(),
-        cancel_token.clone(),
-        &filename,
-        dir_path,
-        global_limiter.clone(),
-        task_limiter.clone(),
-        stall.clone(),
-        filename_was_url_derived,
-    )
-    .await;
+
+    // When a probe confirmed Range support but the file was too small for the
+    // multi-chunk path, reuse the probe's request shape for the single
+    // connection: the range client (HTTP/1.1, identity encoding) plus an
+    // explicit `Range: bytes=0-`. Some signed-URL CDNs (e.g. Quark) accept the
+    // Range probe but reject a plain full GET with 412 Precondition Failed.
+    let probe_confirmed_range = is_http
+        && split > 1
+        && probe_for_name
+            .as_ref()
+            .map(|p| p.range_supported)
+            .unwrap_or(false);
+    let single_client = if probe_confirmed_range {
+        &range_client
+    } else {
+        &client
+    };
+
+    // Single-connection downloads auto-retry transient network failures
+    // (connection reset, body-read errors, timeouts), resuming in place from
+    // the partial `.part`. This mirrors the per-piece retry budget of the
+    // multi-chunk path so a flaky link doesn't drop the whole task to Error
+    // and force a manual resume. Hard HTTP errors (4xx/5xx), cancellation, and
+    // stall trips are NOT retried here — they're handled a level up.
+    let mut single_attempt: u32 = 0;
+    let result = loop {
+        let attempt = run_single_download(
+            single_client,
+            uri,
+            &part_path,
+            &headers,
+            total.clone(),
+            completed.clone(),
+            speed.clone(),
+            cancelled.clone(),
+            cancel_token.clone(),
+            &filename,
+            dir_path,
+            global_limiter.clone(),
+            task_limiter.clone(),
+            stall.clone(),
+            filename_was_url_derived,
+            probe_confirmed_range,
+        )
+        .await;
+
+        match attempt {
+            Err(ref e)
+                if single_attempt < SINGLE_MAX_RETRIES
+                    && !cancelled.load(Ordering::Relaxed)
+                    && !cancel_token.is_cancelled()
+                    && is_transient_single_error(e) =>
+            {
+                single_attempt += 1;
+                let resumed = completed.load(Ordering::Relaxed);
+                tracing::warn!(
+                    "Single-connection attempt {single_attempt}/{SINGLE_MAX_RETRIES} failed \
+                     ({e}); resuming from {resumed} bytes"
+                );
+                speed.store(0, Ordering::Relaxed);
+                tokio::time::sleep(std::time::Duration::from_secs(single_attempt as u64)).await;
+                continue;
+            }
+            other => break other,
+        }
+    };
 
     // If a stale .part was removed, retry once from scratch
     let final_result = match result {
@@ -1130,6 +1183,7 @@ async fn run_single_uri_download(
                 task_limiter,
                 stall,
                 filename_was_url_derived,
+                false,
             )
             .await
         }
@@ -1327,6 +1381,15 @@ async fn probe_range_support(
         log_cloudflare_diagnostic(client, headers, resp.headers(), uri);
         return Err(cloudflare_error(uri, status));
     }
+
+    tracing::debug!(
+        "Range probe: uri={uri}, status={status}, accept-ranges={:?}, content-range={:?}, \
+         content-length={:?}, content-encoding={:?}",
+        resp.headers().get(ACCEPT_RANGES),
+        resp.headers().get(CONTENT_RANGE),
+        resp.headers().get(CONTENT_LENGTH),
+        resp.headers().get(CONTENT_ENCODING),
+    );
 
     let etag = resp
         .headers()
@@ -1826,6 +1889,14 @@ async fn download_piece_stream(
     }
 
     if status >= 400 {
+        let header_dump = format!("{:?}", resp.headers());
+        let body = resp.text().await.unwrap_or_default();
+        let snippet: String = body.chars().take(256).collect();
+        tracing::warn!(
+            "Piece request got HTTP {status} for range {}; headers={header_dump}; \
+             body[..256]={snippet:?}",
+            range.to_range_header_value()
+        );
         return StreamOutcome {
             error: Some(format!("HTTP error: {status}")),
         };
@@ -2066,6 +2137,31 @@ impl ChunkWriter {
     }
 }
 
+/// Classify a single-connection download error as transient (worth an
+/// in-place resume retry) vs terminal. Terminal cases: cancellation, the
+/// stale-`.part` signal (handled separately by the caller), a hard HTTP
+/// status (4xx/5xx — mirror failover handles those a level up), a Cloudflare
+/// challenge, integrity failures, and stall-watchdog trips. Everything else —
+/// connection resets, body-read errors, timeouts, transient DNS/connect
+/// hiccups — is treated as transient and retried with resume.
+fn is_transient_single_error(e: &str) -> bool {
+    if e.contains("cancelled")
+        || e.contains(STALE_PART_REMOVED)
+        || e.contains("HTTP error:")
+        || e.contains("Cloudflare")
+        || e.contains("cloudflare")
+        || e.contains("checksum")
+        || e.contains("stalled")
+    {
+        return false;
+    }
+    e.contains("Download failed:")
+        || e.contains("Stream error")
+        || e.contains("error reading a body")
+        || e.contains("Writer task")
+        || e.contains("connection")
+}
+
 /// Single-connection download
 /// Returns (final_path, last_modified_header_value)
 async fn run_single_download(
@@ -2084,6 +2180,7 @@ async fn run_single_download(
     task_limiter: Arc<SpeedLimiter>,
     stall: StallWatchdog,
     filename_was_url_derived: bool,
+    force_range: bool,
 ) -> Result<(PathBuf, Option<String>), String> {
     let existing_size = if part_path.exists() {
         fs::metadata(part_path).map(|m| m.len()).unwrap_or(0)
@@ -2096,7 +2193,17 @@ async fn run_single_download(
     let mut req = client.get(uri).headers(headers.clone());
     if existing_size > 0 {
         req = req.header(RANGE, format!("bytes={existing_size}-"));
+    } else if force_range {
+        // Mirror the successful Range probe's request shape. Some signed-URL
+        // CDNs (e.g. Quark) reject a plain full GET with 412 Precondition
+        // Failed but serve the identical URL when a Range request is issued.
+        req = req
+            .header(RANGE, "bytes=0-")
+            .header(ACCEPT_ENCODING, "identity");
     }
+    tracing::debug!(
+        "Single download request: uri={uri}, existing={existing_size}, force_range={force_range}"
+    );
 
     let resp = req.send().await.map_err(|e| {
         if cancelled.load(Ordering::Relaxed) {
@@ -2120,6 +2227,13 @@ async fn run_single_download(
     }
 
     if status >= 400 {
+        let header_dump = format!("{:?}", resp.headers());
+        let body = resp.text().await.unwrap_or_default();
+        let snippet: String = body.chars().take(512).collect();
+        tracing::warn!(
+            "Single download got HTTP {status} for {uri}; force_range={force_range}; \
+             headers={header_dump}; body[..512]={snippet:?}"
+        );
         return Err(format!("HTTP error: {status}"));
     }
 
