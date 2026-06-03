@@ -17,15 +17,20 @@ use tokio_util::sync::CancellationToken;
 use super::speed_limiter::{parse_speed_limit, SpeedLimiter};
 
 const PART_SUFFIX: &str = ".part";
-/// Default minimum segment size when `min-split-size` is not set: 1 MiB.
-/// Don't split below this — small files get a single connection.
+/// Default minimum segment size when `min-split-size` is not set: 1 MiB
+/// Don't split below this — small files get a single connection
 const DEFAULT_MIN_SPLIT_SIZE: u64 = 1024 * 1024;
 /// Max retries per piece on transient errors
 const CHUNK_MAX_RETRIES: u32 = 5;
+/// Max auto-retries for the single-connection path on transient network
+/// errors. Each retry resumes in place from the partial `.part` file, so a
+/// flaky link recovers without dropping the task to Error / needing a manual
+/// resume. Mirrors the per-piece retry budget of the multi-chunk path
+const SINGLE_MAX_RETRIES: u32 = 5;
 /// Resume granularity: every multi-chunk download is divided into 1 MiB pieces.
 /// Workers pull pieces off a shared queue (work-stealing for free) and resume
 /// preserves per-piece byte progress so a SIGKILL never loses more than the
-/// in-flight bytes of one piece per worker.
+/// in-flight bytes of one piece per worker
 ///
 /// Public so integration tests can size payloads in piece-boundary terms
 /// instead of hard-coding 1 MiB
@@ -62,12 +67,12 @@ impl ChunkRange {
 /// Outcome from a single stream call. Per-piece progress is tracked via the
 /// shared `piece_completed: Arc<AtomicU32>` that the writer task updates as
 /// bytes hit disk — the caller reads that atomic instead of relying on a
-/// returned byte count.
+/// returned byte count
 struct StreamOutcome {
     error: Option<String>,
 }
 
-/// Per-piece resume entry. Sparse: only pieces with `c > 0` are persisted.
+/// Per-piece resume entry. Sparse: only pieces with `c > 0` are persisted
 #[derive(serde::Serialize, serde::Deserialize)]
 struct PieceProgress {
     /// piece index
@@ -79,7 +84,7 @@ struct PieceProgress {
 /// Resume metadata for a multi-piece download. JSON sidecar next to the
 /// `.part` file. Versioned: incompatible versions are discarded and the
 /// download restarts from scratch (the file is still pre-allocated, so the
-/// kernel page cache may have warm data, but we re-issue every Range).
+/// kernel page cache may have warm data, but we re-issue every Range)
 #[derive(serde::Serialize, serde::Deserialize)]
 struct ChunkMeta {
     version: u32,
@@ -87,7 +92,7 @@ struct ChunkMeta {
     piece_size: u32,
     etag: Option<String>,
     /// Sparse list of pieces with progress. A piece is fully done when
-    /// `c == piece_length`. Pieces not listed start fresh at 0.
+    /// `c == piece_length`. Pieces not listed start fresh at 0
     pieces: Vec<PieceProgress>,
 }
 
@@ -185,13 +190,13 @@ fn delete_chunk_meta(part_path: &Path) {
 // Each piece is at most PIECE_SIZE bytes. Workers atomically claim a free
 // piece (CAS state 0 -> 1), download it, then mark it done (state -> 2) or
 // release it back to the pool on transient error (state -> 0, completed
-// bytes preserved so the next claimant resumes mid-piece).
+// bytes preserved so the next claimant resumes mid-piece)
 //
 // This naturally implements work stealing: fast workers pull more pieces;
 // slow or idle workers simply pull fewer. There is no explicit "steal from
 // peer X" call because nothing is owned long-term.
 
-/// Free / in-flight / done state encoded in a single byte for cheap CAS.
+/// Free / in-flight / done state encoded in a single byte for cheap CAS
 const PIECE_FREE: u8 = 0;
 const PIECE_INFLIGHT: u8 = 1;
 const PIECE_DONE: u8 = 2;
@@ -199,11 +204,11 @@ const PIECE_DONE: u8 = 2;
 struct Piece {
     /// Absolute byte offset in the output file.
     offset: u64,
-    /// Piece length in bytes (last piece may be < PIECE_SIZE).
+    /// Piece length in bytes (last piece may be < PIECE_SIZE)
     length: u32,
     /// Bytes confirmed flushed to disk so far. Monotonically increasing
     /// because positioned writes are issued in order from the writer task.
-    /// Wrapped in Arc so the writer task can hold a clone independently.
+    /// Wrapped in Arc so the writer task can hold a clone independently
     completed: Arc<AtomicU32>,
     /// Lifecycle state — see PIECE_* constants.
     state: AtomicU8,
@@ -211,7 +216,7 @@ struct Piece {
 
 struct PieceQueue {
     pieces: Vec<Piece>,
-    /// Hint for the next free piece, to avoid rescanning from 0 every claim.
+    /// Hint for the next free piece, to avoid rescanning from 0 every claim
     next_hint: AtomicUsize,
 }
 
@@ -236,8 +241,8 @@ impl PieceQueue {
         }
     }
 
-    /// Try to claim the next free piece, scanning circularly from the hint.
-    /// Returns the piece index, or None if the queue is exhausted.
+    /// Try to claim the next free piece, scanning circularly from the hint
+    /// Returns the piece index, or None if the queue is exhausted
     fn claim_next(&self) -> Option<usize> {
         let n = self.pieces.len();
         if n == 0 {
@@ -265,10 +270,10 @@ impl PieceQueue {
     }
 
     /// Return a piece to the pool with its `completed` count preserved so the
-    /// next claimant resumes mid-piece via a smaller Range request.
+    /// next claimant resumes mid-piece via a smaller Range request
     fn release(&self, idx: usize) {
         self.pieces[idx].state.store(PIECE_FREE, Ordering::Release);
-        // Bias the hint backwards so this piece gets retried sooner.
+        // Bias the hint backwards so this piece gets retried sooner
         let cur = self.next_hint.load(Ordering::Relaxed);
         if idx < cur {
             self.next_hint.store(idx, Ordering::Relaxed);
@@ -303,7 +308,7 @@ fn build_client(
 }
 
 /// Build a client without automatic decompression — needed for range requests
-/// where we must receive raw bytes at exact file offsets.
+/// where we must receive raw bytes at exact file offsets
 fn build_client_no_decompress(
     options: &Map<String, Value>,
     cookie_jar: Option<std::sync::Arc<risuko_http::Jar>>,
@@ -345,7 +350,7 @@ impl StallWatchdog {
     }
 }
 
-/// Read a duration option (seconds) with sane fallback.
+/// Read a duration option (seconds) with sane fallback
 fn parse_duration_secs_option(v: Option<&Value>, default: u64) -> std::time::Duration {
     let secs = v
         .and_then(|v| {
@@ -359,7 +364,7 @@ fn parse_duration_secs_option(v: Option<&Value>, default: u64) -> std::time::Dur
 /// Pull `checksum` from the options map and parse it. Empty string / missing
 /// key disables verification (returns `Ok(None)`); a non-empty but malformed
 /// value is rejected so users see the typo immediately rather than after a
-/// long download.
+/// long download
 fn parse_whole_checksum_option(
     options: &Map<String, Value>,
 ) -> Result<Option<super::hasher::WholeChecksum>, String> {
@@ -380,7 +385,7 @@ fn parse_piece_checksums_option(
 
 /// Hash `path` from disk in 1 MiB blocks and verify against `expected`.
 /// Runs on the blocking pool so the async runtime stays responsive even on
-/// multi-GB files.
+/// multi-GB files
 async fn verify_whole_file(
     path: &Path,
     expected: &super::hasher::WholeChecksum,
@@ -443,7 +448,7 @@ async fn verify_piece_checksums(
         let mut buf = vec![0u8; piece_size];
         for (i, want) in expected.hexes.iter().enumerate() {
             // Last piece may be short; read exactly the remaining bytes so we
-            // don't hash any pre-allocated zero padding.
+            // don't hash any pre-allocated zero padding
             let offset = i as u64 * PIECE_SIZE;
             let remaining = content_length.saturating_sub(offset) as usize;
             let take = remaining.min(piece_size);
@@ -501,7 +506,7 @@ fn build_client_inner(
     } else {
         // Range/chunk workers MUST stay on HTTP/1.1. HTTP/2 multiplexes every
         // "parallel" request onto a single TCP stream, collapsing aggregate
-        // throughput from a single origin. aria2 makes the same choice.
+        // throughput from a single origin. aria2 makes the same choice
         builder = builder.no_gzip().no_brotli().no_deflate().http1_only();
     }
 
@@ -1042,24 +1047,72 @@ async fn run_single_uri_download(
         delete_chunk_meta(&part_path);
     }
     connections.store(1, Ordering::Relaxed);
-    let result = run_single_download(
-        &client,
-        uri,
-        &part_path,
-        &headers,
-        total.clone(),
-        completed.clone(),
-        speed.clone(),
-        cancelled.clone(),
-        cancel_token.clone(),
-        &filename,
-        dir_path,
-        global_limiter.clone(),
-        task_limiter.clone(),
-        stall.clone(),
-        filename_was_url_derived,
-    )
-    .await;
+
+    // When a probe confirmed Range support but the file was too small for the
+    // multi-chunk path, reuse the probe's request shape for the single
+    // connection: the range client (HTTP/1.1, identity encoding) plus an
+    // explicit `Range: bytes=0-`. Some signed-URL CDNs (e.g. Quark) accept the
+    // Range probe but reject a plain full GET with 412 Precondition Failed.
+    let probe_confirmed_range = is_http
+        && split > 1
+        && probe_for_name
+            .as_ref()
+            .map(|p| p.range_supported)
+            .unwrap_or(false);
+    let single_client = if probe_confirmed_range {
+        &range_client
+    } else {
+        &client
+    };
+
+    // Single-connection downloads auto-retry transient network failures
+    // (connection reset, body-read errors, timeouts), resuming in place from
+    // the partial `.part`. This mirrors the per-piece retry budget of the
+    // multi-chunk path so a flaky link doesn't drop the whole task to Error
+    // and force a manual resume. Hard HTTP errors (4xx/5xx), cancellation, and
+    // stall trips are NOT retried here — they're handled a level up
+    let mut single_attempt: u32 = 0;
+    let result = loop {
+        let attempt = run_single_download(
+            single_client,
+            uri,
+            &part_path,
+            &headers,
+            total.clone(),
+            completed.clone(),
+            speed.clone(),
+            cancelled.clone(),
+            cancel_token.clone(),
+            &filename,
+            dir_path,
+            global_limiter.clone(),
+            task_limiter.clone(),
+            stall.clone(),
+            filename_was_url_derived,
+            probe_confirmed_range,
+        )
+        .await;
+
+        match attempt {
+            Err(ref e)
+                if single_attempt < SINGLE_MAX_RETRIES
+                    && !cancelled.load(Ordering::Relaxed)
+                    && !cancel_token.is_cancelled()
+                    && is_transient_single_error(e) =>
+            {
+                single_attempt += 1;
+                let resumed = completed.load(Ordering::Relaxed);
+                tracing::warn!(
+                    "Single-connection attempt {single_attempt}/{SINGLE_MAX_RETRIES} failed \
+                     ({e}); resuming from {resumed} bytes"
+                );
+                speed.store(0, Ordering::Relaxed);
+                tokio::time::sleep(std::time::Duration::from_secs(single_attempt as u64)).await;
+                continue;
+            }
+            other => break other,
+        }
+    };
 
     // If a stale .part was removed, retry once from scratch
     let final_result = match result {
@@ -1130,6 +1183,7 @@ async fn run_single_uri_download(
                 task_limiter,
                 stall,
                 filename_was_url_derived,
+                probe_confirmed_range,
             )
             .await
         }
@@ -1327,6 +1381,15 @@ async fn probe_range_support(
         log_cloudflare_diagnostic(client, headers, resp.headers(), uri);
         return Err(cloudflare_error(uri, status));
     }
+
+    tracing::debug!(
+        "Range probe: uri={uri}, status={status}, accept-ranges={:?}, content-range={:?}, \
+         content-length={:?}, content-encoding={:?}",
+        resp.headers().get(ACCEPT_RANGES),
+        resp.headers().get(CONTENT_RANGE),
+        resp.headers().get(CONTENT_LENGTH),
+        resp.headers().get(CONTENT_ENCODING),
+    );
 
     let etag = resp
         .headers()
@@ -1768,7 +1831,7 @@ async fn piece_worker(
 
 /// Stream a single piece (or its remaining tail). Always returns the number
 /// of bytes flushed to disk, even on error, so the caller can accurately
-/// track resume progress via the per-piece atomic counter.
+/// track resume progress via the per-piece atomic counter
 #[allow(clippy::too_many_arguments)]
 async fn download_piece_stream(
     client: &Client,
@@ -1826,6 +1889,63 @@ async fn download_piece_stream(
     }
 
     if status >= 400 {
+        // Redact sensitive headers before logging
+        let safe_headers: String = resp
+            .headers()
+            .iter()
+            .filter_map(|(name, value)| {
+                let name_str = name.as_str();
+                // Skip sensitive headers
+                if matches!(
+                    name_str.to_lowercase().as_str(),
+                    "authorization" | "set-cookie" | "cookie" | "proxy-authorization"
+                ) {
+                    None
+                } else {
+                    Some(format!("{}: {:?}", name_str, value))
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        // Read only bounded bytes from response stream to avoid memory issues
+        let body_len = resp.content_length().unwrap_or(0);
+        const MAX_SNIPPET_BYTES: usize = 256;
+        let snippet = if body_len > 0 {
+            use futures_util::StreamExt;
+            let mut stream = resp.bytes_stream();
+            let mut buf = Vec::new();
+            while let Some(item) = stream.next().await {
+                match item {
+                    Ok(bytes) => {
+                        let remaining = MAX_SNIPPET_BYTES.saturating_sub(buf.len());
+                        if remaining == 0 {
+                            break;
+                        }
+                        if bytes.len() <= remaining {
+                            buf.extend_from_slice(&bytes);
+                        } else {
+                            buf.extend_from_slice(&bytes[..remaining]);
+                            break;
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+            String::from_utf8_lossy(&buf).to_string()
+        } else {
+            "<empty body>".to_string()
+        };
+
+        tracing::debug!(
+            "Piece request got HTTP {status} for range {}; safe_headers=[{safe_headers}]; \
+             body_len={body_len}; body_snippet={snippet:?}",
+            range.to_range_header_value()
+        );
+        tracing::warn!(
+            "Piece request got HTTP {status} for range {}",
+            range.to_range_header_value()
+        );
         return StreamOutcome {
             error: Some(format!("HTTP error: {status}")),
         };
@@ -2050,13 +2170,13 @@ impl ChunkWriter {
         Self { tx, join }
     }
 
-    /// Send a Bytes to the writer. Returns false if the writer has died.
+    /// Send a Bytes to the writer. Returns false if the writer has died
     async fn send(&self, bytes: Bytes) -> bool {
         self.tx.send(bytes).await.is_ok()
     }
 
     /// Close the input side and await the writer thread. Returns total bytes
-    /// successfully written or the writer's first error.
+    /// successfully written or the writer's first error
     async fn finish(self) -> Result<u64, String> {
         drop(self.tx);
         match self.join.await {
@@ -2064,6 +2184,31 @@ impl ChunkWriter {
             Err(e) => Err(format!("write task join error: {e}")),
         }
     }
+}
+
+/// Classify a single-connection download error as transient (worth an
+/// in-place resume retry) vs terminal. Terminal cases: cancellation, the
+/// stale-`.part` signal (handled separately by the caller), a hard HTTP
+/// status (4xx/5xx — mirror failover handles those a level up), a Cloudflare
+/// challenge, integrity failures, and stall-watchdog trips. Everything else —
+/// connection resets, body-read errors, timeouts, transient DNS/connect
+/// hiccups — is treated as transient and retried with resume.
+fn is_transient_single_error(e: &str) -> bool {
+    if e.contains("cancelled")
+        || e.contains(STALE_PART_REMOVED)
+        || e.contains("HTTP error:")
+        || e.contains("Cloudflare")
+        || e.contains("cloudflare")
+        || e.contains("checksum")
+        || e.contains("stalled")
+    {
+        return false;
+    }
+    e.contains("Download failed:")
+        || e.contains("Stream error")
+        || e.contains("error reading a body")
+        || e.contains("Writer task")
+        || e.contains("connection")
 }
 
 /// Single-connection download
@@ -2084,6 +2229,7 @@ async fn run_single_download(
     task_limiter: Arc<SpeedLimiter>,
     stall: StallWatchdog,
     filename_was_url_derived: bool,
+    force_range: bool,
 ) -> Result<(PathBuf, Option<String>), String> {
     let existing_size = if part_path.exists() {
         fs::metadata(part_path).map(|m| m.len()).unwrap_or(0)
@@ -2096,7 +2242,17 @@ async fn run_single_download(
     let mut req = client.get(uri).headers(headers.clone());
     if existing_size > 0 {
         req = req.header(RANGE, format!("bytes={existing_size}-"));
+    } else if force_range {
+        // Mirror the successful Range probe's request shape. Some signed-URL
+        // CDNs (e.g. Quark) reject a plain full GET with 412 Precondition
+        // Failed but serve the identical URL when a Range request is issued.
+        req = req
+            .header(RANGE, "bytes=0-")
+            .header(ACCEPT_ENCODING, "identity");
     }
+    tracing::debug!(
+        "Single download request: uri={uri}, existing={existing_size}, force_range={force_range}"
+    );
 
     let resp = req.send().await.map_err(|e| {
         if cancelled.load(Ordering::Relaxed) {
@@ -2120,6 +2276,13 @@ async fn run_single_download(
     }
 
     if status >= 400 {
+        let header_dump = format!("{:?}", resp.headers());
+        let body = resp.text().await.unwrap_or_default();
+        let snippet: String = body.chars().take(512).collect();
+        tracing::warn!(
+            "Single download got HTTP {status} for {uri}; force_range={force_range}; \
+             headers={header_dump}; body[..512]={snippet:?}"
+        );
         return Err(format!("HTTP error: {status}"));
     }
 
@@ -2146,7 +2309,7 @@ async fn run_single_download(
     }
 
     // Open file as a sync handle for positioned writes. We start writing at
-    // `existing_size` to resume in place \u2014 no append mode, no shared cursor.
+    // `existing_size` to resume in place \u2014 no append mode, no shared cursor
     let file = {
         let f = fs::OpenOptions::new()
             .create(true)

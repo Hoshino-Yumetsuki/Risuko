@@ -28,6 +28,7 @@ use risuko_engine::engine::http::{run_http_download_multi, PIECE_SIZE};
 use risuko_engine::engine::speed_limiter::SpeedLimiter;
 use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio_util::sync::CancellationToken;
 
@@ -558,4 +559,240 @@ async fn adopts_filename_when_server_doesnt_support_ranges() {
         Some("StoragePeek.jar"),
         "engine should publish the adopted filename even without range support"
     );
+}
+
+// A small, deterministic payload below the multi-chunk threshold so the
+// engine falls back to the single-connection path.
+fn small_payload(n: usize) -> Vec<u8> {
+    (0..n).map(|i| (i % 251) as u8).collect()
+}
+
+/// Quark-style signed-URL CDN: serves Range requests (206) but rejects a
+/// plain full GET with `412 Precondition Failed`. The Range probe succeeds,
+/// so the small-file single-connection fallback must reuse the Range request
+/// shape rather than issuing a plain GET.
+async fn handle_quark(
+    req: Request<Incoming>,
+    payload: Arc<Vec<u8>>,
+) -> Result<Response<Full<Bytes>>, Infallible> {
+    let len = payload.len() as u64;
+    if let Some(range) = req.headers().get(hyper::header::RANGE) {
+        if let Ok(s) = range.to_str() {
+            if let Some(rest) = s.strip_prefix("bytes=") {
+                let mut parts = rest.split('-');
+                let start: u64 = parts.next().unwrap_or("0").parse().unwrap_or(0);
+                let end_str = parts.next().unwrap_or("");
+                let end: u64 = if end_str.is_empty() {
+                    len - 1
+                } else {
+                    end_str.parse().unwrap_or(len - 1)
+                };
+                let end = end.min(len - 1);
+                let slice = payload[start as usize..=end as usize].to_vec();
+                return Ok(Response::builder()
+                    .status(StatusCode::PARTIAL_CONTENT)
+                    .header("Accept-Ranges", "bytes")
+                    .header("Content-Length", slice.len().to_string())
+                    .header("Content-Range", format!("bytes {start}-{end}/{len}"))
+                    .body(Full::new(Bytes::from(slice)))
+                    .unwrap());
+            }
+        }
+    }
+    Ok(Response::builder()
+        .status(StatusCode::PRECONDITION_FAILED)
+        .body(Full::new(Bytes::from_static(b"precondition failed")))
+        .unwrap())
+}
+
+async fn spawn_quark_server(payload: Arc<Vec<u8>>) -> SocketAddr {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        loop {
+            let (stream, _) = match listener.accept().await {
+                Ok(p) => p,
+                Err(_) => return,
+            };
+            let payload = payload.clone();
+            tokio::spawn(async move {
+                let io = TokioIo::new(stream);
+                let _ = http1::Builder::new()
+                    .serve_connection(
+                        io,
+                        service_fn(move |req| handle_quark(req, payload.clone())),
+                    )
+                    .await;
+            });
+        }
+    });
+    addr
+}
+
+#[tokio::test]
+async fn small_file_reuses_probe_range_shape_on_412_cdn() {
+    // Regression for the Quark `412` failure: probe (Range) succeeds, but the
+    // single-connection fallback used to issue a plain full GET, which the CDN
+    // rejected with 412. The fallback must now reuse the Range request shape.
+    let payload = Arc::new(small_payload(5000));
+    let addr = spawn_quark_server(payload.clone()).await;
+    tokio::task::yield_now().await;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().to_string_lossy().to_string();
+    let uris = vec![format!("http://{addr}/file.bin")];
+    // split=4 (from options_with) with min-split-size=1M => 5000 bytes is
+    // "too small for multi-chunk", forcing the single-connection path.
+    let options = options_with(vec![]);
+    let (total, completed, speed, cancelled, conns, ct, gl, tl, cc) = dummy_state();
+
+    let result = run_http_download_multi(
+        &uris,
+        &dir,
+        "file.bin",
+        &options,
+        total,
+        completed,
+        speed,
+        cancelled,
+        conns,
+        ct,
+        gl,
+        tl,
+        cc,
+        std::sync::Arc::new(parking_lot::Mutex::new(None)),
+    )
+    .await
+    .expect("small-file download should succeed by reusing the Range request");
+
+    let got = std::fs::read(&result).unwrap();
+    assert_eq!(got, *payload, "downloaded content must match payload");
+}
+
+/// Flaky raw-TCP server: the first response claims the full `Content-Length`
+/// but sends only half the body before closing the socket, simulating an
+/// `ECONNRESET` mid-stream. Subsequent requests honor `Range` and serve the
+/// remainder, letting the single-connection auto-retry resume in place.
+async fn spawn_flaky_server(payload: Arc<Vec<u8>>) -> SocketAddr {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let attempt = Arc::new(AtomicU32::new(0));
+    tokio::spawn(async move {
+        loop {
+            let (mut stream, _) = match listener.accept().await {
+                Ok(p) => p,
+                Err(_) => return,
+            };
+            let payload = payload.clone();
+            let attempt = attempt.clone();
+            tokio::spawn(async move {
+                // Read request headers up to the blank line.
+                let mut buf = Vec::new();
+                let mut tmp = [0u8; 1024];
+                loop {
+                    match stream.read(&mut tmp).await {
+                        Ok(0) => return,
+                        Ok(n) => {
+                            buf.extend_from_slice(&tmp[..n]);
+                            if buf.windows(4).any(|w| w == b"\r\n\r\n") {
+                                break;
+                            }
+                        }
+                        Err(_) => return,
+                    }
+                }
+                let req = String::from_utf8_lossy(&buf).to_ascii_lowercase();
+                let start = req.lines().find_map(|l| {
+                    l.strip_prefix("range: bytes=")
+                        .and_then(|r| r.split('-').next())
+                        .and_then(|s| s.trim().parse::<usize>().ok())
+                });
+                let len = payload.len();
+                let n = attempt.fetch_add(1, Ordering::SeqCst);
+                if n == 0 {
+                    // First attempt: promise the full body, deliver half, then
+                    // drop the connection to trigger a body-read error.
+                    let head = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Length: {len}\r\nAccept-Ranges: bytes\r\n\r\n"
+                    );
+                    let _ = stream.write_all(head.as_bytes()).await;
+                    let _ = stream.write_all(&payload[..len / 2]).await;
+                    let _ = stream.flush().await;
+                    // Drop `stream` -> connection closes before Content-Length.
+                } else {
+                    // Require Range header on retry to prove resume behavior
+                    let start = match start {
+                        Some(s) => s,
+                        None => {
+                            // No Range header on retry - fail the request
+                            let head = "HTTP/1.1 400 Bad Request\r\n\r\n";
+                            let _ = stream.write_all(head.as_bytes()).await;
+                            let _ = stream.flush().await;
+                            return;
+                        }
+                    };
+                    let body = &payload[start..];
+                    let head = if start > 0 {
+                        format!(
+                            "HTTP/1.1 206 Partial Content\r\nContent-Length: {}\r\n\
+                             Content-Range: bytes {}-{}/{}\r\nAccept-Ranges: bytes\r\n\r\n",
+                            body.len(),
+                            start,
+                            len - 1,
+                            len
+                        )
+                    } else {
+                        format!(
+                            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nAccept-Ranges: bytes\r\n\r\n",
+                            body.len()
+                        )
+                    };
+                    let _ = stream.write_all(head.as_bytes()).await;
+                    let _ = stream.write_all(body).await;
+                    let _ = stream.flush().await;
+                }
+            });
+        }
+    });
+    addr
+}
+
+#[tokio::test]
+async fn single_connection_auto_retries_and_resumes_on_reset() {
+    // Regression for "requires manual resume": a single-connection download
+    // that hits a mid-stream connection reset must auto-retry and resume in
+    // place instead of dropping the task to Error.
+    let payload = Arc::new(small_payload(4000));
+    let addr = spawn_flaky_server(payload.clone()).await;
+    tokio::task::yield_now().await;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().to_string_lossy().to_string();
+    // split=1 + a URL path that differs from `out` skips the Range probe, so
+    // the first request the server sees is the download itself.
+    let uris = vec![format!("http://{addr}/stream")];
+    let options = options_with(vec![("split", json!("1"))]);
+    let (total, completed, speed, cancelled, conns, ct, gl, tl, cc) = dummy_state();
+
+    let result = run_http_download_multi(
+        &uris,
+        &dir,
+        "out.bin",
+        &options,
+        total,
+        completed,
+        speed,
+        cancelled,
+        conns,
+        ct,
+        gl,
+        tl,
+        cc,
+        std::sync::Arc::new(parking_lot::Mutex::new(None)),
+    )
+    .await
+    .expect("download should succeed after auto-retry/resume");
+
+    let got = std::fs::read(&result).unwrap();
+    assert_eq!(got, *payload, "resumed content must match payload");
 }

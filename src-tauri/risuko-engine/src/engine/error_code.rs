@@ -198,37 +198,37 @@ pub fn classify_error(msg: &str, protocol: &str) -> ErrorCode {
         {
             return ErrorCode::CLOUDFLARE_CHALLENGE;
         }
-    }
-    if lower.contains("401") || lower.contains("unauthorized") {
-        return ErrorCode::HTTP_UNAUTHORIZED;
-    }
-    if lower.contains("403") || lower.contains("forbidden") {
-        return ErrorCode::HTTP_FORBIDDEN;
-    }
-    if lower.contains("404") || lower.contains("not found") {
-        // Distinguish HTTP 404 from file-not-found on disk
-        if protocol == "http" || protocol == "m3u8" {
-            return ErrorCode::HTTP_NOT_FOUND;
+        if lower.contains("401") || lower.contains("unauthorized") {
+            return ErrorCode::HTTP_UNAUTHORIZED;
         }
-    }
-    if lower.contains("416") || lower.contains("range not satisfiable") {
-        return ErrorCode::HTTP_RANGE_NOT_SATISFIABLE;
-    }
-    if lower.contains("429") || lower.contains("too many requests") {
-        return ErrorCode::HTTP_TOO_MANY_REQUESTS;
-    }
-    if lower.contains("503") || lower.contains("service unavailable") {
-        return ErrorCode::HTTP_SERVICE_UNAVAILABLE;
-    }
-    if lower.contains("5xx")
-        || lower.contains("500")
-        || lower.contains("502")
-        || lower.contains("server error")
-    {
-        return ErrorCode::HTTP_SERVER_ERROR;
-    }
-    if lower.contains("redirect") {
-        return ErrorCode::HTTP_REDIRECT_LOOP;
+        if lower.contains("403") || lower.contains("forbidden") {
+            return ErrorCode::HTTP_FORBIDDEN;
+        }
+        if lower.contains("404") || lower.contains("not found") {
+            // Distinguish HTTP 404 from file-not-found on disk
+            if protocol == "http" || protocol == "m3u8" {
+                return ErrorCode::HTTP_NOT_FOUND;
+            }
+        }
+        if lower.contains("416") || lower.contains("range not satisfiable") {
+            return ErrorCode::HTTP_RANGE_NOT_SATISFIABLE;
+        }
+        if lower.contains("429") || lower.contains("too many requests") {
+            return ErrorCode::HTTP_TOO_MANY_REQUESTS;
+        }
+        if lower.contains("503") || lower.contains("service unavailable") {
+            return ErrorCode::HTTP_SERVICE_UNAVAILABLE;
+        }
+        if lower.contains("5xx")
+            || lower.contains("500")
+            || lower.contains("502")
+            || lower.contains("server error")
+        {
+            return ErrorCode::HTTP_SERVER_ERROR;
+        }
+        if lower.contains("redirect") {
+            return ErrorCode::HTTP_REDIRECT_LOOP;
+        }
     }
 
     // -- File system errors --
