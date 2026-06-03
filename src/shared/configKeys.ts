@@ -51,6 +51,7 @@ const userKeys = [
 	"completion-script-args",
 	"completion-script-timeout-ms",
 	"doh-provider",
+	"shutdown-when-complete",
 ];
 
 const systemKeys = [

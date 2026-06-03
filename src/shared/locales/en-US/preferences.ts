@@ -94,6 +94,11 @@ export default {
 	"prevent-sleep-while-downloading": "Prevent system sleep while downloading",
 	"prevent-sleep-while-downloading-tips":
 		"Keep the computer awake whenever an active task is in progress",
+	"shutdown-when-complete": "Shutdown computer when all tasks complete",
+	"shutdown-when-complete-tips":
+		"One-time: shuts down the computer once the download queue is empty",
+	"shutdown-countdown-title": "Shutting down in {{seconds}}s…",
+	"shutdown-countdown-cancel": "Cancel",
 	"auto-purge-record": "Automatically purge download records when exiting app",
 	"purge-record-on-start": "Purge download records when app starts",
 	ui: "UI",

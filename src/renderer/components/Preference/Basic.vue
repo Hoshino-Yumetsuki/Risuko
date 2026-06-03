@@ -531,6 +531,22 @@
                 />
               </div>
             </div>
+            <div v-if="!isAndroid" class="settings-row">
+              <div class="settings-row-content">
+                <div class="settings-row-title">
+                  {{ $t('preferences.shutdown-when-complete') }}
+                </div>
+                <div class="settings-row-description">
+                  {{ $t('preferences.shutdown-when-complete-tips') }}
+                </div>
+              </div>
+              <div class="settings-row-action">
+                <ui-checkbox
+                  :model-value="!!form.shutdownWhenComplete"
+                  @change="(val) => setBasicBoolean('shutdownWhenComplete', val)"
+                />
+              </div>
+            </div>
             <div class="settings-row">
               <div class="settings-row-content">
                 <span class="settings-row-title">{{
@@ -679,6 +695,7 @@ const initForm = (config) => {
 		noConfirmBeforeDeleteTask,
 		openAtLogin,
 		preventSleepWhileDownloading,
+		shutdownWhenComplete,
 		purgeRecordOnStart,
 		resumeAllWhenAppLaunched,
 		runMode,
@@ -735,6 +752,7 @@ const initForm = (config) => {
 			preventSleepWhileDownloading === undefined
 				? false
 				: parseBooleanConfig(preventSleepWhileDownloading),
+		shutdownWhenComplete: parseBooleanConfig(shutdownWhenComplete),
 		purgeRecordOnStart: parseBooleanConfig(purgeRecordOnStart),
 		resumeAllWhenAppLaunched: parseBooleanConfig(resumeAllWhenAppLaunched),
 		runMode,
@@ -800,6 +818,7 @@ export default {
 		isRenderer: () => is.renderer(),
 		isMac: () => is.macOS(),
 		isMas: () => is.mas(),
+		isAndroid: () => is.android(),
 		title() {
 			return this.$t("preferences.basic");
 		},
@@ -1012,6 +1031,7 @@ export default {
 				"autoDetectLowSpeedTasks",
 				"newTaskShowDownloading",
 				"preventSleepWhileDownloading",
+				"shutdownWhenComplete",
 				"taskNotification",
 				"noConfirmBeforeDeleteTask",
 				"useRemoteFileTime",

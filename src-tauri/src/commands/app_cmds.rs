@@ -204,3 +204,37 @@ pub fn clear_android_download_notification() -> Result<(), String> {
         Ok(())
     }
 }
+
+#[tauri::command]
+pub async fn shutdown_system(handle: AppHandle) -> Result<(), String> {
+    log::info!("[Risuko] shutdown_system: initiating OS shutdown");
+
+    #[cfg(target_os = "android")]
+    {
+        // Android does not support OS-level shutdown from apps
+        return quit_app(handle).await;
+    }
+
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = handle;
+
+        #[cfg(target_os = "windows")]
+        {
+            std::process::Command::new("shutdown")
+                .args(["/s", "/t", "0"])
+                .spawn()
+                .map_err(|e| format!("shutdown failed: {e}"))?;
+        }
+
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        {
+            std::process::Command::new("shutdown")
+                .args(["-h", "now"])
+                .spawn()
+                .map_err(|e| format!("shutdown failed: {e}"))?;
+        }
+
+        Ok(())
+    }
+}
