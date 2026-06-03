@@ -951,9 +951,14 @@ export default {
 				toast.dismiss(this.shutdownToastId);
 				this.shutdownToastId = null;
 			}
-			await usePreferenceStore().save({ shutdownWhenComplete: false });
 			try {
 				await invoke("shutdown_system");
+				// Only clear the preference after shutdown succeeds
+				try {
+					await usePreferenceStore().save({ shutdownWhenComplete: false });
+				} catch (err) {
+					logger.warn("[Risuko] failed to save shutdownWhenComplete preference:", err?.message || err);
+				}
 			} catch (err) {
 				logger.warn("[Risuko] shutdown_system failed:", err?.message || err);
 				toast.error(this.$t("preferences.shutdown-failed"));

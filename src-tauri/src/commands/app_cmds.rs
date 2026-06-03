@@ -217,14 +217,34 @@ pub async fn shutdown_system(handle: AppHandle) -> Result<(), String> {
 
     #[cfg(not(target_os = "android"))]
     {
-        // Attempt OS shutdown first; only set quit flag and stop engine on success
+        // Set quit flag and stop engine first for clean teardown
+        handle
+            .state::<crate::state::AppState>()
+            .is_quitting
+            .store(true, Ordering::SeqCst);
+        risuko_engine::engine::stop_engine()
+            .await
+            .map_err(|e| e.to_string())?;
+
+        // Attempt OS shutdown; rollback quit flag on failure
         #[cfg(target_os = "windows")]
         {
             let status = std::process::Command::new("shutdown")
                 .args(["/s", "/t", "0"])
                 .status()
-                .map_err(|e| format!("shutdown failed: {e}"))?;
+                .map_err(|e| {
+                    // Rollback quit flag on failure
+                    handle
+                        .state::<crate::state::AppState>()
+                        .is_quitting
+                        .store(false, Ordering::SeqCst);
+                    format!("shutdown failed: {e}")
+                })?;
             if !status.success() {
+                handle
+                    .state::<crate::state::AppState>()
+                    .is_quitting
+                    .store(false, Ordering::SeqCst);
                 return Err(format!("shutdown command failed: {:?}", status));
             }
         }
@@ -234,20 +254,22 @@ pub async fn shutdown_system(handle: AppHandle) -> Result<(), String> {
             let status = std::process::Command::new("shutdown")
                 .args(["-h", "now"])
                 .status()
-                .map_err(|e| format!("shutdown failed: {e}"))?;
+                .map_err(|e| {
+                    // Rollback quit flag on failure
+                    handle
+                        .state::<crate::state::AppState>()
+                        .is_quitting
+                        .store(false, Ordering::SeqCst);
+                    format!("shutdown failed: {e}")
+                })?;
             if !status.success() {
+                handle
+                    .state::<crate::state::AppState>()
+                    .is_quitting
+                    .store(false, Ordering::SeqCst);
                 return Err(format!("shutdown command failed: {:?}", status));
             }
         }
-
-        // OS shutdown succeeded; set quit flag and stop engine
-        handle
-            .state::<crate::state::AppState>()
-            .is_quitting
-            .store(true, Ordering::SeqCst);
-        risuko_engine::engine::stop_engine()
-            .await
-            .map_err(|e| e.to_string())?;
 
         Ok(())
     }
