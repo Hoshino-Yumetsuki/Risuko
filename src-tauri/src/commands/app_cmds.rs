@@ -204,3 +204,71 @@ pub fn clear_android_download_notification() -> Result<(), String> {
         Ok(())
     }
 }
+
+#[tauri::command]
+pub async fn shutdown_system(handle: AppHandle) -> Result<(), String> {
+    log::info!("[Risuko] shutdown_system: initiating OS shutdown");
+
+    #[cfg(target_os = "android")]
+    {
+        // Android does not support OS-level shutdown from apps
+        return quit_app(handle).await;
+    }
+
+    #[cfg(not(target_os = "android"))]
+    {
+        // Set quit flag but don't stop engine; OS shutdown will terminate everything
+        // If OS shutdown fails, engine remains running so app stays functional
+        handle
+            .state::<crate::state::AppState>()
+            .is_quitting
+            .store(true, Ordering::SeqCst);
+
+        // Attempt OS shutdown; rollback quit flag on failure
+        #[cfg(target_os = "windows")]
+        {
+            let status = std::process::Command::new("shutdown")
+                .args(["/s", "/t", "0"])
+                .status()
+                .map_err(|e| {
+                    // Rollback quit flag on failure
+                    handle
+                        .state::<crate::state::AppState>()
+                        .is_quitting
+                        .store(false, Ordering::SeqCst);
+                    format!("shutdown failed: {e}")
+                })?;
+            if !status.success() {
+                handle
+                    .state::<crate::state::AppState>()
+                    .is_quitting
+                    .store(false, Ordering::SeqCst);
+                return Err(format!("shutdown command failed: {:?}", status));
+            }
+        }
+
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        {
+            let status = std::process::Command::new("shutdown")
+                .args(["-h", "now"])
+                .status()
+                .map_err(|e| {
+                    // Rollback quit flag on failure
+                    handle
+                        .state::<crate::state::AppState>()
+                        .is_quitting
+                        .store(false, Ordering::SeqCst);
+                    format!("shutdown failed: {e}")
+                })?;
+            if !status.success() {
+                handle
+                    .state::<crate::state::AppState>()
+                    .is_quitting
+                    .store(false, Ordering::SeqCst);
+                return Err(format!("shutdown command failed: {:?}", status));
+            }
+        }
+
+        Ok(())
+    }
+}

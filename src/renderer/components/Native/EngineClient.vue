@@ -14,6 +14,7 @@ import logger from "@shared/utils/logger";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import * as nosleep from "tauri-plugin-nosleep-api";
+import { toast } from "vue-sonner";
 import api from "@/api";
 import { useAppStore } from "@/store/app";
 import { usePreferenceStore } from "@/store/preference";
@@ -66,6 +67,9 @@ export default {
 			lowSpeedRecoverAtMap: {} as Record<string, number>,
 			lowSpeedRecoveringMap: {} as Record<string, boolean>,
 			eventUnlisteners: [] as (() => void)[],
+			shutdownCountdownTimer: null as ReturnType<typeof setInterval> | null,
+			shutdownCountdownSecondsLeft: 0,
+			shutdownToastId: null as string | number | null,
 		};
 	},
 	computed: {
@@ -148,6 +152,10 @@ export default {
 			// installs keep their current sleep-inhibit behaviour.
 			return raw === undefined ? true : parseBooleanConfig(raw);
 		},
+		shutdownWhenComplete() {
+			const raw = usePreferenceStore().config.shutdownWhenComplete;
+			return parseBooleanConfig(raw);
+		},
 		currentTaskIsBT() {
 			return checkTaskIsBT(this.currentTaskItem);
 		},
@@ -170,6 +178,11 @@ export default {
 			if (desired !== this.noSleepDesired) {
 				this.noSleepDesired = desired;
 				this.syncNoSleepState();
+			}
+		},
+		shutdownWhenComplete(val) {
+			if (!val) {
+				this.cancelShutdown();
 			}
 		},
 		progress(val) {
@@ -878,6 +891,7 @@ export default {
 		// Called from engine event handlers so that newly-started or newly-resumed
 		// work wakes the poll loop back up after it self-suspended on idle
 		ensurePolling() {
+			this.cancelShutdown();
 			if (this.isDestroyed) {
 				return;
 			}
@@ -885,6 +899,70 @@ export default {
 				return;
 			}
 			this.startPolling();
+		},
+		armShutdownCountdown() {
+			if (this.shutdownCountdownTimer !== null) {
+				return;
+			}
+			const COUNTDOWN_SECONDS = 60;
+			this.shutdownCountdownSecondsLeft = COUNTDOWN_SECONDS;
+			const updateToast = () => {
+				const title = this.$t("preferences.shutdown-countdown-title", {
+					seconds: this.shutdownCountdownSecondsLeft,
+				});
+				const toastOptions = {
+					duration: Infinity,
+					action: {
+						label: this.$t("preferences.shutdown-countdown-cancel"),
+						onClick: () => this.cancelShutdown(),
+					},
+				};
+				if (this.shutdownToastId === null) {
+					this.shutdownToastId = toast.warning(title, toastOptions);
+				} else {
+					toast.warning(title, { ...toastOptions, id: this.shutdownToastId });
+				}
+			};
+			updateToast();
+			this.shutdownCountdownTimer = setInterval(() => {
+				this.shutdownCountdownSecondsLeft -= 1;
+				if (this.shutdownCountdownSecondsLeft <= 0) {
+					this.executeShutdown();
+				} else {
+					updateToast();
+				}
+			}, 1000);
+		},
+		cancelShutdown() {
+			if (this.shutdownCountdownTimer === null) {
+				return;
+			}
+			clearInterval(this.shutdownCountdownTimer);
+			this.shutdownCountdownTimer = null;
+			if (this.shutdownToastId !== null) {
+				toast.dismiss(this.shutdownToastId);
+				this.shutdownToastId = null;
+			}
+		},
+		async executeShutdown() {
+			clearInterval(this.shutdownCountdownTimer);
+			this.shutdownCountdownTimer = null;
+			if (this.shutdownToastId !== null) {
+				toast.dismiss(this.shutdownToastId);
+				this.shutdownToastId = null;
+			}
+			// Clear preference before shutdown since save after won't complete before OS termination
+			try {
+				await usePreferenceStore().save({ shutdownWhenComplete: false });
+			} catch (err) {
+				logger.warn("[Risuko] failed to save shutdownWhenComplete preference:", err?.message || err);
+			}
+			try {
+				await invoke("shutdown_system");
+			} catch (err) {
+				logger.warn("[Risuko] shutdown_system failed:", err?.message || err);
+				toast.error(this.$t("preferences.shutdown-failed"));
+			}
 		},
 		async polling() {
 			if (this.isPolling) {
@@ -968,6 +1046,9 @@ export default {
 			const nonPausedWaiting = (stat.numWaiting || 0) - derivedPaused;
 			if (stat.numActive === 0 && nonPausedWaiting === 0) {
 				this.stopPolling();
+				if (this.shutdownWhenComplete) {
+					this.armShutdownCountdown();
+				}
 			}
 		},
 		stopPolling() {
@@ -1019,6 +1100,7 @@ export default {
 		this.unbindEngineEvents();
 		this.stopPolling();
 		this.clearAllAutoRetryTimers();
+		this.cancelShutdown();
 
 		// Best effort release in case component is torn down while downloads were active.
 		this.noSleepDesired = false;

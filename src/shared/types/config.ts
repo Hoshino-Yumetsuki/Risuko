@@ -74,6 +74,7 @@ export interface AppConfig {
 	completionScriptCommand?: string;
 	completionScriptArgs?: string;
 	completionScriptTimeoutMs?: number;
+	shutdownWhenComplete?: boolean;
 	// DNS over HTTPS
 	dohEnable?: boolean;
 	dohUrl?: string;
