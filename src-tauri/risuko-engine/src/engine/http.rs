@@ -1910,13 +1910,25 @@ async fn download_piece_stream(
 
         // Read only bounded bytes from response stream to avoid memory issues
         let body_len = resp.content_length().unwrap_or(0);
+        const MAX_SNIPPET_BYTES: usize = 256;
         let snippet = if body_len > 0 {
             use futures_util::StreamExt;
-            let mut stream = resp.bytes_stream().take(256);
+            let mut stream = resp.bytes_stream();
             let mut buf = Vec::new();
             while let Some(item) = stream.next().await {
                 match item {
-                    Ok(bytes) => buf.extend_from_slice(&bytes),
+                    Ok(bytes) => {
+                        let remaining = MAX_SNIPPET_BYTES.saturating_sub(buf.len());
+                        if remaining == 0 {
+                            break;
+                        }
+                        if bytes.len() <= remaining {
+                            buf.extend_from_slice(&bytes);
+                        } else {
+                            buf.extend_from_slice(&bytes[..remaining]);
+                            break;
+                        }
+                    }
                     Err(_) => break,
                 }
             }
