@@ -951,14 +951,14 @@ export default {
 				toast.dismiss(this.shutdownToastId);
 				this.shutdownToastId = null;
 			}
+			// Clear preference before shutdown since save after won't complete before OS termination
+			try {
+				await usePreferenceStore().save({ shutdownWhenComplete: false });
+			} catch (err) {
+				logger.warn("[Risuko] failed to save shutdownWhenComplete preference:", err?.message || err);
+			}
 			try {
 				await invoke("shutdown_system");
-				// Only clear the preference after shutdown succeeds
-				try {
-					await usePreferenceStore().save({ shutdownWhenComplete: false });
-				} catch (err) {
-					logger.warn("[Risuko] failed to save shutdownWhenComplete preference:", err?.message || err);
-				}
 			} catch (err) {
 				logger.warn("[Risuko] shutdown_system failed:", err?.message || err);
 				toast.error(this.$t("preferences.shutdown-failed"));

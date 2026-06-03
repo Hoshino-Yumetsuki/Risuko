@@ -217,14 +217,12 @@ pub async fn shutdown_system(handle: AppHandle) -> Result<(), String> {
 
     #[cfg(not(target_os = "android"))]
     {
-        // Set quit flag and stop engine first for clean teardown
+        // Set quit flag but don't stop engine; OS shutdown will terminate everything
+        // If OS shutdown fails, engine remains running so app stays functional
         handle
             .state::<crate::state::AppState>()
             .is_quitting
             .store(true, Ordering::SeqCst);
-        risuko_engine::engine::stop_engine()
-            .await
-            .map_err(|e| e.to_string())?;
 
         // Attempt OS shutdown; rollback quit flag on failure
         #[cfg(target_os = "windows")]
