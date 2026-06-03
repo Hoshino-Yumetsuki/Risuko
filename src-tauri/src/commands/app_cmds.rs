@@ -217,22 +217,35 @@ pub async fn shutdown_system(handle: AppHandle) -> Result<(), String> {
 
     #[cfg(not(target_os = "android"))]
     {
-        let _ = handle;
+        // Set quit flag and stop engine before shutdown
+        handle
+            .state::<crate::state::AppState>()
+            .is_quitting
+            .store(true, Ordering::SeqCst);
+        risuko_engine::engine::stop_engine()
+            .await
+            .map_err(|e| e.to_string())?;
 
         #[cfg(target_os = "windows")]
         {
-            std::process::Command::new("shutdown")
+            let status = std::process::Command::new("shutdown")
                 .args(["/s", "/t", "0"])
-                .spawn()
+                .status()
                 .map_err(|e| format!("shutdown failed: {e}"))?;
+            if !status.success() {
+                return Err(format!("shutdown command failed: {:?}", status));
+            }
         }
 
         #[cfg(any(target_os = "macos", target_os = "linux"))]
         {
-            std::process::Command::new("shutdown")
+            let status = std::process::Command::new("shutdown")
                 .args(["-h", "now"])
-                .spawn()
+                .status()
                 .map_err(|e| format!("shutdown failed: {e}"))?;
+            if !status.success() {
+                return Err(format!("shutdown command failed: {:?}", status));
+            }
         }
 
         Ok(())

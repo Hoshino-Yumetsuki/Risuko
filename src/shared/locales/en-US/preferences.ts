@@ -99,6 +99,7 @@ export default {
 		"One-time: shuts down the computer once the download queue is empty",
 	"shutdown-countdown-title": "Shutting down in {{seconds}}s…",
 	"shutdown-countdown-cancel": "Cancel",
+	"shutdown-failed": "Shutdown failed. Check permissions.",
 	"auto-purge-record": "Automatically purge download records when exiting app",
 	"purge-record-on-start": "Purge download records when app starts",
 	ui: "UI",

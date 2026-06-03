@@ -153,7 +153,8 @@ export default {
 			return raw === undefined ? true : parseBooleanConfig(raw);
 		},
 		shutdownWhenComplete() {
-			return !!usePreferenceStore().config.shutdownWhenComplete;
+			const raw = usePreferenceStore().config.shutdownWhenComplete;
+			return parseBooleanConfig(raw);
 		},
 		currentTaskIsBT() {
 			return checkTaskIsBT(this.currentTaskItem);
@@ -177,6 +178,11 @@ export default {
 			if (desired !== this.noSleepDesired) {
 				this.noSleepDesired = desired;
 				this.syncNoSleepState();
+			}
+		},
+		shutdownWhenComplete(val) {
+			if (!val) {
+				this.cancelShutdown();
 			}
 		},
 		progress(val) {
@@ -945,10 +951,12 @@ export default {
 				toast.dismiss(this.shutdownToastId);
 				this.shutdownToastId = null;
 			}
-			await usePreferenceStore().save({ shutdownWhenComplete: false });
-			invoke("shutdown_system").catch((err) => {
+			try {
+				await invoke("shutdown_system");
+			} catch (err) {
 				logger.warn("[Risuko] shutdown_system failed:", err?.message || err);
-			});
+				toast.error(this.$t("preferences.shutdown-failed"));
+			}
 		},
 		async polling() {
 			if (this.isPolling) {

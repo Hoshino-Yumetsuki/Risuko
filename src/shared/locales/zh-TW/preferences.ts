@@ -82,6 +82,7 @@ export default {
 	"shutdown-when-complete-tips": "一次性：下載佇列清空後自動關閉電腦",
 	"shutdown-countdown-title": "{{seconds}} 秒後關機…",
 	"shutdown-countdown-cancel": "取消",
+	"shutdown-failed": "關機失敗，請檢查權限。",
 	"auto-purge-record": "當結束程式時自動清除下載紀錄",
 	ui: "使用者介面",
 	appearance: "外觀",

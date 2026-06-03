@@ -93,6 +93,7 @@ export default {
 	"shutdown-when-complete-tips": "一次性：下载队列清空后自动关闭电脑",
 	"shutdown-countdown-title": "{{seconds}} 秒后关机…",
 	"shutdown-countdown-cancel": "取消",
+	"shutdown-failed": "关机失败，请检查权限。",
 	"auto-purge-record": "当应用退出时自动清除下载记录",
 	"purge-record-on-start": "当应用启动时清除下载记录",
 	ui: "界面",
