@@ -955,7 +955,10 @@ export default {
 			try {
 				await usePreferenceStore().save({ shutdownWhenComplete: false });
 			} catch (err) {
-				logger.warn("[Risuko] failed to save shutdownWhenComplete preference:", err?.message || err);
+				logger.warn(
+					"[Risuko] failed to save shutdownWhenComplete preference:",
+					err?.message || err,
+				);
 			}
 			try {
 				await invoke("shutdown_system");

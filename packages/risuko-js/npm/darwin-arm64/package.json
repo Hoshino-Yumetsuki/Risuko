@@ -1,6 +1,6 @@
 {
 	"name": "@risuko/js-darwin-arm64",
-	"version": "0.3.4",
+	"version": "0.3.5",
 	"description": "Risuko JS native module for macOS ARM64",
 	"repository": {
 		"type": "git",
