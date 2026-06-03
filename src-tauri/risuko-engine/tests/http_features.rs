@@ -618,7 +618,10 @@ async fn spawn_quark_server(payload: Arc<Vec<u8>>) -> SocketAddr {
             tokio::spawn(async move {
                 let io = TokioIo::new(stream);
                 let _ = http1::Builder::new()
-                    .serve_connection(io, service_fn(move |req| handle_quark(req, payload.clone())))
+                    .serve_connection(
+                        io,
+                        service_fn(move |req| handle_quark(req, payload.clone())),
+                    )
                     .await;
             });
         }
@@ -717,7 +720,17 @@ async fn spawn_flaky_server(payload: Arc<Vec<u8>>) -> SocketAddr {
                     let _ = stream.flush().await;
                     // Drop `stream` -> connection closes before Content-Length.
                 } else {
-                    let start = start.unwrap_or(0);
+                    // Require Range header on retry to prove resume behavior
+                    let start = match start {
+                        Some(s) => s,
+                        None => {
+                            // No Range header on retry - fail the request
+                            let head = "HTTP/1.1 400 Bad Request\r\n\r\n";
+                            let _ = stream.write_all(head.as_bytes()).await;
+                            let _ = stream.flush().await;
+                            return;
+                        }
+                    };
                     let body = &payload[start..];
                     let head = if start > 0 {
                         format!(
