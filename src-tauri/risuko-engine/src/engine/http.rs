@@ -2196,12 +2196,18 @@ impl ChunkWriter {
 fn is_transient_single_error(e: &str) -> bool {
     if e.contains("cancelled")
         || e.contains(STALE_PART_REMOVED)
-        || e.contains("HTTP error:")
         || e.contains("Cloudflare")
         || e.contains("cloudflare")
         || e.contains("checksum")
         || e.contains("stalled")
     {
+        return false;
+    }
+    // 412 Precondition Failed on signed URLs (e.g. Quark) is often transient
+    if e.contains("HTTP error: 412") {
+        return true;
+    }
+    if e.contains("HTTP error:") {
         return false;
     }
     e.contains("Download failed:")

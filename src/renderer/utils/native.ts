@@ -350,16 +350,8 @@ export const moveTaskFilesToTrash = async (
 		if (partPath) {
 			add(`${partPath}.ytdl`);
 			add(chunkMetaPath(partPath));
-		}
-
-		if (path.toLowerCase().endsWith(TEMP_DOWNLOAD_SUFFIX)) {
-			const basePath = stripTempDownloadSuffix(path);
-			add(`${basePath}.ytdl`);
-			add(`${basePath}${TEMP_DOWNLOAD_SUFFIX}.ytdl`);
+		} else if (path.toLowerCase().endsWith(TEMP_DOWNLOAD_SUFFIX)) {
 			add(chunkMetaPath(path));
-		} else {
-			add(`${path}${TEMP_DOWNLOAD_SUFFIX}.ytdl`);
-			add(chunkMetaPath(`${path}${TEMP_DOWNLOAD_SUFFIX}`));
 		}
 
 		return [...set];
