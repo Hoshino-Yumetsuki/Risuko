@@ -984,6 +984,9 @@ async fn run_single_uri_download(
                     last_modified_header = probe.last_modified.clone();
                 }
                 connections.store(split as u32, Ordering::Relaxed);
+                tracing::debug!(
+                    "run_single_uri_download calling run_multi_chunk: part_path={part_path:?}, filename={filename:?}"
+                );
                 let result = run_multi_chunk(
                     &range_client,
                     uri,
@@ -1713,6 +1716,9 @@ async fn run_multi_chunk(
         return Err(format!("fsync before rename failed: {e}"));
     }
     delete_chunk_meta(part_path);
+    tracing::debug!(
+        "run_multi_chunk finalizing: part_path={part_path:?}, filename={filename:?}"
+    );
     finalize_download(part_path, filename, dir_path)
 }
 
@@ -2404,6 +2410,9 @@ async fn run_single_download(
     }
 
     result?;
+    tracing::debug!(
+        "run_single_download finalizing: part_path={part_path:?}, final_filename={final_filename:?}"
+    );
     let final_path = finalize_download(part_path, &final_filename, dir_path)?;
     Ok((final_path, resp_last_modified))
 }
@@ -2498,6 +2507,9 @@ fn finalize_download(part_path: &Path, filename: &str, dir_path: &Path) -> Resul
         filename.to_string()
     };
     let final_path = dir_path.join(&final_name);
+    tracing::debug!(
+        "finalize_download: part_path={part_path:?}, filename={filename:?}, final_path={final_path:?}"
+    );
     if part_path != final_path {
         fs::rename(part_path, &final_path).map_err(|e| format!("Failed to rename: {e}"))?;
     }
@@ -2614,15 +2626,24 @@ fn adopt_suggested_filename(
     dir_path: &Path,
 ) -> Option<(String, std::path::PathBuf)> {
     let candidate = sanitize_filename(suggested);
+    tracing::debug!(
+        "adopt_suggested_filename: candidate={candidate:?}, current={current_filename:?}, \
+         current_part={current_part_path:?}"
+    );
     if candidate.is_empty() || candidate == current_filename {
+        tracing::debug!("adopt_suggested_filename: rejected (empty or same name)");
         return None;
     }
     // Refuse to rename a download that already has bytes on disk
-    if current_part_path.exists()
+    let current_has_bytes = current_part_path.exists()
         && fs::metadata(current_part_path)
             .map(|m| m.len() > 0)
-            .unwrap_or(false)
-    {
+            .unwrap_or(false);
+    tracing::debug!(
+        "adopt_suggested_filename: current_has_bytes={current_has_bytes}"
+    );
+    if current_has_bytes {
+        tracing::debug!("adopt_suggested_filename: rejected (current .part has bytes)");
         return None;
     }
     let new_part = if candidate.ends_with(PART_SUFFIX) {
@@ -2633,14 +2654,19 @@ fn adopt_suggested_filename(
     // Don't trample another download that's already mid-flight under
     // the suggested filename. A `.part` with bytes belongs to a
     // different task; leaving it alone preserves their work
-    if new_part != current_part_path
+    let new_part_has_bytes = new_part != current_part_path
         && new_part.exists()
         && fs::metadata(&new_part)
             .map(|m| m.len() > 0)
-            .unwrap_or(false)
-    {
+            .unwrap_or(false);
+    tracing::debug!(
+        "adopt_suggested_filename: new_part={new_part:?}, new_part_has_bytes={new_part_has_bytes}"
+    );
+    if new_part_has_bytes {
+        tracing::debug!("adopt_suggested_filename: rejected (target .part has bytes)");
         return None;
     }
+    tracing::debug!("adopt_suggested_filename: accepted -> {candidate:?}, {new_part:?}");
     Some((candidate, new_part))
 }
 
@@ -2652,6 +2678,13 @@ fn adopt_content_type_extension(
 ) -> Option<(String, std::path::PathBuf)> {
     let candidate = filename_with_content_type_extension(current_filename, Some(content_type))?;
     let new_part = dir_path.join(format!("{candidate}{PART_SUFFIX}"));
+    if current_part_path.exists()
+        && fs::metadata(current_part_path)
+            .map(|m| m.len() > 0)
+            .unwrap_or(false)
+    {
+        return Some((candidate, current_part_path.to_path_buf()));
+    }
     if new_part != current_part_path
         && new_part.exists()
         && fs::metadata(&new_part)
@@ -2659,13 +2692,6 @@ fn adopt_content_type_extension(
             .unwrap_or(false)
     {
         return None;
-    }
-    if current_part_path.exists()
-        && fs::metadata(current_part_path)
-            .map(|m| m.len() > 0)
-            .unwrap_or(false)
-    {
-        return Some((candidate, current_part_path.to_path_buf()));
     }
     Some((candidate, new_part))
 }
@@ -2775,9 +2801,8 @@ fn is_placeholder_download_name(name: &str) -> bool {
 ///
 /// Returns `None` when no usable filename is present
 pub fn filename_from_content_disposition(headers: &HeaderMap) -> Option<String> {
-    let raw = headers
-        .get("content-disposition")
-        .and_then(|v| v.to_str().ok())?;
+    let raw_bytes = headers.get("content-disposition")?.as_bytes();
+    let raw = String::from_utf8_lossy(raw_bytes);
 
     // Prefer filename* (RFC 5987) since it can carry non-ASCII names.
     let mut star_value: Option<String> = None;
