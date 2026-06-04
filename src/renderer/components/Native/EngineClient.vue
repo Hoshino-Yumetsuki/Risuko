@@ -147,7 +147,7 @@ export default {
 		},
 		lowSpeedStrikeThreshold() {
 			const raw = usePreferenceStore().config.lowSpeedStrikeThreshold;
-			return normalizePositiveNumber(raw, 5, 1, 20);
+			return Math.floor(normalizePositiveNumber(raw, 5, 1, 20));
 		},
 		preventSleepWhileDownloading() {
 			const raw = usePreferenceStore().config.preventSleepWhileDownloading;
@@ -406,7 +406,6 @@ export default {
 				| "status"
 				| "downloadSpeed"
 				| "totalLength"
-				| "completedLength"
 				| "seeder"
 				| "bittorrent"
 				| "ed2kLink"
@@ -423,7 +422,9 @@ export default {
 			// the swarm can rebuild, leaving speed permanently at zero. Filter
 			// skip tasks whose totalLength is still zero
 			const eligibleTasks = tasks.filter((task) => {
-				if (!taskBenefitsFromLowSpeedRecovery(task)) return false;
+				if (!taskBenefitsFromLowSpeedRecovery(task)) {
+					return false;
+				}
 				const total = Number(task?.totalLength || 0);
 				return total > 0;
 			});

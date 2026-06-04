@@ -2662,8 +2662,8 @@ fn adopt_suggested_filename(
     tracing::debug!(
         "adopt_suggested_filename: new_part={new_part:?}, new_part_has_bytes={new_part_has_bytes}"
     );
-    if new_part_has_bytes && current_part_path.exists() {
-        tracing::debug!("adopt_suggested_filename: rejected (target .part has bytes and current .part still exists)");
+    if new_part_has_bytes {
+        tracing::debug!("adopt_suggested_filename: rejected (target .part has bytes)");
         return None;
     }
     tracing::debug!("adopt_suggested_filename: accepted -> {candidate:?}, {new_part:?}");
@@ -2678,21 +2678,20 @@ fn adopt_content_type_extension(
 ) -> Option<(String, std::path::PathBuf)> {
     let candidate = filename_with_content_type_extension(current_filename, Some(content_type))?;
     let new_part = dir_path.join(format!("{candidate}{PART_SUFFIX}"));
-    if new_part != current_part_path
-        && new_part.exists()
-        && fs::metadata(&new_part)
-            .map(|m| m.len() > 0)
-            .unwrap_or(false)
-        && current_part_path.exists()
-    {
-        return None;
-    }
     if current_part_path.exists()
         && fs::metadata(current_part_path)
             .map(|m| m.len() > 0)
             .unwrap_or(false)
     {
         return Some((candidate, current_part_path.to_path_buf()));
+    }
+    if new_part != current_part_path
+        && new_part.exists()
+        && fs::metadata(&new_part)
+            .map(|m| m.len() > 0)
+            .unwrap_or(false)
+    {
+        return None;
     }
     Some((candidate, new_part))
 }
