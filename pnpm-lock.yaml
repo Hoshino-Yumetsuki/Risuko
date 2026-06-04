@@ -36,8 +36,8 @@ importers:
         specifier: ^2.2.1
         version: 2.2.1(@vueuse/core@14.3.0(vue@3.5.35(typescript@6.0.3)))(vue@3.5.35(typescript@6.0.3))
       reka-ui:
-        specifier: ^2.9.8
-        version: 2.9.8(vue@3.5.35(typescript@6.0.3))
+        specifier: ^2.9.9
+        version: 2.9.9(vue@3.5.35(typescript@6.0.3))
       tailwind-merge:
         specifier: ^3.6.0
         version: 3.6.0
@@ -49,7 +49,7 @@ importers:
         version: 1.4.0
       vaul-vue:
         specifier: ^0.4.1
-        version: 0.4.1(reka-ui@2.9.8(vue@3.5.35(typescript@6.0.3)))(vue@3.5.35(typescript@6.0.3))
+        version: 0.4.1(reka-ui@2.9.9(vue@3.5.35(typescript@6.0.3)))(vue@3.5.35(typescript@6.0.3))
       vee-validate:
         specifier: ^4.15.1
         version: 4.15.1(vue@3.5.35(typescript@6.0.3))
@@ -76,8 +76,8 @@ importers:
         specifier: ^3.5.35
         version: 3.5.35
       axios:
-        specifier: ^1.16.1
-        version: 1.16.1
+        specifier: ^1.17.0
+        version: 1.17.0
       cfonts:
         specifier: ^3.3.1
         version: 3.3.1
@@ -135,44 +135,44 @@ importers:
   packages/risuko-cli:
     optionalDependencies:
       '@risuko/cli-darwin-arm64':
-        specifier: 0.3.5
-        version: 0.3.5
+        specifier: 0.3.6
+        version: 0.3.6
       '@risuko/cli-darwin-x64':
-        specifier: 0.3.5
-        version: 0.3.5
+        specifier: 0.3.6
+        version: 0.3.6
       '@risuko/cli-linux-arm64-gnu':
-        specifier: 0.3.5
-        version: 0.3.5
+        specifier: 0.3.6
+        version: 0.3.6
       '@risuko/cli-linux-x64-gnu':
-        specifier: 0.3.5
-        version: 0.3.5
+        specifier: 0.3.6
+        version: 0.3.6
       '@risuko/cli-win32-arm64-msvc':
-        specifier: 0.3.5
-        version: 0.3.5
+        specifier: 0.3.6
+        version: 0.3.6
       '@risuko/cli-win32-x64-msvc':
-        specifier: 0.3.5
-        version: 0.3.5
+        specifier: 0.3.6
+        version: 0.3.6
 
   packages/risuko-js:
     optionalDependencies:
       '@risuko/js-darwin-arm64':
-        specifier: 0.3.5
-        version: 0.3.5
+        specifier: 0.3.6
+        version: 0.3.6
       '@risuko/js-darwin-x64':
-        specifier: 0.3.5
-        version: 0.3.5
+        specifier: 0.3.6
+        version: 0.3.6
       '@risuko/js-linux-arm64-gnu':
-        specifier: 0.3.5
-        version: 0.3.5
+        specifier: 0.3.6
+        version: 0.3.6
       '@risuko/js-linux-x64-gnu':
-        specifier: 0.3.5
-        version: 0.3.5
+        specifier: 0.3.6
+        version: 0.3.6
       '@risuko/js-win32-arm64-msvc':
-        specifier: 0.3.5
-        version: 0.3.5
+        specifier: 0.3.6
+        version: 0.3.6
       '@risuko/js-win32-x64-msvc':
-        specifier: 0.3.5
-        version: 0.3.5
+        specifier: 0.3.6
+        version: 0.3.6
 
 packages:
 
@@ -365,65 +365,65 @@ packages:
     resolution: {integrity: sha512-tmmZ3lQxAe/k/+rNnXQRawJ4NjxO2hqiOLTHvWchtGZULp4RyFeh6aU4XdOYBFe2KE1oShQTv4AblOs2iOrNnQ==}
     engines: {node: '>= 10.0.0'}
 
-  '@risuko/cli-darwin-arm64@0.3.5':
-    resolution: {integrity: sha512-IxxfBQ9ruFiSBZP1KbCEv6U/60+xvxkq/AvtRzjaBNqptuaiJjRPnb39PLKEIiol7WJKhJB8gFB7x3n+8uP7KA==}
+  '@risuko/cli-darwin-arm64@0.3.6':
+    resolution: {integrity: sha512-keFkgN9qafh4vI1rG7Zd3dWMe9OqYlwilAZkG7cP49wrmmi8lpZN/LtRPoJPlK3A0OqJ5LjNta/9A2t+RJrYSA==}
     cpu: [arm64]
     os: [darwin]
 
-  '@risuko/cli-darwin-x64@0.3.5':
-    resolution: {integrity: sha512-PbY0mC2PD6E5sM+qQQhbE3ANxRECKUyDxu3rTyXYA7L9S2RNO4BKiE8+xWyTzHWwKZdgyAgv3vCZVu9tjj9vLQ==}
+  '@risuko/cli-darwin-x64@0.3.6':
+    resolution: {integrity: sha512-2XvPmshK1eAoeCUjnHoXuL54jYVUb/gq+LQRv1uo8sMUg1+h5qioWVn0tTlI4xjsC8IM+Tib+yW0cKo2gdKbOQ==}
     cpu: [x64]
     os: [darwin]
 
-  '@risuko/cli-linux-arm64-gnu@0.3.5':
-    resolution: {integrity: sha512-vMtJFRhcI7PyAoW8S3aaPmpDDqJPbrk5GVK4BTLVi+bCYO8QB/rfLYrPIcBXXyIlp3du9/fE3/eWZKD2hHuQSQ==}
+  '@risuko/cli-linux-arm64-gnu@0.3.6':
+    resolution: {integrity: sha512-8N4wRqJhb0nhpug+GWFD1HTcsAJx+Wjtk4UM8NHPHcJ8mZbfAeX+iEIYQ+66mQ3WsK+H5W6wjrrgfCitNTptWg==}
     cpu: [arm64]
     os: [linux]
 
-  '@risuko/cli-linux-x64-gnu@0.3.5':
-    resolution: {integrity: sha512-NHuNRQOuXRNQuKYxd/IK/yoJLJ8UAqIhvICxB/H5XWRPy5SJI1xgfV5geHzS8lB2rkRcFCJk4i0ghTHl5wr/ew==}
+  '@risuko/cli-linux-x64-gnu@0.3.6':
+    resolution: {integrity: sha512-TXRpkWqjLVesY7KkurV/XJMC4/sOouN9OwgDTldeRJnuQFRfm/PeA06lYItYe6hDKAGvf+mlbo4r0Dd2aLjJZw==}
     cpu: [x64]
     os: [linux]
 
-  '@risuko/cli-win32-arm64-msvc@0.3.5':
-    resolution: {integrity: sha512-PPlnGCC8rLDbwV8Po35xoXqqDtMcYCClDknBZLtOM0hEH/p7uPhR5kX6zjTaWZOTzGpPw2cSFFCTB3O0nEh4Gg==}
+  '@risuko/cli-win32-arm64-msvc@0.3.6':
+    resolution: {integrity: sha512-6bk6fs3DN0Fgpxk5tNeDP5qL1o2HWO4J/npoauzbLvoWPxURoLKZhGcfY71StZy/aT6jCA4gK/kPoEfOdweyZw==}
     cpu: [arm64]
     os: [win32]
 
-  '@risuko/cli-win32-x64-msvc@0.3.5':
-    resolution: {integrity: sha512-ppAv0VorgcbWhZw1hmgYW0bqgr+QytghKoTOYmlUlR12rVIDt5/7D4ZTrEH/ovQ7+eBoirxfsCMVYP3+qAq6Xg==}
+  '@risuko/cli-win32-x64-msvc@0.3.6':
+    resolution: {integrity: sha512-v720sQ8vn4/GkXC4Gvb8Ik0/jlHAS5wH6Xa4XohLdqvQQeoKQ01wM0k6L2ziT35IoyA6Wt9KX6IuIrzsElbNLw==}
     cpu: [x64]
     os: [win32]
 
-  '@risuko/js-darwin-arm64@0.3.5':
-    resolution: {integrity: sha512-pEDPL6c4flE63txdaNcTESGRhDc9S5yzRc+tLt8VZRdAv8V9IoCW1onvuidl9itYSVCtGQQ9v16NFhvZOeXftA==}
+  '@risuko/js-darwin-arm64@0.3.6':
+    resolution: {integrity: sha512-etFesBb3a9EVuoXYJYXAobOnykprfJUPcvP+tlvK9lXrmiwLU6NrdZnTkQmln8j7SMmmsreoKDW7HcETh109wQ==}
     cpu: [arm64]
     os: [darwin]
 
-  '@risuko/js-darwin-x64@0.3.5':
-    resolution: {integrity: sha512-4n18CvUSRAr+zVTqEvn0SxSfnjgja+kgoq1TdMSb/oexIX7fCSUjL7MUadMRPDJvw4kdZ0adRLYc6ajpeLCOLg==}
+  '@risuko/js-darwin-x64@0.3.6':
+    resolution: {integrity: sha512-Z+fqedmTqmbM0tkQ72RHqTTuNaHDLFLX5+gFcPgGHavCP1CjXwxF5rJTsAzqvDMuZcOypgyIwxgG3gVakOuQiA==}
     cpu: [x64]
     os: [darwin]
 
-  '@risuko/js-linux-arm64-gnu@0.3.5':
-    resolution: {integrity: sha512-ZRep16lXlaYLlAYNtzqaXFEc60B9sNOLtZ19R8BcMtSjqb9Df8DoO/24Sens6pHWCoZhT5k6PC8bEmSZuqW70A==}
+  '@risuko/js-linux-arm64-gnu@0.3.6':
+    resolution: {integrity: sha512-HnjPeO87Q9TpZHLWI8RwCUo40hF8wC0TunhJBhavFNjHrYl+mkxnDq71ce2+kJPjE1Te9E3ILB98eX6Ekzu2HA==}
     cpu: [arm64]
     os: [linux]
     libc: [glibc]
 
-  '@risuko/js-linux-x64-gnu@0.3.5':
-    resolution: {integrity: sha512-r4wtsavEBzLbDDDdiAJ9+8HBpI/6x2NR2rr4H3KonWvyGJjQiO4iQSAXzWjmNcRxZDn68ScGWgyXADp+n1VYvQ==}
+  '@risuko/js-linux-x64-gnu@0.3.6':
+    resolution: {integrity: sha512-IzkHNsHFUhuDc7xMuwd/tlGaaJeYAbXC0UAk5Cl3KW+oByEahRLbBVb4RI9bI3us27m1S3cREx+ZpjaQeUazqQ==}
     cpu: [x64]
     os: [linux]
     libc: [glibc]
 
-  '@risuko/js-win32-arm64-msvc@0.3.5':
-    resolution: {integrity: sha512-/Zcm/dRFG0FH+UdzpoeivYfoPcz3pB/RLoQr1ZikBFqXrJ0t4f3Psr+P+ywhAwk675Iw2owQl9ALf+7kKAgBMw==}
+  '@risuko/js-win32-arm64-msvc@0.3.6':
+    resolution: {integrity: sha512-dzaNc+ziG/iNrBuKRNa+rKIWPHQBdVeggCdhu4PbQSxIja/vAjeEbvYtAHeVNfWHBu1nSF3RE47sqwtCninmhg==}
     cpu: [arm64]
     os: [win32]
 
-  '@risuko/js-win32-x64-msvc@0.3.5':
-    resolution: {integrity: sha512-x2iNKBCOBVfUoSB7OiFwea7oZd4phf9WbCBPJLlW0pdMIT9P0vjxIzJp9FMZow6g/4FcFjKuATGwXg3K/neSLA==}
+  '@risuko/js-win32-x64-msvc@0.3.6':
+    resolution: {integrity: sha512-R5zA+yjzCm/MLx36oX+XuMYx7AR1PvNnNCOyF95gC+Ehv2+SSxuL9AF5gVyxTDaV+S0a75h0q0vQvKeOOwEL4w==}
     cpu: [x64]
     os: [win32]
 
@@ -862,8 +862,8 @@ packages:
   asynckit@0.4.0:
     resolution: {integrity: sha512-Oei9OH4tRh0YqU3GxhX79dM/mwVgvbZJaSNaRk+bshkj0S5cfHcgYakreBjrHwatXKbz+IoIdYLxrKim2MjW0Q==}
 
-  axios@1.16.1:
-    resolution: {integrity: sha512-caYkukvroVPO8KrzuJEb50Hm07KwfBZPEC3VeFHTsqWHvKTsy54hjJz9BS/cdaypROE2rH6xvm9mHX4fgWkr3A==}
+  axios@1.17.0:
+    resolution: {integrity: sha512-J8SwNxprqqpbfenehxWYXE7CW+wM1BB4w3+N+g+/Wx40xM4rsLrfPmHHxSWIxJLYDgSY/HqlFPIYb2/S3rxafw==}
 
   binary-extensions@2.3.0:
     resolution: {integrity: sha512-Ceh+7ox5qe7LJuLHoY0feh3pHuUDHAcRUeyL2VYghZwfpkNIy/+8Ocg0a3UuSoYzavmylwuLWQOf3hl0jjMMIw==}
@@ -1370,8 +1370,8 @@ packages:
     resolution: {integrity: sha512-9u/XQ1pvrQtYyMpZe7DXKv2p5CNvyVwzUB6uhLAnQwHMSgKMBR62lc7AHljaeteeHXn11XTAaLLUVZYVZyuRBQ==}
     engines: {node: '>= 20.19.0'}
 
-  reka-ui@2.9.8:
-    resolution: {integrity: sha512-7dxaBJ6nQ0zOQZXPV45219tTEgZPstmihBLS9ABPhSiPiJ8SiF0sacfZHFaBptS0v9N4tzsevq+8MNBpE4p5JQ==}
+  reka-ui@2.9.9:
+    resolution: {integrity: sha512-/e+hdF9vP8E2kPrKR4RdgMQQsfpCr8l436Zn8GRWM3jKT9EG1lOO/UFMGBVEnrMLOVoJSjjmIFrej4tMOb+6qQ==}
     peerDependencies:
       vue: '>= 3.4.0'
 
@@ -1794,40 +1794,40 @@ snapshots:
       '@parcel/watcher-win32-x64': 2.5.6
     optional: true
 
-  '@risuko/cli-darwin-arm64@0.3.5':
+  '@risuko/cli-darwin-arm64@0.3.6':
     optional: true
 
-  '@risuko/cli-darwin-x64@0.3.5':
+  '@risuko/cli-darwin-x64@0.3.6':
     optional: true
 
-  '@risuko/cli-linux-arm64-gnu@0.3.5':
+  '@risuko/cli-linux-arm64-gnu@0.3.6':
     optional: true
 
-  '@risuko/cli-linux-x64-gnu@0.3.5':
+  '@risuko/cli-linux-x64-gnu@0.3.6':
     optional: true
 
-  '@risuko/cli-win32-arm64-msvc@0.3.5':
+  '@risuko/cli-win32-arm64-msvc@0.3.6':
     optional: true
 
-  '@risuko/cli-win32-x64-msvc@0.3.5':
+  '@risuko/cli-win32-x64-msvc@0.3.6':
     optional: true
 
-  '@risuko/js-darwin-arm64@0.3.5':
+  '@risuko/js-darwin-arm64@0.3.6':
     optional: true
 
-  '@risuko/js-darwin-x64@0.3.5':
+  '@risuko/js-darwin-x64@0.3.6':
     optional: true
 
-  '@risuko/js-linux-arm64-gnu@0.3.5':
+  '@risuko/js-linux-arm64-gnu@0.3.6':
     optional: true
 
-  '@risuko/js-linux-x64-gnu@0.3.5':
+  '@risuko/js-linux-x64-gnu@0.3.6':
     optional: true
 
-  '@risuko/js-win32-arm64-msvc@0.3.5':
+  '@risuko/js-win32-arm64-msvc@0.3.6':
     optional: true
 
-  '@risuko/js-win32-x64-msvc@0.3.5':
+  '@risuko/js-win32-x64-msvc@0.3.6':
     optional: true
 
   '@rolldown/binding-android-arm64@1.0.3':
@@ -2223,7 +2223,7 @@ snapshots:
 
   asynckit@0.4.0: {}
 
-  axios@1.16.1:
+  axios@1.17.0:
     dependencies:
       follow-redirects: 1.16.0
       form-data: 4.0.5
@@ -2649,7 +2649,7 @@ snapshots:
 
   readdirp@5.0.0: {}
 
-  reka-ui@2.9.8(vue@3.5.35(typescript@6.0.3)):
+  reka-ui@2.9.9(vue@3.5.35(typescript@6.0.3)):
     dependencies:
       '@floating-ui/dom': 1.7.6
       '@floating-ui/vue': 1.1.11(vue@3.5.35(typescript@6.0.3))
@@ -2769,10 +2769,10 @@ snapshots:
       picomatch: 4.0.4
       webpack-virtual-modules: 0.6.2
 
-  vaul-vue@0.4.1(reka-ui@2.9.8(vue@3.5.35(typescript@6.0.3)))(vue@3.5.35(typescript@6.0.3)):
+  vaul-vue@0.4.1(reka-ui@2.9.9(vue@3.5.35(typescript@6.0.3)))(vue@3.5.35(typescript@6.0.3)):
     dependencies:
       '@vueuse/core': 10.11.1(vue@3.5.35(typescript@6.0.3))
-      reka-ui: 2.9.8(vue@3.5.35(typescript@6.0.3))
+      reka-ui: 2.9.9(vue@3.5.35(typescript@6.0.3))
       vue: 3.5.35(typescript@6.0.3)
     transitivePeerDependencies:
       - '@vue/composition-api'
