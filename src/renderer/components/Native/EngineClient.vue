@@ -28,7 +28,6 @@ import {
 const RETRY_STRATEGY_STATIC = "static";
 const RETRY_STRATEGY_EXPONENTIAL = "exponential";
 const AUTO_RETRY_MAX_DELAY_MS = 15 * 60 * 1000;
-const LOW_SPEED_STRIKE_THRESHOLD = 3;
 const LOW_SPEED_RECOVERY_COOLDOWN_MS = 30 * 1000;
 const LOW_SPEED_RESTART_WAIT_MS = 500;
 
@@ -145,6 +144,10 @@ export default {
 			const raw = usePreferenceStore().config.lowSpeedThreshold;
 			const kb = normalizePositiveNumber(raw, 20, 1, 10240);
 			return Math.floor(kb * 1024);
+		},
+		lowSpeedStrikeThreshold() {
+			const raw = usePreferenceStore().config.lowSpeedStrikeThreshold;
+			return normalizePositiveNumber(raw, 5, 1, 20);
 		},
 		preventSleepWhileDownloading() {
 			const raw = usePreferenceStore().config.preventSleepWhileDownloading;
@@ -402,6 +405,8 @@ export default {
 				| "gid"
 				| "status"
 				| "downloadSpeed"
+				| "totalLength"
+				| "completedLength"
 				| "seeder"
 				| "bittorrent"
 				| "ed2kLink"
@@ -416,10 +421,12 @@ export default {
 			// tasks (BT/ED2K/ADC/Gnutella/G2/giFT) take minutes to warm up and a
 			// force-pause aborts that warm-up; the cooldown then refires before
 			// the swarm can rebuild, leaving speed permanently at zero. Filter
-			// down to kinds that actually benefit before consulting the evaluator
-			const eligibleTasks = tasks.filter((task) =>
-				taskBenefitsFromLowSpeedRecovery(task),
-			);
+			// skip tasks whose totalLength is still zero
+			const eligibleTasks = tasks.filter((task) => {
+				if (!taskBenefitsFromLowSpeedRecovery(task)) return false;
+				const total = Number(task?.totalLength || 0);
+				return total > 0;
+			});
 			if (!eligibleTasks.length) {
 				this.lowSpeedStrikeMap = {};
 				this.lowSpeedRecoverAtMap = {};
@@ -439,7 +446,7 @@ export default {
 						};
 					}) as DownloadTask[],
 					thresholdBytes: this.lowSpeedThresholdBytes,
-					strikeThreshold: LOW_SPEED_STRIKE_THRESHOLD,
+					strikeThreshold: this.lowSpeedStrikeThreshold,
 					cooldownMs: LOW_SPEED_RECOVERY_COOLDOWN_MS,
 					nowMs: Date.now(),
 					strikeMap: this.lowSpeedStrikeMap,
@@ -985,6 +992,8 @@ export default {
 					| "gid"
 					| "status"
 					| "downloadSpeed"
+					| "totalLength"
+					| "completedLength"
 					| "seeder"
 					| "bittorrent"
 					| "ed2kLink"
@@ -1003,6 +1012,8 @@ export default {
 									"gid",
 									"status",
 									"downloadSpeed",
+									"totalLength",
+									"completedLength",
 									"seeder",
 									"bittorrent",
 									"ed2kLink",
