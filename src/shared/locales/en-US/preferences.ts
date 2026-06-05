@@ -55,6 +55,7 @@ export default {
 	"auto-retry-strategy-exponential": "Exponential backoff",
 	"auto-retry-interval": "Base retry interval",
 	"auto-retry-interval-unit": "seconds",
+	"worker-max-retries": "Max retries per worker piece",
 	"auto-detect-low-speed-tasks": "Auto detect low speed tasks",
 	"auto-detect-low-speed-tasks-tips":
 		"If a running task stays below the speed threshold, pause and restart it automatically.",

@@ -2379,8 +2379,13 @@ impl TaskManager {
                 .iter_mut()
                 .find(|t| t.gid == gid)
                 .ok_or_else(|| format!("Task {} not found or not paused", gid))?;
-            if task.status != TaskStatus::Paused {
+            if task.status != TaskStatus::Paused && task.status != TaskStatus::Error {
                 return Err(format!("Task {} not found or not paused", gid));
+            }
+            // Clear stale error state so the task re-enters the queue cleanly
+            if task.status == TaskStatus::Error {
+                task.error_code = None;
+                task.error_message = None;
             }
             is_torrent = task.kind == TaskKind::Torrent;
             if is_torrent {

@@ -463,6 +463,14 @@
                 <NumberInput v-model="form.autoRetryInterval" :min="1" :max="300" :step="1" />
               </div>
             </div>
+            <div v-if="form.autoRetry" class="settings-select-group">
+              <div class="settings-select-item">
+                <label class="settings-select-item-label">
+                  {{ $t('preferences.worker-max-retries') }}
+                </label>
+                <NumberInput v-model="form.workerMaxRetries" :min="1" :max="20" :step="1" />
+              </div>
+            </div>
             <div class="settings-row">
               <div class="settings-row-content">
                 <div class="settings-row-title">
@@ -678,6 +686,7 @@ const initForm = (config) => {
 		autoRetry,
 		autoRetryInterval,
 		autoRetryStrategy,
+		workerMaxRetries,
 		autoHideWindow,
 		btForceEncryption,
 		btSaveMetadata,
@@ -717,6 +726,7 @@ const initForm = (config) => {
 			autoRetryStrategy === RETRY_STRATEGY_EXPONENTIAL
 				? RETRY_STRATEGY_EXPONENTIAL
 				: RETRY_STRATEGY_STATIC,
+		workerMaxRetries: normalizePositiveInt(workerMaxRetries, 5, 1, 20),
 		autoHideWindow: parseBooleanConfig(autoHideWindow),
 		btForceEncryption: parseBooleanConfig(btForceEncryption),
 		btSaveMetadata: parseBooleanConfig(btSaveMetadata),
@@ -1075,6 +1085,15 @@ export default {
 					this.form.autoRetryStrategy === RETRY_STRATEGY_EXPONENTIAL
 						? RETRY_STRATEGY_EXPONENTIAL
 						: RETRY_STRATEGY_STATIC;
+			}
+
+			if ("workerMaxRetries" in data) {
+				data.workerMaxRetries = normalizePositiveInt(
+					this.form.workerMaxRetries,
+					5,
+					1,
+					20,
+				);
 			}
 
 			logger.log("[Risuko] preference changed data:", data);

@@ -859,6 +859,14 @@ async fn run_single_uri_download(
         })
         .unwrap_or(8)
         .max(1) as usize;
+    let max_worker_retries = options
+        .get("max-worker-retries")
+        .and_then(|v| {
+            v.as_u64()
+                .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+        })
+        .map(|v| v.max(1) as u32)
+        .unwrap_or(CHUNK_MAX_RETRIES);
 
     // aria2-compatible `min-split-size` (bytes, with K/M suffixes accepted).
     // Default 1 MiB — smaller files use a single connection.
@@ -1006,6 +1014,7 @@ async fn run_single_uri_download(
                     &chunk_completed,
                     stall.clone(),
                     falloc_mode,
+                    max_worker_retries,
                 )
                 .await;
                 if let Ok(ref path) = result {
@@ -1098,7 +1107,7 @@ async fn run_single_uri_download(
 
         match attempt {
             Err(ref e)
-                if single_attempt < SINGLE_MAX_RETRIES
+                if single_attempt < max_worker_retries
                     && !cancelled.load(Ordering::Relaxed)
                     && !cancel_token.is_cancelled()
                     && is_transient_single_error(e) =>
@@ -1106,7 +1115,7 @@ async fn run_single_uri_download(
                 single_attempt += 1;
                 let resumed = completed.load(Ordering::Relaxed);
                 tracing::warn!(
-                    "Single-connection attempt {single_attempt}/{SINGLE_MAX_RETRIES} failed \
+                    "Single-connection attempt {single_attempt}/{max_worker_retries} failed \
                      ({e}); resuming from {resumed} bytes"
                 );
                 speed.store(0, Ordering::Relaxed);
@@ -1157,6 +1166,7 @@ async fn run_single_uri_download(
                             &chunk_completed,
                             stall.clone(),
                             falloc_mode,
+                            max_worker_retries,
                         )
                         .await;
                         if let Ok(ref path) = mc_result {
@@ -1533,6 +1543,7 @@ async fn run_multi_chunk(
     chunk_completed: &[Arc<AtomicU64>],
     stall: StallWatchdog,
     falloc_mode: super::falloc::Mode,
+    max_retries: u32,
 ) -> Result<PathBuf, String> {
     total.store(content_length, Ordering::Relaxed);
 
@@ -1649,6 +1660,7 @@ async fn run_multi_chunk(
                 tl,
                 etag,
                 wc,
+                max_retries,
             )
             .await
         }));
@@ -1716,9 +1728,7 @@ async fn run_multi_chunk(
         return Err(format!("fsync before rename failed: {e}"));
     }
     delete_chunk_meta(part_path);
-    tracing::debug!(
-        "run_multi_chunk finalizing: part_path={part_path:?}, filename={filename:?}"
-    );
+    tracing::debug!("run_multi_chunk finalizing: part_path={part_path:?}, filename={filename:?}");
     finalize_download(part_path, filename, dir_path)
 }
 
@@ -1739,6 +1749,7 @@ async fn piece_worker(
     task_limiter: Arc<SpeedLimiter>,
     expected_etag: Option<String>,
     worker_completed: Option<Arc<AtomicU64>>,
+    max_retries: u32,
 ) -> Result<(), String> {
     let mut retry_count: u32 = 0;
     loop {
@@ -1799,15 +1810,15 @@ async fn piece_worker(
                     // pin a worker in an infinite loop
                     queue.release(idx);
                     retry_count += 1;
-                    if retry_count > CHUNK_MAX_RETRIES {
+                    if retry_count > max_retries {
                         return Err(format!(
-                            "Worker {worker_id} failed after {CHUNK_MAX_RETRIES} retries on \
+                            "Worker {worker_id} failed after {max_retries} retries on \
                              piece {idx}: server closed stream early"
                         ));
                     }
                     tracing::warn!(
                         "Worker {worker_id} piece {idx} attempt \
-                         {retry_count}/{CHUNK_MAX_RETRIES}: early EOF, will retry"
+                         {retry_count}/{max_retries}: early EOF, will retry"
                     );
                     tokio::time::sleep(std::time::Duration::from_secs(retry_count as u64)).await;
                 }
@@ -1819,15 +1830,15 @@ async fn piece_worker(
             Some(e) => {
                 queue.release(idx);
                 retry_count += 1;
-                if retry_count > CHUNK_MAX_RETRIES {
+                if retry_count > max_retries {
                     return Err(format!(
-                        "Worker {worker_id} failed after {CHUNK_MAX_RETRIES} retries on \
+                        "Worker {worker_id} failed after {max_retries} retries on \
                          piece {idx}: {e}"
                     ));
                 }
                 tracing::warn!(
                     "Worker {worker_id} piece {idx} attempt \
-                     {retry_count}/{CHUNK_MAX_RETRIES}: {e}, will retry"
+                     {retry_count}/{max_retries}: {e}, will retry"
                 );
                 tokio::time::sleep(std::time::Duration::from_secs(retry_count as u64)).await;
             }
@@ -2639,9 +2650,7 @@ fn adopt_suggested_filename(
         && fs::metadata(current_part_path)
             .map(|m| m.len() > 0)
             .unwrap_or(false);
-    tracing::debug!(
-        "adopt_suggested_filename: current_has_bytes={current_has_bytes}"
-    );
+    tracing::debug!("adopt_suggested_filename: current_has_bytes={current_has_bytes}");
     if current_has_bytes {
         tracing::debug!("adopt_suggested_filename: rejected (current .part has bytes)");
         return None;
