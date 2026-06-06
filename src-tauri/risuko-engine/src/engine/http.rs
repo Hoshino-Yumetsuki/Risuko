@@ -22,11 +22,6 @@ const PART_SUFFIX: &str = ".part";
 const DEFAULT_MIN_SPLIT_SIZE: u64 = 1024 * 1024;
 /// Max retries per piece on transient errors
 const CHUNK_MAX_RETRIES: u32 = 5;
-/// Max auto-retries for the single-connection path on transient network
-/// errors. Each retry resumes in place from the partial `.part` file, so a
-/// flaky link recovers without dropping the task to Error / needing a manual
-/// resume. Mirrors the per-piece retry budget of the multi-chunk path
-const SINGLE_MAX_RETRIES: u32 = 5;
 /// Resume granularity: every multi-chunk download is divided into 1 MiB pieces.
 /// Workers pull pieces off a shared queue (work-stealing for free) and resume
 /// preserves per-piece byte progress so a SIGKILL never loses more than the
