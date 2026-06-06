@@ -15,6 +15,8 @@ export interface TaskRoutingRule {
 export interface AppConfig {
 	locale: string;
 	theme?: string;
+	fontFamily?: string;
+	fontSize?: string;
 	dir?: string;
 	split?: number;
 	allProxy?: string;

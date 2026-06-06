@@ -183,6 +183,107 @@
 		display: flex;
 		align-items: center;
 	}
+	.typography-controls {
+		display: flex;
+		flex-direction: column;
+		gap: 10px;
+		margin-bottom: 6px;
+		padding-bottom: 14px;
+		border-bottom: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
+	}
+	.typography-row {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 14px;
+		min-width: 0;
+	}
+	.typography-row-main {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		min-width: 0;
+	}
+	.typography-row--font .typography-row-main {
+		flex: 0 0 230px;
+	}
+	.typography-row--size .typography-row-main {
+		flex: 0 0 auto;
+	}
+	.typography-font-select [data-slot="select-trigger"] {
+		width: 132px !important;
+		height: 34px;
+	}
+	.typography-sample {
+		flex: 1 1 auto;
+		min-width: 0;
+		padding: 7px 10px;
+		border: 1px solid color-mix(in srgb, var(--border) 68%, transparent);
+		border-radius: calc(var(--radius) - 2px);
+		color: var(--muted-foreground);
+		background: color-mix(in srgb, var(--muted) 54%, transparent);
+		font-size: 13px;
+		line-height: 1.35;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+	.typography-sample--system {
+		font-family: var(--app-font-family-system);
+	}
+	.typography-sample--rounded {
+		font-family: var(--app-font-family-rounded);
+	}
+	.typography-sample--serif {
+		font-family: var(--app-font-family-serif);
+	}
+	.typography-sample--mono {
+		font-family: var(--app-font-family-mono);
+	}
+	.font-size-segmented {
+		display: inline-grid;
+		grid-template-columns: repeat(4, minmax(58px, 1fr));
+		gap: 2px;
+		min-width: 256px;
+		padding: 3px;
+		border: 1px solid var(--border);
+		border-radius: calc(var(--radius) - 2px);
+		background: color-mix(in srgb, var(--muted) 66%, transparent);
+	}
+	.font-size-segment {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		min-width: 0;
+		min-height: 28px;
+		padding: 0 10px;
+		border: 0;
+		border-radius: calc(var(--radius) - 4px);
+		color: var(--muted-foreground);
+		background: transparent;
+		font-size: 12px;
+		font-weight: 600;
+		line-height: 1;
+		white-space: nowrap;
+		cursor: pointer;
+		transition:
+			background-color 0.16s ease,
+			color 0.16s ease,
+			box-shadow 0.16s ease;
+	}
+	.font-size-segment:hover {
+		color: var(--foreground);
+		background: color-mix(in srgb, var(--foreground) 6%, transparent);
+	}
+	.font-size-segment--active {
+		color: var(--primary-foreground);
+		background: var(--primary);
+		box-shadow: 0 1px 4px color-mix(in srgb, var(--primary) 28%, transparent);
+	}
+	.font-size-segment--active:hover {
+		color: var(--primary-foreground);
+		background: var(--primary);
+	}
 	.settings-inline-input {
 		display: flex;
 		align-items: center;

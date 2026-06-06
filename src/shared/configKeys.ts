@@ -9,6 +9,8 @@ const userKeys = [
 	"cookie",
 	"favorite-directories",
 	"file-category-dirs",
+	"font-family",
+	"font-size",
 	"external-engine-enabled",
 	"external-engine-host",
 	"external-engine-port",

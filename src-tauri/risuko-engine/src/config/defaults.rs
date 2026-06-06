@@ -130,6 +130,8 @@ pub fn user_defaults() -> Map<String, Value> {
     m.insert("auto-sync-tracker".into(), json!(true));
     m.insert("doh-provider".into(), json!("cloudflare"));
     m.insert("favorite-directories".into(), json!([]));
+    m.insert("font-family".into(), json!("system"));
+    m.insert("font-size".into(), json!("default"));
     m.insert("hide-app-menu".into(), json!(is_not_macos));
     m.insert("history-directories".into(), json!([]));
     m.insert("keep-seeding".into(), json!(false));
@@ -245,6 +247,8 @@ mod tests {
         let user = user_defaults();
         let required = [
             "theme",
+            "font-family",
+            "font-size",
             "locale",
             "keep-seeding",
             "auto-check-update",
@@ -263,6 +267,8 @@ mod tests {
     fn user_defaults_sensible_values() {
         let user = user_defaults();
         assert_eq!(user.get("theme").unwrap(), "auto");
+        assert_eq!(user.get("font-family").unwrap(), "system");
+        assert_eq!(user.get("font-size").unwrap(), "default");
         assert_eq!(user.get("locale").unwrap(), "auto");
         assert_eq!(user.get("keep-seeding").unwrap(), false);
         assert_eq!(user.get("rpc-host").unwrap(), "127.0.0.1");

@@ -32,6 +32,19 @@ import is from "@/shims/platform";
 import { useAppStore } from "@/store/app";
 import { usePreferenceStore } from "@/store/preference";
 
+const FONT_FAMILY_OPTIONS = ["system", "rounded", "serif", "mono"];
+const FONT_SIZE_OPTIONS = ["small", "default", "large", "extra-large"];
+
+const normalizeOption = (
+	value: unknown,
+	options: string[],
+	fallback: string,
+) => {
+	return typeof value === "string" && options.includes(value)
+		? value
+		: fallback;
+};
+
 export default {
 	name: "risuko-app",
 	components: {
@@ -86,6 +99,25 @@ export default {
 		directionClass() {
 			return `dir-${this.direction}`;
 		},
+		fontFamilyClass() {
+			if (this.isAndroid) {
+				return "";
+			}
+			const family = normalizeOption(
+				usePreferenceStore().config.fontFamily,
+				FONT_FAMILY_OPTIONS,
+				"system",
+			);
+			return `font-family-${family}`;
+		},
+		fontSizeClass() {
+			const size = normalizeOption(
+				usePreferenceStore().config.fontSize,
+				FONT_SIZE_OPTIONS,
+				"default",
+			);
+			return `font-size-${size}`;
+		},
 		enableDynamicTray() {
 			return (
 				this.isMac &&
@@ -107,8 +139,10 @@ export default {
 				i18nClass = "",
 				directionClass = "",
 				platformClass = "",
+				fontFamilyClass = "",
+				fontSizeClass = "",
 			} = this;
-			const className = `${themeClass} ${i18nClass} ${directionClass} ${platformClass}`;
+			const className = `${themeClass} ${i18nClass} ${directionClass} ${platformClass} ${fontFamilyClass} ${fontSizeClass}`;
 			document.documentElement.className = className;
 			this.syncAndroidSystemBars();
 		},
@@ -146,6 +180,12 @@ export default {
 			this.updateRootClassName();
 		},
 		platformClass() {
+			this.updateRootClassName();
+		},
+		fontFamilyClass() {
+			this.updateRootClassName();
+		},
+		fontSizeClass() {
 			this.updateRootClassName();
 		},
 	},

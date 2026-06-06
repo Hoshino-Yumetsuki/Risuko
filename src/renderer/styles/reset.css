@@ -14,7 +14,8 @@
 		overflow: hidden;
 	}
 	body {
-		font-family:
+		font-family: var(
+			--app-font-family,
 			"Monospaced Number",
 			"Chinese Quote",
 			-apple-system,
@@ -27,9 +28,10 @@
 			"Helvetica Neue",
 			Helvetica,
 			Arial,
-			sans-serif;
+			sans-serif
+		);
 		font-variant: tabular-nums;
-		font-size: 14px;
+		font-size: var(--app-font-size-base, 14px);
 		color: var(--foreground);
 		background-color: var(--background);
 	}

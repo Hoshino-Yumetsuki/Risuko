@@ -24,6 +24,49 @@
                 ref="themeSwitcher"
               />
             </div>
+            <div class="typography-controls">
+              <div v-if="!isAndroid" class="typography-row typography-row--font">
+                <div class="typography-row-main">
+                  <label class="settings-select-item-label">{{ $t('preferences.font-family') }}</label>
+                  <Select v-model="form.fontFamily" class="typography-font-select">
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem v-for="item in fontFamilyOptions" :key="item.value" :value="item.value">
+                        {{ item.label }}
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div
+                  class="typography-sample"
+                  :class="`typography-sample--${form.fontFamily}`"
+                >
+                  {{ $t('preferences.font-family-sample') }}
+                </div>
+              </div>
+              <div class="typography-row typography-row--size">
+                <div class="typography-row-main">
+                  <span class="settings-select-item-label">{{ $t('preferences.font-size') }}</span>
+                </div>
+                <div class="font-size-segmented" role="radiogroup" :aria-label="$t('preferences.font-size')">
+                  <button
+                    v-for="item in fontSizeOptions"
+                    :key="item.value"
+                    type="button"
+                    role="radio"
+                    class="font-size-segment"
+                    :class="{ 'font-size-segment--active': form.fontSize === item.value }"
+                    :aria-label="item.label"
+                    :aria-checked="form.fontSize === item.value"
+                    @click="form.fontSize = item.value"
+                  >
+                    {{ item.shortLabel }}
+                  </button>
+                </div>
+              </div>
+            </div>
             <div v-if="showHideAppMenuOption" class="settings-row">
               <div class="settings-row-content">
                 <span class="settings-row-title">{{ $t('preferences.hide-app-menu') }}</span>
@@ -666,6 +709,12 @@ import { getRisukoVersion } from "@/utils/version";
 
 const RETRY_STRATEGY_STATIC = "static";
 const RETRY_STRATEGY_EXPONENTIAL = "exponential";
+const FONT_FAMILY_OPTIONS = ["system", "rounded", "serif", "mono"];
+const FONT_SIZE_OPTIONS = ["small", "default", "large", "extra-large"];
+
+const normalizeOption = (value, options, fallback) => {
+	return options.includes(value) ? value : fallback;
+};
 
 const normalizePositiveInt = (
 	value,
@@ -692,6 +741,8 @@ const initForm = (config) => {
 		btSaveMetadata,
 		dir,
 		fileCategoryDirs,
+		fontFamily,
+		fontSize,
 		followTorrent,
 		hideAppMenu,
 		keepSeeding,
@@ -742,6 +793,8 @@ const initForm = (config) => {
 			rss: "",
 			...(fileCategoryDirs || {}),
 		},
+		fontFamily: normalizeOption(fontFamily, FONT_FAMILY_OPTIONS, "system"),
+		fontSize: normalizeOption(fontSize, FONT_SIZE_OPTIONS, "default"),
 		taskRoutingRules: (config.taskRoutingRules || []).map((rule) => ({
 			...rule,
 			id: rule.id || crypto.randomUUID(),
@@ -889,6 +942,50 @@ export default {
 				},
 			];
 			return result;
+		},
+		fontFamilyOptions() {
+			return [
+				{
+					label: this.$t("preferences.font-family-system"),
+					value: "system",
+				},
+				{
+					label: this.$t("preferences.font-family-rounded"),
+					value: "rounded",
+				},
+				{
+					label: this.$t("preferences.font-family-serif"),
+					value: "serif",
+				},
+				{
+					label: this.$t("preferences.font-family-mono"),
+					value: "mono",
+				},
+			];
+		},
+		fontSizeOptions() {
+			return [
+				{
+					label: this.$t("preferences.font-size-small"),
+					shortLabel: this.$t("preferences.font-size-small-short"),
+					value: "small",
+				},
+				{
+					label: this.$t("preferences.font-size-default"),
+					shortLabel: this.$t("preferences.font-size-default-short"),
+					value: "default",
+				},
+				{
+					label: this.$t("preferences.font-size-large"),
+					shortLabel: this.$t("preferences.font-size-large-short"),
+					value: "large",
+				},
+				{
+					label: this.$t("preferences.font-size-extra-large"),
+					shortLabel: this.$t("preferences.font-size-extra-large-short"),
+					value: "extra-large",
+				},
+			];
 		},
 		speedUnits() {
 			return [
@@ -1093,6 +1190,22 @@ export default {
 					5,
 					1,
 					20,
+				);
+			}
+
+			if ("fontFamily" in data) {
+				data.fontFamily = normalizeOption(
+					this.form.fontFamily,
+					FONT_FAMILY_OPTIONS,
+					"system",
+				);
+			}
+
+			if ("fontSize" in data) {
+				data.fontSize = normalizeOption(
+					this.form.fontSize,
+					FONT_SIZE_OPTIONS,
+					"default",
 				);
 			}
 
