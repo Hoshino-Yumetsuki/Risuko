@@ -2389,7 +2389,7 @@ impl TaskManager {
             }
             let was_error = task.status == TaskStatus::Error;
             is_torrent = task.kind == TaskKind::Torrent;
-            if is_torrent && !was_error {
+            if is_torrent {
                 task.status = TaskStatus::Active;
             } else {
                 task.status = TaskStatus::Waiting;
