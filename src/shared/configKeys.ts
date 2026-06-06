@@ -104,6 +104,7 @@ const systemKeys = [
 	"max-download-limit",
 	"max-overall-download-limit",
 	"max-overall-upload-limit",
+	"max-worker-retries",
 	"netrc-path",
 	"no-netrc",
 	"no-proxy",

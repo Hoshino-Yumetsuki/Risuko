@@ -54,6 +54,7 @@ export default {
 	"auto-retry-strategy-exponential": "指数退避",
 	"auto-retry-interval": "基础重试间隔",
 	"auto-retry-interval-unit": "秒",
+	"worker-max-retries": "分片下载最大重试次数",
 	"auto-detect-low-speed-tasks": "自动检测低速任务",
 	"auto-detect-low-speed-tasks-tips":
 		"当任务速度持续低于阈值时，自动暂停并重启任务。",

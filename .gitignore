@@ -32,3 +32,5 @@ src-tauri/gen/*
 !src-tauri/gen/android/**
 
 *.node
+
+content

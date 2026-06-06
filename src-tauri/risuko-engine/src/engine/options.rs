@@ -60,6 +60,7 @@ impl EngineOptions {
             "purge-record-on-start",
             "task-routing-rules",
             "file-category-dirs",
+            "max-worker-retries",
         ] {
             if let Some(v) = user.get(key) {
                 global.insert(key.into(), v.clone());
