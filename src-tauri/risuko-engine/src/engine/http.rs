@@ -865,7 +865,7 @@ async fn run_single_uri_download(
             v.as_u64()
                 .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
         })
-        .map(|v| v.max(1) as u32)
+        .map(|v| v.max(1).min(u64::from(u32::MAX)) as u32)
         .unwrap_or(CHUNK_MAX_RETRIES);
 
     // aria2-compatible `min-split-size` (bytes, with K/M suffixes accepted).
