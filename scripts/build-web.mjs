@@ -12,8 +12,12 @@ const webDist = resolve(root, "dist/web");
 const pkgDist = resolve(root, "packages/risuko-app/dist");
 
 console.log("Building web UI with Vite...\n");
-const npxBin = process.platform === "win32" ? "npx.cmd" : "npx";
-const build = spawnSync(npxBin, ["vite", "build", "--config", "vite.web.config.ts"], {
+const isWindows = process.platform === "win32";
+const command = isWindows ? process.env.ComSpec || "cmd.exe" : "npx";
+const args = isWindows
+	? ["/d", "/s", "/c", "npx.cmd", "vite", "build", "--config", "vite.web.config.ts"]
+	: ["vite", "build", "--config", "vite.web.config.ts"];
+const build = spawnSync(command, args, {
 	cwd: root,
 	stdio: "inherit",
 	shell: false,

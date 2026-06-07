@@ -22,6 +22,18 @@ const { execFileSync, spawn } = require("node:child_process");
 const PKG_VERSION = require("./package.json").version;
 const REPO = "YueMiyuki/risuko";
 
+class DownloadHttpError extends Error {
+	constructor(statusCode, url) {
+		super(
+			`Download failed: HTTP ${statusCode} — ${url}\n` +
+				`To download manually: https://github.com/${REPO}/releases/tag/v${version}`,
+		);
+		this.name = "DownloadHttpError";
+		this.statusCode = statusCode;
+		this.url = url;
+	}
+}
+
 // -- CLI arg parsing --
 
 const rawArgs = process.argv.slice(2);
@@ -150,12 +162,7 @@ function download(url, destPath) {
 				}
 				if (res.statusCode !== 200) {
 					req.destroy();
-					return reject(
-						new Error(
-							`Download failed: HTTP ${res.statusCode} — ${url}\n` +
-								`To download manually: https://github.com/${REPO}/releases/tag/v${version}`,
-						),
-					);
+					return reject(new DownloadHttpError(res.statusCode, url));
 				}
 
 				const total = Number.parseInt(res.headers["content-length"] || "0", 10);
@@ -233,7 +240,15 @@ function parseExpectedSha256(text, assetName) {
 }
 
 async function verifySha256(assetPath, checksumUrl, assetName) {
-	const checksumText = await downloadText(checksumUrl);
+	let checksumText;
+	try {
+		checksumText = await downloadText(checksumUrl);
+	} catch (err) {
+		if (err instanceof DownloadHttpError && err.statusCode === 404) {
+			return false;
+		}
+		throw err;
+	}
 	const expected = parseExpectedSha256(checksumText, assetName);
 	const actual = await sha256File(assetPath);
 	if (actual !== expected) {
@@ -241,6 +256,7 @@ async function verifySha256(assetPath, checksumUrl, assetName) {
 			`SHA-256 mismatch for ${assetName}: expected ${expected}, got ${actual}`,
 		);
 	}
+	return true;
 }
 
 function fmtBytes(n) {
@@ -307,7 +323,18 @@ async function main() {
 
 		try {
 			await download(assetUrl, tmpPath);
-			await verifySha256(tmpPath, checksumUrl, entry.asset);
+			const checksumVerified = await verifySha256(
+				tmpPath,
+				checksumUrl,
+				entry.asset,
+			);
+			if (checksumVerified) {
+				console.log("  Verified SHA-256 checksum");
+			} else {
+				console.warn(
+					"  SHA-256 sidecar not found; skipping checksum verification",
+				);
+			}
 			fs.renameSync(tmpPath, assetPath);
 		} catch (err) {
 			fs.rmSync(tmpPath, { force: true });

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, globSync, readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 const packageDir = process.cwd();
@@ -9,14 +9,29 @@ const pkg = JSON.parse(readFileSync(packagePath, "utf8"));
 const files = Array.isArray(pkg.files) ? pkg.files : [];
 const missing = [];
 
+function isGlobPattern(rel) {
+	return /[*?[\]{}]/.test(rel);
+}
+
 for (const rel of files) {
-	const path = resolve(packageDir, rel);
-	if (!existsSync(path)) {
+	const matches = isGlobPattern(rel)
+		? globSync(rel, { cwd: packageDir })
+		: [rel];
+
+	if (matches.length === 0) {
 		missing.push(`${rel} (missing)`);
 		continue;
 	}
-	if (statSync(path).size === 0) {
-		missing.push(`${rel} (empty)`);
+
+	for (const match of matches) {
+		const path = resolve(packageDir, match);
+		if (!existsSync(path)) {
+			missing.push(`${match} (missing)`);
+			continue;
+		}
+		if (statSync(path).size === 0) {
+			missing.push(`${match} (empty)`);
+		}
 	}
 }
 

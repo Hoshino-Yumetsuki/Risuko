@@ -81,7 +81,26 @@ impl Drop for Dht {
     }
 }
 
-type PendingMap = std::collections::HashMap<u16, (oneshot::Sender<KrpcResponse>, SocketAddr)>;
+type PendingMap = std::collections::HashMap<u16, PendingEntry>;
+
+#[derive(Clone)]
+struct PendingToken(Arc<()>);
+
+impl PendingToken {
+    fn new() -> Self {
+        Self(Arc::new(()))
+    }
+
+    fn matches(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+struct PendingEntry {
+    tx: oneshot::Sender<KrpcResponse>,
+    target: SocketAddr,
+    token: PendingToken,
+}
 
 /// Removes its transaction id from `pending` on drop
 ///
@@ -89,11 +108,18 @@ type PendingMap = std::collections::HashMap<u16, (oneshot::Sender<KrpcResponse>,
 struct PendingGuard {
     pending: Arc<Mutex<PendingMap>>,
     txn: u16,
+    token: PendingToken,
 }
 
 impl Drop for PendingGuard {
     fn drop(&mut self) {
-        self.pending.lock().remove(&self.txn);
+        let mut pending = self.pending.lock();
+        let should_remove = pending
+            .get(&self.txn)
+            .is_some_and(|entry| entry.token.matches(&self.token));
+        if should_remove {
+            pending.remove(&self.txn);
+        }
     }
 }
 
@@ -435,10 +461,19 @@ impl Dht {
         while map.contains_key(&txn) {
             txn = txn.wrapping_add(1);
         }
-        map.insert(txn, (tx, target));
+        let token = PendingToken::new();
+        map.insert(
+            txn,
+            PendingEntry {
+                tx,
+                target,
+                token: token.clone(),
+            },
+        );
         let guard = PendingGuard {
             pending: self.pending.clone(),
             txn,
+            token,
         };
         (txn, rx, guard)
     }
@@ -740,9 +775,9 @@ async fn reader_loop(sock: Arc<UdpSocket>, pending: Arc<Mutex<PendingMap>>) {
         };
         let mut guard = pending.lock();
         if let Some(entry) = guard.get(&txn) {
-            if entry.1 == from {
-                if let Some((tx, _)) = guard.remove(&txn) {
-                    let _ = tx.send(KrpcResponse { from, body: msg });
+            if entry.target == from {
+                if let Some(entry) = guard.remove(&txn) {
+                    let _ = entry.tx.send(KrpcResponse { from, body: msg });
                 }
             }
             // Mismatch: ignore the packet, leave entry for the real responder
@@ -930,5 +965,43 @@ mod tests {
         let labels: Vec<&[u8]> = want.iter().filter_map(|v| v.as_bytes()).collect();
         assert!(labels.contains(&(b"n4" as &[u8])));
         assert!(labels.contains(&(b"n6" as &[u8])));
+    }
+
+    #[test]
+    fn pending_guard_drop_does_not_remove_reused_transaction() {
+        let pending: Arc<Mutex<PendingMap>> = Arc::new(Mutex::new(Default::default()));
+        let txn = 0x1234;
+        let target: SocketAddr = "127.0.0.1:1".parse().unwrap();
+        let (old_tx, _old_rx) = oneshot::channel();
+        let (new_tx, _new_rx) = oneshot::channel();
+        let old_token = PendingToken::new();
+        let new_token = PendingToken::new();
+
+        pending.lock().insert(
+            txn,
+            PendingEntry {
+                tx: old_tx,
+                target,
+                token: old_token.clone(),
+            },
+        );
+        let guard = PendingGuard {
+            pending: pending.clone(),
+            txn,
+            token: old_token,
+        };
+        pending.lock().remove(&txn);
+        pending.lock().insert(
+            txn,
+            PendingEntry {
+                tx: new_tx,
+                target,
+                token: new_token,
+            },
+        );
+
+        drop(guard);
+
+        assert!(pending.lock().contains_key(&txn));
     }
 }

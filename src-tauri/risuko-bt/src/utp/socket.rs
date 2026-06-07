@@ -162,6 +162,7 @@ impl Drop for UtpSocket {
         if let Some(handle) = self.router_handle.get_mut().take() {
             handle.abort();
         }
+        self.registry.lock().clear();
     }
 }
 
@@ -333,5 +334,23 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::TimedOut);
+    }
+
+    #[tokio::test]
+    async fn drop_clears_registry_to_close_driver_channels() {
+        let udp = Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap());
+        let sock = UtpSocket::from_udp(udp);
+        let registry = sock.registry.clone();
+        let key: ConnKey = ("127.0.0.1:9".parse().unwrap(), 7);
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        registry.lock().insert(key, tx);
+
+        drop(sock);
+
+        assert!(registry.lock().is_empty());
+        let received = tokio::time::timeout(Duration::from_millis(100), rx.recv())
+            .await
+            .expect("registry sender kept the driver channel open");
+        assert!(received.is_none());
     }
 }

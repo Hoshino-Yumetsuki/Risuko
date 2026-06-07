@@ -280,13 +280,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          node - <<'NODE'
-          const fs = require("node:fs");
-          const crypto = require("node:crypto");
-          const asset = process.env.APP_ASSET;
-          const digest = crypto.createHash("sha256").update(fs.readFileSync(asset)).digest("hex");
-          fs.writeFileSync(`${asset}.sha256`, `${digest}  ${asset}\n`);
-          NODE
+          node scripts/write-sha256-sidecar.mjs "$APP_ASSET"
 
       - name: Upload standardized app bundle to GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
@@ -337,13 +331,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          node - <<'NODE'
-          const fs = require("node:fs");
-          const crypto = require("node:crypto");
-          const asset = process.env.PORTABLE_ASSET;
-          const digest = crypto.createHash("sha256").update(fs.readFileSync(asset)).digest("hex");
-          fs.writeFileSync(`${asset}.sha256`, `${digest}  ${asset}\n`);
-          NODE
+          node scripts/write-sha256-sidecar.mjs "$PORTABLE_ASSET"
 
       - name: Upload Windows portable exe to GitHub Release
         if: runner.os == 'Windows' && startsWith(github.ref, 'refs/tags/')
