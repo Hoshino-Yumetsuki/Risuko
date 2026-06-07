@@ -35,7 +35,7 @@ pub async fn watch_download(
         let total: u64 = parse_num(&status, "totalLength");
         let completed: u64 = parse_num(&status, "completedLength");
         let speed: u64 = parse_num(&status, "downloadSpeed");
-        let name = extract_filename(&status);
+        let name = extract_filename(&status, "unknown");
 
         if json_output {
             println!("{}", serde_json::to_string(&status)?);
@@ -74,13 +74,13 @@ pub async fn watch_download(
     }
 }
 
-fn parse_num(val: &Value, key: &str) -> u64 {
+pub fn parse_num(val: &Value, key: &str) -> u64 {
     val.get(key)
         .and_then(|v| v.as_str().and_then(|s| s.parse().ok()).or(v.as_u64()))
         .unwrap_or(0)
 }
 
-fn extract_filename(status: &Value) -> String {
+pub fn extract_filename(status: &Value, fallback: &str) -> String {
     status
         .get("files")
         .and_then(|f| f.as_array())
@@ -93,7 +93,7 @@ fn extract_filename(status: &Value) -> String {
                 .map(|n| n.to_string_lossy().to_string())
         })
         .map(|n| n.strip_suffix(".part").unwrap_or(&n).to_string())
-        .unwrap_or_else(|| "unknown".into())
+        .unwrap_or_else(|| fallback.into())
 }
 
 fn print_progress(name: &str, status: &str, total: u64, completed: u64, speed: u64) {

@@ -3,9 +3,11 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 
+use futures_util::StreamExt;
 use risuko_http::Client;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::Semaphore;
+use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use super::decrypt::{decrypt_segment, fetch_decryption_key, iv_from_sequence};
@@ -19,6 +21,10 @@ const PROGRESS_FILENAME: &str = ".m3u8.progress";
 pub struct ProgressState {
     pub completed_indices: HashSet<usize>,
     progress_path: PathBuf,
+    /// Append-only progress file handle opened once in `load`
+    ///
+    /// Completed segments append one line, avoiding O(N^2) rewrites on large playlists
+    append_file: Option<std::fs::File>,
 }
 
 impl ProgressState {
@@ -34,26 +40,27 @@ impl ProgressState {
         } else {
             HashSet::new()
         };
+        let append_file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&progress_path)
+            .ok();
         Self {
             completed_indices,
             progress_path,
+            append_file,
         }
     }
 
-    /// Mark a segment index as completed and persist
+    /// Mark a segment index as completed and persist by appending a single line
     pub fn mark_completed(&mut self, index: usize) {
-        self.completed_indices.insert(index);
-        self.persist();
-    }
-
-    fn persist(&self) {
-        let content: String = self
-            .completed_indices
-            .iter()
-            .map(|i| i.to_string())
-            .collect::<Vec<_>>()
-            .join("\n");
-        let _ = std::fs::write(&self.progress_path, content);
+        // Persist only newly-seen indices to keep resume work small
+        if self.completed_indices.insert(index) {
+            if let Some(file) = self.append_file.as_mut() {
+                use std::io::Write;
+                let _ = writeln!(file, "{index}");
+            }
+        }
     }
 
     /// Remove the progress file
@@ -202,12 +209,15 @@ pub async fn download_segments(
     // Collect results
     // On error, cancel remaining tasks via cancel_token
 
-    for maybe_handle in handles {
+    for idx in 0..handles.len() {
         if cancelled.load(Ordering::Relaxed) || cancel_token.is_cancelled() {
+            abort_remaining(&mut handles).await;
             return Err("cancelled".to_string());
         }
 
-        let Some(handle) = maybe_handle else { continue };
+        let Some(handle) = handles[idx].take() else {
+            continue;
+        };
 
         match handle.await {
             Ok(Ok(index)) => {
@@ -215,20 +225,30 @@ pub async fn download_segments(
             }
             Ok(Err(e)) => {
                 if e.contains("cancelled") {
+                    abort_remaining(&mut handles).await;
                     return Err("cancelled".to_string());
                 }
                 // Cancel remaining spawned tasks before returning error
                 cancel_token.cancel();
+                abort_remaining(&mut handles).await;
                 return Err(e);
             }
             Err(e) => {
                 cancel_token.cancel();
+                abort_remaining(&mut handles).await;
                 return Err(format!("Segment task panicked: {e}"));
             }
         }
     }
 
     Ok((segment_paths, progress))
+}
+
+async fn abort_remaining(handles: &mut [Option<JoinHandle<Result<usize, String>>>]) {
+    for handle in handles.iter_mut().filter_map(Option::take) {
+        handle.abort();
+        let _ = handle.await;
+    }
 }
 
 /// Download a single segment
@@ -295,8 +315,11 @@ async fn attempt_segment_download(
 
     // Add byte range header if specified
     if let Some(ref br) = segment.byte_range {
-        let end = br.offset + br.length - 1;
-        request = request.header("Range", format!("bytes={}-{}", br.offset, end));
+        // Guard malformed playlists from underflowing `length - 1` or overflowing offset math
+        if br.length > 0 {
+            let end = br.offset.saturating_add(br.length).saturating_sub(1);
+            request = request.header("Range", format!("bytes={}-{}", br.offset, end));
+        }
     }
 
     let resp = request
@@ -308,50 +331,63 @@ async fn attempt_segment_download(
         return Err(format!("Segment HTTP {}", resp.status()));
     }
 
-    let data = resp
-        .bytes()
-        .await
-        .map_err(|e| format!("Failed to read segment body: {e}"))?;
+    // AES-128 needs the whole ciphertext buffered before decrypting; other segments pass through
+    let needs_decrypt = segment
+        .encryption
+        .as_ref()
+        .is_some_and(|enc| enc.method == "AES-128");
 
-    // Apply speed limiting
-    let chunk_size = data.len();
-    global_limiter.acquire(chunk_size).await;
-    task_limiter.acquire(chunk_size).await;
-
-    // Decrypt if needed
-    let final_data = if let Some(ref enc) = segment.encryption {
-        if enc.method == "AES-128" {
-            let key = key_cache
-                .lock()
-                .await
-                .get_or_fetch(&enc.key_uri, client)
-                .await?;
-            let iv = match &enc.iv {
-                Some(iv_bytes) => {
-                    let mut iv = [0u8; 16];
-                    let len = iv_bytes.len().min(16);
-                    iv[16 - len..].copy_from_slice(&iv_bytes[..len]);
-                    iv
-                }
-                None => iv_from_sequence(sequence_number),
-            };
-            decrypt_segment(&data, &key, &iv)?
-        } else {
-            // or unknown — pass through
-            data.to_vec()
-        }
-    } else {
-        data.to_vec()
-    };
-
-    // Write to disk
-    let bytes_written = final_data.len() as u64;
+    // Throttle each network chunk instead of sleeping once after buffering
+    // Encrypted segments still buffer ciphertext, but only after rate limiting
+    let mut stream = resp.bytes_stream();
     let mut file = tokio::fs::File::create(output_path)
         .await
         .map_err(|e| format!("Failed to create segment file: {e}"))?;
-    file.write_all(&final_data)
-        .await
-        .map_err(|e| format!("Failed to write segment: {e}"))?;
+    let mut ciphertext: Vec<u8> = Vec::new();
+    let mut bytes_written: u64 = 0;
+
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| format!("Failed to read segment body: {e}"))?;
+        let len = chunk.len();
+        // Pace the actual transfer by limiting each chunk
+        global_limiter.acquire(len).await;
+        task_limiter.acquire(len).await;
+
+        if needs_decrypt {
+            ciphertext.extend_from_slice(&chunk);
+        } else {
+            file.write_all(&chunk)
+                .await
+                .map_err(|e| format!("Failed to write segment: {e}"))?;
+            bytes_written += len as u64;
+        }
+    }
+
+    // Decrypt buffered AES-128 ciphertext and write plaintext
+    if needs_decrypt {
+        // Safe to unwrap: `needs_decrypt` only becomes true when encryption is set
+        let enc = segment.encryption.as_ref().expect("encryption present");
+        let key = key_cache
+            .lock()
+            .await
+            .get_or_fetch(&enc.key_uri, client)
+            .await?;
+        let iv = match &enc.iv {
+            Some(iv_bytes) => {
+                let mut iv = [0u8; 16];
+                let len = iv_bytes.len().min(16);
+                iv[16 - len..].copy_from_slice(&iv_bytes[..len]);
+                iv
+            }
+            None => iv_from_sequence(sequence_number),
+        };
+        let plaintext = decrypt_segment(&ciphertext, &key, &iv)?;
+        bytes_written = plaintext.len() as u64;
+        file.write_all(&plaintext)
+            .await
+            .map_err(|e| format!("Failed to write segment: {e}"))?;
+    }
+
     file.flush()
         .await
         .map_err(|e| format!("Failed to flush segment: {e}"))?;

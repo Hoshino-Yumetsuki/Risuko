@@ -9,6 +9,10 @@ pub struct RpcClient {
 
 impl RpcClient {
     pub fn new(port: u16, secret: Option<String>) -> Self {
+        Self::new_with_host("127.0.0.1", port, secret)
+    }
+
+    pub fn new_with_host(host: &str, port: u16, secret: Option<String>) -> Self {
         // Fail closed: a default client would silently drop the timeout and
         // connect_timeout configured above, leaving JSON-RPC calls free to hang
         // indefinitely. Building the client cannot legitimately fail with this
@@ -18,8 +22,17 @@ impl RpcClient {
             .connect_timeout(std::time::Duration::from_secs(5))
             .build()
             .expect("Failed to build HTTP client with custom config");
+        let connect_host = match host.trim() {
+            "" | "0.0.0.0" | "::" | "[::]" => "127.0.0.1",
+            h => h,
+        };
+        let url = if connect_host.contains(':') && !connect_host.starts_with('[') {
+            format!("http://[{}]:{}/jsonrpc", connect_host, port)
+        } else {
+            format!("http://{}:{}/jsonrpc", connect_host, port)
+        };
         Self {
-            url: format!("http://127.0.0.1:{}/jsonrpc", port),
+            url,
             secret,
             client,
             id_counter: std::sync::atomic::AtomicU64::new(1),

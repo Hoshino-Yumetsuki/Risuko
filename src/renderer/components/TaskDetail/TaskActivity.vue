@@ -153,7 +153,6 @@ import TaskGraphic from "@/components/TaskGraphic/Index.vue";
 import is from "@/shims/platform";
 import { usePreferenceStore } from "@/store/preference";
 import {
-	deleteSpeedHistory,
 	getSpeedHistory,
 	SPEED_HISTORY_LIMIT,
 	useTaskStore,
@@ -170,27 +169,8 @@ export default {
 		[TaskProgress.name]: TaskProgress,
 	},
 	props: {
-		gid: {
-			type: String,
-		},
 		task: {
 			type: Object,
-		},
-		files: {
-			type: Array,
-			default() {
-				return [];
-			},
-		},
-		peers: {
-			type: Array,
-			default() {
-				return [];
-			},
-		},
-		visible: {
-			type: Boolean,
-			default: false,
 		},
 	},
 	data() {
@@ -340,9 +320,6 @@ export default {
 				};
 			});
 		},
-		splitProgressPercents() {
-			return this.splitProgressList.map((item) => item.percent);
-		},
 		hasChunkProgress() {
 			return (
 				Array.isArray(this.task?.chunkProgress) &&
@@ -414,13 +391,6 @@ export default {
 		});
 	},
 	methods: {
-		resetSpeedHistory() {
-			const gid = this.task?.gid;
-			if (gid) {
-				deleteSpeedHistory(gid);
-				useTaskStore().speedHistoryRev++;
-			}
-		},
 		buildSpeedPath(type) {
 			if (!Array.isArray(this.speedHistory) || this.speedHistory.length < 2) {
 				return "";

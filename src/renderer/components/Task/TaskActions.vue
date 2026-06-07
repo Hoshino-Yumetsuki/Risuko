@@ -119,7 +119,7 @@ import {
 	Trash2,
 } from "@lucide/vue";
 import { ADD_TASK_TYPE } from "@shared/constants";
-import { bytesToSize, calcProgress } from "@shared/utils";
+import { bytesToSize } from "@shared/utils";
 import { toast } from "vue-sonner";
 import { commands } from "@/components/CommandManager/instance";
 import { useAppStore } from "@/store/app";
@@ -178,25 +178,19 @@ export default {
 			);
 		},
 		totalLength() {
-			return this.taskList.reduce(
-				(sum, task) => sum + Number(task.totalLength || 0),
-				0,
-			);
+			return useTaskStore().totalLength;
 		},
 		totalCompletedLength() {
-			return this.taskList.reduce(
-				(sum, task) => sum + Number(task.completedLength || 0),
-				0,
-			);
+			return useTaskStore().totalCompletedLength;
 		},
 		totalProgressPercent() {
-			const result = calcProgress(
-				this.totalLength,
-				this.totalCompletedLength,
-				1,
-			);
-			return `${result}`.replace(/\.0$/, "");
+			return useTaskStore().totalProgressPercent;
 		},
+	},
+	beforeUnmount() {
+		if (this.t) {
+			clearTimeout(this.t);
+		}
 	},
 	methods: {
 		refreshSpin() {

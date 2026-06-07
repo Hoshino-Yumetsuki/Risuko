@@ -8,42 +8,6 @@
     </mo-enter>
     <main class="panel-content">
       <form class="form-preference" ref="advancedForm" @submit.prevent>
-        <!-- Auto Update Section -->
-        <div class="settings-section">
-          <div class="settings-section-header">
-            <div class="section-icon"><RefreshCw :size="16" /></div>
-            <div class="section-title">
-              <h3>{{ $t('preferences.auto-update') }}</h3>
-            </div>
-          </div>
-          <div class="settings-section-content">
-            <div class="settings-row">
-              <div class="settings-row-content">
-                <div class="settings-row-title">
-                  {{ $t('preferences.auto-check-update') }}
-                </div>
-                <div class="settings-row-description" v-if="form.lastCheckUpdateTime !== 0">
-                  {{ $t('preferences.last-check-update-time') }}:
-                  {{ new Date(form.lastCheckUpdateTime).toLocaleString() }}
-                  <span
-                    class="action-link"
-                    @click.prevent="onCheckUpdateClick"
-                    style="margin-left: 8px"
-                  >
-                    {{ $t('app.check-updates-now') }}
-                  </span>
-                </div>
-              </div>
-              <div class="settings-row-action">
-                <ui-checkbox
-                  :model-value="!!form.autoCheckUpdate"
-                  @change="(val) => setAdvancedBoolean('autoCheckUpdate', val)"
-                />
-              </div>
-            </div>
-          </div>
-        </div>
-
         <!-- Completion Script Section -->
         <div class="settings-section">
           <div class="settings-section-header">
@@ -1408,7 +1372,6 @@ const resolveDohProvider = (storedProvider, storedUrl) => {
 
 const initForm = (config) => {
 	const {
-		autoCheckUpdate,
 		autoSyncTracker,
 		engineOverridesText,
 		engineOverrides,
@@ -1442,7 +1405,6 @@ const initForm = (config) => {
 		ed2KPort: ed2kPort,
 		ed2KServer: ed2kServer,
 		hideAppMenu,
-		lastCheckUpdateTime,
 		lastSyncTrackerTime,
 		listenPort,
 		logDirOverride,
@@ -1466,7 +1428,6 @@ const initForm = (config) => {
 			? engineOverridesText
 			: JSON.stringify(engineOverrides || {}, null, 2);
 	const result = {
-		autoCheckUpdate: parseBooleanConfig(autoCheckUpdate),
 		autoSyncTracker: parseBooleanConfig(autoSyncTracker),
 		engineOverridesText: pendingEngineOverridesText,
 		externalEngineEnabled: parseBooleanConfig(externalEngineEnabled, false),
@@ -1515,7 +1476,6 @@ const initForm = (config) => {
 			config["youtube-format"] ??
 			"",
 		hideAppMenu,
-		lastCheckUpdateTime,
 		lastSyncTrackerTime,
 		listenPort,
 		logDirOverride: typeof logDirOverride === "string" ? logDirOverride : "",
@@ -1649,6 +1609,7 @@ export default {
 			completionScriptTesting: false,
 			completionScriptTestResult: "",
 			cookieEntries: [] as CookieEntryView[],
+			rpcSecretTimer: null as ReturnType<typeof setTimeout> | null,
 		};
 	},
 	watch: {
@@ -1756,18 +1717,6 @@ export default {
 				this.form.trackerSource.splice(idx, 1);
 			}
 		},
-		onCheckUpdateClick() {
-			this.$msg.info(this.$t("app.checking-for-updates"));
-			invoke("check_for_updates").catch(() => {
-				this.$msg.error(this.$t("app.update-error-message"));
-			});
-			usePreferenceStore()
-				.fetchPreference()
-				.then((config) => {
-					const { lastCheckUpdateTime } = config;
-					this.form.lastCheckUpdateTime = lastCheckUpdateTime;
-				});
-		},
 		async onTestCompletionScript() {
 			const command = `${this.form.completionScriptCommand || ""}`.trim();
 			if (!command) {
@@ -1843,24 +1792,6 @@ export default {
 				enable: !!enable,
 			};
 		},
-		onProxyServerChange(server) {
-			this.form.proxy = {
-				...this.form.proxy,
-				server,
-			};
-		},
-		handleProxyBypassChange(bypass) {
-			this.form.proxy = {
-				...this.form.proxy,
-				bypass: convertLineToComma(bypass),
-			};
-		},
-		onProxyScopeChange(scope) {
-			this.form.proxy = {
-				...this.form.proxy,
-				scope: [...scope],
-			};
-		},
 		onProxyScopeToggle(item, checked) {
 			const isChecked = !!checked;
 			const scope = [...this.form.proxy.scope];
@@ -1911,8 +1842,12 @@ export default {
 			const rpcSecret = randomize("Aa0", 16);
 			this.form.rpcSecret = rpcSecret;
 
-			setTimeout(() => {
+			if (this.rpcSecretTimer) {
+				clearTimeout(this.rpcSecretTimer);
+			}
+			this.rpcSecretTimer = setTimeout(() => {
 				this.hideRpcSecret = true;
+				this.rpcSecretTimer = null;
 			}, 2000);
 		},
 		async onSessionResetClick() {
@@ -1993,7 +1928,6 @@ export default {
 				delete data.engineOverridesText;
 			}
 			const booleanKeys = [
-				"autoCheckUpdate",
 				"autoSyncTracker",
 				"externalEngineEnabled",
 				"completionScriptEnabled",
@@ -2244,6 +2178,12 @@ export default {
 	},
 	mounted() {
 		this.refreshCookieEntries();
+	},
+	beforeUnmount() {
+		if (this.rpcSecretTimer) {
+			clearTimeout(this.rpcSecretTimer);
+			this.rpcSecretTimer = null;
+		}
 	},
 	async beforeRouteLeave(to, _from) {
 		changedConfig.advanced = diffConfig(this.formOriginal, this.form);

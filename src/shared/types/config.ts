@@ -1,5 +1,33 @@
 import type { SavedCredential } from "./credential";
 
+export const FONT_FAMILY_OPTIONS = [
+	"system",
+	"rounded",
+	"serif",
+	"mono",
+] as const;
+export type FontFamily = (typeof FONT_FAMILY_OPTIONS)[number];
+export const DEFAULT_FONT_FAMILY: FontFamily = "system";
+
+export const FONT_SIZE_OPTIONS = [
+	"small",
+	"default",
+	"large",
+	"extra-large",
+] as const;
+export type FontSize = (typeof FONT_SIZE_OPTIONS)[number];
+export const DEFAULT_FONT_SIZE: FontSize = "default";
+
+export const normalizeConfigOption = <T extends readonly string[]>(
+	value: unknown,
+	options: T,
+	fallback: T[number],
+): T[number] => {
+	return typeof value === "string" && options.includes(value)
+		? (value as T[number])
+		: fallback;
+};
+
 export interface TaskRoutingRule {
 	id: string;
 	label: string;
@@ -15,8 +43,8 @@ export interface TaskRoutingRule {
 export interface AppConfig {
 	locale: string;
 	theme?: string;
-	fontFamily?: string;
-	fontSize?: string;
+	fontFamily?: FontFamily;
+	fontSize?: FontSize;
 	dir?: string;
 	split?: number;
 	allProxy?: string;

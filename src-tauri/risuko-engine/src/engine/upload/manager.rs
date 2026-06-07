@@ -27,6 +27,11 @@ use super::webdav::WebdavSink;
 
 const UPLOAD_STORE_KEY: &str = "upload-sinks";
 
+/// Upper bound for retained terminal upload jobs
+///
+/// Queued and active jobs are never evicted by this cap
+const MAX_TERMINAL_JOBS: usize = 200;
+
 fn now_secs() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -437,7 +442,12 @@ impl UploadSinkManager {
             finished_at: None,
         };
 
-        self.jobs.lock().await.insert(job_id.clone(), job.clone());
+        {
+            let mut jobs = self.jobs.lock().await;
+            jobs.insert(job_id.clone(), job.clone());
+            // Trim oldest terminal jobs only; queued and active jobs stay
+            prune_terminal_jobs(&mut jobs, MAX_TERMINAL_JOBS);
+        }
         // Pre-create the cancel token so users can cancel queued jobs that
         // haven't acquired a semaphore permit yet
         let cancel = CancellationToken::new();
@@ -660,12 +670,21 @@ impl UploadSinkManager {
     }
 
     async fn touch_sink_used(&self, sink_id: &str) {
-        let mut s = self.store.write().await;
-        if let Some(sink) = s.sinks.iter_mut().find(|x| x.id == sink_id) {
-            sink.last_used_at = Some(now_secs());
+        let now = now_secs();
+        let changed = {
+            let mut s = self.store.write().await;
+            match s.sinks.iter_mut().find(|x| x.id == sink_id) {
+                // Skip full-store save when second-granularity timestamp has not moved
+                Some(sink) if sink.last_used_at != Some(now) => {
+                    sink.last_used_at = Some(now);
+                    true
+                }
+                _ => false,
+            }
+        };
+        if changed {
+            let _ = self.save().await;
         }
-        drop(s);
-        let _ = self.save().await;
     }
 
     fn emit_event(&self, name: &str, job: &UploadJob) {
@@ -679,6 +698,38 @@ impl UploadSinkManager {
             Ok(v) => sink.emit(name, v),
             Err(e) => log::warn!("upload event serialize failed: {e}"),
         }
+    }
+}
+
+/// Evict oldest terminal jobs so at most `max_terminal` remain
+fn prune_terminal_jobs(jobs: &mut HashMap<String, UploadJob>, max_terminal: usize) {
+    let terminal_count = jobs
+        .values()
+        .filter(|j| {
+            matches!(
+                j.status,
+                JobStatus::Complete | JobStatus::Failed | JobStatus::Cancelled
+            )
+        })
+        .count();
+    if terminal_count <= max_terminal {
+        return;
+    }
+    // Collect terminal job ids oldest-first, then drop the excess
+    let mut terminal: Vec<(u64, String)> = jobs
+        .values()
+        .filter(|j| {
+            matches!(
+                j.status,
+                JobStatus::Complete | JobStatus::Failed | JobStatus::Cancelled
+            )
+        })
+        .map(|j| (j.created_at, j.id.clone()))
+        .collect();
+    terminal.sort_by_key(|(created_at, _)| *created_at);
+    let to_remove = terminal_count - max_terminal;
+    for (_, id) in terminal.into_iter().take(to_remove) {
+        jobs.remove(&id);
     }
 }
 

@@ -11,12 +11,9 @@
 //!
 //! So we exercise URI parsers, binary message codecs, and pure helpers
 
-use crate::engine::adc::{
-    is_adc_uri,
-    nmdc::{escape_key, lock_to_key},
-    parse_adc_hub_uri, parse_dchub_file_uri,
-    types::HubDialect,
-};
+#[cfg(feature = "adc-transfer")]
+use crate::engine::adc::nmdc::{escape_key, lock_to_key};
+use crate::engine::adc::{is_adc_uri, parse_adc_hub_uri, parse_dchub_file_uri, types::HubDialect};
 use crate::engine::g2::{is_g2_uri, parse_g2_uri};
 use crate::engine::gift::{extract_gift_name, is_gift_uri, parse_gift_uri};
 use crate::engine::gnutella::{
@@ -106,6 +103,7 @@ fn dchub_file_uri_returns_none_when_no_query() {
 }
 
 #[test]
+#[cfg(feature = "adc-transfer")]
 fn nmdc_lock_to_key_round_trip_properties() {
     // Algorithm correctness check: for the well-known short input the
     // first byte mixes lock[0] xor lock[n-1] xor lock[n-2] xor 5, then
@@ -120,6 +118,7 @@ fn nmdc_lock_to_key_round_trip_properties() {
 }
 
 #[test]
+#[cfg(feature = "adc-transfer")]
 fn nmdc_escape_key_escapes_only_reserved_bytes() {
     let raw = vec![0u8, 1, 5, 36, 50, 96, 100, 124, 126, 200];
     let esc = escape_key(&raw);

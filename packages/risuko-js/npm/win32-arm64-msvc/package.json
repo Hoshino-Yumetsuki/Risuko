@@ -1,6 +1,6 @@
 {
 	"name": "@risuko/js-win32-arm64-msvc",
-	"version": "0.3.6",
+	"version": "0.4.0",
 	"description": "Risuko JS native module for Windows ARM64",
 	"repository": {
 		"type": "git",
@@ -15,6 +15,9 @@
 		"arm64"
 	],
 	"main": "risuko.win32-arm64-msvc.node",
+	"scripts": {
+		"prepack": "node ../../../../scripts/ensure-package-artifacts.mjs"
+	},
 	"files": [
 		"risuko.win32-arm64-msvc.node"
 	]

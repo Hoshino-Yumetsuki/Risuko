@@ -1,7 +1,8 @@
 {
 	"name": "@risuko/app",
-	"version": "0.3.6",
+	"version": "0.4.0",
 	"description": "Risuko download manager — launches the desktop app, downloading it from GitHub Releases on first run",
+	"main": "index.js",
 	"license": "MIT",
 	"repository": {
 		"type": "git",
@@ -20,7 +21,8 @@
 		"risuko-app": "bin.js"
 	},
 	"files": [
-		"bin.js"
+		"bin.js",
+		"index.js"
 	],
 	"engines": {
 		"node": ">=22.0.0"

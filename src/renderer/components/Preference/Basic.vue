@@ -677,6 +677,13 @@ import {
 } from "@shared/constants";
 import { availableLanguages } from "@shared/locales";
 import {
+	DEFAULT_FONT_FAMILY,
+	DEFAULT_FONT_SIZE,
+	FONT_FAMILY_OPTIONS,
+	FONT_SIZE_OPTIONS,
+	normalizeConfigOption,
+} from "@shared/types/config";
+import {
 	changedConfig,
 	convertLineToComma,
 	diffConfig,
@@ -709,12 +716,6 @@ import { getRisukoVersion } from "@/utils/version";
 
 const RETRY_STRATEGY_STATIC = "static";
 const RETRY_STRATEGY_EXPONENTIAL = "exponential";
-const FONT_FAMILY_OPTIONS = ["system", "rounded", "serif", "mono"];
-const FONT_SIZE_OPTIONS = ["small", "default", "large", "extra-large"];
-
-const normalizeOption = (value, options, fallback) => {
-	return options.includes(value) ? value : fallback;
-};
 
 const normalizePositiveInt = (
 	value,
@@ -793,8 +794,16 @@ const initForm = (config) => {
 			rss: "",
 			...(fileCategoryDirs || {}),
 		},
-		fontFamily: normalizeOption(fontFamily, FONT_FAMILY_OPTIONS, "system"),
-		fontSize: normalizeOption(fontSize, FONT_SIZE_OPTIONS, "default"),
+		fontFamily: normalizeConfigOption(
+			fontFamily,
+			FONT_FAMILY_OPTIONS,
+			DEFAULT_FONT_FAMILY,
+		),
+		fontSize: normalizeConfigOption(
+			fontSize,
+			FONT_SIZE_OPTIONS,
+			DEFAULT_FONT_SIZE,
+		),
 		taskRoutingRules: (config.taskRoutingRules || []).map((rule) => ({
 			...rule,
 			id: rule.id || crypto.randomUUID(),
@@ -944,48 +953,17 @@ export default {
 			return result;
 		},
 		fontFamilyOptions() {
-			return [
-				{
-					label: this.$t("preferences.font-family-system"),
-					value: "system",
-				},
-				{
-					label: this.$t("preferences.font-family-rounded"),
-					value: "rounded",
-				},
-				{
-					label: this.$t("preferences.font-family-serif"),
-					value: "serif",
-				},
-				{
-					label: this.$t("preferences.font-family-mono"),
-					value: "mono",
-				},
-			];
+			return FONT_FAMILY_OPTIONS.map((value) => ({
+				label: this.$t(`preferences.font-family-${value}`),
+				value,
+			}));
 		},
 		fontSizeOptions() {
-			return [
-				{
-					label: this.$t("preferences.font-size-small"),
-					shortLabel: this.$t("preferences.font-size-small-short"),
-					value: "small",
-				},
-				{
-					label: this.$t("preferences.font-size-default"),
-					shortLabel: this.$t("preferences.font-size-default-short"),
-					value: "default",
-				},
-				{
-					label: this.$t("preferences.font-size-large"),
-					shortLabel: this.$t("preferences.font-size-large-short"),
-					value: "large",
-				},
-				{
-					label: this.$t("preferences.font-size-extra-large"),
-					shortLabel: this.$t("preferences.font-size-extra-large-short"),
-					value: "extra-large",
-				},
-			];
+			return FONT_SIZE_OPTIONS.map((value) => ({
+				label: this.$t(`preferences.font-size-${value}`),
+				shortLabel: this.$t(`preferences.font-size-${value}-short`),
+				value,
+			}));
 		},
 		speedUnits() {
 			return [
@@ -1194,18 +1172,18 @@ export default {
 			}
 
 			if ("fontFamily" in data) {
-				data.fontFamily = normalizeOption(
+				data.fontFamily = normalizeConfigOption(
 					this.form.fontFamily,
 					FONT_FAMILY_OPTIONS,
-					"system",
+					DEFAULT_FONT_FAMILY,
 				);
 			}
 
 			if ("fontSize" in data) {
-				data.fontSize = normalizeOption(
+				data.fontSize = normalizeConfigOption(
 					this.form.fontSize,
 					FONT_SIZE_OPTIONS,
-					"default",
+					DEFAULT_FONT_SIZE,
 				);
 			}
 
@@ -1232,13 +1210,12 @@ export default {
 							});
 						}
 					}
+					changedConfig.basic = {};
+					changedConfig.advanced = {};
 				})
 				.catch(() => {
 					this.$msg.error(this.$t("preferences.save-fail-message"));
 				});
-
-			changedConfig.basic = {};
-			changedConfig.advanced = {};
 		},
 		resetForm(_formName) {
 			this.syncFormConfig();

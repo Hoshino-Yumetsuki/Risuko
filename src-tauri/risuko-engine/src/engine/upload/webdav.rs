@@ -176,7 +176,15 @@ impl UploadSink for WebdavSink {
         // Streaming PUT. The body factory opens the file lazily so retries
         // start from byte zero with a fresh reader
         let path: PathBuf = file.local_path.clone();
-        let body = risuko_http::file_stream_body(path.clone(), Some(file.size));
+        // Wrap the file stream so chunks report progress and observe cancellation mid-stream
+        let total = file.size;
+        let progress = ctl.clone();
+        let body = risuko_http::file_stream_body_with_progress(
+            path.clone(),
+            total,
+            move |sent| progress.report(sent.min(total), total),
+            Some(ctl.cancel.clone()),
+        );
 
         let mut req = self
             .client

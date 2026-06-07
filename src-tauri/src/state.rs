@@ -11,7 +11,6 @@ use crate::managers::vault::VaultManager;
 
 pub struct AppState {
     pub config: Mutex<ConfigManager>,
-    pub engine_running: Mutex<bool>,
     pub is_quitting: AtomicBool,
     pub rss: Mutex<Option<Arc<RssManager>>>,
     pub upload_sinks: Mutex<Option<Arc<UploadSinkManager>>>,
@@ -39,7 +38,6 @@ impl AppState {
         }
         Ok(Self {
             config: Mutex::new(config),
-            engine_running: Mutex::new(false),
             is_quitting: AtomicBool::new(false),
             rss: Mutex::new(Some(Arc::new(rss_manager))),
             upload_sinks: Mutex::new(Some(Arc::new(upload_manager))),

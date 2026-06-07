@@ -559,7 +559,7 @@ pub struct TorrentStats {
 pub struct PeerSnapshot {
     pub addr: std::net::SocketAddr,
     /// Raw bitfield bytes; manager hex-encodes for the RPC payload
-    pub bitfield: Vec<u8>,
+    pub bitfield: std::sync::Arc<[u8]>,
     pub am_choking: bool,
     pub am_interested: bool,
     pub peer_choking: bool,

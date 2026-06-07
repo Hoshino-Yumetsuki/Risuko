@@ -14,7 +14,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use super::sink::{SftpConfig, UploadControl, UploadFile, UploadSink};
 use crate::engine::ssh_known_hosts::TofuHandler;
 
-const COPY_BUF: usize = 64 * 1024;
+const COPY_BUF: usize = 256 * 1024;
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
 
 pub struct SftpSink {

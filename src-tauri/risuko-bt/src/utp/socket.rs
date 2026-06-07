@@ -11,6 +11,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
+use bytes::{Bytes, BytesMut};
 use parking_lot::Mutex;
 use rand::RngExt;
 use tokio::net::UdpSocket;
@@ -24,11 +25,12 @@ pub(crate) type ConnKey = (SocketAddr, u16);
 
 /// Maps each live connection to the channel its driver reads packets from.
 pub(crate) type ConnRegistry =
-    Arc<Mutex<HashMap<ConnKey, mpsc::UnboundedSender<(UtpHeader, Vec<u8>)>>>>;
+    Arc<Mutex<HashMap<ConnKey, mpsc::UnboundedSender<(UtpHeader, Bytes)>>>>;
 
 /// Largest UDP datagram we'll read (µTP payloads are MSS-sized; this leaves
 /// room for the header plus any extensions).
 const MAX_DATAGRAM: usize = 2048;
+const ROUTER_READ_SLAB: usize = MAX_DATAGRAM * 64;
 const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// A µTP endpoint sharing a single UDP socket across all its connections.
@@ -37,6 +39,7 @@ pub struct UtpSocket {
     registry: ConnRegistry,
     local_addr: SocketAddr,
     accept_rx: tokio::sync::Mutex<mpsc::UnboundedReceiver<UtpStream>>,
+    router_handle: Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
 
 impl UtpSocket {
@@ -54,12 +57,13 @@ impl UtpSocket {
             .unwrap_or_else(|_| SocketAddr::from(([0, 0, 0, 0], 0)));
         let registry: ConnRegistry = Arc::new(Mutex::new(HashMap::new()));
         let (accept_tx, accept_rx) = mpsc::unbounded_channel();
-        tokio::spawn(router(udp.clone(), registry.clone(), accept_tx));
+        let router_handle = tokio::spawn(router(udp.clone(), registry.clone(), accept_tx));
         Arc::new(Self {
             udp,
             registry,
             local_addr,
             accept_rx: tokio::sync::Mutex::new(accept_rx),
+            router_handle: Mutex::new(Some(router_handle)),
         })
     }
 
@@ -144,6 +148,21 @@ impl UtpSocket {
             .await
             .ok_or_else(|| io::Error::new(io::ErrorKind::BrokenPipe, "utp socket closed"))
     }
+
+    pub fn shutdown(&self) {
+        if let Some(handle) = self.router_handle.lock().take() {
+            handle.abort();
+        }
+        self.registry.lock().clear();
+    }
+}
+
+impl Drop for UtpSocket {
+    fn drop(&mut self) {
+        if let Some(handle) = self.router_handle.get_mut().take() {
+            handle.abort();
+        }
+    }
 }
 
 /// Reads every datagram and routes it to the owning connection, or opens a new
@@ -153,9 +172,13 @@ async fn router(
     registry: ConnRegistry,
     accept_tx: mpsc::UnboundedSender<UtpStream>,
 ) {
-    let mut buf = vec![0u8; MAX_DATAGRAM];
+    let mut buf = BytesMut::with_capacity(ROUTER_READ_SLAB);
+    buf.resize(ROUTER_READ_SLAB, 0);
     loop {
-        let (n, src) = match udp.recv_from(&mut buf).await {
+        if buf.len() < MAX_DATAGRAM {
+            buf.resize(ROUTER_READ_SLAB, 0);
+        }
+        let (n, src) = match udp.recv_from(&mut buf[..MAX_DATAGRAM]).await {
             Ok(x) => x,
             // A transient recv error (e.g. ICMP port-unreachable surfaced on
             // some platforms) shouldn't kill the whole endpoint.
@@ -164,12 +187,14 @@ async fn router(
         let Ok((header, payload)) = UtpHeader::decode(&buf[..n]) else {
             continue;
         };
+        let payload_offset = n - payload.len();
+        let payload = buf.split_to(n).freeze().slice(payload_offset..);
         let key = (src, header.connection_id);
         // Fast path: an established connection owns this id.
         {
             let reg = registry.lock();
             if let Some(tx) = reg.get(&key) {
-                let _ = tx.send((header, payload.to_vec()));
+                let _ = tx.send((header, payload));
                 continue;
             }
         }

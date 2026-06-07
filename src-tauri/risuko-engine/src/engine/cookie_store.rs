@@ -127,8 +127,10 @@ impl CookieStore {
         }
         entry.last_validated_at = now;
 
+        // Lowercase host keys so exact lookup, remove, and touch share one form
+        let key = entry.host.to_ascii_lowercase();
         let mut s = self.state.write();
-        s.entries.insert(entry.host.clone(), entry);
+        s.entries.insert(key, entry);
 
         if s.entries.len() > MAX_ENTRIES {
             let mut by_age: Vec<(String, u64)> = s
@@ -148,8 +150,9 @@ impl CookieStore {
     /// Bump `last_validated_at` for an entry that's still working. Called
     /// from the HTTP downloader after a successful task start
     pub fn touch(&self, host: &str) {
+        let host = host.to_ascii_lowercase();
         let mut s = self.state.write();
-        if let Some(entry) = s.entries.get_mut(host) {
+        if let Some(entry) = s.entries.get_mut(&host) {
             entry.last_validated_at = now_secs();
             // Best-effort persist; a write failure isn't fatal
             let _ = write_to_disk(&self.path, &s);
@@ -157,8 +160,9 @@ impl CookieStore {
     }
 
     pub fn remove(&self, host: &str) -> Result<bool, String> {
+        let host = host.to_ascii_lowercase();
         let mut s = self.state.write();
-        let removed = s.entries.remove(host).is_some();
+        let removed = s.entries.remove(&host).is_some();
         if removed {
             write_to_disk(&self.path, &s)?;
         }

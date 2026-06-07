@@ -89,97 +89,116 @@ macro_rules! ftp_transfer {
         } else {
             $file_size
         };
-        let resume_offset =
-            if existing_size > 0 && effective_size > 0 && existing_size < effective_size {
-                match $ftp.resume_transfer(existing_size as usize).await {
-                    Ok(()) => {
-                        $completed.store(existing_size, Ordering::Relaxed);
-                        tracing::info!("Resuming FTP download from byte {existing_size}");
-                        existing_size
+        // If .part already matches the remote size, skip transfer and let finalization rename it
+        // Oversized .part files are stale and get recreated in the resume branch below
+        if existing_size > 0 && effective_size > 0 && existing_size == effective_size {
+            $completed.store(existing_size, Ordering::Relaxed);
+            tracing::info!("FTP .part already complete ({existing_size} bytes), skipping transfer");
+            let _ = $ftp.quit().await;
+        } else {
+            let resume_offset =
+                if existing_size > 0 && effective_size > 0 && existing_size < effective_size {
+                    // Avoid truncating the u64 resume offset on 32-bit targets
+                    match usize::try_from(existing_size) {
+                        Ok(off) => match $ftp.resume_transfer(off).await {
+                            Ok(()) => {
+                                $completed.store(existing_size, Ordering::Relaxed);
+                                tracing::info!("Resuming FTP download from byte {existing_size}");
+                                existing_size
+                            }
+                            Err(e) => {
+                                tracing::warn!("FTP resume not supported: {e}");
+                                0
+                            }
+                        },
+                        Err(_) => {
+                            tracing::warn!(
+                                "FTP resume offset {existing_size} exceeds usize; \
+                                 restarting download from scratch"
+                            );
+                            0
+                        }
                     }
-                    Err(e) => {
-                        tracing::warn!("FTP resume not supported: {e}");
-                        0
-                    }
-                }
+                } else {
+                    0
+                };
+
+            let mut file = if resume_offset > 0 {
+                tokio::fs::OpenOptions::new()
+                    .write(true)
+                    .append(true)
+                    .open(&$part_path)
+                    .await
+                    .map_err(|e| format!("Failed to open part file: {e}"))?
             } else {
-                0
+                tokio::fs::File::create(&$part_path)
+                    .await
+                    .map_err(|e| format!("Failed to create part file: {e}"))?
             };
 
-        let mut file = if resume_offset > 0 {
-            tokio::fs::OpenOptions::new()
-                .write(true)
-                .append(true)
-                .open(&$part_path)
+            let mut data_stream = $ftp
+                .retr_as_stream(remote_path)
                 .await
-                .map_err(|e| format!("Failed to open part file: {e}"))?
-        } else {
-            tokio::fs::File::create(&$part_path)
-                .await
-                .map_err(|e| format!("Failed to create part file: {e}"))?
-        };
+                .map_err(|e| format!("FTP RETR failed: {e}"))?;
 
-        let mut data_stream = $ftp
-            .retr_as_stream(remote_path)
-            .await
-            .map_err(|e| format!("FTP RETR failed: {e}"))?;
+            let mut bytes_downloaded = resume_offset;
+            let mut buf = vec![0u8; BUF_SIZE];
+            let mut last_speed_time = Instant::now();
+            let mut interval_bytes: u64 = 0;
+            let mut ema_speed: f64 = 0.0;
 
-        let mut bytes_downloaded = resume_offset;
-        let mut buf = vec![0u8; BUF_SIZE];
-        let mut last_speed_time = Instant::now();
-        let mut interval_bytes: u64 = 0;
-        let mut ema_speed: f64 = 0.0;
-
-        loop {
-            if $cancelled.load(Ordering::Relaxed) || $cancel_token.is_cancelled() {
-                return Err("Download cancelled".to_string());
-            }
-
-            let n = tokio::select! {
-                result = data_stream.read(&mut buf) => {
-                    result.map_err(|e| format!("FTP read error: {e}"))?
-                }
-                _ = $cancel_token.cancelled() => {
+            loop {
+                if $cancelled.load(Ordering::Relaxed) || $cancel_token.is_cancelled() {
                     return Err("Download cancelled".to_string());
                 }
-            };
 
-            if n == 0 {
-                break;
+                let n = tokio::select! {
+                    result = data_stream.read(&mut buf) => {
+                        result.map_err(|e| format!("FTP read error: {e}"))?
+                    }
+                    _ = $cancel_token.cancelled() => {
+                        return Err("Download cancelled".to_string());
+                    }
+                };
+
+                if n == 0 {
+                    break;
+                }
+
+                $global_limiter.acquire(n).await;
+                $task_limiter.acquire(n).await;
+
+                file.write_all(&buf[..n])
+                    .await
+                    .map_err(|e| format!("Failed to write: {e}"))?;
+
+                bytes_downloaded += n as u64;
+                $completed.store(bytes_downloaded, Ordering::Relaxed);
+                interval_bytes += n as u64;
+
+                let elapsed = last_speed_time.elapsed();
+                if elapsed.as_millis() >= 500 {
+                    let secs = elapsed.as_secs_f64();
+                    let instant_speed = interval_bytes as f64 / secs;
+                    ema_speed =
+                        SPEED_EMA_ALPHA * instant_speed + (1.0 - SPEED_EMA_ALPHA) * ema_speed;
+                    $speed.store(ema_speed as u64, Ordering::Relaxed);
+                    interval_bytes = 0;
+                    last_speed_time = Instant::now();
+                }
             }
 
-            $global_limiter.acquire(n).await;
-            $task_limiter.acquire(n).await;
-
-            file.write_all(&buf[..n])
+            file.flush()
                 .await
-                .map_err(|e| format!("Failed to write: {e}"))?;
+                .map_err(|e| format!("Failed to flush: {e}"))?;
+            drop(file);
 
-            bytes_downloaded += n as u64;
-            $completed.store(bytes_downloaded, Ordering::Relaxed);
-            interval_bytes += n as u64;
+            $ftp.finalize_retr_stream(data_stream)
+                .await
+                .map_err(|e| format!("FTP finalize failed: {e}"))?;
 
-            let elapsed = last_speed_time.elapsed();
-            if elapsed.as_millis() >= 500 {
-                let secs = elapsed.as_secs_f64();
-                let instant_speed = interval_bytes as f64 / secs;
-                ema_speed = SPEED_EMA_ALPHA * instant_speed + (1.0 - SPEED_EMA_ALPHA) * ema_speed;
-                $speed.store(ema_speed as u64, Ordering::Relaxed);
-                interval_bytes = 0;
-                last_speed_time = Instant::now();
-            }
+            let _ = $ftp.quit().await;
         }
-
-        file.flush()
-            .await
-            .map_err(|e| format!("Failed to flush: {e}"))?;
-        drop(file);
-
-        $ftp.finalize_retr_stream(data_stream)
-            .await
-            .map_err(|e| format!("FTP finalize failed: {e}"))?;
-
-        let _ = $ftp.quit().await;
         Ok::<(), String>(())
     }};
 }
@@ -215,7 +234,7 @@ pub async fn run_ftp_ftps_download(
     fs::create_dir_all(dir_path).map_err(|e| format!("Failed to create dir: {e}"))?;
 
     let filename = if out.is_empty() {
-        super::infer_filename_from_ftp_uri(&format!("ftp://{}{}", parsed.host, parsed.path))
+        basename_from_ftp_path(&parsed.path)
     } else {
         out.to_string()
     };
@@ -242,18 +261,42 @@ pub async fn run_ftp_ftps_download(
     let file_size = total.load(Ordering::Relaxed);
 
     if parsed.protocol == FtpProtocol::Ftps {
-        let rustls_config = rustls::ClientConfig::builder()
-            .dangerous()
-            .with_custom_certificate_verifier(Arc::new(AcceptAnyCert))
-            .with_no_client_auth();
+        // Match aria2's `--check-certificate=true` default
+        // Only accept self-signed or invalid certs when `check-certificate=false`
+        let verify_cert = option_bool(options, "check-certificate", true);
+        let rustls_config = if verify_cert {
+            let root_store = rustls::RootCertStore {
+                roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
+            };
+            rustls::ClientConfig::builder()
+                .with_root_certificates(root_store)
+                .with_no_client_auth()
+        } else {
+            tracing::warn!(
+                "FTPS certificate verification disabled (check-certificate=false) for {}",
+                parsed.host
+            );
+            rustls::ClientConfig::builder()
+                .dangerous()
+                .with_custom_certificate_verifier(Arc::new(AcceptAnyCert))
+                .with_no_client_auth()
+        };
         let connector = AsyncRustlsConnector::from(suppaftp::tokio_rustls::TlsConnector::from(
             Arc::new(rustls_config),
         ));
 
-        // Use implicit TLS connection for FTPS
-        let mut ftp = AsyncRustlsFtpStream::connect_secure_implicit(&addr, connector, &parsed.host)
-            .await
-            .map_err(|e| format!("FTPS connect failed: {e}"))?;
+        let mut ftp = if parsed.port == 990 {
+            AsyncRustlsFtpStream::connect_secure_implicit(&addr, connector, &parsed.host)
+                .await
+                .map_err(|e| format!("FTPS implicit connect failed: {e}"))?
+        } else {
+            AsyncRustlsFtpStream::connect(&addr)
+                .await
+                .map_err(|e| format!("FTPS explicit connect failed: {e}"))?
+                .into_secure(connector, &parsed.host)
+                .await
+                .map_err(|e| format!("FTPS AUTH TLS failed: {e}"))?
+        };
 
         ftp.login(&user, &password)
             .await
@@ -361,4 +404,28 @@ fn option_str(options: &Map<String, Value>, key: &str) -> Option<String> {
         .and_then(|v| v.as_str())
         .filter(|s| !s.is_empty())
         .map(|s| s.to_string())
+}
+
+/// Read a boolean option from JSON bools or common string forms
+///
+/// Returns `default` when absent or unrecognized
+fn option_bool(options: &Map<String, Value>, key: &str, default: bool) -> bool {
+    match options.get(key) {
+        Some(Value::Bool(b)) => *b,
+        Some(Value::String(s)) => match s.trim().to_ascii_lowercase().as_str() {
+            "true" | "1" | "yes" | "on" => true,
+            "false" | "0" | "no" | "off" => false,
+            _ => default,
+        },
+        _ => default,
+    }
+}
+
+/// Derive a download filename from an already-parsed FTP path
+fn basename_from_ftp_path(path: &str) -> String {
+    let trimmed = path.trim_end_matches('/');
+    match trimmed.rfind('/') {
+        Some(idx) if !trimmed[idx + 1..].is_empty() => trimmed[idx + 1..].to_string(),
+        _ => "download".to_string(),
+    }
 }

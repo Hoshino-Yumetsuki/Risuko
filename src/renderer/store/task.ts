@@ -5,7 +5,7 @@ import type {
 	PeerInfo,
 	SyncOrderResult,
 } from "@shared/types/task";
-import { checkTaskIsBT, getTaskName } from "@shared/utils";
+import { calcProgress, checkTaskIsBT, getTaskName } from "@shared/utils";
 import logger from "@shared/utils/logger";
 import { getSelectableTaskKeys } from "@shared/utils/taskSelection";
 import { defineStore } from "pinia";
@@ -21,6 +21,9 @@ const SORT_ORDER_STORAGE_KEY = "risuko.task-sort-order";
 /** Max speed samples kept per task */
 export const SPEED_HISTORY_LIMIT = 60;
 
+/** Max tasks tracked in the speed-history LRU */
+const SPEED_HISTORY_GID_LIMIT = 200;
+
 type SpeedSample = { download: number; upload: number };
 
 /** Module cache: gid -> speed samples */
@@ -29,10 +32,6 @@ const speedHistoryCache = new Map<string, SpeedSample[]>();
 
 export function getSpeedHistory(gid: string): SpeedSample[] {
 	return speedHistoryCache.get(gid) || [];
-}
-
-export function deleteSpeedHistory(gid: string): void {
-	speedHistoryCache.delete(gid);
 }
 
 /** Row count for the task list
@@ -59,7 +58,17 @@ function sampleSpeedsFromTasks(tasks: DownloadTask[]): boolean {
 		const sample: SpeedSample = { download, upload };
 		const prev = speedHistoryCache.get(task.gid) || [];
 		const next = [...prev, sample].slice(-SPEED_HISTORY_LIMIT);
+		// Re-insert so the sampled gid becomes most-recently-used
+		speedHistoryCache.delete(task.gid);
 		speedHistoryCache.set(task.gid, next);
+		// Bound tracked gids by evicting least-recently-used entries
+		while (speedHistoryCache.size > SPEED_HISTORY_GID_LIMIT) {
+			const oldest = speedHistoryCache.keys().next().value;
+			if (oldest === undefined) {
+				break;
+			}
+			speedHistoryCache.delete(oldest);
+		}
 		changed = true;
 	}
 	return changed;
@@ -184,6 +193,26 @@ export const useTaskStore = defineStore("task", {
 				...task,
 				_displayKey: task.gid,
 			}));
+		},
+		totalLength(state) {
+			return state.taskList.reduce(
+				(sum, task) => sum + Number(task.totalLength || 0),
+				0,
+			);
+		},
+		totalCompletedLength(state) {
+			return state.taskList.reduce(
+				(sum, task) => sum + Number(task.completedLength || 0),
+				0,
+			);
+		},
+		totalProgressPercent() {
+			const result = calcProgress(
+				this.totalLength,
+				this.totalCompletedLength,
+				1,
+			);
+			return `${result}`.replace(/\.0$/, "");
 		},
 		filteredTaskList(state) {
 			const filter = state.filterText.trim().toLowerCase();
@@ -685,6 +714,8 @@ export const useTaskStore = defineStore("task", {
 				)
 				.finally(() => {
 					speedHistoryCache.delete(gid);
+					// Drop cloudflare retry flags for tasks that no longer exist
+					useAppStore().clearCloudflareRetryFlag(gid);
 					this.fetchList();
 					this.saveSession();
 				});
@@ -831,8 +862,11 @@ export const useTaskStore = defineStore("task", {
 					),
 				)
 				.finally(() => {
+					const appStore = useAppStore();
 					for (const gid of gids) {
 						speedHistoryCache.delete(gid);
+						// Prune the cloudflare retry flag for removed tasks
+						appStore.clearCloudflareRetryFlag(gid);
 					}
 					this.fetchList();
 					this.saveSession();

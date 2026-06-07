@@ -192,7 +192,7 @@ export const getLanguage = (locale = "en-US") => {
 	return "en-US";
 };
 
-export const getSystemLocale = () => {
+const getSystemLocale = () => {
 	if (typeof navigator === "undefined") {
 		return "en-US";
 	}

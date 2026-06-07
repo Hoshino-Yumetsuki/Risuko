@@ -14,6 +14,7 @@ interface UploadState {
 	defaultSinkId: string | null;
 	loading: boolean;
 	_eventUnlisteners: (() => void)[];
+	_listenerSetupToken: symbol | null;
 	_pollTimer: ReturnType<typeof setInterval> | null;
 	_isRefreshing: boolean;
 }
@@ -28,6 +29,7 @@ export const useUploadSinkStore = defineStore("uploadSink", {
 		defaultSinkId: null,
 		loading: false,
 		_eventUnlisteners: [],
+		_listenerSetupToken: null,
 		_pollTimer: null,
 		_isRefreshing: false,
 	}),
@@ -191,6 +193,9 @@ export const useUploadSinkStore = defineStore("uploadSink", {
 
 		async initEventListeners() {
 			this.cleanupEventListeners();
+			const setupToken = Symbol("upload-sink-listener-setup");
+			this._listenerSetupToken = setupToken;
+			const pendingUnlisteners: (() => void)[] = [];
 			try {
 				const { listen } = await import("@tauri-apps/api/event");
 				const events = [
@@ -206,12 +211,19 @@ export const useUploadSinkStore = defineStore("uploadSink", {
 							this._upsertJob(e.payload);
 						}
 					});
-					this._eventUnlisteners.push(u);
+					pendingUnlisteners.push(u);
+					if (this._listenerSetupToken !== setupToken) {
+						for (const unlisten of pendingUnlisteners) {
+							unlisten();
+						}
+						return;
+					}
 				}
+				this._eventUnlisteners.push(...pendingUnlisteners);
 				// Active uploads need byte-level progress; events only fire on
 				// state transitions, so poll while at least one job is in
 				// flight. Cheap, bounded, and stops automatically
-				if (!this._pollTimer) {
+				if (this._listenerSetupToken === setupToken && !this._pollTimer) {
 					this._pollTimer = setInterval(() => {
 						if (this.hasActiveJobs) {
 							this.refreshJobs();
@@ -219,6 +231,9 @@ export const useUploadSinkStore = defineStore("uploadSink", {
 					}, POLL_MS);
 				}
 			} catch (err) {
+				for (const unlisten of pendingUnlisteners) {
+					unlisten();
+				}
 				logger.warn(
 					"[Risuko] upload sink event listener setup failed:",
 					(err as Error)?.message || err,
@@ -227,6 +242,7 @@ export const useUploadSinkStore = defineStore("uploadSink", {
 		},
 
 		cleanupEventListeners() {
+			this._listenerSetupToken = null;
 			for (const u of this._eventUnlisteners) {
 				u();
 			}

@@ -749,6 +749,8 @@ pub async fn run_http_download_multi(
         }
 
         let started = std::time::Instant::now();
+        // Existing .part bytes are already in `completed`; exclude them from this mirror's speed EMA
+        let start_bytes = completed.load(Ordering::Relaxed);
         let result = run_single_uri_download(
             uri,
             dir,
@@ -770,7 +772,9 @@ pub async fn run_http_download_multi(
         match result {
             Ok(path) => {
                 let elapsed = started.elapsed().as_secs_f64();
-                let bytes = completed.load(Ordering::Relaxed);
+                let bytes = completed
+                    .load(Ordering::Relaxed)
+                    .saturating_sub(start_bytes);
                 stats.record_success(&super::uri_selector::host_of(uri), bytes, elapsed);
                 return Ok(path);
             }
@@ -784,8 +788,9 @@ pub async fn run_http_download_multi(
                 last_err = Some(e);
                 // Reset counters before retrying the next mirror so progress
                 // accounting doesn't double-count partial bytes from a
-                // failed attempt.
+                // Clear `total` so a failed mirror's content-length cannot leak into an unknown-length mirror
                 completed.store(0, Ordering::Relaxed);
+                total.store(0, Ordering::Relaxed);
                 speed.store(0, Ordering::Relaxed);
                 for cc in &chunk_completed {
                     cc.store(0, Ordering::Relaxed);
@@ -978,7 +983,7 @@ async fn run_single_uri_download(
     }
 
     if is_http && split > 1 {
-        match probe_for_name.clone() {
+        match probe_for_name.as_ref() {
             Some(probe)
                 if probe.range_supported
                     && probe.content_length > min_split_size.saturating_mul(split as u64) =>
@@ -1005,7 +1010,7 @@ async fn run_single_uri_download(
                     dir_path,
                     global_limiter,
                     task_limiter,
-                    probe.etag,
+                    probe.etag.clone(),
                     &chunk_completed,
                     stall.clone(),
                     falloc_mode,
@@ -1366,6 +1371,27 @@ fn cloudflare_error(uri: &str, status: u16) -> String {
     format!("{CLOUDFLARE_MARKER} host={host} status={status}")
 }
 
+/// Drain a small response body so reqwest can reuse the connection
+///
+/// Bounded for early-return paths such as Cloudflare challenges
+async fn drain_response_body(resp: risuko_http::Response) {
+    use futures_util::StreamExt;
+    const MAX_DRAIN_BYTES: usize = 64 * 1024;
+    let mut read: usize = 0;
+    let mut stream = resp.bytes_stream();
+    while let Some(item) = stream.next().await {
+        match item {
+            Ok(bytes) => {
+                read = read.saturating_add(bytes.len());
+                if read >= MAX_DRAIN_BYTES {
+                    break;
+                }
+            }
+            Err(_) => break,
+        }
+    }
+}
+
 /// Probe whether the server supports Range requests. Returns the
 /// response headers we care about regardless of range support; check
 /// `range_supported` on the result before slicing
@@ -1387,7 +1413,9 @@ async fn probe_range_support(
 
     if looks_like_cloudflare_block(resp.headers(), status) {
         log_cloudflare_diagnostic(client, headers, resp.headers(), uri);
-        return Err(cloudflare_error(uri, status));
+        let err = cloudflare_error(uri, status);
+        drain_response_body(resp).await;
+        return Err(err);
     }
 
     tracing::debug!(
@@ -1455,7 +1483,7 @@ async fn probe_range_support(
         return Ok(no_range);
     }
 
-    if status == 206 {
+    if range_supported_from_probe_status(status) {
         // Parse Content-Range: bytes 0-0/TOTAL
         if let Some(cr) = resp
             .headers()
@@ -1479,33 +1507,8 @@ async fn probe_range_support(
     }
 
     if status == 200 {
-        // Server ignored Range header; check Accept-Ranges
-        if let Some(ar) = resp
-            .headers()
-            .get(ACCEPT_RANGES)
-            .and_then(|v| v.to_str().ok())
-        {
-            if ar.eq_ignore_ascii_case("bytes") {
-                if let Some(cl) = resp
-                    .headers()
-                    .get(CONTENT_LENGTH)
-                    .and_then(|v| v.to_str().ok())
-                {
-                    if let Ok(total) = cl.trim().parse::<u64>() {
-                        if total > 0 {
-                            return Ok(ProbeResult {
-                                content_length: total,
-                                etag,
-                                last_modified,
-                                suggested_filename,
-                                content_type,
-                                range_supported: true,
-                            });
-                        }
-                    }
-                }
-            }
-        }
+        // A 200 to a concrete Range request is not a byte-range response
+        // Keep filename/type metadata, but stay out of multi-chunk mode
         return Ok(no_range);
     }
 
@@ -1796,13 +1799,13 @@ async fn piece_worker(
                 if now_completed >= piece_length {
                     queue.complete(idx);
                     retry_count = 0;
+                } else if now_completed > already {
+                    // Early EOF made progress; return the piece with progress intact
+                    // Keep retry budget because per-piece resume moves toward piece_length
+                    queue.release(idx);
+                    retry_count = 0;
                 } else {
-                    // Server closed the stream early — return the piece to the
-                    // pool with its progress preserved; another worker (or
-                    // this one on a later iteration) will pick up the tail.
-                    // Count the early EOF against the retry budget so a
-                    // server that consistently truncates responses cannot
-                    // pin a worker in an infinite loop
+                    // Early EOF with zero progress counts against retry budget to avoid worker spin
                     queue.release(idx);
                     retry_count += 1;
                     if retry_count > max_retries {
@@ -1883,9 +1886,9 @@ async fn download_piece_stream(
 
     if looks_like_cloudflare_block(resp.headers(), status) {
         log_cloudflare_diagnostic(client, headers, resp.headers(), uri);
-        return StreamOutcome {
-            error: Some(cloudflare_error(uri, status)),
-        };
+        let err = cloudflare_error(uri, status);
+        drain_response_body(resp).await;
+        return StreamOutcome { error: Some(err) };
     }
 
     if let Some(expected) = expected_etag {
@@ -2284,7 +2287,9 @@ async fn run_single_download(
 
     if looks_like_cloudflare_block(resp.headers(), status) {
         log_cloudflare_diagnostic(client, headers, resp.headers(), uri);
-        return Err(cloudflare_error(uri, status));
+        let err = cloudflare_error(uri, status);
+        drain_response_body(resp).await;
+        return Err(err);
     }
 
     if status == 416 && existing_size > 0 {
@@ -2581,6 +2586,10 @@ fn parse_http_date(s: &str) -> Option<filetime::FileTime> {
     }
 
     None
+}
+
+fn range_supported_from_probe_status(status: u16) -> bool {
+    status == 206
 }
 
 /// Convert a civil date (year, month, day) to days since Unix epoch.
@@ -3027,6 +3036,12 @@ mod tests {
         assert!(msg.starts_with(CLOUDFLARE_MARKER));
         assert!(msg.contains("host=dl.example.com"));
         assert!(msg.contains("status=403"));
+    }
+
+    #[test]
+    fn range_probe_200_does_not_confirm_range_support() {
+        assert!(!range_supported_from_probe_status(200));
+        assert!(range_supported_from_probe_status(206));
     }
 
     #[test]

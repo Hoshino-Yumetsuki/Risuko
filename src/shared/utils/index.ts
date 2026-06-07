@@ -29,10 +29,13 @@ import {
 export const bytesToSize = (bytes, precision = 1) => {
 	const b = parseInt(bytes, 10);
 	const sizes = ["B", "KB", "MB", "GB", "TB"];
-	if (b === 0) {
+	if (!Number.isFinite(b) || b === 0) {
 		return "0 KB";
 	}
-	const i = Math.floor(Math.log(b) / Math.log(1024));
+	const i = Math.min(
+		Math.floor(Math.log(b) / Math.log(1024)),
+		sizes.length - 1,
+	);
 	if (i === 0) {
 		return `${b} ${sizes[i]}`;
 	}
@@ -77,7 +80,10 @@ export const parseBooleanConfig = (value: unknown, fallback = false) => {
 };
 
 export const bitfieldToPercent = (text) => {
-	const len = text.length - 1;
+	const len = text.length;
+	if (len === 0) {
+		return "0";
+	}
 	let p: number;
 	let one = 0;
 	for (let i = 0; i < len; i++) {
@@ -129,6 +135,9 @@ export const calcRatio = (totalLength, uploadLength) => {
 
 export const timeRemaining = (totalLength, completedLength, downloadSpeed) => {
 	const remainingLength = totalLength - completedLength;
+	if (remainingLength <= 0 || downloadSpeed <= 0) {
+		return 0;
+	}
 	return Math.ceil(remainingLength / downloadSpeed);
 };
 
@@ -251,7 +260,7 @@ export const getFileNameFromFile = (file) => {
 
 	const index = path.lastIndexOf("/");
 
-	if (index <= 0 || index === path.length) {
+	if (index < 0 || index === path.length - 1) {
 		return path;
 	}
 
@@ -271,15 +280,14 @@ const hasUriScheme = (input: string, schemes: string[]) => {
 	return schemes.some((s) => lower.startsWith(`${s}:`));
 };
 
-export const isAdcUri = (uri: string) =>
+const isAdcUri = (uri: string) =>
 	hasUriScheme(uri, ["adc", "adcs", "dchub", "nmdc"]);
-export const isGnutellaUri = (uri: string) =>
-	hasUriScheme(uri, ["gnutella", "gnet"]);
-export const isG2Uri = (uri: string) => hasUriScheme(uri, ["g2"]);
-export const isGiftUri = (uri: string) => hasUriScheme(uri, ["gift"]);
-export const isMagnetUri = (uri: string) => hasUriScheme(uri, ["magnet"]);
-export const isEd2kUri = (uri: string) => hasUriScheme(uri, ["ed2k"]);
-export const isThunderUri = (uri: string) =>
+const isGnutellaUri = (uri: string) => hasUriScheme(uri, ["gnutella", "gnet"]);
+const isG2Uri = (uri: string) => hasUriScheme(uri, ["g2"]);
+const isGiftUri = (uri: string) => hasUriScheme(uri, ["gift"]);
+const isMagnetUri = (uri: string) => hasUriScheme(uri, ["magnet"]);
+const isEd2kUri = (uri: string) => hasUriScheme(uri, ["ed2k"]);
+const isThunderUri = (uri: string) =>
 	hasUriScheme(uri, ["thunder", "flashget", "qqdl"]);
 
 const YOUTUBE_HOSTS = new Set([
@@ -335,7 +343,7 @@ const hostnameOf = (uri: string): string | null => {
 	}
 };
 
-export const isYoutubeUri = (uri: string): boolean => {
+const isYoutubeUri = (uri: string): boolean => {
 	if (!uri || typeof uri !== "string") {
 		return false;
 	}
@@ -372,7 +380,7 @@ export const isMediaUri = (uri: string): boolean => {
 	);
 };
 
-export const isM3u8Uri = (uri: string): boolean => {
+const isM3u8Uri = (uri: string): boolean => {
 	if (!uri || typeof uri !== "string") {
 		return false;
 	}
@@ -639,7 +647,7 @@ export interface ParsedTaskLink {
 	rename?: string;
 }
 
-export const parseRenameDirective = (line = ""): ParsedTaskLink => {
+const parseRenameDirective = (line = ""): ParsedTaskLink => {
 	const m = RENAME_SUFFIX_REGEX.exec(line);
 	if (!m) {
 		return { uri: line };
@@ -781,15 +789,6 @@ export const generateRandomInt = (min = 0, max = 10000) => {
 	return min + Math.floor(Math.random() * (max - min));
 };
 
-export const intersection = (array1 = [], array2 = []) => {
-	if (array1.length === 0 || array2.length === 0) {
-		return [];
-	}
-
-	const set = new Set(array2);
-	return array1.filter((value) => set.has(value));
-};
-
 export const cloneArray = (arr = [], reversed = false) => {
 	if (!Array.isArray(arr)) {
 		return arr;
@@ -802,7 +801,7 @@ export const cloneArray = (arr = [], reversed = false) => {
 export const pushItemToFixedLengthArray = (arr = [], maxLength, item) => {
 	const result =
 		arr.length >= maxLength
-			? [...arr.slice(1, maxLength - 1), item]
+			? [...arr.slice(1, maxLength), item]
 			: [...arr, item];
 	return result;
 };

@@ -96,9 +96,7 @@ export default {
 		},
 	},
 	data() {
-		return {
-			visible: false,
-		};
+		return {};
 	},
 	computed: {
 		historyDirectories() {
@@ -110,12 +108,6 @@ export default {
 		empty() {
 			const { favoriteDirectories, historyDirectories } = this;
 			return favoriteDirectories.length + historyDirectories.length === 0;
-		},
-		popoverDisabled() {
-			const { favoriteDirectories, historyDirectories } = this;
-			return (
-				favoriteDirectories.length === 0 && historyDirectories.length === 0
-			);
 		},
 		showDivider() {
 			const { favoriteDirectories, historyDirectories } = this;
@@ -129,7 +121,6 @@ export default {
 	methods: {
 		handleSelectItem(directory) {
 			this.$emit("selected", directory.trim());
-			this.visible = false;
 		},
 		handleFavoriteItem(directory) {
 			logger.log("handleFavoriteItem==>", directory);

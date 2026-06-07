@@ -180,13 +180,13 @@
               {{ $t('rss.open-externally') }}
             </Button>
           </div>
-          <iframe
-            v-else
-            ref="viewerFrame"
-            class="rss-viewer-frame"
-            sandbox="allow-same-origin allow-scripts"
-            :srcdoc="viewerContent"
-          />
+	          <iframe
+	            v-else
+	            ref="viewerFrame"
+	            class="rss-viewer-frame"
+	            sandbox="allow-popups"
+	            :srcdoc="viewerContent"
+	          />
         </div>
       </DialogContent>
     </Dialog>
@@ -464,7 +464,7 @@ export default {
 				const raw = await api.readRssDownload(item.feed_id, item.id);
 				const baseUrl = item.link || item.enclosure_url || "";
 				const isDark = document.documentElement.classList.contains("dark");
-				this.viewerContent = injectBaseTag(raw, baseUrl, isDark);
+				this.viewerContent = injectBaseTag(sanitizeHtml(raw), baseUrl, isDark);
 			} catch (e: unknown) {
 				this.viewerError = e instanceof Error ? e.message : String(e);
 			} finally {

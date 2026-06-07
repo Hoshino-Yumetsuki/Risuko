@@ -108,10 +108,6 @@ import TaskGeneral from "./TaskGeneral.vue";
 import TaskPeers from "./TaskPeers.vue";
 import TaskTrackers from "./TaskTrackers.vue";
 
-const cached = {
-	files: [],
-};
-
 export default {
 	name: "mo-task-detail",
 	components: {
@@ -208,8 +204,7 @@ export default {
 					completedLength: item.completedLength,
 				};
 			});
-			cached.files = result;
-			return cached.files;
+			return result;
 		},
 		selectedFileList() {
 			const { fileList } = this;
@@ -231,12 +226,8 @@ export default {
 		if (this.updateGraphicWidthDebounced?.cancel) {
 			this.updateGraphicWidthDebounced.cancel();
 		}
-		cached.files = [];
 	},
 	watch: {
-		gid() {
-			cached.files = [];
-		},
 		visible(newVal, oldVal) {
 			if (oldVal && !newVal) {
 				setTimeout(() => {

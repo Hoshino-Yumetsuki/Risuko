@@ -90,9 +90,6 @@ export default {
 		progress() {
 			return useAppStore().progress;
 		},
-		messages() {
-			return (useTaskStore() as unknown as Record<string, unknown>).messages;
-		},
 		seedingList() {
 			return useTaskStore().seedingList;
 		},
@@ -873,6 +870,11 @@ export default {
 				const unlisten = await listen(event, (e: { payload: unknown }) =>
 					handler(e.payload as { gid: string }),
 				);
+				// If unmounted while listen() is pending, release the resolved listener instead of storing it
+				if (this.isDestroyed) {
+					unlisten();
+					break;
+				}
 				this.eventUnlisteners.push(unlisten);
 			}
 		},

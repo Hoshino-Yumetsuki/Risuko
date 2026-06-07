@@ -99,11 +99,6 @@ pub fn factory_reset(
 }
 
 #[tauri::command]
-pub fn check_for_updates() -> Result<(), String> {
-    Err("Update checking is not implemented for this build".to_string())
-}
-
-#[tauri::command]
 pub async fn reset_session(handle: AppHandle) -> Result<(), String> {
     risuko_engine::engine::stop_engine()
         .await

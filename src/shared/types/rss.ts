@@ -11,7 +11,7 @@ export interface RssFeed {
 	error_count: number;
 }
 
-export interface ParsedMeta {
+interface ParsedMeta {
 	series?: string | null;
 	year?: number | null;
 	season?: number | null;
@@ -61,18 +61,18 @@ export type EpisodeSelector =
 	| { type: "range"; start: number; end: number }
 	| { type: "specific"; values: number[] };
 
-export type Weekday = "mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun";
+type Weekday = "mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun";
 
-export interface Schedule {
+interface Schedule {
 	days: Weekday[];
 	start_hour: number;
 	end_hour: number;
 	tz_offset_min: number;
 }
 
-export type RuleMode = "any-match" | "best-match";
+type RuleMode = "any-match" | "best-match";
 
-export interface RuleStats {
+interface RuleStats {
 	last_matched_at: number | null;
 	match_count: number;
 	download_count: number;

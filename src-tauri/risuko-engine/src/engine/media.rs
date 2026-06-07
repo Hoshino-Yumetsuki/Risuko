@@ -368,7 +368,8 @@ pub async fn run_media_download(
 
                                 if let Some(dl) = dl_bytes {
                                     if dl < last_dl_bytes && last_dl_bytes > 65536 {
-                                        base_bytes += last_stage_total;
+                                        // Advance by the finished stage size, or last downloaded bytes when total is unknown
+                                        base_bytes += last_stage_total.max(last_dl_bytes);
                                     }
                                     last_dl_bytes = dl;
                                     if let Some(t) = total_bytes {

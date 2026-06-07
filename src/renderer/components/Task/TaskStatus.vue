@@ -5,7 +5,6 @@
 </template>
 
 <script lang="ts">
-import colors from "@shared/colors";
 import { APP_THEME, TASK_STATUS } from "@shared/constants";
 
 const statusTypeMap = {
@@ -36,9 +35,6 @@ export default {
 	computed: {
 		type() {
 			return statusTypeMap[this.status];
-		},
-		color() {
-			return colors[this.status];
 		},
 	},
 };

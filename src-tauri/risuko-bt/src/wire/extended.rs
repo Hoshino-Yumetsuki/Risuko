@@ -8,7 +8,7 @@
 use std::collections::HashMap;
 use std::net::IpAddr;
 
-use bytes::{BufMut, Bytes, BytesMut};
+use bytes::Bytes;
 
 use super::super::bencode::{decode_all, encode_to_vec, Value};
 
@@ -255,21 +255,9 @@ pub fn parse_ut_pex(
     Some((v4, v6))
 }
 
-/// Encode a compact peer list as a bencoded ut_pex payload (just `added`)
-pub fn build_ut_pex(v4: &[std::net::SocketAddrV4]) -> Bytes {
-    let mut buf = BytesMut::with_capacity(v4.len() * 6);
-    for addr in v4 {
-        buf.put_slice(&addr.ip().octets());
-        buf.put_u16(addr.port());
-    }
-    let dict = Value::Dict(vec![(b"added".to_vec(), Value::Bytes(buf.to_vec()))]);
-    Bytes::from(encode_to_vec(&dict))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::net::SocketAddrV4;
 
     #[test]
     fn handshake_round_trip() {
@@ -327,17 +315,5 @@ mod tests {
         let bytes = out.encode();
         let parsed = ExtHandshake::decode(&bytes).unwrap();
         assert_eq!(parsed.yourip, Some(ip));
-    }
-
-    #[test]
-    fn ut_pex_round_trip() {
-        let addrs = vec![
-            SocketAddrV4::new("1.2.3.4".parse().unwrap(), 6881),
-            SocketAddrV4::new("5.6.7.8".parse().unwrap(), 6882),
-        ];
-        let bytes = build_ut_pex(&addrs);
-        let (v4, _) = parse_ut_pex(&bytes).unwrap();
-        assert_eq!(v4.len(), 2);
-        assert_eq!(v4[0].port(), 6881);
     }
 }

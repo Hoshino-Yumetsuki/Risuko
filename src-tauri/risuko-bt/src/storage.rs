@@ -216,21 +216,26 @@ impl StorageBackend for FilesystemStorage {
             return Err(StorageError::OutOfRange { offset, total });
         }
 
-        let mut cursor = 0usize;
+        // Start all span reads first, then copy each owned buffer into place
+        // `buf` cannot cross spawned tasks, so handles carry cursor and length
         let spans: Vec<_> = self.layout.spans_for(offset, buf.len() as u64).collect();
+        let mut tasks = Vec::with_capacity(spans.len());
+        let mut cursor = 0usize;
         for span in spans {
             let handle = self.handle(span.file_index).await?;
             let len = span.len as usize;
             let file_offset = span.file_offset;
-            let chunk = task::spawn_blocking(move || -> io::Result<Vec<u8>> {
+            let join = task::spawn_blocking(move || -> io::Result<Vec<u8>> {
                 let mut out = vec![0u8; len];
                 pread_exact(&handle, file_offset, &mut out)?;
                 Ok(out)
-            })
-            .await
-            .map_err(|e| io::Error::other(e.to_string()))??;
-            buf[cursor..cursor + len].copy_from_slice(&chunk);
+            });
+            tasks.push((cursor, len, join));
             cursor += len;
+        }
+        for (cursor, len, join) in tasks {
+            let chunk = join.await.map_err(|e| io::Error::other(e.to_string()))??;
+            buf[cursor..cursor + len].copy_from_slice(&chunk);
         }
         Ok(())
     }

@@ -1,6 +1,6 @@
 {
 	"name": "@risuko/js-darwin-x64",
-	"version": "0.3.6",
+	"version": "0.4.0",
 	"description": "Risuko JS native module for macOS x64",
 	"repository": {
 		"type": "git",
@@ -15,6 +15,9 @@
 		"x64"
 	],
 	"main": "risuko.darwin-x64.node",
+	"scripts": {
+		"prepack": "node ../../../../scripts/ensure-package-artifacts.mjs"
+	},
 	"files": [
 		"risuko.darwin-x64.node"
 	]

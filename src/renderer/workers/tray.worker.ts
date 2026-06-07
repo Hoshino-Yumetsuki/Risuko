@@ -24,11 +24,6 @@ interface TrayDrawPayload {
 }
 
 const drawTray = async (payload: TrayDrawPayload) => {
-	self.postMessage({
-		type: "log",
-		payload,
-	});
-
 	if (!canvas) {
 		canvas = initCanvas();
 	}

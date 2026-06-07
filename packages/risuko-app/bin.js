@@ -16,6 +16,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const https = require("node:https");
+const crypto = require("node:crypto");
 const { execFileSync, spawn } = require("node:child_process");
 
 const PKG_VERSION = require("./package.json").version;
@@ -139,10 +140,13 @@ function download(url, destPath) {
 				if (
 					res.statusCode === 301 ||
 					res.statusCode === 302 ||
-					res.statusCode === 307
+					res.statusCode === 303 ||
+					res.statusCode === 307 ||
+					res.statusCode === 308
 				) {
 					req.destroy();
-					return download(res.headers.location, destPath).then(resolve, reject);
+					const nextUrl = new URL(res.headers.location, url).toString();
+					return download(nextUrl, destPath).then(resolve, reject);
 				}
 				if (res.statusCode !== 200) {
 					req.destroy();
@@ -187,6 +191,56 @@ function download(url, destPath) {
 
 		req.on("error", reject);
 	});
+}
+
+function downloadText(url) {
+	const tmpDir = fs.mkdtempSync(
+		path.join(require("node:os").tmpdir(), "risuko-launcher-"),
+	);
+	const tmpPath = path.join(tmpDir, "download.txt");
+	return download(url, tmpPath)
+		.then(() => fs.readFileSync(tmpPath, "utf8"))
+		.finally(() => {
+			fs.rmSync(tmpDir, { recursive: true, force: true });
+		});
+}
+
+function sha256File(filePath) {
+	const hash = crypto.createHash("sha256");
+	const input = fs.createReadStream(filePath);
+	return new Promise((resolve, reject) => {
+		input.on("data", (chunk) => hash.update(chunk));
+		input.on("error", reject);
+		input.on("end", () => resolve(hash.digest("hex")));
+	});
+}
+
+function parseExpectedSha256(text, assetName) {
+	for (const line of text.split(/\r?\n/)) {
+		const trimmed = line.trim();
+		if (!trimmed) {
+			continue;
+		}
+		const [hash, fileName] = trimmed.split(/\s+/, 2);
+		if (
+			/^[a-fA-F0-9]{64}$/.test(hash) &&
+			(!fileName || fileName === assetName)
+		) {
+			return hash.toLowerCase();
+		}
+	}
+	throw new Error(`No SHA-256 digest found for ${assetName}`);
+}
+
+async function verifySha256(assetPath, checksumUrl, assetName) {
+	const checksumText = await downloadText(checksumUrl);
+	const expected = parseExpectedSha256(checksumText, assetName);
+	const actual = await sha256File(assetPath);
+	if (actual !== expected) {
+		throw new Error(
+			`SHA-256 mismatch for ${assetName}: expected ${expected}, got ${actual}`,
+		);
+	}
 }
 
 function fmtBytes(n) {
@@ -242,6 +296,7 @@ async function main() {
 
 	if (!isCached || noCache) {
 		const assetUrl = `https://github.com/${REPO}/releases/download/v${version}/${entry.asset}`;
+		const checksumUrl = `${assetUrl}.sha256`;
 		const assetPath = path.join(cacheDir, entry.asset);
 		const tmpPath = `${assetPath}.download`;
 
@@ -250,8 +305,14 @@ async function main() {
 		console.log(`Downloading Risuko v${version} for ${platform}/${arch}…`);
 		console.log(`  From: ${assetUrl}`);
 
-		await download(assetUrl, tmpPath);
-		fs.renameSync(tmpPath, assetPath);
+		try {
+			await download(assetUrl, tmpPath);
+			await verifySha256(tmpPath, checksumUrl, entry.asset);
+			fs.renameSync(tmpPath, assetPath);
+		} catch (err) {
+			fs.rmSync(tmpPath, { force: true });
+			throw err;
+		}
 		console.log("  Extracting…");
 		extract(entry, assetPath, cacheDir);
 		console.log(`  Cached to: ${cacheDir}`);

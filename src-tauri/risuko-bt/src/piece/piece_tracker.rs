@@ -84,11 +84,19 @@ impl PieceTracker {
     /// Increment the availability counter for every bit set in `bitfield`
     pub fn add_peer_bitfield(&mut self, bitfield: &[u8]) {
         let n = self.lengths.total_pieces() as usize;
-        for i in 0..n {
-            let byte = i / 8;
-            let bit = 7 - (i % 8);
-            if bitfield.get(byte).is_some_and(|b| b & (1 << bit) != 0) {
-                self.availability[i] = self.availability[i].saturating_add(1);
+        for (byte_idx, &b) in bitfield.iter().enumerate() {
+            if b == 0 {
+                continue;
+            }
+            for bit in 0..8 {
+                if b & (1 << (7 - bit)) != 0 {
+                    let i = byte_idx * 8 + bit;
+                    // Ignore trailing padding bits past total_pieces
+                    if i >= n {
+                        break;
+                    }
+                    self.availability[i] = self.availability[i].saturating_add(1);
+                }
             }
         }
     }
@@ -96,11 +104,19 @@ impl PieceTracker {
     /// Inverse of `add_peer_bitfield`, called when a peer disconnects
     pub fn remove_peer_bitfield(&mut self, bitfield: &[u8]) {
         let n = self.lengths.total_pieces() as usize;
-        for i in 0..n {
-            let byte = i / 8;
-            let bit = 7 - (i % 8);
-            if bitfield.get(byte).is_some_and(|b| b & (1 << bit) != 0) {
-                self.availability[i] = self.availability[i].saturating_sub(1);
+        for (byte_idx, &b) in bitfield.iter().enumerate() {
+            if b == 0 {
+                continue;
+            }
+            for bit in 0..8 {
+                if b & (1 << (7 - bit)) != 0 {
+                    let i = byte_idx * 8 + bit;
+                    // Ignore trailing padding bits past total_pieces
+                    if i >= n {
+                        break;
+                    }
+                    self.availability[i] = self.availability[i].saturating_sub(1);
+                }
             }
         }
     }
@@ -108,11 +124,6 @@ impl PieceTracker {
     pub fn note_peer_has(&mut self, idx: ValidPieceIndex) {
         let slot = &mut self.availability[idx.get_usize()];
         *slot = slot.saturating_add(1);
-    }
-
-    pub fn note_peer_lost(&mut self, idx: ValidPieceIndex) {
-        let slot = &mut self.availability[idx.get_usize()];
-        *slot = slot.saturating_sub(1);
     }
 
     pub fn is_complete(&self) -> bool {
@@ -155,6 +166,22 @@ impl PieceTracker {
         hint: u32,
     ) -> Option<ValidPieceIndex> {
         self.choose_impl(peer_bitfield, true, hint, None)
+    }
+
+    /// Return requestable pieces in rarest-first order from one bitfield scan
+    ///
+    /// `hint` rotates equal-availability buckets to spread first choice
+    pub fn choose_requestable_pieces(
+        &mut self,
+        peer_bitfield: &[u8],
+        hint: u32,
+    ) -> Vec<ValidPieceIndex> {
+        self.choose_many_impl(peer_bitfield, true, hint)
+    }
+
+    /// Return useful pieces, including in-flight pieces for endgame duplication
+    pub fn choose_pieces(&mut self, peer_bitfield: &[u8], hint: u32) -> Vec<ValidPieceIndex> {
+        self.choose_many_impl(peer_bitfield, false, hint)
     }
 
     fn choose_impl(
@@ -213,6 +240,51 @@ impl PieceTracker {
         let idx = hint as usize % self.scratch.len();
         Some(self.scratch[idx])
     }
+
+    fn choose_many_impl(
+        &mut self,
+        peer_bitfield: &[u8],
+        skip_in_flight: bool,
+        hint: u32,
+    ) -> Vec<ValidPieceIndex> {
+        self.scratch.clear();
+        let n = self.lengths.total_pieces() as usize;
+        for i in 0..n {
+            let byte = i / 8;
+            let bit = 7 - (i % 8);
+            if peer_bitfield.get(byte).is_none_or(|b| b & (1 << bit) == 0) {
+                continue;
+            }
+            if self.have_local[i] {
+                continue;
+            }
+            if skip_in_flight && self.in_flight[i] {
+                continue;
+            }
+            if self.availability[i] == 0 {
+                continue;
+            }
+            if let Ok(vpi) = self.lengths.validate_piece(i as u32) {
+                self.scratch.push(vpi);
+            }
+        }
+
+        let availability = &self.availability;
+        self.scratch
+            .sort_by_key(|idx| (availability[idx.get_usize()], idx.get()));
+        let mut start = 0;
+        while start < self.scratch.len() {
+            let avail = availability[self.scratch[start].get_usize()];
+            let mut end = start + 1;
+            while end < self.scratch.len() && availability[self.scratch[end].get_usize()] == avail {
+                end += 1;
+            }
+            let len = end - start;
+            self.scratch[start..end].rotate_left(hint as usize % len);
+            start = end;
+        }
+        self.scratch.clone()
+    }
 }
 
 #[cfg(test)]
@@ -249,6 +321,43 @@ mod tests {
         t.set_local(chosen, true);
         let chosen = t.choose_piece(&[0b1111_0000]).unwrap();
         assert_eq!(chosen.get(), 3);
+    }
+
+    #[test]
+    fn batched_requestable_pieces_preserve_rarest_hint_order() {
+        let mut t = PieceTracker::new(lengths(4));
+        t.add_peer_bitfield(&[0b1111_0000]);
+        t.add_peer_bitfield(&[0b0011_0000]);
+        // Availability is [1, 1, 2, 2]; hint rotates each equal bucket
+        let chosen: Vec<u32> = t
+            .choose_requestable_pieces(&[0b1111_0000], 1)
+            .into_iter()
+            .map(|p| p.get())
+            .collect();
+
+        assert_eq!(chosen, vec![1, 0, 3, 2]);
+    }
+
+    #[test]
+    fn batched_endgame_pieces_include_in_flight() {
+        let mut t = PieceTracker::new(lengths(2));
+        t.add_peer_bitfield(&[0b1100_0000]);
+        let first = t.lengths.validate_piece(0).unwrap();
+        t.mark_in_flight(first);
+
+        let requestable: Vec<u32> = t
+            .choose_requestable_pieces(&[0b1100_0000], 0)
+            .into_iter()
+            .map(|p| p.get())
+            .collect();
+        let endgame: Vec<u32> = t
+            .choose_pieces(&[0b1100_0000], 0)
+            .into_iter()
+            .map(|p| p.get())
+            .collect();
+
+        assert_eq!(requestable, vec![1]);
+        assert_eq!(endgame, vec![0, 1]);
     }
 
     #[test]

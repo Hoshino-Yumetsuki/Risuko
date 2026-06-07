@@ -1,12 +1,15 @@
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 
+use futures_util::stream::{FuturesUnordered, StreamExt};
 use russh::client;
 use russh::keys::PrivateKeyWithHashAlg;
-use russh_sftp::client::SftpSession;
+use russh_sftp::client::{error::Error as SftpError, RawSftpSession};
+use russh_sftp::protocol::{FileAttributes, OpenFlags, StatusCode};
 use serde_json::{Map, Value};
 use tokio::io::AsyncWriteExt;
 use tokio_util::sync::CancellationToken;
@@ -17,7 +20,90 @@ use crate::engine::ssh_known_hosts::TofuHandler;
 
 const PART_SUFFIX: &str = ".part";
 const BUF_SIZE: usize = 64 * 1024;
+const SFTP_READ_AHEAD: usize = 6;
 const SPEED_EMA_ALPHA: f64 = 0.3;
+
+#[derive(Debug)]
+struct SftpReadChunk {
+    offset: u64,
+    requested_len: usize,
+    data: Vec<u8>,
+}
+
+struct OrderedChunkBuffer {
+    next_offset: u64,
+    pending: BTreeMap<u64, Vec<u8>>,
+}
+
+impl OrderedChunkBuffer {
+    fn new(next_offset: u64) -> Self {
+        Self {
+            next_offset,
+            pending: BTreeMap::new(),
+        }
+    }
+
+    fn push(&mut self, chunk: SftpReadChunk) {
+        if !chunk.data.is_empty() {
+            self.pending.insert(chunk.offset, chunk.data);
+        }
+    }
+
+    fn pop_ready(&mut self) -> Option<Vec<u8>> {
+        let data = self.pending.remove(&self.next_offset)?;
+        self.next_offset += data.len() as u64;
+        Some(data)
+    }
+}
+
+fn next_sftp_read_len(file_size: u64, offset: u64) -> Option<usize> {
+    if file_size > 0 {
+        if offset >= file_size {
+            None
+        } else {
+            Some(BUF_SIZE.min((file_size - offset) as usize))
+        }
+    } else {
+        Some(BUF_SIZE)
+    }
+}
+
+fn short_read_gap(chunk: &SftpReadChunk, file_size: u64) -> Option<(u64, usize)> {
+    let actual_len = chunk.data.len();
+    if actual_len == 0 || actual_len >= chunk.requested_len {
+        return None;
+    }
+
+    let gap_offset = chunk.offset + actual_len as u64;
+    if file_size > 0 && gap_offset >= file_size {
+        return None;
+    }
+
+    let mut gap_len = chunk.requested_len - actual_len;
+    if file_size > 0 {
+        gap_len = gap_len.min((file_size - gap_offset) as usize);
+    }
+    (gap_len > 0).then_some((gap_offset, gap_len))
+}
+
+async fn read_sftp_range(
+    sftp: Arc<RawSftpSession>,
+    handle: String,
+    offset: u64,
+    len: usize,
+) -> Result<SftpReadChunk, String> {
+    let data = match sftp.read(handle, offset, len as u32).await {
+        Ok(data) => data.data,
+        Err(SftpError::Status(status)) if status.status_code == StatusCode::Eof => Vec::new(),
+        Err(e) => return Err(format!("SFTP read error: {e}")),
+    };
+
+    Ok(SftpReadChunk {
+        offset,
+        requested_len: len,
+        data,
+    })
+}
 
 /// Run an SFTP download
 #[allow(clippy::too_many_arguments)]
@@ -109,16 +195,29 @@ pub async fn run_sftp_download(
         .await
         .map_err(|e| format!("SFTP subsystem request failed: {e}"))?;
 
-    let sftp = SftpSession::new(channel.into_stream())
+    let mut sftp = RawSftpSession::new(channel.into_stream());
+    let version = sftp
+        .init()
         .await
         .map_err(|e| format!("SFTP session init failed: {e}"))?;
+    if version
+        .extensions
+        .get(russh_sftp::extensions::LIMITS)
+        .is_some_and(|v| v == "1")
+    {
+        match sftp.limits().await {
+            Ok(limits) => sftp.set_limits(limits.into()),
+            Err(e) => tracing::warn!("SFTP limits extension failed: {e}"),
+        }
+    }
+    let sftp = Arc::new(sftp);
 
     connections.store(1, Ordering::Relaxed);
 
     // Stat remote file for size
     let remote_path = &parsed.path;
-    let file_size = match sftp.metadata(remote_path).await {
-        Ok(attrs) => attrs.size.unwrap_or(0),
+    let file_size = match sftp.stat(remote_path).await {
+        Ok(attrs) => attrs.attrs.size.unwrap_or(0),
         Err(e) => {
             tracing::warn!("SFTP stat failed (continuing without size): {e}");
             0
@@ -146,20 +245,11 @@ pub async fn run_sftp_download(
         tracing::info!("Resuming SFTP download from byte {resume_offset}");
     }
 
-    // Open remote file for reading
-    let mut remote_file = sftp
-        .open(remote_path)
+    let handle = sftp
+        .open(remote_path, OpenFlags::READ, FileAttributes::empty())
         .await
-        .map_err(|e| format!("SFTP open failed: {e}"))?;
-
-    // Seek to resume offset if needed
-    if resume_offset > 0 {
-        use tokio::io::AsyncSeekExt;
-        remote_file
-            .seek(std::io::SeekFrom::Start(resume_offset))
-            .await
-            .map_err(|e| format!("SFTP seek failed: {e}"))?;
-    }
+        .map_err(|e| format!("SFTP open failed: {e}"))?
+        .handle;
 
     // Open local file
     let mut local_file = if resume_offset > 0 {
@@ -175,57 +265,105 @@ pub async fn run_sftp_download(
             .map_err(|e| format!("Failed to create part file: {e}"))?
     };
 
-    // Download loop
+    // Use positional reads with a small read-ahead window for high-latency SFTP links
     let mut bytes_downloaded = resume_offset;
-    let mut buf = vec![0u8; BUF_SIZE];
     let mut last_speed_time = Instant::now();
     let mut interval_bytes: u64 = 0;
     let mut ema_speed: f64 = 0.0;
+    let mut next_read_offset = resume_offset;
+    let mut saw_eof = false;
+    let mut reads = FuturesUnordered::new();
+    let mut ordered = OrderedChunkBuffer::new(resume_offset);
 
-    use tokio::io::AsyncReadExt;
+    while reads.len() < SFTP_READ_AHEAD {
+        let Some(len) = next_sftp_read_len(file_size, next_read_offset) else {
+            break;
+        };
+        reads.push(read_sftp_range(
+            sftp.clone(),
+            handle.clone(),
+            next_read_offset,
+            len,
+        ));
+        next_read_offset += len as u64;
+    }
 
-    loop {
+    while !reads.is_empty() {
         if cancelled.load(Ordering::Relaxed) || cancel_token.is_cancelled() {
+            let _ = sftp.close(handle.clone()).await;
             return Err("Download cancelled".to_string());
         }
 
-        let n = tokio::select! {
-            result = remote_file.read(&mut buf) => {
-                result.map_err(|e| format!("SFTP read error: {e}"))?
-            }
+        let chunk = match tokio::select! {
+            result = reads.next() => result,
             _ = cancel_token.cancelled() => {
+                let _ = sftp.close(handle.clone()).await;
                 return Err("Download cancelled".to_string());
             }
+        } {
+            Some(chunk) => chunk,
+            None => break,
         };
+        let chunk = chunk?;
 
-        if n == 0 {
-            break;
+        if chunk.data.is_empty() {
+            saw_eof = true;
+        } else {
+            if let Some((gap_offset, gap_len)) = short_read_gap(&chunk, file_size) {
+                reads.push(read_sftp_range(
+                    sftp.clone(),
+                    handle.clone(),
+                    gap_offset,
+                    gap_len,
+                ));
+            }
+            ordered.push(chunk);
+
+            while let Some(data) = ordered.pop_ready() {
+                let n = data.len();
+                global_limiter.acquire(n).await;
+                task_limiter.acquire(n).await;
+
+                local_file
+                    .write_all(&data)
+                    .await
+                    .map_err(|e| format!("Failed to write: {e}"))?;
+
+                bytes_downloaded += n as u64;
+                completed.store(bytes_downloaded, Ordering::Relaxed);
+                interval_bytes += n as u64;
+
+                // Update speed EMA every 500 ms
+                let elapsed = last_speed_time.elapsed();
+                if elapsed.as_millis() >= 500 {
+                    let secs = elapsed.as_secs_f64();
+                    let instant_speed = interval_bytes as f64 / secs;
+                    ema_speed =
+                        SPEED_EMA_ALPHA * instant_speed + (1.0 - SPEED_EMA_ALPHA) * ema_speed;
+                    speed.store(ema_speed as u64, Ordering::Relaxed);
+                    interval_bytes = 0;
+                    last_speed_time = Instant::now();
+                }
+            }
         }
 
-        // Apply speed limiting
-        global_limiter.acquire(n).await;
-        task_limiter.acquire(n).await;
-
-        local_file
-            .write_all(&buf[..n])
-            .await
-            .map_err(|e| format!("Failed to write: {e}"))?;
-
-        bytes_downloaded += n as u64;
-        completed.store(bytes_downloaded, Ordering::Relaxed);
-        interval_bytes += n as u64;
-
-        // Update speed EMA every 500ms
-        let elapsed = last_speed_time.elapsed();
-        if elapsed.as_millis() >= 500 {
-            let secs = elapsed.as_secs_f64();
-            let instant_speed = interval_bytes as f64 / secs;
-            ema_speed = SPEED_EMA_ALPHA * instant_speed + (1.0 - SPEED_EMA_ALPHA) * ema_speed;
-            speed.store(ema_speed as u64, Ordering::Relaxed);
-            interval_bytes = 0;
-            last_speed_time = Instant::now();
+        while !saw_eof && reads.len() < SFTP_READ_AHEAD {
+            let Some(len) = next_sftp_read_len(file_size, next_read_offset) else {
+                break;
+            };
+            reads.push(read_sftp_range(
+                sftp.clone(),
+                handle.clone(),
+                next_read_offset,
+                len,
+            ));
+            next_read_offset += len as u64;
         }
     }
+
+    sftp.close(handle)
+        .await
+        .map_err(|e| format!("SFTP close failed: {e}"))?;
 
     local_file
         .flush()
@@ -335,4 +473,47 @@ fn option_str(options: &Map<String, Value>, key: &str) -> Option<String> {
         .and_then(|v| v.as_str())
         .filter(|s| !s.is_empty())
         .map(|s| s.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn chunk(offset: u64, requested_len: usize, data: &[u8]) -> SftpReadChunk {
+        SftpReadChunk {
+            offset,
+            requested_len,
+            data: data.to_vec(),
+        }
+    }
+
+    #[test]
+    fn ordered_chunk_buffer_waits_for_missing_offsets() {
+        let mut buffer = OrderedChunkBuffer::new(0);
+        buffer.push(chunk(4, 4, b"efgh"));
+
+        assert!(buffer.pop_ready().is_none());
+
+        buffer.push(chunk(0, 4, b"abcd"));
+        assert_eq!(buffer.pop_ready().as_deref(), Some(&b"abcd"[..]));
+        assert_eq!(buffer.pop_ready().as_deref(), Some(&b"efgh"[..]));
+        assert!(buffer.pop_ready().is_none());
+    }
+
+    #[test]
+    fn short_read_gap_requests_only_the_missing_range() {
+        let c = chunk(64, 16, b"abcd");
+
+        assert_eq!(short_read_gap(&c, 100), Some((68, 12)));
+        assert_eq!(short_read_gap(&c, 68), None);
+        assert_eq!(short_read_gap(&chunk(64, 4, b"abcd"), 100), None);
+    }
+
+    #[test]
+    fn next_sftp_read_len_caps_to_remaining_known_size() {
+        assert_eq!(next_sftp_read_len(100, 0), Some(100));
+        assert_eq!(next_sftp_read_len(100, 99), Some(1));
+        assert_eq!(next_sftp_read_len(100, 100), None);
+        assert_eq!(next_sftp_read_len(0, u64::MAX), Some(BUF_SIZE));
+    }
 }

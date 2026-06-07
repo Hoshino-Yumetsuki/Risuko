@@ -146,10 +146,13 @@ macro_rules! copy_to {
         let mut local_file = tokio::fs::File::open(&$local)
             .await
             .map_err(|e| format!("open {}: {e}", $local.display()))?;
+
+        // Stage to ".part" and rename only after finalize, so failures never commit a truncated file
+        let part_remote = format!("{}.part", $remote);
         let mut writer = $ftp
-            .put_with_stream(&$remote)
+            .put_with_stream(&part_remote)
             .await
-            .map_err(|e| format!("FTP STOR {}: {e}", $remote))?;
+            .map_err(|e| format!("FTP STOR {}: {e}", part_remote))?;
 
         let mut buf = vec![0u8; COPY_BUF];
         let mut sent: u64 = 0;
@@ -180,12 +183,22 @@ macro_rules! copy_to {
         }
         .await;
 
-        // Propagate copy/flush errors before finalizing — otherwise the
-        // server commits a truncated file on cancellation or write failure
-        copy_res?;
+        // On copy, flush, or cancel failure, close the stream and remove the staged file
+        if let Err(e) = copy_res {
+            let _ = $ftp.finalize_put_stream(writer).await;
+            let _ = $ftp.rm(part_remote.as_str()).await;
+            return Err(e);
+        }
         $ftp.finalize_put_stream(writer)
             .await
             .map_err(|e| format!("FTP finalize: {e}"))?;
+
+        // Remove any stale target before RNTO; some servers refuse overwrite
+        let _ = $ftp.rm($remote.as_str()).await;
+        $ftp
+            .rename(part_remote.as_str(), $remote.as_str())
+            .await
+            .map_err(|e| format!("FTP rename {} -> {}: {e}", part_remote, $remote))?;
     }};
 }
 

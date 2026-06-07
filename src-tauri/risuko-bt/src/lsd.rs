@@ -271,11 +271,16 @@ async fn recv_loop(sock: Arc<UdpSocket>, inner: Arc<LsdInner>) {
             continue;
         }
         let peer_addr = SocketAddr::new(from.ip(), port);
-        let our_hashes = inner.info_hashes.lock().clone();
-        for ih in parsed.info_hashes {
-            if !our_hashes.contains(&ih) {
-                continue;
-            }
+        // Snapshot only tracked hashes under the lock, then send outside it
+        let matched: Vec<Id20> = {
+            let our = inner.info_hashes.lock();
+            parsed
+                .info_hashes
+                .into_iter()
+                .filter(|ih| our.contains(ih))
+                .collect()
+        };
+        for ih in matched {
             // Rate limit 1 peer per (info_hash, ip) per second.
             let key = (ih, from.ip());
             let now = Instant::now();

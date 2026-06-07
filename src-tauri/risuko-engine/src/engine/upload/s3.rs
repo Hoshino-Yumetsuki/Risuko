@@ -7,9 +7,12 @@
 //! / UploadPart × N / Complete) which raises the per-object cap to 5 TiB
 //! at the cost of one extra round-trip and an XML completion document
 
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
+use futures_util::{StreamExt, TryStreamExt};
 use hmac::digest::KeyInit;
 use hmac::{Hmac, Mac};
 use risuko_http::{Client, ClientBuilder, Url};
@@ -35,6 +38,11 @@ const MIN_PART_SIZE: u64 = 5 * 1024 * 1024;
 
 /// AWS-imposed maximum number of parts per multipart upload
 const MAX_PARTS: u64 = 10_000;
+
+/// Number of multipart parts uploaded concurrently
+///
+/// Small fixed fan-out improves high-latency uploads without flooding the client pool
+const MULTIPART_CONCURRENCY: usize = 4;
 
 pub struct S3Sink {
     cfg: S3Config,
@@ -208,9 +216,8 @@ impl S3Sink {
     /// without that the bucket would silently accumulate orphan multipart
     /// state that the user pays for
     ///
-    /// Parts are uploaded sequentially in v1; concurrency is a future
-    /// optimisation but adds a stricter ordering of progress reports than
-    /// the rest of the pipeline currently expects
+    /// Parts are uploaded with bounded concurrency ([`MULTIPART_CONCURRENCY`]);
+    /// progress uses a shared atomic so out-of-order parts still report a monotonic total
     async fn upload_multipart(
         &self,
         file: &UploadFile,
@@ -227,9 +234,8 @@ impl S3Sink {
             .upload_parts_and_complete(file, ctl, &url, &upload_id, part_size)
             .await;
 
-        if result.is_err() || ctl.cancel.is_cancelled() {
-            // Best-effort abort. Errors here are logged but don't override
-            // the original failure reason
+        if result.is_err() {
+            // Best-effort abort; log errors without replacing the original failure
             if let Err(e) = self.abort_multipart(&url, &upload_id).await {
                 log::warn!("S3 abort multipart {upload_id}: {e}");
             }
@@ -246,40 +252,46 @@ impl S3Sink {
         upload_id: &str,
         part_size: u64,
     ) -> Result<String, String> {
-        let mut parts: Vec<(u32, String)> = Vec::new();
         let total = file.size;
-        let mut bytes_done: u64 = 0;
-        let mut part_number: u32 = 1;
-        let mut offset: u64 = 0;
 
+        // Build descriptors first so the part-count cap is checked before any request
+        let mut descriptors: Vec<(u32, u64, u64)> = Vec::new();
+        let mut offset: u64 = 0;
+        let mut part_number: u32 = 1;
         while offset < total {
-            if ctl.cancel.is_cancelled() {
-                return Err("cancelled".into());
-            }
             let len = part_size.min(total - offset);
-            let etag = self
-                .upload_part(
-                    file,
-                    ctl,
-                    url,
-                    upload_id,
-                    part_number,
-                    offset,
-                    len,
-                    bytes_done,
-                    total,
-                )
-                .await?;
-            parts.push((part_number, etag));
+            descriptors.push((part_number, offset, len));
             offset += len;
-            bytes_done += len;
-            part_number += 1;
-            if part_number as u64 > MAX_PARTS && offset < total {
+            if part_number as u64 >= MAX_PARTS && offset < total {
                 return Err(format!(
                     "S3 multipart: part count exceeded {MAX_PARTS} (file too large for chosen part size)"
                 ));
             }
+            part_number += 1;
         }
+
+        // Track cumulative bytes across out-of-order parts with one shared atomic
+        let uploaded = Arc::new(AtomicU64::new(0));
+
+        let mut parts: Vec<(u32, String)> =
+            futures_util::stream::iter(descriptors.into_iter().map(|(pn, off, len)| {
+                let uploaded = uploaded.clone();
+                async move {
+                    if ctl.cancel.is_cancelled() {
+                        return Err("cancelled".to_string());
+                    }
+                    let etag = self
+                        .upload_part(file, ctl, url, upload_id, pn, off, len, &uploaded, total)
+                        .await?;
+                    Ok::<(u32, String), String>((pn, etag))
+                }
+            }))
+            .buffer_unordered(MULTIPART_CONCURRENCY)
+            .try_collect()
+            .await?;
+
+        // CompleteMultipartUpload requires ascending part numbers
+        parts.sort_by_key(|(pn, _)| *pn);
 
         // -- Complete --
         self.complete_multipart(url, upload_id, &parts).await?;
@@ -327,7 +339,7 @@ impl S3Sink {
         part_number: u32,
         offset: u64,
         len: u64,
-        bytes_done_before: u64,
+        uploaded: &Arc<AtomicU64>,
         total: u64,
     ) -> Result<String, String> {
         let query = format!(
@@ -340,14 +352,20 @@ impl S3Sink {
         let now = chrono_now_utc();
         let auth = self.sign_request("PUT", &part_url, &query, UNSIGNED, &now.0, &now.1);
 
-        // Progress callback rebases per-part bytes onto the cumulative
-        // total so the UI sees a monotonic climb across all parts
+        // Fold each part's `sent` delta into the shared counter for monotonic UI progress
         let progress = ctl.clone();
+        let uploaded = uploaded.clone();
+        let part_last = Arc::new(AtomicU64::new(0));
         let body = risuko_http::file_stream_body_range_with_progress(
             file.local_path.clone(),
             offset,
             len,
-            move |sent| progress.report((bytes_done_before + sent).min(total), total),
+            move |sent| {
+                let prev = part_last.swap(sent, Ordering::Relaxed);
+                let delta = sent.saturating_sub(prev);
+                let cum = uploaded.fetch_add(delta, Ordering::Relaxed) + delta;
+                progress.report(cum.min(total), total);
+            },
             Some(ctl.cancel.clone()),
         );
 

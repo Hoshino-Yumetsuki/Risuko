@@ -197,10 +197,29 @@ pub enum MseError {
 /// Find the first occurrence of `needle` in `hay`. Returns its starting index
 /// if found, else `None`. Used by the incoming side to locate `HASH('req1',S)`
 pub fn find_subsequence(hay: &[u8], needle: &[u8]) -> Option<usize> {
+    find_subsequence_from(hay, needle, 0)
+}
+
+/// Like [`find_subsequence`], but skips candidate offsets before `start`
+pub fn find_subsequence_from(hay: &[u8], needle: &[u8], start: usize) -> Option<usize> {
     if needle.is_empty() || needle.len() > hay.len() {
         return None;
     }
-    hay.windows(needle.len()).position(|w| w == needle)
+    let max_start = hay.len() - needle.len();
+    if start > max_start {
+        return None;
+    }
+    hay[start..]
+        .windows(needle.len())
+        .position(|w| w == needle)
+        .map(|off| off + start)
+}
+
+/// First candidate offset to rescan after appending bytes to a searched buffer
+///
+/// Backs up by `needle_len - 1` to keep matches that cross the old/new boundary
+pub fn scan_start_after_append(previous_len: usize, needle_len: usize) -> usize {
+    previous_len.saturating_sub(needle_len.saturating_sub(1))
 }
 
 /// Build the initiator's third message body (plaintext, to be RC4-encrypted
@@ -315,5 +334,22 @@ mod tests {
         assert_eq!(find_subsequence(hay, b"ccccdddd"), Some(8));
         assert_eq!(find_subsequence(hay, b"zzzz"), None);
         assert_eq!(find_subsequence(hay, b""), None);
+    }
+
+    #[test]
+    fn cursor_search_finds_boundary_spanning_subsequence() {
+        let needle = b"needle";
+        let mut hay = b"aaaa nee".to_vec();
+        let start = scan_start_after_append(hay.len(), needle.len());
+        hay.extend_from_slice(b"dle zzzz");
+
+        assert_eq!(find_subsequence_from(&hay, needle, start), Some(5));
+    }
+
+    #[test]
+    fn cursor_search_skips_already_scanned_prefix() {
+        let hay = b"needle xxxx needle";
+
+        assert_eq!(find_subsequence_from(hay, b"needle", 1), Some(12));
     }
 }

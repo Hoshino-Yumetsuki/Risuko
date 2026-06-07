@@ -491,11 +491,6 @@ impl PieceVerifier {
             }
         }
     }
-
-    /// True for the SHA-1 (v1) variant. Only useful for diagnostics
-    pub fn is_v1(&self) -> bool {
-        matches!(self, Self::V1Sha1 { .. })
-    }
 }
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]

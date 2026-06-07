@@ -83,6 +83,20 @@ impl Drop for Dht {
 
 type PendingMap = std::collections::HashMap<u16, (oneshot::Sender<KrpcResponse>, SocketAddr)>;
 
+/// Removes its transaction id from `pending` on drop
+///
+/// Keeps aborted lookup tasks from leaving orphaned pending entries
+struct PendingGuard {
+    pending: Arc<Mutex<PendingMap>>,
+    txn: u16,
+}
+
+impl Drop for PendingGuard {
+    fn drop(&mut self) {
+        self.pending.lock().remove(&self.txn);
+    }
+}
+
 struct KrpcResponse {
     from: SocketAddr,
     body: Value,
@@ -383,8 +397,9 @@ impl Dht {
         target: SocketAddr,
         info_hash: Id20,
     ) -> Option<GetPeersReply> {
-        let (txn, rx) = self.register_transaction(target);
+        let (txn, rx, _guard) = self.register_transaction(target);
         let packet = build_get_peers(txn, &self.our_id, &info_hash);
+        // `_guard` removes `txn` from `pending`, including JoinSet aborts on budget timeout
         // Route via the appropriate socket family. If we target an IPv6
         // node but lack a v6 socket, drop the query.
         let send_res = match target {
@@ -393,19 +408,16 @@ impl Dht {
                 if let Some(s6) = &self.sock6 {
                     s6.send_to(&packet, target).await
                 } else {
-                    self.pending.lock().remove(&txn);
                     return None;
                 }
             }
         };
         if send_res.is_err() {
-            self.pending.lock().remove(&txn);
             return None;
         }
         let resp = match tokio::time::timeout(QUERY_TIMEOUT, rx).await {
             Ok(Ok(r)) => r,
             _ => {
-                self.pending.lock().remove(&txn);
                 return None;
             }
         };
@@ -413,7 +425,10 @@ impl Dht {
             .map(|(rid, peers, nodes, token)| (resp.from, rid, peers, nodes, token))
     }
 
-    fn register_transaction(&self, target: SocketAddr) -> (u16, oneshot::Receiver<KrpcResponse>) {
+    fn register_transaction(
+        &self,
+        target: SocketAddr,
+    ) -> (u16, oneshot::Receiver<KrpcResponse>, PendingGuard) {
         let (tx, rx) = oneshot::channel();
         let mut map = self.pending.lock();
         let mut txn: u16 = rand::rng().random();
@@ -421,18 +436,17 @@ impl Dht {
             txn = txn.wrapping_add(1);
         }
         map.insert(txn, (tx, target));
-        (txn, rx)
+        let guard = PendingGuard {
+            pending: self.pending.clone(),
+            txn,
+        };
+        (txn, rx, guard)
     }
 
     /// Number of unique nodes currently held in the Kademlia routing table
     /// Useful as a coarse health signal for DHT bootstrap progress
     pub fn routing_table_len(&self) -> usize {
         self.routing.lock().len()
-    }
-
-    /// Snapshot of the routing-table state for diagnostics.
-    pub fn routing_table_status(&self) -> RoutingTableStatus {
-        self.routing.lock().status()
     }
 
     /// Warm the routing table by performing an iterative lookup against our
@@ -473,12 +487,6 @@ pub(crate) struct RoutingTable {
     buckets: Vec<Vec<RoutingNode>>,
 }
 
-#[derive(Debug, Clone, Copy, Default)]
-pub struct RoutingTableStatus {
-    pub total_nodes: usize,
-    pub non_empty_buckets: usize,
-}
-
 impl RoutingTable {
     fn new(our_id: Id20) -> Self {
         let buckets = (0..NUM_BUCKETS)
@@ -489,21 +497,6 @@ impl RoutingTable {
 
     fn len(&self) -> usize {
         self.buckets.iter().map(|b| b.len()).sum()
-    }
-
-    fn status(&self) -> RoutingTableStatus {
-        let mut total = 0;
-        let mut non_empty = 0;
-        for b in &self.buckets {
-            if !b.is_empty() {
-                non_empty += 1;
-                total += b.len();
-            }
-        }
-        RoutingTableStatus {
-            total_nodes: total,
-            non_empty_buckets: non_empty,
-        }
     }
 
     fn bucket_index(&self, id: &Id20) -> Option<usize> {
@@ -803,9 +796,6 @@ mod tests {
             );
         }
         assert_eq!(rt.len(), BUCKET_SIZE);
-        let st = rt.status();
-        assert_eq!(st.total_nodes, BUCKET_SIZE);
-        assert_eq!(st.non_empty_buckets, 1);
     }
 
     #[test]

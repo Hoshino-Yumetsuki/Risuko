@@ -374,7 +374,6 @@ pub fn run() {
         commands::app_cmds::show_window,
         commands::app_cmds::hide_window,
         commands::app_cmds::factory_reset,
-        commands::app_cmds::check_for_updates,
         commands::app_cmds::reset_session,
         commands::app_cmds::auto_hide_window,
         commands::app_cmds::toggle_app_menu,
