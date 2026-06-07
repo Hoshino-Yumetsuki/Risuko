@@ -240,15 +240,7 @@ function parseExpectedSha256(text, assetName) {
 }
 
 async function verifySha256(assetPath, checksumUrl, assetName) {
-	let checksumText;
-	try {
-		checksumText = await downloadText(checksumUrl);
-	} catch (err) {
-		if (err instanceof DownloadHttpError && err.statusCode === 404) {
-			return false;
-		}
-		throw err;
-	}
+	const checksumText = await downloadText(checksumUrl);
 	const expected = parseExpectedSha256(checksumText, assetName);
 	const actual = await sha256File(assetPath);
 	if (actual !== expected) {
@@ -256,7 +248,6 @@ async function verifySha256(assetPath, checksumUrl, assetName) {
 			`SHA-256 mismatch for ${assetName}: expected ${expected}, got ${actual}`,
 		);
 	}
-	return true;
 }
 
 function fmtBytes(n) {
@@ -323,18 +314,8 @@ async function main() {
 
 		try {
 			await download(assetUrl, tmpPath);
-			const checksumVerified = await verifySha256(
-				tmpPath,
-				checksumUrl,
-				entry.asset,
-			);
-			if (checksumVerified) {
-				console.log("  Verified SHA-256 checksum");
-			} else {
-				console.warn(
-					"  SHA-256 sidecar not found; skipping checksum verification",
-				);
-			}
+			await verifySha256(tmpPath, checksumUrl, entry.asset);
+			console.log("  Verified SHA-256 checksum");
 			fs.renameSync(tmpPath, assetPath);
 		} catch (err) {
 			fs.rmSync(tmpPath, { force: true });
