@@ -66,6 +66,22 @@
 	--input: #e5e5e5;
 	--ring: #619eff;
 	--radius: 0.5rem;
+	--app-font-family-system:
+		"Monospaced Number", "Chinese Quote", -apple-system, BlinkMacSystemFont,
+		"Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB",
+		"Microsoft YaHei", "Helvetica Neue", Helvetica, Arial, sans-serif;
+	--app-font-family-rounded:
+		"SF Pro Rounded", ui-rounded, "Nunito Sans", "Segoe UI", -apple-system,
+		BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
+		sans-serif;
+	--app-font-family-serif:
+		"New York", "Iowan Old Style", Georgia, "Times New Roman", "Songti SC",
+		"SimSun", serif;
+	--app-font-family-mono:
+		"SFMono-Regular", ui-monospace, "Cascadia Code", "Roboto Mono", Menlo,
+		Monaco, Consolas, "Liberation Mono", monospace;
+	--app-font-family: var(--app-font-family-system);
+	--app-font-size-base: 14px;
 	--mo-bg-app: transparent;
 	--mo-titlebar-actions-color: #1f1f1f;
 	--mo-titlebar-actions-active-bg: #eee;
@@ -136,6 +152,38 @@
 	--mo-input-number-btn-hover-color: #1e293b;
 	--mo-form-static-value-color: #475569;
 	--mo-link-color: color-mix(in srgb, #fff 15%, #619eff);
+}
+
+html.font-family-system {
+	--app-font-family: var(--app-font-family-system);
+}
+
+html.font-family-rounded {
+	--app-font-family: var(--app-font-family-rounded);
+}
+
+html.font-family-serif {
+	--app-font-family: var(--app-font-family-serif);
+}
+
+html.font-family-mono {
+	--app-font-family: var(--app-font-family-mono);
+}
+
+html.font-size-small {
+	--app-font-size-base: 13px;
+}
+
+html.font-size-default {
+	--app-font-size-base: 14px;
+}
+
+html.font-size-large {
+	--app-font-size-base: 15px;
+}
+
+html.font-size-extra-large {
+	--app-font-size-base: 16px;
 }
 
 /* ---- Dark theme variables ---- */

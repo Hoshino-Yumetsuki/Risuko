@@ -22,12 +22,13 @@
 		--android-radius-sm: 12px;
 		--android-radius-pill: 999px;
 
-		--android-text-display: 22px;
-		--android-text-headline: 18px;
-		--android-text-title: 16px;
-		--android-text-body: 15px;
-		--android-text-label: 13px;
-		--android-text-caption: 12px;
+		--android-type-base: var(--app-font-size-base, 14px);
+		--android-text-display: calc(var(--android-type-base) + 8px);
+		--android-text-headline: calc(var(--android-type-base) + 4px);
+		--android-text-title: calc(var(--android-type-base) + 2px);
+		--android-text-body: calc(var(--android-type-base) + 1px);
+		--android-text-label: calc(var(--android-type-base) - 1px);
+		--android-text-caption: calc(var(--android-type-base) - 2px);
 
 		--android-bottom-bar: 128px;
 
@@ -1015,6 +1016,46 @@
 	html.mobile-phone .settings-select-item-label {
 		color: var(--android-on-surface-variant);
 		font-size: var(--android-text-caption);
+	}
+
+	html.platform-android .typography-controls,
+	html.mobile-phone .typography-controls {
+		margin-bottom: 2px;
+		padding-bottom: 12px;
+		border-bottom-color: var(--android-outline-variant);
+	}
+
+	html.platform-android .typography-row,
+	html.mobile-phone .typography-row {
+		align-items: stretch;
+		flex-direction: column;
+		gap: 8px;
+	}
+
+	html.platform-android .font-size-segmented,
+	html.mobile-phone .font-size-segmented {
+		width: 100%;
+		min-width: 0;
+		grid-template-columns: repeat(4, minmax(0, 1fr));
+		border-color: var(--android-outline-variant);
+		background: var(--android-surface-container-high);
+	}
+
+	html.platform-android .font-size-segment,
+	html.mobile-phone .font-size-segment {
+		min-height: 36px;
+		padding: 0 6px;
+		font-size: var(--android-text-caption);
+		color: var(--android-on-surface-variant);
+	}
+
+	html.platform-android .font-size-segment--active,
+	html.platform-android .font-size-segment--active:hover,
+	html.mobile-phone .font-size-segment--active,
+	html.mobile-phone .font-size-segment--active:hover {
+		color: var(--android-on-primary-container);
+		background: var(--android-primary-container);
+		box-shadow: none;
 	}
 
 	/* The .panel wraps every page's content. On mobile we want the page
