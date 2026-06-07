@@ -21,6 +21,7 @@ const { execFileSync, spawn } = require("node:child_process");
 
 const PKG_VERSION = require("./package.json").version;
 const REPO = "YueMiyuki/risuko";
+const SHA256_SIDECAR_REQUIRED_VERSION = "0.4.0";
 
 class DownloadHttpError extends Error {
 	constructor(statusCode, url) {
@@ -239,8 +240,44 @@ function parseExpectedSha256(text, assetName) {
 	throw new Error(`No SHA-256 digest found for ${assetName}`);
 }
 
+function compareReleaseVersions(left, right) {
+	const leftMatch = /^v?(\d+)\.(\d+)\.(\d+)/.exec(left);
+	const rightMatch = /^v?(\d+)\.(\d+)\.(\d+)/.exec(right);
+	if (!leftMatch || !rightMatch) {
+		return null;
+	}
+	for (let i = 1; i <= 3; i++) {
+		const diff = Number(leftMatch[i]) - Number(rightMatch[i]);
+		if (diff !== 0) {
+			return diff;
+		}
+	}
+	return 0;
+}
+
+function isLegacyChecksumRelease(releaseVersion) {
+	const order = compareReleaseVersions(
+		releaseVersion,
+		SHA256_SIDECAR_REQUIRED_VERSION,
+	);
+	return order !== null && order < 0;
+}
+
 async function verifySha256(assetPath, checksumUrl, assetName) {
-	const checksumText = await downloadText(checksumUrl);
+	let checksumText;
+	try {
+		checksumText = await downloadText(checksumUrl);
+	} catch (err) {
+		if (err instanceof DownloadHttpError && err.statusCode === 404) {
+			if (isLegacyChecksumRelease(version)) {
+				return false;
+			}
+			throw new Error(
+				`SHA-256 sidecar not found for ${assetName}: ${checksumUrl}`,
+			);
+		}
+		throw err;
+	}
 	const expected = parseExpectedSha256(checksumText, assetName);
 	const actual = await sha256File(assetPath);
 	if (actual !== expected) {
@@ -314,8 +351,18 @@ async function main() {
 
 		try {
 			await download(assetUrl, tmpPath);
-			await verifySha256(tmpPath, checksumUrl, entry.asset);
-			console.log("  Verified SHA-256 checksum");
+			const checksumVerified = await verifySha256(
+				tmpPath,
+				checksumUrl,
+				entry.asset,
+			);
+			if (checksumVerified === false) {
+				console.warn(
+					`  SHA-256 sidecar not found for legacy release v${version}; continuing without checksum verification`,
+				);
+			} else {
+				console.log("  Verified SHA-256 checksum");
+			}
 			fs.renameSync(tmpPath, assetPath);
 		} catch (err) {
 			fs.rmSync(tmpPath, { force: true });
