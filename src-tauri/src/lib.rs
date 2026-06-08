@@ -3,6 +3,7 @@ pub mod cli;
 mod commands;
 mod managers;
 mod state;
+mod utils;
 
 // Re-export risuko_engine modules for use by commands and other app code
 pub use risuko_engine::config;
@@ -381,20 +382,9 @@ pub fn run() {
             if window.label() == managers::flyout::FLYOUT_LABEL {
                 #[cfg(target_os = "macos")]
                 {
-                    // Only set Accessory policy when in tray mode (run_mode 2 or 3)
-                    let run_mode = window
-                        .app_handle()
-                        .state::<crate::state::AppState>()
-                        .config
-                        .lock()
-                        .ok()
-                        .and_then(|cfg| {
-                            cfg.get_user_config()
-                                .get("run-mode")
-                                .and_then(|value| value.as_i64())
-                        })
-                        .unwrap_or(1);
-                    if matches!(run_mode, 2 | 3) {
+                    // Only set Accessory policy when in tray mode
+                    let run_mode = utils::run_mode::current_run_mode(window.app_handle());
+                    if utils::run_mode::is_tray_mode(run_mode) {
                         let _ = window
                             .app_handle()
                             .set_activation_policy(tauri::ActivationPolicy::Accessory);

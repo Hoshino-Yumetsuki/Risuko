@@ -81,19 +81,9 @@ pub fn toggle_flyout(app: &AppHandle) {
     if window.is_visible().unwrap_or(false) {
         #[cfg(target_os = "macos")]
         {
-            // Only set Accessory policy when in tray mode (run_mode 2 or 3)
-            let run_mode = app
-                .state::<crate::state::AppState>()
-                .config
-                .lock()
-                .ok()
-                .and_then(|cfg| {
-                    cfg.get_user_config()
-                        .get("run-mode")
-                        .and_then(|value| value.as_i64())
-                })
-                .unwrap_or(1);
-            if matches!(run_mode, 2 | 3) {
+            // Only set Accessory policy when in tray mode
+            let run_mode = crate::utils::run_mode::current_run_mode(app);
+            if crate::utils::run_mode::is_tray_mode(run_mode) {
                 let _ = app.set_activation_policy(tauri::ActivationPolicy::Accessory);
             }
         }

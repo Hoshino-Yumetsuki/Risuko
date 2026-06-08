@@ -317,7 +317,13 @@ export default {
 						await taskStore.addUri({ uris: [uri], outs: [], options: {} });
 					} catch (err: unknown) {
 						errors.push((err as Error)?.message || `${err}`);
-						logger.warn("[Risuko] flyout add task failed for uri:", uri, err);
+						// Log with redacted URI (prefix only) to avoid exposing sensitive data
+						const uriPrefix = uri.slice(0, 8);
+						logger.warn(
+							"[Risuko] flyout add task failed for uri:",
+							`${uriPrefix}...`,
+							err,
+						);
 					}
 				}
 				if (errors.length > 0) {

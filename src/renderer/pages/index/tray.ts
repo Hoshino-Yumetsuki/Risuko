@@ -41,22 +41,8 @@ function startPolling() {
 		}
 	};
 
-	const loop = async () => {
-		if (!running || document.hidden) {
-			scheduleNext();
-			return;
-		}
-		try {
-			await appStore.fetchGlobalStat();
-			await taskStore.fetchList();
-		} catch (err) {
-			logger.warn("[Risuko] flyout poll failed:", (err as Error).message);
-		}
-		scheduleNext();
-	};
-
-	const tick = async () => {
-		if (document.hidden || isPolling) {
+	const performPoll = async () => {
+		if (isPolling) {
 			return;
 		}
 		isPolling = true;
@@ -68,6 +54,22 @@ function startPolling() {
 		} finally {
 			isPolling = false;
 		}
+	};
+
+	const loop = async () => {
+		if (!running || document.hidden) {
+			scheduleNext();
+			return;
+		}
+		await performPoll();
+		scheduleNext();
+	};
+
+	const tick = async () => {
+		if (document.hidden) {
+			return;
+		}
+		await performPoll();
 	};
 
 	const start = () => {
