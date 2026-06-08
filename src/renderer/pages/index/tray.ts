@@ -33,6 +33,7 @@ function startPolling() {
 	const taskStore = useTaskStore();
 	let timer: number | null = null;
 	let running = false;
+	let isPolling = false;
 
 	const scheduleNext = () => {
 		if (running) {
@@ -55,14 +56,17 @@ function startPolling() {
 	};
 
 	const tick = async () => {
-		if (document.hidden) {
+		if (document.hidden || isPolling) {
 			return;
 		}
+		isPolling = true;
 		try {
 			await appStore.fetchGlobalStat();
 			await taskStore.fetchList();
 		} catch (err) {
 			logger.warn("[Risuko] flyout poll failed:", (err as Error).message);
+		} finally {
+			isPolling = false;
 		}
 	};
 
@@ -149,7 +153,7 @@ async function init(config: AppConfig) {
 usePreferenceStore()
 	.fetchPreference()
 	.then((config) => {
-		init(config);
+		return init(config);
 	})
 	.catch((err: unknown) => {
 		logger.warn("[Risuko] flyout init failed:", err);

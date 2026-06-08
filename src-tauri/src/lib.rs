@@ -380,9 +380,26 @@ pub fn run() {
             #[cfg(not(target_os = "android"))]
             if window.label() == managers::flyout::FLYOUT_LABEL {
                 #[cfg(target_os = "macos")]
-                let _ = window
-                    .app_handle()
-                    .set_activation_policy(tauri::ActivationPolicy::Accessory);
+                {
+                    // Only set Accessory policy when in tray mode (run_mode 2 or 3)
+                    let run_mode = window
+                        .app_handle()
+                        .state::<crate::state::AppState>()
+                        .config
+                        .lock()
+                        .ok()
+                        .and_then(|cfg| {
+                            cfg.get_user_config()
+                                .get("run-mode")
+                                .and_then(|value| value.as_i64())
+                        })
+                        .unwrap_or(1);
+                    if matches!(run_mode, 2 | 3) {
+                        let _ = window
+                            .app_handle()
+                            .set_activation_policy(tauri::ActivationPolicy::Accessory);
+                    }
+                }
                 let _ = window.hide();
             }
         }

@@ -310,16 +310,23 @@ export default {
 			this.adding = true;
 			this.addError = "";
 			const taskStore = useTaskStore();
+			const errors: string[] = [];
 			try {
 				for (const uri of uris) {
-					await taskStore.addUri({ uris: [uri], outs: [], options: {} });
+					try {
+						await taskStore.addUri({ uris: [uri], outs: [], options: {} });
+					} catch (err: unknown) {
+						errors.push((err as Error)?.message || `${err}`);
+						logger.warn("[Risuko] flyout add task failed for uri:", uri, err);
+					}
 				}
-				this.addValue = "";
-				this.addOpen = false;
-				taskStore.changeCurrentList("active");
-			} catch (err: unknown) {
-				this.addError = (err as Error)?.message || `${err}`;
-				logger.warn("[Risuko] flyout add task failed:", err);
+				if (errors.length > 0) {
+					this.addError = errors.join("; ");
+				} else {
+					this.addValue = "";
+					this.addOpen = false;
+					taskStore.changeCurrentList("active");
+				}
 			} finally {
 				this.adding = false;
 			}
