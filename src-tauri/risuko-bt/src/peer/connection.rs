@@ -589,6 +589,7 @@ async fn connect_mse(
                 ));
             }
         };
+        let scan_from = mse::scan_start_after_append(recv.len(), 8);
         recv.extend_from_slice(&chunk[..rn]);
 
         // Scan new candidate offsets. The responder encrypts with keyB
@@ -599,12 +600,7 @@ async fn connect_mse(
         // any offset `off` where recv[off..off+8] == keystream[0..8]
         if recv.len() >= 8 && keystream.len() >= 8 {
             let needle = &keystream[..8];
-            for off in 0..=(recv.len() - 8) {
-                if &recv[off..off + 8] == needle {
-                    found_offset = Some(off);
-                    break;
-                }
-            }
+            found_offset = mse::find_subsequence_from(&recv, needle, scan_from);
         }
         if found_offset.is_some() {
             break;
@@ -852,8 +848,9 @@ async fn accept_mse(
                 "eof before req1",
             ));
         }
+        let scan_from = mse::scan_start_after_append(recv.len(), req1.len());
         recv.extend_from_slice(&chunk[..n]);
-        if let Some(off) = mse::find_subsequence(&recv, &req1) {
+        if let Some(off) = mse::find_subsequence_from(&recv, &req1, scan_from) {
             break off;
         }
     };
@@ -1407,7 +1404,6 @@ async fn reader_task(mut reader: Box<dyn AsyncRead + Unpin + Send>, tx: mpsc::Se
     // Piece reply is up to 16 KiB of payload + 13 B header; 64 KiB lets us
     // ingest several pipelined replies per syscall
     let mut buf = BytesMut::with_capacity(256 * 1024);
-    let mut tmp = vec![0u8; 64 * 1024];
     loop {
         // Try to decode any complete frame already buffered
         loop {
@@ -1428,7 +1424,9 @@ async fn reader_task(mut reader: Box<dyn AsyncRead + Unpin + Send>, tx: mpsc::Se
                 }
             }
         }
-        match reader.read(&mut tmp).await {
+        // Reserve the old 64 KiB scratch size so `read_buf` can absorb pipelined Piece replies without an extra copy
+        buf.reserve(64 * 1024);
+        match reader.read_buf(&mut buf).await {
             Ok(0) => {
                 let _ = tx
                     .send(PeerEvent::Disconnected {
@@ -1437,7 +1435,7 @@ async fn reader_task(mut reader: Box<dyn AsyncRead + Unpin + Send>, tx: mpsc::Se
                     .await;
                 return;
             }
-            Ok(n) => buf.extend_from_slice(&tmp[..n]),
+            Ok(_) => {}
             Err(e) => {
                 let _ = tx
                     .send(PeerEvent::Disconnected {

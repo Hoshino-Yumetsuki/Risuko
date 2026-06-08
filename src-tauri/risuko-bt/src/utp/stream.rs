@@ -23,6 +23,7 @@ use std::sync::Arc;
 use std::task::{Context, Poll, Waker};
 use std::time::{Duration, Instant};
 
+use bytes::Bytes;
 use parking_lot::Mutex;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::UdpSocket;
@@ -124,6 +125,11 @@ pub(crate) struct ConnState {
     eof: bool,
     error: Option<io::ErrorKind>,
 
+    /// Recovery marker for the current fast-retransmit episode
+    ///
+    /// Further SACKs before this seq is cumulatively acked do not shrink the window again
+    recovery_seq: Option<u16>,
+
     /// Encoded datagrams the driver should put on the wire this iteration.
     outbox: Vec<Vec<u8>>,
     read_waker: Option<Waker>,
@@ -134,7 +140,10 @@ pub(crate) struct ConnState {
 
 impl ConnState {
     fn advertised_window(&self) -> u32 {
-        RECV_BUF_MAX.saturating_sub(self.recv_ready.len()) as u32
+        // Out-of-order bytes in `reorder` also consume receive buffer, so count them in the advertised window
+        let reorder_bytes: usize = self.reorder.values().map(|b| b.len()).sum();
+        let used = self.recv_ready.len().saturating_add(reorder_bytes);
+        RECV_BUF_MAX.saturating_sub(used) as u32
     }
 
     /// Encode an outstanding packet with current ack/window/timestamps.
@@ -253,6 +262,12 @@ impl ConnState {
             }
         }
         if acked_any {
+            // Recovery ends once its marker is cumulatively acked, re-arming decrease for the next loss
+            if let Some(rseq) = self.recovery_seq {
+                if !seq_after(rseq, ack_nr) {
+                    self.recovery_seq = None;
+                }
+            }
             self.update_cwnd(their_delay, acked_bytes);
             self.notify_write();
         }
@@ -279,6 +294,13 @@ impl ConnState {
         // fast-retransmit it. Extract its fields first so the mutable borrow
         // is released before we re-encode (which borrows &self).
         if sacked {
+            // SACK past a hole signals loss; decrease once per `recovery_seq` episode
+            if self.recovery_seq.is_none() {
+                if let Some(back) = self.unacked.back() {
+                    self.recovery_seq = Some(back.seq_nr);
+                    self.max_window = (self.max_window / 2).max(MIN_CWND);
+                }
+            }
             let p = self.unacked.front_mut().map(|f| {
                 f.sent_at = Instant::now();
                 f.transmissions += 1;
@@ -545,7 +567,7 @@ pub(crate) enum RoleKind {
 pub(crate) struct DriverConfig {
     pub udp: Arc<UdpSocket>,
     pub remote: SocketAddr,
-    pub incoming: mpsc::UnboundedReceiver<(UtpHeader, Vec<u8>)>,
+    pub incoming: mpsc::UnboundedReceiver<(UtpHeader, Bytes)>,
     pub registry: ConnRegistry,
     pub key: ConnKey,
 }
@@ -584,6 +606,7 @@ pub(crate) fn new_shared(remote: SocketAddr, conn_id_send: u16, kind: RoleKind) 
             peer_fin: None,
             eof: false,
             error: None,
+            recovery_seq: None,
             outbox: Vec::new(),
             read_waker: None,
             write_waker: None,
@@ -857,7 +880,7 @@ mod tests {
             sent_at: Instant::now() - Duration::from_secs(60),
             transmissions: MAX_RETRANSMITS,
         });
-        st.send_buf.extend(std::iter::repeat(0u8).take(100));
+        st.send_buf.extend(std::iter::repeat_n(0u8, 100));
 
         st.fail(io::ErrorKind::TimedOut);
         assert!(st.unacked.is_empty());

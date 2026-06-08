@@ -260,22 +260,6 @@ impl ChunkTracker {
     }
 }
 
-// The `states_for` borrow above conflicts with the endgame scan that also
-// borrows `self.pieces`. Work around with an explicit helper that takes
-// `&mut HashMap<…>`
-impl ChunkTracker {
-    fn _ensure<'a>(
-        pieces: &'a mut HashMap<u32, Vec<ChunkState>>,
-        lengths: &Lengths,
-        piece: ValidPieceIndex,
-    ) -> &'a mut Vec<ChunkState> {
-        pieces.entry(piece.get()).or_insert_with(|| {
-            let count = lengths.chunks_of(piece).count();
-            vec![ChunkState::Missing; count]
-        })
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

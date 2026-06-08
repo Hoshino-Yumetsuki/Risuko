@@ -51,7 +51,6 @@ pub struct Resolved {
     pub info_hash_v2: Option<Id32>,
     pub info_bytes: Vec<u8>,
     pub trackers: Vec<String>,
-    pub display_name: Option<String>,
     /// BEP 52 piece layers fetched from peers via `HASH_REQUEST`. Keyed by
     /// each file's `pieces root`. Empty for v1-only magnets and for v2
     /// magnets whose every file fits in a single piece (no layer required)
@@ -294,7 +293,6 @@ pub async fn resolve_with_peers(
                 info_hash_v2: want_v2,
                 info_bytes,
                 trackers,
-                display_name: magnet.display_name.clone(),
                 piece_layers,
             })
         }

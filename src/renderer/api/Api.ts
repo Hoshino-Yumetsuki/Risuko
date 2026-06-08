@@ -7,6 +7,7 @@ import type {
 	DownloadTask,
 	GlobalStat,
 	LowSpeedEvaluationResult,
+	MediaInfo,
 	PeerInfo,
 	SyncOrderResult,
 } from "@shared/types/task";
@@ -183,13 +184,20 @@ export default class Api {
 	}
 
 	updateActiveTaskOption(options: Record<string, unknown>) {
-		this.fetchTaskList({ type: "active" }).then((data) => {
-			if (isEmpty(data)) {
-				return;
-			}
-			const gids = (data as DownloadTask[]).map((task) => task.gid);
-			this.batchChangeOption({ gids, options });
-		});
+		return this.fetchTaskList({ type: "active" })
+			.then((data) => {
+				if (isEmpty(data)) {
+					return;
+				}
+				const gids = (data as DownloadTask[]).map((task) => task.gid);
+				return this.batchChangeOption({ gids, options });
+			})
+			.catch((err) => {
+				logger.warn(
+					"[Risuko] updateActiveTaskOption failed:",
+					err?.message || err,
+				);
+			});
 	}
 
 	changeOption(
@@ -320,7 +328,7 @@ export default class Api {
 
 	getMediaInfo(params: { url: string; options?: Record<string, unknown> }) {
 		const engineOptions = formatOptionsForEngine(params.options);
-		return invoke<import("@shared/types/task").MediaInfo>("get_media_info", {
+		return invoke<MediaInfo>("get_media_info", {
 			url: params.url,
 			options: engineOptions,
 		});
@@ -361,15 +369,10 @@ export default class Api {
 	async fetchDownloadingTaskList(
 		params: { offset?: number; num?: number; keys?: string[] } = {},
 	) {
-		const { offset = 0, num = TASK_LIST_FETCH_SIZE, keys } = params;
-		const safeNum = clampTaskListFetchSize(num);
-		const [active, waiting] = await Promise.all([
-			invoke<DownloadTask[]>("tell_active", { keys }),
-			invoke<DownloadTask[]>("tell_waiting", { offset, num: safeNum, keys }),
-		]);
+		const { keys } = params;
+		const active = await invoke<DownloadTask[]>("tell_active", { keys });
 		const activeArr = Array.isArray(active) ? active : [];
-		const waitingArr = Array.isArray(waiting) ? waiting : [];
-		return [...activeArr, ...waitingArr];
+		return activeArr;
 	}
 
 	fetchWaitingTaskList(
@@ -817,7 +820,7 @@ export interface BrowserInfo {
 	userAgent: string;
 }
 
-export interface ImportedCookieView {
+interface ImportedCookieView {
 	name: string;
 	value: string;
 	domain: string;

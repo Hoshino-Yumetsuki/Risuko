@@ -8,7 +8,7 @@
 //! Scope: IPv4 only. IPv6 has no UPnP IGD equivalent (PCP/NAT-PMP covers
 //! a subset of routers; left to a follow-up).
 
-use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
+use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -41,13 +41,6 @@ impl MapProto {
             MapProto::Udp => "UDP",
         }
     }
-}
-
-/// Returned from [`map_port`]; kept for backward compatibility with earlier
-/// callers that expected an immediate `PortMapping`.
-#[derive(Debug, Clone)]
-pub struct PortMapping {
-    pub external: Option<SocketAddr>,
 }
 
 /// Options for [`UpnpPortForwarder`]. Defaults mirror common client choices.
@@ -119,17 +112,6 @@ pub struct UpnpHandle {
 }
 
 impl UpnpHandle {
-    /// Snapshot of currently confirmed mappings.
-    pub fn mappings(&self) -> Vec<PortMapping> {
-        self.active
-            .lock()
-            .iter()
-            .map(|m| PortMapping {
-                external: Some(SocketAddr::new(IpAddr::V4(m.external_ip), m.external_port)),
-            })
-            .collect()
-    }
-
     /// Number of currently confirmed mappings without cloning them
     pub fn mapping_count(&self) -> usize {
         self.active.lock().len()
@@ -159,47 +141,6 @@ impl Drop for UpnpHandle {
     }
 }
 
-/// One-shot mapping call. Preserved for backwards compatibility. Discovers
-/// the first IGD, maps TCP `port`, and returns the external address; the
-/// mapping is not renewed and will expire.
-pub async fn map_port(port: u16) -> std::io::Result<PortMapping> {
-    let opts = UpnpOptions::default();
-    let endpoints = ssdp_discover(opts.discover_timeout).await?;
-    let ifaces = NetworkInterface::show().unwrap_or_default();
-    for ep in endpoints {
-        let Ok(root) = fetch_root_desc(&ep.location).await else {
-            continue;
-        };
-        let Some((control_url, service_type)) = find_wan_service(&root, &ep.location) else {
-            continue;
-        };
-        let Some(local_ip) = pick_local_ipv4(&ifaces, *ep.received_from.ip()) else {
-            continue;
-        };
-        if add_port_mapping(
-            &control_url,
-            &service_type,
-            &local_ip,
-            port,
-            MapProto::Tcp,
-            opts.lease,
-            &opts.description,
-        )
-        .await
-        .is_ok()
-        {
-            let external = get_external_ip(&control_url, &service_type).await.ok();
-            return Ok(PortMapping {
-                external: external.map(|ip| SocketAddr::new(IpAddr::V4(ip), port)),
-            });
-        }
-    }
-    Err(std::io::Error::new(
-        std::io::ErrorKind::NotFound,
-        "no UPnP IGD responded to SSDP M-SEARCH",
-    ))
-}
-
 // ---------------------------------------------------------------------------
 // Core loop
 // ---------------------------------------------------------------------------
@@ -208,8 +149,6 @@ pub async fn map_port(port: u16) -> std::io::Result<PortMapping> {
 struct ActiveMapping {
     control_url: Url,
     service_type: String,
-    external_ip: Ipv4Addr,
-    external_port: u16,
     port: u16,
     proto: MapProto,
 }
@@ -301,8 +240,6 @@ async fn discover_and_map(
                     g.push(ActiveMapping {
                         control_url: control_url.clone(),
                         service_type: service_type.clone(),
-                        external_ip: external_ip.unwrap_or(Ipv4Addr::UNSPECIFIED),
-                        external_port: port,
                         port,
                         proto,
                     });

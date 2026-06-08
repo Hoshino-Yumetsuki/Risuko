@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::{Map, Value};
 use tokio::io::AsyncWriteExt;
@@ -9,6 +10,8 @@ use tokio_util::sync::CancellationToken;
 use super::parser::{self, ParsedPlaylist, Variant};
 use super::segment;
 use crate::engine::speed_limiter::SpeedLimiter;
+
+static TEMP_DIR_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// Run an M3U8/HLS download
 /// Main entry point called from manager.rs
@@ -98,7 +101,7 @@ pub async fn run_m3u8_download(
     } else {
         out.to_string()
     };
-    let temp_dir_name = format!(".m3u8_{}", sanitize_filename(&filename));
+    let temp_dir_name = temp_dir_name_for(&filename);
     let temp_dir = dir_path.join(&temp_dir_name);
 
     // Download all segments (speed tracker runs alongside)
@@ -109,7 +112,7 @@ pub async fn run_m3u8_download(
         run_speed_tracker(speed_completed, speed_val, speed_cancel).await;
     });
 
-    let (seg_paths, progress) = segment::download_segments(
+    let segments_result = segment::download_segments(
         &segments,
         media_sequence,
         &temp_dir,
@@ -123,7 +126,17 @@ pub async fn run_m3u8_download(
         task_limiter,
         split,
     )
-    .await?;
+    .await;
+
+    let (seg_paths, progress) = match segments_result {
+        Ok(result) => result,
+        Err(e) => {
+            cancel_token.cancel();
+            speed.store(0, Ordering::Relaxed);
+            speed_tracker.abort();
+            return Err(e);
+        }
+    };
 
     // Stop speed tracker
     speed.store(0, Ordering::Relaxed);
@@ -132,11 +145,10 @@ pub async fn run_m3u8_download(
     check_cancelled(&cancelled, &cancel_token)?;
 
     // Concatenate segments into final output
-    let ts_path = dir_path.join(&filename);
-    concatenate_segments(&seg_paths, &ts_path).await?;
+    let final_ts_path = concatenate_segments_unique(&seg_paths, dir_path, &filename).await?;
 
     // Set final byte-accurate total from the output file
-    if let Ok(meta) = tokio::fs::metadata(&ts_path).await {
+    if let Ok(meta) = tokio::fs::metadata(&final_ts_path).await {
         let file_size = meta.len();
         total.store(file_size, Ordering::Relaxed);
         completed.store(file_size, Ordering::Relaxed);
@@ -149,19 +161,19 @@ pub async fn run_m3u8_download(
         .unwrap_or("ts");
 
     let final_path = if output_format == "mp4" {
-        match remux_to_mp4(&ts_path).await {
+        match remux_to_mp4(&final_ts_path).await {
             Ok(mp4_path) => {
                 // Remove the .ts intermediate
-                let _ = tokio::fs::remove_file(&ts_path).await;
+                let _ = tokio::fs::remove_file(&final_ts_path).await;
                 mp4_path
             }
             Err(e) => {
                 tracing::warn!("[m3u8] ffmpeg remux failed, keeping .ts output: {e}");
-                ts_path // fall back to .ts
+                final_ts_path // fall back to .ts
             }
         }
     } else {
-        ts_path
+        final_ts_path
     };
 
     // Cleanup temp dir and progress
@@ -286,37 +298,134 @@ fn sanitize_filename(name: &str) -> String {
         .collect()
 }
 
+fn temp_dir_name_for(filename: &str) -> String {
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    let counter = TEMP_DIR_COUNTER.fetch_add(1, Ordering::Relaxed);
+    format!(
+        ".m3u8_{}_{}_{}_{}",
+        sanitize_filename(filename),
+        std::process::id(),
+        nonce,
+        counter
+    )
+}
+
+fn final_path_candidate(dir: &Path, filename: &str, n: u32) -> PathBuf {
+    let sanitized = sanitize_filename(filename);
+    if n == 0 {
+        return dir.join(sanitized);
+    }
+
+    let (stem, ext) = match sanitized.rfind('.') {
+        Some(dot) if dot > 0 => (&sanitized[..dot], &sanitized[dot..]),
+        _ => (sanitized.as_str(), ""),
+    };
+
+    let numbered = if ext.is_empty() {
+        format!("{stem}.{n}")
+    } else {
+        format!("{stem}.{n}{ext}")
+    };
+    dir.join(numbered)
+}
+
 /// Concatenate segment files into a single output file
-async fn concatenate_segments(segment_paths: &[PathBuf], output_path: &Path) -> Result<(), String> {
-    let mut output = tokio::fs::File::create(output_path)
+async fn concatenate_segments_unique(
+    segment_paths: &[PathBuf],
+    output_dir: &Path,
+    filename: &str,
+) -> Result<PathBuf, String> {
+    for n in 0u32.. {
+        let output_path = final_path_candidate(output_dir, filename, n);
+        match concatenate_segments_to_new_file(segment_paths, &output_path).await {
+            Ok(()) => return Ok(output_path),
+            Err(ConcatError::AlreadyExists) => continue,
+            Err(ConcatError::Failed(message)) => return Err(message),
+        }
+    }
+
+    Err("Failed to reserve M3U8 output filename".to_string())
+}
+
+enum ConcatError {
+    AlreadyExists,
+    Failed(String),
+}
+
+async fn concatenate_segments_to_new_file(
+    segment_paths: &[PathBuf],
+    output_path: &Path,
+) -> Result<(), ConcatError> {
+    let mut output = tokio::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(output_path)
         .await
-        .map_err(|e| format!("Failed to create output file: {e}"))?;
+        .map_err(|e| {
+            if e.kind() == std::io::ErrorKind::AlreadyExists {
+                ConcatError::AlreadyExists
+            } else {
+                ConcatError::Failed(format!("Failed to create output file: {e}"))
+            }
+        })?;
 
     for path in segment_paths {
         if !path.exists() {
-            return Err(format!("Missing segment file: {}", path.display()));
+            let _ = tokio::fs::remove_file(output_path).await;
+            return Err(ConcatError::Failed(format!(
+                "Missing segment file: {}",
+                path.display()
+            )));
         }
-        let data = tokio::fs::read(path)
-            .await
-            .map_err(|e| format!("Failed to read segment {}: {e}", path.display()))?;
+        let mut seg_file = match tokio::fs::File::open(path).await {
+            Ok(file) => file,
+            Err(e) => {
+                let _ = tokio::fs::remove_file(output_path).await;
+                return Err(ConcatError::Failed(format!(
+                    "Failed to open segment {}: {e}",
+                    path.display()
+                )));
+            }
+        };
 
-        output
-            .write_all(&data)
-            .await
-            .map_err(|e| format!("Failed to write to output: {e}"))?;
+        if let Err(e) = tokio::io::copy(&mut seg_file, &mut output).await {
+            let _ = tokio::fs::remove_file(output_path).await;
+            return Err(ConcatError::Failed(format!(
+                "Failed to write to output: {e}"
+            )));
+        }
     }
 
-    output
-        .flush()
-        .await
-        .map_err(|e| format!("Failed to flush output: {e}"))?;
+    output.flush().await.map_err(|e| {
+        let _ = std::fs::remove_file(output_path);
+        ConcatError::Failed(format!("Failed to flush output: {e}"))
+    })?;
 
     Ok(())
 }
 
 /// Attempt to remux .ts to .mp4 using system ffmpeg
 async fn remux_to_mp4(ts_path: &Path) -> Result<PathBuf, String> {
-    let mp4_path = ts_path.with_extension("mp4");
+    let parent = ts_path
+        .parent()
+        .ok_or_else(|| "M3U8 output path has no parent directory".to_string())?;
+    let mp4_name = ts_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(|name| {
+            let mut name = name.to_string();
+            if let Some(dot) = name.rfind('.') {
+                name.replace_range(dot.., ".mp4");
+                name
+            } else {
+                format!("{name}.mp4")
+            }
+        })
+        .ok_or_else(|| "M3U8 output filename is not valid UTF-8".to_string())?;
+    let mp4_path = reserve_unique_output_path(parent, &mp4_name).await?;
 
     // Check ffmpeg availability
     let ffmpeg_check = tokio::process::Command::new("ffmpeg")
@@ -342,11 +451,30 @@ async fn remux_to_mp4(ts_path: &Path) -> Result<PathBuf, String> {
         .map_err(|e| format!("ffmpeg execution failed: {e}"))?;
 
     if !output.status.success() {
+        let _ = tokio::fs::remove_file(&mp4_path).await;
         let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(format!("ffmpeg remux failed: {stderr}"));
     }
 
     Ok(mp4_path)
+}
+
+async fn reserve_unique_output_path(dir: &Path, filename: &str) -> Result<PathBuf, String> {
+    for n in 0u32.. {
+        let path = final_path_candidate(dir, filename, n);
+        match tokio::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .await
+        {
+            Ok(_) => return Ok(path),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(format!("Failed to reserve output file: {e}")),
+        }
+    }
+
+    Err("Failed to reserve output filename".to_string())
 }
 
 #[cfg(test)]
@@ -378,5 +506,27 @@ mod tests {
         assert_eq!(sanitize_filename("hello world.ts"), "hello_world.ts");
         assert_eq!(sanitize_filename("video/name:1.ts"), "video_name_1.ts");
         assert_eq!(sanitize_filename("normal-file_01.ts"), "normal-file_01.ts");
+    }
+
+    #[test]
+    fn temp_dir_names_include_unique_suffix() {
+        let a = temp_dir_name_for("video.ts");
+        let b = temp_dir_name_for("video.ts");
+        assert!(a.starts_with(".m3u8_video.ts_"));
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn final_path_candidate_deduplicates_stem_and_extension() {
+        let dir = Path::new("/downloads");
+        assert_eq!(
+            final_path_candidate(dir, "video.ts", 0),
+            dir.join("video.ts")
+        );
+        assert_eq!(
+            final_path_candidate(dir, "video.ts", 1),
+            dir.join("video.1.ts")
+        );
+        assert_eq!(final_path_candidate(dir, "video", 2), dir.join("video.2"));
     }
 }

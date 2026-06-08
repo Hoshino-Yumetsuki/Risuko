@@ -23,7 +23,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
-import { execSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 
 const root = resolve(import.meta.dirname, "..");
 
@@ -40,16 +40,27 @@ if (!/^\d+\.\d+\.\d+(-[\w.]+)?$/.test(version)) {
   process.exit(1);
 }
 
-function run(command, cwd = root, allowFailure = false) {
-  try {
-    return execSync(command, { cwd, stdio: ["ignore", "pipe", "pipe"], encoding: "utf8" }).trim();
-  } catch (err) {
-    if (allowFailure) {
-      return "";
-    }
-    const stderr = err?.stderr?.toString?.() || "";
-    throw new Error(`Command failed: ${command}\n${stderr}`);
+if (!tag || tag.startsWith("-") || /\s/.test(tag)) {
+  console.error(`Invalid npm tag: ${tag}`);
+  process.exit(1);
+}
+
+function run(command, commandArgs = [], cwd = root, allowFailure = false) {
+  const result = spawnSync(command, commandArgs, {
+    cwd,
+    stdio: ["ignore", "pipe", "pipe"],
+    encoding: "utf8",
+    shell: false,
+  });
+  if (result.status === 0) {
+    return result.stdout.trim();
   }
+  if (allowFailure) {
+    return "";
+  }
+  throw new Error(
+    `Command failed: ${[command, ...commandArgs].join(" ")}\n${result.stderr}`,
+  );
 }
 
 function listPackageDirs(baseDir) {
@@ -116,6 +127,12 @@ function createPlaceholderFile(pkgName, filePath) {
 function preparePackage(srcDir, outDir, nextVersion) {
   const pkg = readPkg(srcDir);
   pkg.version = nextVersion;
+  if (pkg.scripts?.prepack) {
+    delete pkg.scripts.prepack;
+    if (Object.keys(pkg.scripts).length === 0) {
+      delete pkg.scripts;
+    }
+  }
   updateInternalDeps(pkg, nextVersion);
   writePkg(outDir, pkg);
 
@@ -130,7 +147,7 @@ function preparePackage(srcDir, outDir, nextVersion) {
 }
 
 function packageExists(name, nextVersion) {
-  const out = run(`npm view ${JSON.stringify(`${name}@${nextVersion}`)} version`, root, true);
+  const out = run("npm", ["view", `${name}@${nextVersion}`, "version"], root, true);
   return out === nextVersion;
 }
 
@@ -152,7 +169,7 @@ console.log(`Dry run: ${dryRun ? "yes" : "no"}`);
 
 if (!dryRun) {
   try {
-    const whoami = run("npm whoami");
+    const whoami = run("npm", ["whoami"]);
     console.log(`npm auth ok as: ${whoami}`);
   } catch {
     console.error("npm auth missing. Run 'npm login' and retry.");
@@ -184,7 +201,7 @@ for (const item of prepared) {
   }
 
   console.log(`publishing ${item.name}@${item.version} (tag: ${tag})`);
-  run(`npm publish --access public --tag ${tag}`, item.dir);
+  run("npm", ["publish", "--access", "public", "--tag", tag], item.dir);
 }
 
 if (dryRun) {

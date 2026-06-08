@@ -12,6 +12,8 @@ pub struct ChunkManager {
     chunk_hashes: Vec<[u8; 16]>,
     chunk_status: Vec<ChunkStatus>,
     completed_length: u64,
+    /// Output handle opened on first write and reused to avoid open(2) per packet
+    file: Option<tokio::fs::File>,
 }
 
 impl ChunkManager {
@@ -24,6 +26,7 @@ impl ChunkManager {
             chunk_hashes: Vec::new(),
             chunk_status: vec![ChunkStatus::Missing; count as usize],
             completed_length: 0,
+            file: None,
         }
     }
 
@@ -49,11 +52,20 @@ impl ChunkManager {
 
     /// Find the next chunk to download (Missing state, peer has it)
     pub fn next_needed_chunk(&self, peer_parts: &[bool]) -> Option<u64> {
+        self.next_needed_chunk_excluding(peer_parts, &[])
+    }
+
+    /// Like [`next_needed_chunk`], but skips chunks already chosen this request round
+    ///
+    /// Chunk status is not updated until data arrives, so this avoids duplicate ranges
+    pub fn next_needed_chunk_excluding(&self, peer_parts: &[bool], exclude: &[u64]) -> Option<u64> {
         for i in 0..self.chunk_count as usize {
+            let idx = i as u64;
             if self.chunk_status[i] == ChunkStatus::Missing
+                && !exclude.contains(&idx)
                 && (peer_parts.is_empty() || (i < peer_parts.len() && peer_parts[i]))
             {
-                return Some(i as u64);
+                return Some(idx);
             }
         }
         None
@@ -102,11 +114,15 @@ impl ChunkManager {
             ));
         }
 
-        let mut file = OpenOptions::new()
-            .write(true)
-            .open(&self.file_path)
-            .await
-            .map_err(|e| format!("Failed to open file for writing: {}", e))?;
+        if self.file.is_none() {
+            let f = OpenOptions::new()
+                .write(true)
+                .open(&self.file_path)
+                .await
+                .map_err(|e| format!("Failed to open file for writing: {}", e))?;
+            self.file = Some(f);
+        }
+        let file = self.file.as_mut().expect("file handle just initialized");
 
         file.seek(SeekFrom::Start(offset))
             .await

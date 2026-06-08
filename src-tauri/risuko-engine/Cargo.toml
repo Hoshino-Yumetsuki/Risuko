@@ -64,6 +64,9 @@ libc = "0.2"
 
 [features]
 default = []
+# Builds the experimental ADC/NMDC peer-transfer clients. The default engine
+# still parses ADC/NMDC URIs and returns the current NoSource stub.
+adc-transfer = []
 
 [dev-dependencies]
 tempfile = "3"

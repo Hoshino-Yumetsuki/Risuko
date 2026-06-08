@@ -46,10 +46,6 @@ pub struct Handshake {
 }
 
 impl Handshake {
-    pub fn new(info_hash: Id20, peer_id: Id20) -> Self {
-        Self::new_with_v2(info_hash, peer_id, true)
-    }
-
     pub fn new_with_v2(info_hash: Id20, peer_id: Id20, advertise_v2: bool) -> Self {
         // We always advertise the BEP-10 extension-protocol bit. The BEP-52 v2 bit
         // is *only* set when the caller is explicitly connecting on a v2 info-hash
@@ -74,11 +70,6 @@ impl Handshake {
 
     pub fn has_ext_protocol(&self) -> bool {
         let (b, m) = reserved::EXT_PROTOCOL;
-        self.reserved[b] & m != 0
-    }
-
-    pub fn has_dht(&self) -> bool {
-        let (b, m) = reserved::DHT;
         self.reserved[b] & m != 0
     }
 
@@ -123,23 +114,13 @@ mod tests {
 
     #[test]
     fn round_trip_advertises_ext_and_optionally_v2() {
-        let hs = Handshake::new(Id20([0xaau8; 20]), Id20([0xbbu8; 20]));
+        let hs = Handshake::new_with_v2(Id20([0xaau8; 20]), Id20([0xbbu8; 20]), true);
         let bytes = hs.to_bytes();
         let parsed = Handshake::parse(&bytes).unwrap();
         assert_eq!(hs, parsed);
         assert!(parsed.has_ext_protocol());
-        // DHT bit is never advertised: we don't act on `Port` from peers
-        assert!(!parsed.has_dht());
-        // `Handshake::new` defaults `advertise_v2` to true so this carries the v2 capability bit
+        // `advertise_v2 = true` carries the v2 capability bit
         assert!(parsed.has_v2());
-    }
-
-    #[test]
-    fn dht_bit_is_never_set() {
-        let hs_off = Handshake::new_with_v2(Id20([0xaau8; 20]), Id20([0xbbu8; 20]), false);
-        let hs_on = Handshake::new_with_v2(Id20([0xaau8; 20]), Id20([0xbbu8; 20]), true);
-        assert!(!hs_off.has_dht());
-        assert!(!hs_on.has_dht());
     }
 
     #[test]

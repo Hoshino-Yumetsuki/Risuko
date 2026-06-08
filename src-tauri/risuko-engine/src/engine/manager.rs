@@ -1072,8 +1072,13 @@ impl TaskManager {
 
     /// Start download workers for waiting tasks up to max concurrent limit
     async fn try_start_next(&self) {
-        let options_guard = self.options.read().await;
-        let max_concurrent = options_guard.max_concurrent_downloads();
+        let (max_concurrent, options_snapshot) = {
+            let options_guard = self.options.read().await;
+            (
+                options_guard.max_concurrent_downloads(),
+                options_guard.clone(),
+            )
+        };
         let active_count = self.active_downloads.read().await.len();
 
         if active_count >= max_concurrent {
@@ -1093,19 +1098,19 @@ impl TaskManager {
             }
             if task.kind == TaskKind::Http && !task.uris.is_empty() {
                 task.status = TaskStatus::Active;
-                let mut merged = options_guard.merge_task_options(&task.options);
+                let mut merged = options_snapshot.merge_task_options(&task.options);
                 self.apply_stored_cookies(&task.uris, &mut merged);
                 self.spawn_http_download(task, merged);
                 started += 1;
             } else if task.kind == TaskKind::Media && !task.uris.is_empty() {
                 task.status = TaskStatus::Active;
-                let mut merged = options_guard.merge_task_options(&task.options);
+                let mut merged = options_snapshot.merge_task_options(&task.options);
                 self.apply_stored_cookies(&task.uris, &mut merged);
                 self.spawn_media_download(task, merged);
                 started += 1;
             } else if task.kind == TaskKind::M3u8 && !task.uris.is_empty() {
                 task.status = TaskStatus::Active;
-                let merged = options_guard.merge_task_options(&task.options);
+                let merged = options_snapshot.merge_task_options(&task.options);
                 self.spawn_m3u8_download(task, merged);
                 started += 1;
             } else if task.kind == TaskKind::Ed2k && !task.uris.is_empty() {
@@ -1114,7 +1119,7 @@ impl TaskManager {
                 started += 1;
             } else if task.kind == TaskKind::Ftp && !task.uris.is_empty() {
                 task.status = TaskStatus::Active;
-                let merged = options_guard.merge_task_options(&task.options);
+                let merged = options_snapshot.merge_task_options(&task.options);
                 self.spawn_ftp_download(task, merged);
                 started += 1;
             } else if matches!(
@@ -1951,6 +1956,9 @@ impl TaskManager {
     /// Update progress for all active downloads
     /// Also starts waiting tasks if slots are available
     pub async fn update_progress(&self) {
+        // Cap stopped task history once per tick to avoid long-uptime growth
+        self.enforce_result_cap().await;
+
         // If there are no Active or Waiting tasks, skip the
         // expensive write-lock + per-task scan + try_start_next entirely
         // This reduces per-second CPU wake-ups when the engine is idle
@@ -1965,96 +1973,13 @@ impl TaskManager {
         }
 
         {
-            let active = self.active_downloads.read().await;
-            let mut tasks = self.tasks.write().await;
-
-            for task in tasks.iter_mut() {
-                if task.status != TaskStatus::Active {
-                    continue;
-                }
-                if let Some(ad) = active.get(&task.gid) {
-                    task.total_length = ad.total.load(Ordering::Relaxed);
-                    task.completed_length = ad.completed.load(Ordering::Relaxed);
-                    task.download_speed = ad.speed.load(Ordering::Relaxed);
-                    task.connections = ad.connections.load(Ordering::Relaxed);
-
-                    // Pick up a filename the engine learned from
-                    // Content-Disposition mid-download. The UI reads task
-                    // names from files[0].path, so we sync both fields to
-                    // keep the display in step with the .part on disk
-                    if let Some(name) = ad.adopted_filename.lock().clone() {
-                        if !name.is_empty() && task.out != name {
-                            task.out = name.clone();
-                            if let Some(f) = task.files.first_mut() {
-                                f.path = format!("{}/{}", task.dir, name);
-                            }
-                        }
-                    }
-
-                    // split chunk progress for multi-thread HTTP
-                    // Only populate when actually using multiple connections;
-                    // single-connection fallback leaves chunk_completed at zero.
-                    let conns = ad.connections.load(Ordering::Relaxed);
-                    if !ad.chunk_completed.is_empty() && task.total_length > 0 && conns > 1 {
-                        let split = ad.chunk_completed.len() as u64;
-                        let chunk_size = task.total_length / split;
-                        task.chunk_progress = ad
-                            .chunk_completed
-                            .iter()
-                            .enumerate()
-                            .map(|(i, cc)| {
-                                // With work-stealing, cc is total bytes worker i has
-                                // downloaded across pieces it pulled. Clamp so percent
-                                // stays in [0, 100].
-                                let baseline = if i as u64 == split - 1 {
-                                    task.total_length - chunk_size * (split - 1)
-                                } else {
-                                    chunk_size
-                                };
-                                let completed = cc.load(Ordering::Relaxed);
-                                ChunkProgress {
-                                    completed,
-                                    total: completed.max(baseline),
-                                }
-                            })
-                            .collect();
-                    } else {
-                        task.chunk_progress.clear();
-                    }
-
-                    if let Some(f) = task.files.first_mut() {
-                        f.length = task.total_length.to_string();
-                        f.completed_length = task.completed_length.to_string();
-                        // if it's still a raw URL, resolve to disk path
-                        if looks_like_url(&f.path) {
-                            let filename = if !task.out.is_empty() {
-                                task.out.clone()
-                            } else if let Some(uri) = task.uris.first() {
-                                let name = http::infer_filename_from_uri(uri);
-                                format!("{name}.part")
-                            } else {
-                                String::new()
-                            };
-                            if !filename.is_empty() {
-                                let display = filename.strip_suffix(".part").unwrap_or(&filename);
-                                f.path = format!("{}/{}", task.dir, display);
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Update torrent tasks
-            let te_guard = self.torrent_engine.read().await;
-            let tid_guard = self.torrent_ids.read().await;
+            // Snapshot seeding options before tasks.write() to avoid cross-lock awaits in the tick
             let (keep_seeding, seed_time_minutes, seed_ratio, bt_create_subfolder_default) = {
                 let opts = self.options.read().await;
                 let st = opts.seed_time();
                 let ratio = opts.seed_ratio();
                 let manual = opts.keep_seeding();
-                // Seed on completion if the user enabled keep-seeding, or if
-                // a finite seed-time / seed-ratio goal was set (both imply
-                // the user wants to seed at least for some duration). When
+                // Seed on completion when keep-seeding or a finite seed goal is set
                 // `keep-seeding` is true we ignore the seed-time/seed-ratio
                 // limits so the torrent runs until manually stopped.
                 let keep = manual || st > 0 || ratio > 0.0;
@@ -2066,224 +1991,283 @@ impl TaskManager {
                 let csub_default = opts.get_bool("bt-create-subfolder").unwrap_or(true);
                 (keep, effective_time, effective_ratio, csub_default)
             };
-            if let Some(ref te) = *te_guard {
+
+            let active_torrent_gids = {
+                let active = self.active_downloads.read().await;
+                let mut tasks = self.tasks.write().await;
+                let mut active_torrent_gids = Vec::new();
+
+                for task in tasks.iter_mut() {
+                    if task.status != TaskStatus::Active {
+                        continue;
+                    }
+                    if task.kind == TaskKind::Torrent {
+                        active_torrent_gids.push(task.gid.clone());
+                    }
+                    if let Some(ad) = active.get(&task.gid) {
+                        task.total_length = ad.total.load(Ordering::Relaxed);
+                        task.completed_length = ad.completed.load(Ordering::Relaxed);
+                        task.download_speed = ad.speed.load(Ordering::Relaxed);
+                        task.connections = ad.connections.load(Ordering::Relaxed);
+
+                        // Sync a Content-Disposition filename into both display path fields
+                        if let Some(name) = ad.adopted_filename.lock().clone() {
+                            if !name.is_empty() && task.out != name {
+                                task.out = name.clone();
+                                if let Some(f) = task.files.first_mut() {
+                                    f.path = format!("{}/{}", task.dir, name);
+                                }
+                            }
+                        }
+
+                        // Split chunk progress only when multiple HTTP connections are active
+                        let conns = ad.connections.load(Ordering::Relaxed);
+                        if !ad.chunk_completed.is_empty() && task.total_length > 0 && conns > 1 {
+                            let split = ad.chunk_completed.len() as u64;
+                            let chunk_size = task.total_length / split;
+                            task.chunk_progress = ad
+                                .chunk_completed
+                                .iter()
+                                .enumerate()
+                                .map(|(i, cc)| {
+                                    // Work-stealing reports bytes per worker; clamp percent into [0, 100]
+                                    let baseline = if i as u64 == split - 1 {
+                                        task.total_length - chunk_size * (split - 1)
+                                    } else {
+                                        chunk_size
+                                    };
+                                    let completed = cc.load(Ordering::Relaxed);
+                                    ChunkProgress {
+                                        completed,
+                                        total: completed.max(baseline),
+                                    }
+                                })
+                                .collect();
+                        } else {
+                            task.chunk_progress.clear();
+                        }
+
+                        if let Some(f) = task.files.first_mut() {
+                            f.length = task.total_length.to_string();
+                            f.completed_length = task.completed_length.to_string();
+                            // Resolve raw URLs to disk paths
+                            if looks_like_url(&f.path) {
+                                let filename = if !task.out.is_empty() {
+                                    task.out.clone()
+                                } else if let Some(uri) = task.uris.first() {
+                                    let name = http::infer_filename_from_uri(uri);
+                                    format!("{name}.part")
+                                } else {
+                                    String::new()
+                                };
+                                if !filename.is_empty() {
+                                    let display =
+                                        filename.strip_suffix(".part").unwrap_or(&filename);
+                                    f.path = format!("{}/{}", task.dir, display);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                active_torrent_gids
+            };
+
+            // Snapshot torrent stats before task mutations to keep lock scope small
+            let torrent_stats_by_gid: HashMap<String, torrent::TorrentStats> =
+                if active_torrent_gids.is_empty() {
+                    HashMap::new()
+                } else {
+                    let te_guard = self.torrent_engine.read().await;
+                    let tid_guard = self.torrent_ids.read().await;
+                    if let Some(ref te) = *te_guard {
+                        active_torrent_gids
+                            .into_iter()
+                            .filter_map(|gid| {
+                                let tid = *tid_guard.get(&gid)?;
+                                te.get_torrent_stats(tid).map(|stats| (gid, stats))
+                            })
+                            .collect()
+                    } else {
+                        HashMap::new()
+                    }
+                };
+
+            if !torrent_stats_by_gid.is_empty() {
+                let mut tasks = self.tasks.write().await;
                 for task in tasks.iter_mut() {
                     if task.kind != TaskKind::Torrent || task.status != TaskStatus::Active {
                         continue;
                     }
-                    if let Some(&tid) = tid_guard.get(&task.gid) {
-                        if let Some(stats) = te.get_torrent_stats(tid) {
-                            task.total_length = stats.total_bytes;
-                            task.completed_length = stats.downloaded_bytes;
-                            task.upload_length = stats.uploaded_bytes;
-                            task.download_speed = stats.download_speed;
-                            task.upload_speed = stats.upload_speed;
-                            task.connections = stats.num_peers;
-                            task.num_seeders = stats.num_seeders;
+                    if let Some(stats) = torrent_stats_by_gid.get(&task.gid) {
+                        task.total_length = stats.total_bytes;
+                        task.completed_length = stats.downloaded_bytes;
+                        task.upload_length = stats.uploaded_bytes;
+                        task.download_speed = stats.download_speed;
+                        task.upload_speed = stats.upload_speed;
+                        task.connections = stats.num_peers;
+                        task.num_seeders = stats.num_seeders;
 
-                            // Snapshot connected peers for the detail panel
-                            // Peer-level speed tracking is not yet wired up,
-                            // so dl/ul speeds are reported as zero
-                            task.peers = stats
-                                .peers
-                                .iter()
-                                .map(|p| {
-                                    let bitfield_hex = bytes_to_hex(&p.bitfield);
-                                    PeerInfo {
-                                        peer_id: String::new(),
-                                        ip: p.addr.ip().to_string(),
-                                        port: p.addr.port().to_string(),
-                                        bitfield: bitfield_hex,
-                                        am_choking: bool_str(p.am_choking),
-                                        peer_choking: bool_str(p.peer_choking),
-                                        download_speed: "0".to_string(),
-                                        upload_speed: "0".to_string(),
-                                        seeder: bool_str(p.seeder),
-                                    }
-                                })
-                                .collect();
+                        // Snapshot connected peers for detail; per-peer speeds are not wired yet
+                        sync_peer_infos(&mut task.peers, &stats.peers);
 
-                            // Surface .torrent metadata once the BT engine
-                            // has parsed it (immediate for torrent files,
-                            // after metadata exchange for magnets)
-                            if let Some(ref meta) = stats.metadata {
-                                task.piece_length = meta.piece_length;
-                                task.num_pieces = meta.num_pieces;
-                                if task.bt_comment.is_none() {
-                                    task.bt_comment = meta.comment.clone();
-                                }
-                                if task.bt_creation_date.is_none() {
-                                    task.bt_creation_date = meta.creation_date;
-                                }
-                                if task.bt_announce_list.is_empty() {
-                                    task.bt_announce_list = meta.announce_list.clone();
-                                }
+                        // Surface .torrent metadata once parsed, immediate for files and delayed for magnets
+                        if let Some(ref meta) = stats.metadata {
+                            task.piece_length = meta.piece_length;
+                            task.num_pieces = meta.num_pieces;
+                            if task.bt_comment.is_none() {
+                                task.bt_comment = meta.comment.clone();
                             }
-
-                            if task.bt_name.is_none() {
-                                if let Some(ref name) = stats.name {
-                                    task.bt_name = Some(name.clone());
-                                }
+                            if task.bt_creation_date.is_none() {
+                                task.bt_creation_date = meta.creation_date;
                             }
+                            if task.bt_announce_list.is_empty() {
+                                task.bt_announce_list = meta.announce_list.clone();
+                            }
+                        }
 
-                            // Populate file list from torrent metadata
-                            if let Some(ref file_details) = stats.file_details {
-                                let torrent_name = task.bt_name.as_deref().unwrap_or("");
-                                let create_subfolder = task
-                                    .options
-                                    .get("bt-create-subfolder")
-                                    .and_then(|v| v.as_bool())
-                                    .unwrap_or(bt_create_subfolder_default);
-                                let base_dir = if let Some(resolved_root) =
-                                    stats.resolved_root.as_ref().filter(|s| !s.is_empty())
-                                {
-                                    resolved_root.clone()
-                                } else if torrent_name.is_empty()
-                                    || stats.single_file_mode
-                                    || !create_subfolder
-                                {
-                                    task.dir.clone()
-                                } else {
-                                    // Multi-file grouped: files are inside torrent folder
-                                    format!("{}/{}", task.dir, torrent_name)
-                                };
+                        if task.bt_name.is_none() {
+                            if let Some(ref name) = stats.name {
+                                task.bt_name = Some(name.clone());
+                            }
+                        }
 
-                                // Determine which files are selected (0-based indices)
-                                let selected_indices: Option<std::collections::HashSet<usize>> =
-                                    task.options
-                                        .get("select-file")
-                                        .and_then(|v| v.as_str())
-                                        .and_then(|raw| {
-                                            let raw = raw.trim();
-                                            if raw.is_empty() {
-                                                return None;
-                                            }
-                                            let set: std::collections::HashSet<usize> = raw
-                                                .split(',')
-                                                .filter_map(|s| s.trim().parse::<usize>().ok())
-                                                .filter(|&i| i >= 1)
-                                                .map(|i| i - 1) // 1-based to 0-based
-                                                .collect();
-                                            if set.is_empty() {
-                                                None
-                                            } else {
-                                                Some(set)
-                                            }
-                                        });
-
-                                let mut selected_total: u64 = 0;
-                                let mut selected_completed: u64 = 0;
-
-                                task.files = file_details
-                                    .iter()
-                                    .map(|fd| {
-                                        let completed =
-                                            stats.file_progress.get(fd.index).copied().unwrap_or(0);
-                                        let is_selected = selected_indices
-                                            .as_ref()
-                                            .is_none_or(|set| set.contains(&fd.index));
-                                        if is_selected {
-                                            selected_total += fd.length;
-                                            selected_completed += completed;
-                                        }
-                                        DownloadFile {
-                                            index: (fd.index + 1).to_string(), // 1-based for compatibility
-                                            path: format!("{}/{}", base_dir, fd.path),
-                                            length: fd.length.to_string(),
-                                            completed_length: completed.to_string(),
-                                            selected: if is_selected { "true" } else { "false" }
-                                                .to_string(),
-                                            uris: Vec::new(),
-                                        }
-                                    })
-                                    .collect();
-
-                                // Override totals with selected-only sums
-                                if selected_indices.is_some() {
-                                    task.total_length = selected_total;
-                                    task.completed_length = selected_completed;
-                                }
-                            } else if task.files.is_empty() {
-                                // Fallback: metadata not yet available
-                                if let Some(ref name) = stats.name {
-                                    task.files = vec![DownloadFile {
-                                        index: "1".to_string(),
-                                        path: format!("{}/{}", task.dir, name),
-                                        length: stats.total_bytes.to_string(),
-                                        completed_length: stats.downloaded_bytes.to_string(),
-                                        selected: "true".to_string(),
-                                        uris: Vec::new(),
-                                    }];
-                                }
+                        // Populate file list from torrent metadata
+                        if let Some(ref file_details) = stats.file_details {
+                            let torrent_name = task.bt_name.as_deref().unwrap_or("");
+                            let create_subfolder = task
+                                .options
+                                .get("bt-create-subfolder")
+                                .and_then(|v| v.as_bool())
+                                .unwrap_or(bt_create_subfolder_default);
+                            let base_dir = if let Some(resolved_root) =
+                                stats.resolved_root.as_ref().filter(|s| !s.is_empty())
+                            {
+                                resolved_root.clone()
+                            } else if torrent_name.is_empty()
+                                || stats.single_file_mode
+                                || !create_subfolder
+                            {
+                                task.dir.clone()
                             } else {
-                                // Update progress for existing single-entry fallback
-                                if let Some(f) = task.files.first_mut() {
-                                    f.length = stats.total_bytes.to_string();
-                                    f.completed_length = stats.downloaded_bytes.to_string();
+                                // Multi-file torrents store files inside the torrent folder
+                                format!("{}/{}", task.dir, torrent_name)
+                            };
+
+                            // Determine selected files as zero-based indices
+                            let selected_indices: Option<std::collections::HashSet<usize>> = task
+                                .options
+                                .get("select-file")
+                                .and_then(|v| v.as_str())
+                                .and_then(|raw| {
+                                    let raw = raw.trim();
+                                    if raw.is_empty() {
+                                        return None;
+                                    }
+                                    let set: std::collections::HashSet<usize> = raw
+                                        .split(',')
+                                        .filter_map(|s| s.trim().parse::<usize>().ok())
+                                        .filter(|&i| i >= 1)
+                                        .map(|i| i - 1) // 1-based to 0-based
+                                        .collect();
+                                    if set.is_empty() {
+                                        None
+                                    } else {
+                                        Some(set)
+                                    }
+                                });
+
+                            let (selected_total, selected_completed) = sync_torrent_files(
+                                &mut task.files,
+                                file_details,
+                                &stats.file_progress,
+                                &base_dir,
+                                selected_indices.as_ref(),
+                            );
+
+                            // Override totals with selected-only sums
+                            if selected_indices.is_some() {
+                                task.total_length = selected_total;
+                                task.completed_length = selected_completed;
+                            }
+                        } else if task.files.is_empty() {
+                            // Fallback while metadata is unavailable
+                            if let Some(ref name) = stats.name {
+                                task.files = vec![DownloadFile {
+                                    index: "1".to_string(),
+                                    path: format!("{}/{}", task.dir, name),
+                                    length: stats.total_bytes.to_string(),
+                                    completed_length: stats.downloaded_bytes.to_string(),
+                                    selected: "true".to_string(),
+                                    uris: Vec::new(),
+                                }];
+                            }
+                        } else {
+                            // Update progress for the existing single-entry fallback
+                            if let Some(f) = task.files.first_mut() {
+                                f.length = stats.total_bytes.to_string();
+                                f.completed_length = stats.downloaded_bytes.to_string();
+                            }
+                        }
+
+                        if stats.is_finished && !task.seeder {
+                            if keep_seeding {
+                                // Mark as seeder while keeping Active so uploads continue
+                                task.seeder = true;
+                                task.seeding_since = std::time::SystemTime::now()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .unwrap_or_default()
+                                    .as_millis()
+                                    as u64;
+                                task.download_speed = 0;
+                                self.events.send(EngineEvent::BtDownloadComplete {
+                                    gid: task.gid.clone(),
+                                });
+                            } else {
+                                task.status = TaskStatus::Complete;
+                                self.events.send(EngineEvent::BtDownloadComplete {
+                                    gid: task.gid.clone(),
+                                });
+                                self.events.send(EngineEvent::DownloadComplete {
+                                    gid: task.gid.clone(),
+                                });
+                            }
+                        }
+
+                        // Check seed time and seed ratio limits
+                        if task.seeder && task.seeding_since > 0 {
+                            let mut should_stop = false;
+
+                            // Check seed time limit
+                            let seed_time_ms = seed_time_minutes * 60 * 1000;
+                            if seed_time_ms > 0 {
+                                let now = std::time::SystemTime::now()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .unwrap_or_default()
+                                    .as_millis() as u64;
+                                if now >= task.seeding_since
+                                    && now - task.seeding_since >= seed_time_ms
+                                {
+                                    should_stop = true;
                                 }
                             }
 
-                            if stats.is_finished && !task.seeder {
-                                if keep_seeding {
-                                    // Mark as seeder but keep Active so the torrent
-                                    // continues uploading to peers
-                                    task.seeder = true;
-                                    task.seeding_since = std::time::SystemTime::now()
-                                        .duration_since(std::time::UNIX_EPOCH)
-                                        .unwrap_or_default()
-                                        .as_millis()
-                                        as u64;
-                                    task.download_speed = 0;
-                                    self.events.send(EngineEvent::BtDownloadComplete {
-                                        gid: task.gid.clone(),
-                                    });
-                                } else {
-                                    task.status = TaskStatus::Complete;
-                                    self.events.send(EngineEvent::BtDownloadComplete {
-                                        gid: task.gid.clone(),
-                                    });
-                                    self.events.send(EngineEvent::DownloadComplete {
-                                        gid: task.gid.clone(),
-                                    });
+                            // Check seed ratio limit
+                            if !should_stop && seed_ratio > 0.0 && task.total_length > 0 {
+                                let current_ratio =
+                                    task.upload_length as f64 / task.total_length as f64;
+                                if current_ratio >= seed_ratio {
+                                    should_stop = true;
                                 }
                             }
 
-                            // Check if seed time has elapsed or seed ratio reached
-                            if task.seeder && task.seeding_since > 0 {
-                                let mut should_stop = false;
-
-                                // Check seed time limit
-                                let seed_time_ms = seed_time_minutes * 60 * 1000;
-                                if seed_time_ms > 0 {
-                                    let now = std::time::SystemTime::now()
-                                        .duration_since(std::time::UNIX_EPOCH)
-                                        .unwrap_or_default()
-                                        .as_millis()
-                                        as u64;
-                                    if now >= task.seeding_since
-                                        && now - task.seeding_since >= seed_time_ms
-                                    {
-                                        should_stop = true;
-                                    }
-                                }
-
-                                // Check seed ratio limit
-                                if !should_stop && seed_ratio > 0.0 && task.total_length > 0 {
-                                    let current_ratio =
-                                        task.upload_length as f64 / task.total_length as f64;
-                                    if current_ratio >= seed_ratio {
-                                        should_stop = true;
-                                    }
-                                }
-
-                                if should_stop {
-                                    task.seeder = false;
-                                    task.seeding_since = 0;
-                                    task.status = TaskStatus::Complete;
-                                    self.events.send(EngineEvent::DownloadComplete {
-                                        gid: task.gid.clone(),
-                                    });
-                                }
+                            if should_stop {
+                                task.seeder = false;
+                                task.seeding_since = 0;
+                                task.status = TaskStatus::Complete;
+                                self.events.send(EngineEvent::DownloadComplete {
+                                    gid: task.gid.clone(),
+                                });
                             }
                         }
                     }
@@ -2982,6 +2966,44 @@ impl TaskManager {
         self.session.save(&tasks)
     }
 
+    /// Hard cap for retained finished/failed/removed task records
+    const MAX_STOPPED_RESULTS: usize = 1000;
+
+    /// Evict oldest stopped tasks beyond [`Self::MAX_STOPPED_RESULTS`]
+    ///
+    /// Drops torrent bt-session entries first so stale `by_hash` records do not block re-add
+    async fn enforce_result_cap(&self) {
+        let to_evict: Vec<String> = {
+            let tasks = self.tasks.read().await;
+            let stopped = tasks.iter().filter(|t| t.status.is_stopped()).count();
+            if stopped <= Self::MAX_STOPPED_RESULTS {
+                return;
+            }
+            let mut excess = stopped - Self::MAX_STOPPED_RESULTS;
+            let mut gids = Vec::with_capacity(excess);
+            // Tasks are appended in creation order, so evict the earliest stopped entries first
+            for t in tasks.iter() {
+                if excess == 0 {
+                    break;
+                }
+                if t.status.is_stopped() {
+                    gids.push(t.gid.clone());
+                    excess -= 1;
+                }
+            }
+            gids
+        };
+
+        // Drop bt-session entries before removing evicted torrent tasks
+        for gid in &to_evict {
+            self.drop_torrent_engine_entry(gid).await;
+        }
+
+        let evict: std::collections::HashSet<&str> = to_evict.iter().map(String::as_str).collect();
+        let mut tasks = self.tasks.write().await;
+        tasks.retain(|t| !(t.status.is_stopped() && evict.contains(t.gid.as_str())));
+    }
+
     pub async fn purge_download_result(&self) {
         // Collect gids of stopped torrent tasks so we can drop their bt-session
         // entries before evicting them from the task list. Without this, the
@@ -3161,6 +3183,7 @@ impl TaskManager {
         let active = self.active_downloads.read().await;
         for (_, ad) in active.iter() {
             ad.cancel.store(true, Ordering::Relaxed);
+            ad.cancel_token.cancel();
         }
         drop(active);
 
@@ -3210,20 +3233,98 @@ fn is_retryable_magnet_resolution_error(err: &str) -> bool {
         || lower.contains("no seeds")
 }
 
-/// Lower-case hex encoding for BT bitfields. The frontend's
-/// `bitfieldToPercent` walks each hex nibble, so the format must be hex
-fn bytes_to_hex(bytes: &[u8]) -> String {
+fn write_hex(bytes: &[u8], out: &mut String) {
     use std::fmt::Write;
-    let mut s = String::with_capacity(bytes.len() * 2);
+    out.clear();
+    out.reserve(bytes.len() * 2);
     for b in bytes {
-        let _ = write!(s, "{b:02x}");
+        let _ = write!(out, "{b:02x}");
     }
-    s
 }
 
-/// Aria2-compatible "true"/"false" string for bool flags exposed via RPC
-fn bool_str(b: bool) -> String {
-    if b { "true" } else { "false" }.to_string()
+fn set_bool_string(out: &mut String, value: bool) {
+    out.clear();
+    out.push_str(if value { "true" } else { "false" });
+}
+
+fn set_u64_string(out: &mut String, value: u64) {
+    use std::fmt::Write;
+    out.clear();
+    let _ = write!(out, "{value}");
+}
+
+fn set_usize_string(out: &mut String, value: usize) {
+    use std::fmt::Write;
+    out.clear();
+    let _ = write!(out, "{value}");
+}
+
+fn sync_peer_infos(target: &mut Vec<PeerInfo>, peers: &[torrent::PeerSnapshot]) {
+    target.resize_with(peers.len(), || PeerInfo {
+        peer_id: String::new(),
+        ip: String::new(),
+        port: String::new(),
+        bitfield: String::new(),
+        am_choking: String::new(),
+        peer_choking: String::new(),
+        download_speed: String::new(),
+        upload_speed: String::new(),
+        seeder: String::new(),
+    });
+
+    for (info, peer) in target.iter_mut().zip(peers) {
+        info.peer_id.clear();
+        info.ip.clear();
+        info.ip.push_str(&peer.addr.ip().to_string());
+        set_usize_string(&mut info.port, peer.addr.port() as usize);
+        write_hex(&peer.bitfield, &mut info.bitfield);
+        set_bool_string(&mut info.am_choking, peer.am_choking);
+        set_bool_string(&mut info.peer_choking, peer.peer_choking);
+        set_u64_string(&mut info.download_speed, 0);
+        set_u64_string(&mut info.upload_speed, 0);
+        set_bool_string(&mut info.seeder, peer.seeder);
+    }
+}
+
+fn sync_torrent_files(
+    target: &mut Vec<DownloadFile>,
+    file_details: &[torrent::TorrentFileInfo],
+    file_progress: &[u64],
+    base_dir: &str,
+    selected_indices: Option<&std::collections::HashSet<usize>>,
+) -> (u64, u64) {
+    use std::fmt::Write;
+
+    target.resize_with(file_details.len(), || DownloadFile {
+        index: String::new(),
+        path: String::new(),
+        length: String::new(),
+        completed_length: String::new(),
+        selected: String::new(),
+        uris: Vec::new(),
+    });
+
+    let mut selected_total = 0;
+    let mut selected_completed = 0;
+    for (file, fd) in target.iter_mut().zip(file_details) {
+        let completed = file_progress.get(fd.index).copied().unwrap_or(0);
+        let is_selected = selected_indices.is_none_or(|set| set.contains(&fd.index));
+        if is_selected {
+            selected_total += fd.length;
+            selected_completed += completed;
+        }
+
+        // 1-based index for aria2/RPC compatibility
+        set_usize_string(&mut file.index, fd.index + 1);
+        file.path.clear();
+        let _ = write!(file.path, "{}/{}", base_dir, fd.path);
+        set_u64_string(&mut file.length, fd.length);
+        set_u64_string(&mut file.completed_length, completed);
+        set_bool_string(&mut file.selected, is_selected);
+        file.uris.clear();
+    }
+
+    (selected_total, selected_completed)
 }
 
 #[cfg(test)]
@@ -3387,6 +3488,31 @@ mod tests {
         );
         assert_eq!(task.bt_name.as_deref(), Some("Metadata Later"));
         assert_eq!(task.uris, vec![uri.to_string()]);
+    }
+
+    #[tokio::test]
+    async fn shutdown_cancels_active_download_tokens() {
+        let mgr = make_test_manager(Vec::new());
+        let cancel = Arc::new(AtomicBool::new(false));
+        let cancel_token = CancellationToken::new();
+        mgr.active_downloads.write().await.insert(
+            "gid1".to_string(),
+            ActiveDownload {
+                cancel: cancel.clone(),
+                cancel_token: cancel_token.clone(),
+                total: Arc::new(AtomicU64::new(0)),
+                completed: Arc::new(AtomicU64::new(0)),
+                speed: Arc::new(AtomicU64::new(0)),
+                connections: Arc::new(AtomicU32::new(0)),
+                chunk_completed: Vec::new(),
+                adopted_filename: Arc::new(parking_lot::Mutex::new(None)),
+            },
+        );
+
+        mgr.shutdown().await;
+
+        assert!(cancel.load(Ordering::Relaxed));
+        assert!(cancel_token.is_cancelled());
     }
 
     #[tokio::test]

@@ -448,7 +448,7 @@ fn check_auth(secret: &str, mut params: Vec<Value>) -> (Vec<Value>, bool) {
     if let Some(first) = params.first() {
         if let Some(token_str) = first.as_str() {
             if let Some(provided) = token_str.strip_prefix("token:") {
-                if provided == secret {
+                if secret_eq(provided, secret) {
                     params.remove(0);
                     return (params, true);
                 }
@@ -456,6 +456,20 @@ fn check_auth(secret: &str, mut params: Vec<Value>) -> (Vec<Value>, bool) {
         }
     }
     (params, false)
+}
+
+/// Constant-time comparison for RPC tokens
+///
+/// Hashes both sides to fixed-size digests, then fold-XORs to avoid early exit
+fn secret_eq(provided: &str, secret: &str) -> bool {
+    use sha2::{Digest, Sha256};
+    let a = Sha256::digest(provided.as_bytes());
+    let b = Sha256::digest(secret.as_bytes());
+    let mut diff = 0u8;
+    for (x, y) in a.iter().zip(b.iter()) {
+        diff |= x ^ y;
+    }
+    diff == 0
 }
 
 /// Normalize `aria2.X` → `risuko.X`, pass `system.X` and `risuko.X` through
@@ -815,12 +829,12 @@ fn dispatch_method<'a>(
             }
 
             "risuko.addRoutingRule" => {
-                let rule = params
-                    .first()
-                    .and_then(|v| {
-                        serde_json::from_value::<super::routing::TaskRoutingRule>(v.clone()).ok()
-                    })
+                let rule_value = params
+                    .into_iter()
+                    .next()
                     .ok_or_else(|| RpcError::from("Invalid routing rule".to_string()))?;
+                let rule = serde_json::from_value::<super::routing::TaskRoutingRule>(rule_value)
+                    .map_err(|e| RpcError::from(format!("Invalid routing rule: {e}")))?;
                 let added = state
                     .manager
                     .add_routing_rule(rule)
@@ -830,12 +844,12 @@ fn dispatch_method<'a>(
             }
 
             "risuko.updateRoutingRule" => {
-                let rule = params
-                    .first()
-                    .and_then(|v| {
-                        serde_json::from_value::<super::routing::TaskRoutingRule>(v.clone()).ok()
-                    })
+                let rule_value = params
+                    .into_iter()
+                    .next()
                     .ok_or_else(|| RpcError::from("Invalid routing rule".to_string()))?;
+                let rule = serde_json::from_value::<super::routing::TaskRoutingRule>(rule_value)
+                    .map_err(|e| RpcError::from(format!("Invalid routing rule: {e}")))?;
                 state
                     .manager
                     .update_routing_rule(rule)

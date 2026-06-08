@@ -19,8 +19,6 @@ interface ReaderPrefs {
 	unreadOnly: boolean;
 	matchedOnly: boolean;
 	sortMode: SortMode;
-	groupByEpisode: boolean;
-	markReadOnScroll: boolean;
 }
 
 const DEFAULT_PREFS: ReaderPrefs = {
@@ -29,8 +27,6 @@ const DEFAULT_PREFS: ReaderPrefs = {
 	unreadOnly: false,
 	matchedOnly: false,
 	sortMode: "newest",
-	groupByEpisode: false,
-	markReadOnScroll: false,
 };
 
 function loadItemsPerPage(): number {
@@ -76,12 +72,6 @@ function loadPrefs(): ReaderPrefs {
 			if (VALID_SORT_MODES.includes(parsed.sortMode as SortMode)) {
 				prefs.sortMode = parsed.sortMode as SortMode;
 			}
-			if (typeof parsed.groupByEpisode === "boolean") {
-				prefs.groupByEpisode = parsed.groupByEpisode;
-			}
-			if (typeof parsed.markReadOnScroll === "boolean") {
-				prefs.markReadOnScroll = parsed.markReadOnScroll;
-			}
 			return prefs;
 		}
 	} catch {
@@ -117,9 +107,8 @@ export const useRssStore = defineStore("rss", {
 			unreadOnly: prefs.unreadOnly,
 			matchedOnly: prefs.matchedOnly,
 			sortMode: prefs.sortMode,
-			groupByEpisode: prefs.groupByEpisode,
-			markReadOnScroll: prefs.markReadOnScroll,
 			_eventUnlisteners: [] as (() => void)[],
+			_listenerSetupToken: null as symbol | null,
 		};
 	},
 
@@ -229,6 +218,9 @@ export const useRssStore = defineStore("rss", {
 		},
 		async initEventListeners() {
 			this.cleanupEventListeners();
+			const setupToken = Symbol("rss-listener-setup");
+			this._listenerSetupToken = setupToken;
+			const pendingUnlisteners: (() => void)[] = [];
 			try {
 				const { listen } = await import("@tauri-apps/api/event");
 				const unlistenComplete = await listen<{
@@ -238,6 +230,7 @@ export const useRssStore = defineStore("rss", {
 				}>("rss:download-complete", (event) => {
 					this._handleRssDownloadComplete(event.payload ?? {});
 				});
+				pendingUnlisteners.push(unlistenComplete);
 				const unlistenError = await listen<{
 					feedId?: string;
 					itemId?: string;
@@ -245,8 +238,18 @@ export const useRssStore = defineStore("rss", {
 				}>("rss:download-error", (event) => {
 					this._handleRssDownloadError(event.payload ?? {});
 				});
-				this._eventUnlisteners.push(unlistenComplete, unlistenError);
+				pendingUnlisteners.push(unlistenError);
+				if (this._listenerSetupToken !== setupToken) {
+					for (const unlisten of pendingUnlisteners) {
+						unlisten();
+					}
+					return;
+				}
+				this._eventUnlisteners.push(...pendingUnlisteners);
 			} catch (err) {
+				for (const unlisten of pendingUnlisteners) {
+					unlisten();
+				}
 				logger.warn(
 					"[Risuko] RSS event listener setup failed:",
 					(err as Error)?.message || err,
@@ -255,6 +258,7 @@ export const useRssStore = defineStore("rss", {
 		},
 
 		cleanupEventListeners() {
+			this._listenerSetupToken = null;
 			for (const unlisten of this._eventUnlisteners) {
 				unlisten();
 			}
@@ -399,11 +403,6 @@ export const useRssStore = defineStore("rss", {
 			return updated;
 		},
 
-		async reorderRules(orderedIds: string[]) {
-			await api.reorderRssRules(orderedIds);
-			await this.fetchRules();
-		},
-
 		async dryRunRule(rule: RssRule, sampleSize?: number) {
 			return (await api.dryRunRssRule(rule, sampleSize)) as DryRunMatch[];
 		},
@@ -424,8 +423,6 @@ export const useRssStore = defineStore("rss", {
 				unreadOnly: this.unreadOnly,
 				matchedOnly: this.matchedOnly,
 				sortMode: this.sortMode,
-				groupByEpisode: this.groupByEpisode,
-				markReadOnScroll: this.markReadOnScroll,
 			});
 		},
 
@@ -450,14 +447,6 @@ export const useRssStore = defineStore("rss", {
 		setSortMode(mode: SortMode) {
 			this.sortMode = mode;
 			this.currentPage = 1;
-			this._persistPrefs();
-		},
-		setGroupByEpisode(value: boolean) {
-			this.groupByEpisode = value;
-			this._persistPrefs();
-		},
-		setMarkReadOnScroll(value: boolean) {
-			this.markReadOnScroll = value;
 			this._persistPrefs();
 		},
 

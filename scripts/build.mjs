@@ -47,6 +47,7 @@ greeting();
 
 const args = process.argv.slice(2);
 const tauriArgs = ["tauri", "build", ...args];
+const pnpmBin = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
 
 function findOptionValue(rawArgs, flags) {
 	for (const flag of flags) {
@@ -143,9 +144,9 @@ if (!userProvidedConfig && resourceConfig) {
 	);
 }
 
-const child = spawn("pnpm", tauriArgs, {
+const child = spawn(pnpmBin, tauriArgs, {
 	stdio: "inherit",
-	shell: true,
+	shell: false,
 	env: { ...process.env },
 });
 

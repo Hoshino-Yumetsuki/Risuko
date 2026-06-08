@@ -156,6 +156,25 @@ impl fmt::Display for ErrorCode {
     }
 }
 
+/// Returns true when `code` appears as a standalone ASCII number
+///
+/// Avoids `contains("500")` matching embedded runs like "5003" or "15000"
+fn contains_status(haystack: &str, code: &str) -> bool {
+    let bytes = haystack.as_bytes();
+    let mut start = 0;
+    while let Some(pos) = haystack[start..].find(code) {
+        let i = start + pos;
+        let before_ok = i == 0 || !bytes[i - 1].is_ascii_digit();
+        let after = i + code.len();
+        let after_ok = after >= bytes.len() || !bytes[after].is_ascii_digit();
+        if before_ok && after_ok {
+            return true;
+        }
+        start = i + 1;
+    }
+    false
+}
+
 /// Classify an error message string into an appropriate error code.
 ///
 /// For HTTP downloads, also pass the protocol kind for better classification.
@@ -198,30 +217,30 @@ pub fn classify_error(msg: &str, protocol: &str) -> ErrorCode {
         {
             return ErrorCode::CLOUDFLARE_CHALLENGE;
         }
-        if lower.contains("401") || lower.contains("unauthorized") {
+        if contains_status(&lower, "401") || lower.contains("unauthorized") {
             return ErrorCode::HTTP_UNAUTHORIZED;
         }
-        if lower.contains("403") || lower.contains("forbidden") {
+        if contains_status(&lower, "403") || lower.contains("forbidden") {
             return ErrorCode::HTTP_FORBIDDEN;
         }
-        if lower.contains("404") || lower.contains("not found") {
+        if contains_status(&lower, "404") || lower.contains("not found") {
             // Distinguish HTTP 404 from file-not-found on disk
             if protocol == "http" || protocol == "m3u8" {
                 return ErrorCode::HTTP_NOT_FOUND;
             }
         }
-        if lower.contains("416") || lower.contains("range not satisfiable") {
+        if contains_status(&lower, "416") || lower.contains("range not satisfiable") {
             return ErrorCode::HTTP_RANGE_NOT_SATISFIABLE;
         }
-        if lower.contains("429") || lower.contains("too many requests") {
+        if contains_status(&lower, "429") || lower.contains("too many requests") {
             return ErrorCode::HTTP_TOO_MANY_REQUESTS;
         }
-        if lower.contains("503") || lower.contains("service unavailable") {
+        if contains_status(&lower, "503") || lower.contains("service unavailable") {
             return ErrorCode::HTTP_SERVICE_UNAVAILABLE;
         }
         if lower.contains("5xx")
-            || lower.contains("500")
-            || lower.contains("502")
+            || contains_status(&lower, "500")
+            || contains_status(&lower, "502")
             || lower.contains("server error")
         {
             return ErrorCode::HTTP_SERVER_ERROR;
@@ -278,7 +297,7 @@ pub fn classify_error(msg: &str, protocol: &str) -> ErrorCode {
             }
         }
         "ftp" | "sftp" => {
-            if lower.contains("login") || lower.contains("530") {
+            if lower.contains("login") || contains_status(&lower, "530") {
                 return ErrorCode::FTP_LOGIN_FAILED;
             }
             if lower.contains("auth") {
@@ -287,7 +306,7 @@ pub fn classify_error(msg: &str, protocol: &str) -> ErrorCode {
             if lower.contains("host key") {
                 return ErrorCode::SFTP_HOST_KEY_FAILED;
             }
-            if lower.contains("not found") || lower.contains("550") {
+            if lower.contains("not found") || contains_status(&lower, "550") {
                 return ErrorCode::FTP_FILE_NOT_FOUND;
             }
             if lower.contains("transfer") {
@@ -309,7 +328,8 @@ pub fn classify_error(msg: &str, protocol: &str) -> ErrorCode {
             if lower.contains("requested format") || lower.contains("format is not available") {
                 return ErrorCode::MEDIA_FORMAT_UNAVAILABLE;
             }
-            if lower.contains("http error 404") || (lower.contains("404") && lower.contains("http"))
+            if lower.contains("http error 404")
+                || (contains_status(&lower, "404") && lower.contains("http"))
             {
                 return ErrorCode::HTTP_NOT_FOUND;
             }
@@ -464,6 +484,20 @@ mod tests {
         assert_eq!(
             classify_error("the format is not available for this video", "media"),
             ErrorCode::MEDIA_FORMAT_UNAVAILABLE
+        );
+    }
+
+    #[test]
+    fn classify_status_code_respects_digit_boundaries() {
+        // A digit run that embeds "500" must not classify as HTTP 5xx
+        assert_eq!(
+            classify_error("received 5003 bytes then the stream ended", "http"),
+            ErrorCode::UNKNOWN
+        );
+        // A standalone 500 status still classifies correctly
+        assert_eq!(
+            classify_error("HTTP 500 returned by origin", "http"),
+            ErrorCode::HTTP_SERVER_ERROR
         );
     }
 

@@ -794,7 +794,6 @@
 import {
 	Activity,
 	AlertCircle,
-	Check,
 	ChevronDown,
 	Cloud,
 	CloudOff,
@@ -980,7 +979,6 @@ export default defineComponent({
 		Activity,
 		AlertCircle,
 		Button,
-		Check,
 		ChevronDown,
 		Cloud,
 		CloudOff,

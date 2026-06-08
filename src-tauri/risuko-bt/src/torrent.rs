@@ -23,10 +23,13 @@ use super::core::{
 };
 use super::peer::{connect_with_utp_fallback, PeerCommand, PeerEvent, SpawnPeer};
 use super::piece::{ChunkTracker, PieceTracker};
-use super::storage::{FilesystemStorage, StorageBackend};
+use super::storage::{FileSet, FilesystemStorage, StorageBackend};
 use super::tracker::{announce as tracker_announce, AnnounceEvent, AnnounceRequest};
 use super::utp::UtpSocket;
-use super::wire::extended::{ut_metadata_data, ut_metadata_type, ExtHandshake, EXT_HANDSHAKE_ID};
+use super::wire::extended::{
+    build_holepunch, holepunch_err, holepunch_type, parse_holepunch, ut_metadata_data,
+    ut_metadata_type, ExtHandshake, HolepunchMsg, EXT_HANDSHAKE_ID,
+};
 use super::wire::{Message, MessageEncoder};
 
 pub use stats::{
@@ -86,6 +89,7 @@ const PEER_IDLE_TIMEOUT: Duration = Duration::from_secs(180);
 /// hard-disconnect peers that stay snubbed for this long so the slot is
 /// recycled to a peer that can actually serve us bytes
 const SNUB_EVICTION_TIMEOUT: Duration = Duration::from_secs(60);
+const PEER_SNAPSHOT_INTERVAL: Duration = Duration::from_secs(5);
 
 /// Per-peer message id we advertise for the BEP-9 `ut_metadata` extension.
 /// Peers send `Extended { ext_id: OUR_UT_METADATA_ID, .. }` to request a
@@ -96,6 +100,15 @@ const OUR_UT_METADATA_ID: u8 = 3;
 /// we parse the `added`/`added6` fields and feed them into the dial path
 /// (see the Extended handler)
 const OUR_UT_PEX_ID: u8 = 4;
+/// Per-peer message id we advertise for `ut_holepunch` (BEP-55). Peers send
+/// `Extended { ext_id: OUR_UT_HOLEPUNCH_ID, .. }` to ask us to relay a
+/// rendezvous, or to tell us to connect to an endpoint (NAT hole punching)
+/// See the Extended handler and [`handle_holepunch`]
+const OUR_UT_HOLEPUNCH_ID: u8 = 5;
+/// Cap on the `pex_source` map (PEX-gossiped addr -> relay pid). Bounds memory
+/// on large swarms; once full we stop recording new gossip provenance, which
+/// only costs us holepunch initiation for late-discovered peers
+const MAX_PEX_SOURCE_ENTRIES: usize = 4096;
 /// BEP-9 metadata piece size: every ut_metadata DATA carries up to one
 /// 16 KiB block of the info dict, except possibly the last
 const META_PIECE_SIZE: usize = 16 * 1024;
@@ -211,6 +224,14 @@ pub async fn spawn(
     our_peer_id: Id20,
     listen_port: u16,
 ) -> std::io::Result<Arc<ManagedTorrent>> {
+    // `only_files` reaches TorrentInit, but the scheduler still fetches every piece
+    // Warn so callers do not think a subset-only download is active
+    if init.only_files.is_some() {
+        log::warn!(
+            "torrent {id}: selective download (only_files) is not yet supported; \
+             downloading all files"
+        );
+    }
     let info_hash = init.meta.info_hash;
     let name = Some(init.meta.info.name.clone());
     let (cmd_tx, cmd_rx) = mpsc::channel::<TorrentCommand>(64);
@@ -226,6 +247,7 @@ pub async fn spawn(
         std::sync::Arc::new(move |peer_ip: std::net::IpAddr| {
             let hs =
                 ExtHandshake::new_outgoing(OUR_UT_METADATA_ID, OUR_UT_PEX_ID, Some(metadata_size))
+                    .with_holepunch(OUR_UT_HOLEPUNCH_ID)
                     .with_yourip(peer_ip);
             MessageEncoder::encode(&Message::Extended {
                 ext_id: EXT_HANDSHAKE_ID,
@@ -308,6 +330,11 @@ struct Peer {
     /// (info is already loaded) but record the id so the responder can
     /// echo it back on DATA / REJECT replies
     their_ut_metadata_id: Option<u8>,
+    /// Per-peer message id the remote advertised for `ut_holepunch` (BEP-55)
+    /// in its extended handshake. `None` if the peer does not support
+    /// holepunch. Used to address rendezvous / connect / error messages we
+    /// send this peer (as a relay endpoint or initiator)
+    their_ut_holepunch_id: Option<u8>,
 }
 
 /// Result of an off-runtime piece write + verify pass
@@ -445,6 +472,11 @@ async fn torrent_loop(
         ),
     };
     let max_peers = init.max_peers.unwrap_or(DEFAULT_MAX_PEERS).max(1);
+    log::info!(
+        target: "diag",
+        "torrent pipeline config: max_outstanding_per_peer={:?} -> floor={} cap={} max_peers={}",
+        init.max_outstanding_per_peer, pipeline_floor, pipeline_cap, max_peers
+    );
     let storage = Arc::new(FilesystemStorage::new(&info, &init.root_dir));
     if let Err(e) = storage.preallocate().await {
         log::warn!("preallocate failed for {info_hash}: {e}");
@@ -472,7 +504,7 @@ async fn torrent_loop(
     // feed discovered peer addresses here; the main loop drains it and dials
     // (with dedup + cap enforcement). DHT feeds peers via the AddPeer command.
     let (peer_src_tx, mut peer_addr_rx) = mpsc::channel::<SocketAddr>(256);
-    spawn_tracker_pollers(
+    let mut tracker_tasks = spawn_tracker_pollers(
         peer_src_tx.clone(),
         collect_trackers(&init.meta),
         announce_hashes,
@@ -493,6 +525,7 @@ async fn torrent_loop(
         std::sync::Arc::new(move |peer_ip: std::net::IpAddr| {
             let hs =
                 ExtHandshake::new_outgoing(OUR_UT_METADATA_ID, OUR_UT_PEX_ID, Some(metadata_size))
+                    .with_holepunch(OUR_UT_HOLEPUNCH_ID)
                     .with_yourip(peer_ip);
             MessageEncoder::encode(&Message::Extended {
                 ext_id: EXT_HANDSHAKE_ID,
@@ -512,10 +545,14 @@ async fn torrent_loop(
     let mut peers: HashMap<u32, Peer> = HashMap::new();
     let mut next_pid: u32 = 1;
     let mut known_addrs: HashSet<SocketAddr> = HashSet::new();
+    // BEP-55
+    let mut pex_source: HashMap<SocketAddr, u32> = HashMap::new();
+    let mut holepunch_attempted: HashSet<SocketAddr> = HashSet::new();
     // Outbound dials that have been spawned but whose peer has not completed
     // the BT handshake yet. Tracked separately so the max-peer cap accounts
     // for in-flight connection bursts, not just handshook peers.
     let mut pending_dials: HashMap<u32, SocketAddr> = HashMap::new();
+    let registry_scope = Arc::new(());
     let mut paused = false;
     let mut tick = interval(Duration::from_millis(500));
     tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
@@ -527,6 +564,7 @@ async fn torrent_loop(
     // flows between two seeders, so without an explicit liveness frame
     // the TCP session looks dead from their side).
     let mut last_keepalive = Instant::now();
+    let mut last_peer_snapshot = Instant::now() - PEER_SNAPSHOT_INTERVAL;
     let mut bytes_this_tick = (0u64, 0u64);
     // Upload bytes accumulate from spawned send tasks; share via atomic so
     // we only credit them after the disk read and channel send succeed
@@ -536,22 +574,24 @@ async fn torrent_loop(
     // write_at could leave a partially-written piece on disk while the
     // torrent loop has already returned
     let mut write_tasks: tokio::task::JoinSet<()> = tokio::task::JoinSet::new();
+    let mut outbound_tasks: tokio::task::JoinSet<()> = tokio::task::JoinSet::new();
 
     loop {
         tokio::select! {
             Some(cmd) = cmd_rx.recv() => match cmd {
                 TorrentCommand::AddPeer(addr) => {
                     if !paused
-                        && known_addrs.insert(addr)
                         && peers.len() < max_peers
                         && pending_dials.len() < MAX_PENDING_DIALS
+                        && known_addrs.insert(addr)
                     {
                         let pid = next_pid; next_pid += 1;
                         pending_dials.insert(pid, addr);
-                        spawn_outbound_peer(
+                        outbound_tasks.spawn(run_outbound_peer(
                             torrent_id,
                             pid,
                             addr,
+                            registry_scope.clone(),
                             info_hash,
                             our_peer_id,
                             peer_event_tx.clone(),
@@ -559,13 +599,13 @@ async fn torrent_loop(
                             advertise_v2,
                             Some(initial_ext_handshake_builder.clone()),
                             utp.clone(),
-                        );
+                        ));
                     }
                 }
                 TorrentCommand::AddInboundPeer { addr, cmd_tx, event_rx } => {
                     if !paused
-                        && known_addrs.insert(addr)
                         && peers.len() < max_peers
+                        && known_addrs.insert(addr)
                     {
                         let pid = next_pid; next_pid += 1;
                         adopt_inbound_peer(pid, addr, cmd_tx, event_rx, peer_event_tx.clone(), &mut peers, &lengths, &mut piece_tracker, pipeline_floor).await;
@@ -573,11 +613,21 @@ async fn torrent_loop(
                 }
                 TorrentCommand::Pause(ack) => {
                     paused = true;
-                    for (_, p) in peers.drain() {
+                    for (pid, p) in peers.drain() {
                         let _ = p.cmd_tx.send(PeerCommand::Disconnect).await;
+                        release_peer_scheduler_state(
+                            pid,
+                            &p.bitfield,
+                            &mut piece_tracker,
+                            &mut chunk_tracker,
+                            &mut piece_assemblies,
+                            &lengths,
+                        );
                     }
                     pending_dials.clear();
                     known_addrs.clear();
+                    pex_source.clear();
+                    holepunch_attempted.clear();
                     // Wait for in-flight piece write tasks before closing handles
                     while let Some(result) = write_tasks.join_next().await {
                         if let Err(e) = result {
@@ -598,11 +648,25 @@ async fn torrent_loop(
                     for (_, p) in peers.drain() {
                         let _ = p.cmd_tx.send(PeerCommand::Disconnect).await;
                     }
+                    tracker_tasks.abort_all();
+                    while let Some(result) = tracker_tasks.join_next().await {
+                        if let Err(e) = result {
+                            if !e.is_cancelled() {
+                                log::warn!("tracker task failed during stop: {e}");
+                            }
+                        }
+                    }
+                    outbound_tasks.shutdown().await;
+                    for pid in pending_dials.keys().copied().collect::<Vec<_>>() {
+                        peer_registry::remove(torrent_id, pid, &registry_scope);
+                    }
                     pending_dials.clear();
-                    // Wait for any in-flight piece write/verify tasks so we
-                    // don't return Stop while a write_at is still pending.
-                    // shutdown() aborts then joins all handles
-                    write_tasks.shutdown().await;
+                    // Wait for in-flight write/verify tasks before Stop acknowledges disk completion
+                    while let Some(result) = write_tasks.join_next().await {
+                        if let Err(e) = result {
+                            log::warn!("write task failed during stop: {e}");
+                        }
+                    }
                     // Flush and release cached file descriptors
                     if let Err(e) = storage.close_handles().await {
                         log::warn!("failed to close storage handles on stop: {e}");
@@ -613,16 +677,17 @@ async fn torrent_loop(
             },
             Some(addr) = peer_addr_rx.recv() => {
                 if !paused
-                    && known_addrs.insert(addr)
                     && peers.len() < max_peers
                     && pending_dials.len() < MAX_PENDING_DIALS
+                    && known_addrs.insert(addr)
                 {
                     let pid = next_pid; next_pid += 1;
                     pending_dials.insert(pid, addr);
-                    spawn_outbound_peer(
+                    outbound_tasks.spawn(run_outbound_peer(
                         torrent_id,
                         pid,
                         addr,
+                        registry_scope.clone(),
                         info_hash,
                         our_peer_id,
                         peer_event_tx.clone(),
@@ -630,17 +695,18 @@ async fn torrent_loop(
                         advertise_v2,
                         Some(initial_ext_handshake_builder.clone()),
                         utp.clone(),
-                    );
+                    ));
                 }
             }
             Some((pid, ev)) = peer_event_rx.recv() => {
                 let kick = process_peer_event(
-                    torrent_id, pid, ev, &mut peers, &mut piece_tracker, &mut chunk_tracker,
+                    torrent_id, pid, ev, &registry_scope, paused, &mut peers, &mut piece_tracker, &mut chunk_tracker,
                     &mut piece_assemblies,
                     &lengths, &storage, &stats, &mut bytes_this_tick,
                     &upload_tick,
                     &mut write_tasks,
                     &mut pending_dials, &mut known_addrs,
+                    &mut pex_source, &mut holepunch_attempted,
                     &peer_src_tx,
                     &verify_tx,
                     &verifier,
@@ -664,6 +730,13 @@ async fn torrent_loop(
                 // instead of waiting for the next 500 ms tick
                 if !paused {
                     drive_requests(&mut peers, &mut piece_tracker, &mut chunk_tracker).await;
+                }
+            }
+            result = outbound_tasks.join_next(), if !outbound_tasks.is_empty() => {
+                if let Some(Err(e)) = result {
+                    if !e.is_cancelled() {
+                        log::warn!("outbound peer task failed: {e}");
+                    }
                 }
             }
             _ = tick.tick() => {
@@ -782,30 +855,51 @@ async fn torrent_loop(
                         }
                     }
                 }
-                let total_pieces = lengths.total_pieces() as usize;
-                let peer_snaps: Vec<stats::PeerSnapshot> = peers
-                    .values()
-                    .map(|p| {
-                        let seeder = peer_bitfield_is_full(&p.bitfield, total_pieces);
-                        stats::PeerSnapshot {
-                            addr: p.addr,
-                            bitfield: p.bitfield.clone(),
-                            am_choking: p.am_choking,
-                            am_interested: p.am_interested,
-                            peer_choking: p.peer_choking,
-                            peer_interested: p.peer_interested,
-                            seeder,
-                        }
-                    })
-                    .collect();
+                let peer_snaps = if now.duration_since(last_peer_snapshot) >= PEER_SNAPSHOT_INTERVAL {
+                    last_peer_snapshot = now;
+                    let total_pieces = lengths.total_pieces() as usize;
+                    Some(
+                        peers
+                            .values()
+                            .map(|p| {
+                                let seeder = peer_bitfield_is_full(&p.bitfield, total_pieces);
+                                stats::PeerSnapshot {
+                                    addr: p.addr,
+                                    bitfield: Arc::<[u8]>::from(p.bitfield.as_slice()),
+                                    am_choking: p.am_choking,
+                                    am_interested: p.am_interested,
+                                    peer_choking: p.peer_choking,
+                                    peer_interested: p.peer_interested,
+                                    seeder,
+                                }
+                            })
+                            .collect(),
+                    )
+                } else {
+                    None
+                };
                 {
                     let mut s = stats.lock();
                     let upload_dt = upload_tick.swap(0, Ordering::Relaxed);
                     bytes_this_tick.1 = upload_dt;
                     s.live_stats.update(bytes_this_tick.0, bytes_this_tick.1, dt);
                     s.live_stats.snapshot.peer_stats.live = peers.len() as u32;
-                    s.peers = peer_snaps;
+                    if let Some(peer_snaps) = peer_snaps {
+                        s.peers = peer_snaps;
+                    }
                 }
+                log::debug!(
+                    target: "diag",
+                    "TICK summary peers={} pending_dials={} known={} endgame={} dl_bytes_tick={} ul_bytes_tick={} pending_chunks={} dt_ms={:.0}",
+                    peers.len(),
+                    pending_dials.len(),
+                    known_addrs.len(),
+                    chunk_tracker.endgame(),
+                    bytes_this_tick.0,
+                    bytes_this_tick.1,
+                    chunk_tracker.pending_chunks(),
+                    f64::from(dt) * 1000.0
+                );
                 bytes_this_tick = (0, 0);
                 if !paused {
                     drive_requests(&mut peers, &mut piece_tracker, &mut chunk_tracker).await;
@@ -823,21 +917,67 @@ mod peer_registry {
     use super::*;
     use once_cell::sync::Lazy;
     use std::sync::Mutex as StdMutex;
-    type PeerCmdRegistry = StdMutex<HashMap<(usize, u32), (mpsc::Sender<PeerCommand>, SocketAddr)>>;
-    static REG: Lazy<PeerCmdRegistry> = Lazy::new(|| StdMutex::new(HashMap::new()));
-    pub fn put(torrent_id: usize, pid: u32, tx: mpsc::Sender<PeerCommand>, addr: SocketAddr) {
-        REG.lock().unwrap().insert((torrent_id, pid), (tx, addr));
+
+    struct RegistryEntry {
+        scope: Arc<()>,
+        tx: mpsc::Sender<PeerCommand>,
+        addr: SocketAddr,
     }
-    pub fn take(torrent_id: usize, pid: u32) -> Option<(mpsc::Sender<PeerCommand>, SocketAddr)> {
-        REG.lock().unwrap().remove(&(torrent_id, pid))
+
+    type PeerCmdRegistry = StdMutex<HashMap<(usize, u32), RegistryEntry>>;
+    static REG: Lazy<PeerCmdRegistry> = Lazy::new(|| StdMutex::new(HashMap::new()));
+
+    pub fn put(
+        torrent_id: usize,
+        pid: u32,
+        scope: &Arc<()>,
+        tx: mpsc::Sender<PeerCommand>,
+        addr: SocketAddr,
+    ) {
+        REG.lock().unwrap().insert(
+            (torrent_id, pid),
+            RegistryEntry {
+                scope: scope.clone(),
+                tx,
+                addr,
+            },
+        );
+    }
+
+    pub fn take(
+        torrent_id: usize,
+        pid: u32,
+        scope: &Arc<()>,
+    ) -> Option<(mpsc::Sender<PeerCommand>, SocketAddr)> {
+        let mut reg = REG.lock().unwrap();
+        let key = (torrent_id, pid);
+        if !reg
+            .get(&key)
+            .is_some_and(|entry| Arc::ptr_eq(&entry.scope, scope))
+        {
+            return None;
+        }
+        reg.remove(&key).map(|entry| (entry.tx, entry.addr))
+    }
+
+    pub fn remove(torrent_id: usize, pid: u32, scope: &Arc<()>) {
+        let mut reg = REG.lock().unwrap();
+        let key = (torrent_id, pid);
+        if reg
+            .get(&key)
+            .is_some_and(|entry| Arc::ptr_eq(&entry.scope, scope))
+        {
+            reg.remove(&key);
+        }
     }
 }
 
 #[allow(clippy::too_many_arguments)]
-fn spawn_outbound_peer(
+async fn run_outbound_peer(
     torrent_id: usize,
     pid: u32,
     addr: SocketAddr,
+    registry_scope: Arc<()>,
     info_hash: Id20,
     our_peer_id: Id20,
     event_tx: mpsc::Sender<(u32, PeerEvent)>,
@@ -846,38 +986,43 @@ fn spawn_outbound_peer(
     ext_handshake_builder: Option<crate::peer::ExtHandshakeBuilder>,
     utp: Option<Arc<UtpSocket>>,
 ) {
-    tokio::spawn(async move {
-        let spawn = SpawnPeer {
-            addr,
-            info_hash,
-            our_peer_id,
-            connect_timeout: Duration::from_secs(10),
-            read_timeout: Duration::from_secs(120),
-            encryption,
-            advertise_v2,
-            ext_handshake_builder,
-        };
-        match connect_with_utp_fallback(spawn, utp).await {
-            Ok((handle, mut rx)) => {
-                peer_registry::put(torrent_id, pid, handle.tx.clone(), handle.addr);
-                while let Some(ev) = rx.recv().await {
-                    if event_tx.send((pid, ev)).await.is_err() {
-                        break;
-                    }
+    let spawn = SpawnPeer {
+        addr,
+        info_hash,
+        our_peer_id,
+        connect_timeout: Duration::from_secs(10),
+        read_timeout: Duration::from_secs(120),
+        encryption,
+        advertise_v2,
+        ext_handshake_builder,
+    };
+    match connect_with_utp_fallback(spawn, utp).await {
+        Ok((handle, mut rx)) => {
+            peer_registry::put(
+                torrent_id,
+                pid,
+                &registry_scope,
+                handle.tx.clone(),
+                handle.addr,
+            );
+            while let Some(ev) = rx.recv().await {
+                if event_tx.send((pid, ev)).await.is_err() {
+                    break;
                 }
             }
-            Err(e) => {
-                let _ = event_tx
-                    .send((
-                        pid,
-                        PeerEvent::Disconnected {
-                            reason: format!("connect: {e}"),
-                        },
-                    ))
-                    .await;
-            }
+            peer_registry::remove(torrent_id, pid, &registry_scope);
         }
-    });
+        Err(e) => {
+            let _ = event_tx
+                .send((
+                    pid,
+                    PeerEvent::Disconnected {
+                        reason: format!("connect: {e}"),
+                    },
+                ))
+                .await;
+        }
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -922,6 +1067,7 @@ async fn adopt_inbound_peer(
             last_recv: Instant::now(),
             snub_since: None,
             their_ut_metadata_id: None,
+            their_ut_holepunch_id: None,
         },
     );
     let bf = piece_tracker.bitfield();
@@ -948,6 +1094,8 @@ async fn process_peer_event(
     torrent_id: usize,
     pid: u32,
     ev: PeerEvent,
+    registry_scope: &Arc<()>,
+    paused: bool,
     peers: &mut HashMap<u32, Peer>,
     piece_tracker: &mut PieceTracker,
     chunk_tracker: &mut ChunkTracker,
@@ -960,6 +1108,10 @@ async fn process_peer_event(
     write_tasks: &mut tokio::task::JoinSet<()>,
     pending_dials: &mut HashMap<u32, SocketAddr>,
     known_addrs: &mut HashSet<SocketAddr>,
+    // BEP-55: addr gossiped via PEX -> the relay pid that gossiped it
+    pex_source: &mut HashMap<SocketAddr, u32>,
+    // BEP-55: targets we've already asked a relay to rendezvous
+    holepunch_attempted: &mut HashSet<SocketAddr>,
     peer_src_tx: &mpsc::Sender<SocketAddr>,
     verify_tx: &mpsc::Sender<VerifyResult>,
     verifier: &PieceVerifier,
@@ -976,7 +1128,16 @@ async fn process_peer_event(
     match ev {
         PeerEvent::Handshook { encrypted, .. } => {
             if !peers.contains_key(&pid) {
-                if let Some((cmd_tx, registry_addr)) = peer_registry::take(torrent_id, pid) {
+                if let Some((cmd_tx, registry_addr)) =
+                    peer_registry::take(torrent_id, pid, registry_scope)
+                {
+                    // The torrent paused while this dial was in flight
+                    // The take() removed the registry entry; drop `cmd_tx` and disconnect
+                    if paused {
+                        pending_dials.remove(&pid);
+                        let _ = cmd_tx.send(PeerCommand::Disconnect).await;
+                        return false;
+                    }
                     // Move from pending dial to live peer. The registry is
                     // the authoritative source of `addr` because
                     // `pending_dials` may have been cleared by Pause/Stop
@@ -1016,6 +1177,7 @@ async fn process_peer_event(
                             last_recv: Instant::now(),
                             snub_since: None,
                             their_ut_metadata_id: None,
+                            their_ut_holepunch_id: None,
                         },
                     );
                     // Extended handshake (when peer supports BEP-10) is
@@ -1189,6 +1351,13 @@ async fn process_peer_event(
                     {
                         peer.max_outstanding = (peer.max_outstanding * 2).min(pipeline_cap);
                         peer.received_since_grow = 0;
+                        log::info!(
+                            target: "diag",
+                            "pipeline GROW pid={pid} addr={} {}->{} cap={pipeline_cap}",
+                            peer.addr,
+                            peer.max_outstanding / 2,
+                            peer.max_outstanding
+                        );
                     }
                     // Last use of `peer` — NLL releases the &mut peers borrow
                     // here so the cancel-scan below can re-borrow `peers`
@@ -1363,6 +1532,7 @@ async fn process_peer_event(
                     if ext_id == EXT_HANDSHAKE_ID {
                         if let Some(peer_ext) = ExtHandshake::decode(&payload) {
                             peer.their_ut_metadata_id = peer_ext.ut_metadata_id();
+                            peer.their_ut_holepunch_id = peer_ext.ut_holepunch_id();
                         }
                     } else if ext_id == OUR_UT_METADATA_ID {
                         serve_ut_metadata(peer, &payload, info_bytes);
@@ -1370,8 +1540,29 @@ async fn process_peer_event(
                         // A connected peer (often a seeder) gossips other swarm members
                         if let Some((v4, v6)) = super::wire::extended::parse_ut_pex(&payload) {
                             for addr in v4.into_iter().chain(v6) {
+                                if pex_source.len() < MAX_PEX_SOURCE_ENTRIES
+                                    || pex_source.contains_key(&addr)
+                                {
+                                    pex_source.insert(addr, pid);
+                                }
                                 let _ = peer_src_tx.try_send(addr);
                             }
+                        }
+                    } else if ext_id == OUR_UT_HOLEPUNCH_ID {
+                        // BEP-55 hole punching
+                        let from_addr = peer.addr;
+                        let from_hp_id = peer.their_ut_holepunch_id;
+                        let from_cmd = peer.cmd_tx.clone();
+                        if let Some(hp) = parse_holepunch(&payload) {
+                            handle_holepunch(
+                                hp,
+                                from_addr,
+                                from_hp_id,
+                                &from_cmd,
+                                peers,
+                                known_addrs,
+                                peer_src_tx,
+                            );
                         }
                     }
                 }
@@ -1381,9 +1572,9 @@ async fn process_peer_event(
         PeerEvent::Disconnected { reason } => {
             // Clear from either in-flight or live, and release the address for future
             // retries (otherwise a single drop permanently blacklists the peer)
-            let addr = pending_dials
-                .remove(&pid)
-                .or_else(|| peers.get(&pid).map(|p| p.addr));
+            let pending_addr = pending_dials.remove(&pid);
+            let was_pending_dial = pending_addr.is_some();
+            let addr = pending_addr.or_else(|| peers.get(&pid).map(|p| p.addr));
             if let Some(a) = addr {
                 // Log the disconnect cause at debug so the per-peer error —
                 // typically the MSE handshake outcome for unreachable /
@@ -1392,10 +1583,14 @@ async fn process_peer_event(
                 // re-deduce it from "trying mse" lines alone
                 log::debug!("peer {a} disconnected: {reason}");
                 known_addrs.remove(&a);
+                pex_source.retain(|_, relay| *relay != pid);
+                if was_pending_dial {
+                    try_initiate_holepunch(a, pex_source, holepunch_attempted, peers);
+                }
             }
             // Drop the registry slot in case the peer disconnected before
             // the Handshook event moved it into `peers`.
-            let _ = peer_registry::take(torrent_id, pid);
+            peer_registry::remove(torrent_id, pid, registry_scope);
             if let Some(dead) = peers.remove(&pid) {
                 piece_tracker.remove_peer_bitfield(&dead.bitfield);
                 let freed = chunk_tracker.release_peer(pid);
@@ -1465,7 +1660,7 @@ async fn process_verify_result(
     // would re-serialise every piece completion through the torrent
     // loop's select arm and stall all peer events for the hash duration
     if vr.verify_ok {
-        piece_tracker.set_local(vpi, true);
+        let became_local = mark_verified_piece_local(piece_tracker, vpi);
         // Piece is verified + on disk; its dense chunk state is no longer
         // needed. Dropping keeps `release_peer` and `pending_chunks`
         // bounded by the working set of in-flight pieces rather than the
@@ -1478,8 +1673,9 @@ async fn process_verify_result(
         cancel_piece_outstanding(peers, vr.piece_index);
         broadcast_have(peers, vr.piece_index).await;
         let mut s = stats.lock();
-        s.progress_bytes = completed_bytes(piece_tracker, lengths);
-        s.file_progress = compute_file_progress(piece_tracker, lengths, storage.layout());
+        if became_local {
+            add_piece_progress(&mut s, lengths, storage.layout(), vpi);
+        }
         s.finished = piece_tracker.is_complete();
     } else {
         log::debug!("piece {} verify failed", vr.piece_index);
@@ -1500,6 +1696,110 @@ async fn process_verify_result(
 fn maybe_clear_endgame(chunk_tracker: &mut ChunkTracker) {
     if chunk_tracker.endgame() && chunk_tracker.pending_chunks() > 64 {
         chunk_tracker.set_endgame(false);
+    }
+}
+
+/// Handle an inbound BEP-55 ut_holepunch message
+
+fn handle_holepunch(
+    hp: HolepunchMsg,
+    from_addr: SocketAddr,
+    from_hp_id: Option<u8>,
+    from_cmd: &mpsc::Sender<PeerCommand>,
+    peers: &HashMap<u32, Peer>,
+    known_addrs: &mut HashSet<SocketAddr>,
+    peer_src_tx: &mpsc::Sender<SocketAddr>,
+) {
+    match hp.msg_type {
+        holepunch_type::CONNECT => {
+            // A relay told us to connect to `hp.addr` now
+            known_addrs.remove(&hp.addr);
+            let _ = peer_src_tx.try_send(hp.addr);
+        }
+        holepunch_type::RENDEZVOUS => {
+            // We are the relay
+            enum Relay {
+                Connect(mpsc::Sender<PeerCommand>, u8),
+                Err(u32),
+            }
+            let action = if hp.addr == from_addr {
+                Relay::Err(holepunch_err::NO_SELF)
+            } else {
+                match peers.values().find(|p| p.addr == hp.addr) {
+                    Some(t) => match t.their_ut_holepunch_id {
+                        Some(thp) => Relay::Connect(t.cmd_tx.clone(), thp),
+                        None => Relay::Err(holepunch_err::NO_SUPPORT),
+                    },
+                    None => Relay::Err(holepunch_err::NO_SUCH_PEER),
+                }
+            };
+            match action {
+                Relay::Connect(target_cmd, target_hp) => {
+                    // Tell the target to connect to the initiator
+                    let _ = target_cmd.try_send(PeerCommand::Send(Message::Extended {
+                        ext_id: target_hp,
+                        payload: build_holepunch(holepunch_type::CONNECT, from_addr, 0),
+                    }));
+                    // and tell the initiator to connect to the target
+                    if let Some(fid) = from_hp_id {
+                        let _ = from_cmd.try_send(PeerCommand::Send(Message::Extended {
+                            ext_id: fid,
+                            payload: build_holepunch(holepunch_type::CONNECT, hp.addr, 0),
+                        }));
+                    }
+                }
+                Relay::Err(code) => {
+                    if let Some(fid) = from_hp_id {
+                        let _ = from_cmd.try_send(PeerCommand::Send(Message::Extended {
+                            ext_id: fid,
+                            payload: build_holepunch(holepunch_type::ERROR, hp.addr, code),
+                        }));
+                    }
+                }
+            }
+        }
+        holepunch_type::ERROR => {
+            log::debug!(
+                target: "diag",
+                "holepunch ERROR from {from_addr} target={} code={}",
+                hp.addr, hp.err_code
+            );
+        }
+        _ => {}
+    }
+}
+
+/// On a failed direct dial to `target`, ask the peer that gossiped it via
+/// PEX to perform a BEP-55 rendezvous
+fn try_initiate_holepunch(
+    target: SocketAddr,
+    pex_source: &HashMap<SocketAddr, u32>,
+    holepunch_attempted: &mut HashSet<SocketAddr>,
+    peers: &HashMap<u32, Peer>,
+) {
+    if holepunch_attempted.contains(&target) {
+        return;
+    }
+    // Only peers we learned via PEX have a known relay; tracker/DHT peers that
+    // fail to connect have no rendezvous path we can use.
+    let Some(&relay_pid) = pex_source.get(&target) else {
+        return;
+    };
+    let Some(relay) = peers.get(&relay_pid) else {
+        return; // the gossiper has since disconnected
+    };
+    let Some(relay_hp) = relay.their_ut_holepunch_id else {
+        return; // relay doesn't support holepunch
+    };
+    if relay.cmd_tx.try_send(PeerCommand::Send(Message::Extended {
+        ext_id: relay_hp,
+        payload: build_holepunch(holepunch_type::RENDEZVOUS, target, 0),
+    })).is_ok() {
+        holepunch_attempted.insert(target);
+        log::debug!(
+            target: "diag",
+            "holepunch RENDEZVOUS initiate target={target} via relay pid={relay_pid}"
+        );
     }
 }
 
@@ -1637,36 +1937,53 @@ async fn drive_peer(
     // PieceTracker::choose_piece (does NOT skip in_flight) — does not loop
     // forever picking the same piece every iteration.
     let mut exhausted: HashSet<u32> = HashSet::new();
+    let requestable_pieces = piece_tracker.choose_requestable_pieces(&peer.bitfield, pid);
+    let mut requestable_idx = 0usize;
+    let mut endgame_pieces: Option<Vec<super::core::ValidPieceIndex>> = None;
+    let mut endgame_idx = 0usize;
+    let mut current_piece: Option<super::core::ValidPieceIndex> = None;
     while peer.outstanding.len() < max_outstanding {
-        // Use the peer id as a hint to distribute piece selection across
-        // peers, avoiding the scenario where every peer picks the same piece.
-        //
-        // Endgame fallback: when no requestable (i.e. non-in-flight) piece
-        // remains, flip endgame on if we're near completion and then ask the
-        // tracker for ANY piece the peer has (including in-flight ones) that
-        // we haven't already exhausted this call. ChunkTracker::next_chunk's
-        // endgame branch will then duplicate another peer's outstanding chunk
-        // request. Without this fallback, the endgame flag is set but never
-        // observed, fast peers idle until REQUEST_TIMEOUT reclaims, and the
-        // last 1% takes minutes.
-        let piece = match piece_tracker.choose_requestable_piece(&peer.bitfield, pid) {
-            Some(p) if !exhausted.contains(&p.get()) => p,
-            _ => {
-                if !chunk_tracker.endgame() && chunk_tracker.pending_chunks() <= 64 {
-                    chunk_tracker.set_endgame(true);
-                }
-                if chunk_tracker.endgame() {
-                    match piece_tracker.choose_piece_excluding(&peer.bitfield, pid, &exhausted) {
-                        Some(p) => p,
-                        None => break,
+        let piece = match current_piece {
+            Some(piece) => piece,
+            None => {
+                let mut selected = None;
+                loop {
+                    if let Some(piece) = requestable_pieces.get(requestable_idx).copied() {
+                        requestable_idx += 1;
+                        if !exhausted.contains(&piece.get()) {
+                            selected = Some(piece);
+                            break;
+                        }
+                        continue;
                     }
-                } else {
+
+                    if !chunk_tracker.endgame() && chunk_tracker.pending_chunks() <= 64 {
+                        chunk_tracker.set_endgame(true);
+                    }
+                    if chunk_tracker.endgame() {
+                        let pieces = endgame_pieces.get_or_insert_with(|| {
+                            piece_tracker.choose_pieces(&peer.bitfield, pid)
+                        });
+                        if let Some(piece) = pieces.get(endgame_idx).copied() {
+                            endgame_idx += 1;
+                            if !exhausted.contains(&piece.get()) {
+                                selected = Some(piece);
+                                break;
+                            }
+                            continue;
+                        }
+                    }
                     break;
                 }
+                let Some(piece) = selected else {
+                    break;
+                };
+                piece
             }
         };
         match chunk_tracker.next_chunk(piece, pid) {
             Some(chunk) => {
+                current_piece = Some(piece);
                 let info = chunk.info;
                 let prior = chunk.prior_state;
                 // try_send + rollback so a single peer with a full writer
@@ -1696,6 +2013,7 @@ async fn drive_peer(
                 }
             }
             None => {
+                current_piece = None;
                 // All chunks of this piece are already requested or received
                 // (under endgame, also already requested by THIS peer). Mark
                 // in_flight so non-endgame `choose_requestable_piece` skips
@@ -1788,6 +2106,30 @@ fn completed_bytes(pt: &PieceTracker, lengths: &Lengths) -> u64 {
     total
 }
 
+fn mark_verified_piece_local(pt: &mut PieceTracker, vpi: super::core::ValidPieceIndex) -> bool {
+    let was_local = pt.has_local(vpi);
+    pt.set_local(vpi, true);
+    !was_local
+}
+
+fn add_piece_progress(
+    stats: &mut TorrentStats,
+    lengths: &Lengths,
+    layout: &FileSet,
+    vpi: super::core::ValidPieceIndex,
+) {
+    let offset = lengths.piece_offset(vpi);
+    let len = lengths.piece_length_of(vpi) as u64;
+    stats.progress_bytes = stats.progress_bytes.saturating_add(len);
+    if stats.file_progress.len() < layout.files().len() {
+        stats.file_progress.resize(layout.files().len(), 0);
+    }
+    for span in layout.spans_for(offset, len) {
+        stats.file_progress[span.file_index] =
+            stats.file_progress[span.file_index].saturating_add(span.len);
+    }
+}
+
 /// Distribute the bytes of every completed piece across the files it
 /// overlaps. Used to populate `TorrentStats::file_progress` so per-file
 /// completion can be reported in the UI.
@@ -1860,14 +2202,15 @@ fn spawn_tracker_pollers(
     peer_id: Id20,
     port: u16,
     stats: Arc<Mutex<TorrentStats>>,
-) {
+) -> tokio::task::JoinSet<()> {
+    let mut tasks = tokio::task::JoinSet::new();
     for url in trackers {
         for info_hash in &info_hashes {
             let tx = tx.clone();
             let url = url.clone();
             let info_hash = *info_hash;
             let stats = Arc::clone(&stats);
-            tokio::spawn(async move {
+            tasks.spawn(async move {
                 let mut event = AnnounceEvent::Started;
                 // Track whether we have already announced `Completed` to
                 // this tracker so we only emit it once per session, even if
@@ -1904,6 +2247,14 @@ fn spawn_tracker_pollers(
                     };
                     match tracker_announce(&url, &req, Duration::from_secs(30)).await {
                         Ok(resp) => {
+                            // DIAG: per-URL peer yield — quantifies whether Risuko's
+                            // (default-empty) tracker set is starving the swarm vs BitComet's.
+                            log::info!(
+                                target: "diag",
+                                "tracker ANNOUNCE ok url={url} event={event:?} peers={} interval_s={}",
+                                resp.peers.len(),
+                                resp.interval.as_secs()
+                            );
                             if matches!(event, AnnounceEvent::Completed) {
                                 sent_completed = true;
                             }
@@ -1915,13 +2266,37 @@ fn spawn_tracker_pollers(
                             tokio::time::sleep(resp.interval).await;
                         }
                         Err(e) => {
-                            log::debug!("tracker {url} failed: {e}");
+                            log::info!(target: "diag", "tracker ANNOUNCE fail url={url} event={event:?} err={e}");
                             tokio::time::sleep(Duration::from_secs(120)).await;
                         }
                     }
                     event = AnnounceEvent::None;
                 }
             });
+        }
+    }
+    tasks
+}
+
+fn release_peer_scheduler_state(
+    pid: u32,
+    bitfield: &[u8],
+    piece_tracker: &mut PieceTracker,
+    chunk_tracker: &mut ChunkTracker,
+    piece_assemblies: &mut HashMap<u32, PieceAssembly>,
+    lengths: &Lengths,
+) {
+    piece_tracker.remove_peer_bitfield(bitfield);
+    let freed = chunk_tracker.release_peer(pid);
+    for piece_idx in freed {
+        if let Ok(vpi) = lengths.validate_piece(piece_idx) {
+            piece_tracker.clear_in_flight(vpi);
+        }
+        let should_drop = piece_assemblies
+            .get(&piece_idx)
+            .is_none_or(|a| a.received_chunks.is_empty());
+        if should_drop {
+            piece_assemblies.remove(&piece_idx);
         }
     }
 }
@@ -2035,6 +2410,8 @@ mod tests {
     use super::*;
     use crate::core::merkle::{compute_root, hash_block, MerkleProofTable, BLOCK_SIZE};
     use crate::core::Id32;
+    use crate::core::TorrentMetaInfo;
+    use std::path::Path;
 
     fn make_v2_tables(num_pieces: usize, piece_length: u32) -> (Vec<MerkleProofTable>, Id32) {
         let blocks_per_piece = piece_length / BLOCK_SIZE;
@@ -2073,6 +2450,67 @@ mod tests {
             MerkleProofTable::from_layer_bytes(file_root, total, piece_length, &layer_bytes)
                 .expect("build table");
         (vec![table], file_root)
+    }
+
+    fn two_file_layout() -> (Lengths, FileSet) {
+        let info = ValidatedTorrentMetaV1Info {
+            name: "root".into(),
+            piece_length: 10,
+            pieces: vec![0; 20 * 3],
+            private: false,
+            files: vec![
+                TorrentMetaInfo {
+                    path: vec!["a".into()],
+                    length: 15,
+                },
+                TorrentMetaInfo {
+                    path: vec!["b".into()],
+                    length: 15,
+                },
+            ],
+            single_file_mode: false,
+        };
+        let lengths = Lengths::new(30, 10).unwrap();
+        let layout = FileSet::from_meta(&info, Path::new("/tmp"));
+        (lengths, layout)
+    }
+
+    #[test]
+    fn verified_piece_progress_is_idempotent() {
+        let (lengths, layout) = two_file_layout();
+        let mut stats = TorrentStats::initial(
+            lengths.total_length(),
+            layout.files().iter().map(|f| f.length).collect(),
+        );
+        let mut tracker = PieceTracker::new(lengths);
+        let piece = tracker.lengths().validate_piece(1).unwrap();
+
+        if mark_verified_piece_local(&mut tracker, piece) {
+            add_piece_progress(&mut stats, tracker.lengths(), &layout, piece);
+        }
+        assert_eq!(stats.progress_bytes, 10);
+        assert_eq!(stats.file_progress, vec![5, 5]);
+
+        if mark_verified_piece_local(&mut tracker, piece) {
+            add_piece_progress(&mut stats, tracker.lengths(), &layout, piece);
+        }
+        assert_eq!(stats.progress_bytes, 10);
+        assert_eq!(stats.file_progress, vec![5, 5]);
+    }
+
+    #[test]
+    fn peer_registry_scope_prevents_cross_session_take() {
+        let torrent_id = 7;
+        let pid = 3;
+        let addr: SocketAddr = "127.0.0.1:6881".parse().unwrap();
+        let scope_a = Arc::new(());
+        let scope_b = Arc::new(());
+        let (tx, _rx) = mpsc::channel(1);
+
+        peer_registry::put(torrent_id, pid, &scope_a, tx, addr);
+
+        assert!(peer_registry::take(torrent_id, pid, &scope_b).is_none());
+        assert!(peer_registry::take(torrent_id, pid, &scope_a).is_some());
     }
 
     #[test]

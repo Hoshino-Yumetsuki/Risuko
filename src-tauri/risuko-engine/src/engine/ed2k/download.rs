@@ -33,6 +33,16 @@ pub async fn run_ed2k_download(
     let file_hash = file_link.file_hash_bytes;
     let file_path = PathBuf::from(dir).join(&file_link.file_name);
 
+    // Part request/answer opcodes use 32-bit offsets
+    // Reject files over 4 GiB until the eMule 64-bit extension is implemented
+    if file_link.file_size > u32::MAX as u64 {
+        return Err(format!(
+            "ed2k file too large ({} bytes): files over 4 GiB require the 64-bit \
+             large-file extension, which is not supported",
+            file_link.file_size
+        ));
+    }
+
     total.store(file_link.file_size, Ordering::Relaxed);
 
     let chunks = ChunkManager::new(file_path.clone(), file_link.file_size);
@@ -456,8 +466,10 @@ async fn run_peer_download(
 
 fn collect_needed_ranges(cm: &ChunkManager, max: usize) -> Vec<(u32, u32)> {
     let mut ranges = Vec::with_capacity(max);
+    let mut picked: Vec<u64> = Vec::with_capacity(max);
     for _ in 0..max {
-        if let Some(idx) = cm.next_needed_chunk(&[]) {
+        if let Some(idx) = cm.next_needed_chunk_excluding(&[], &picked) {
+            picked.push(idx);
             let (s, e) = cm.chunk_range(idx);
             ranges.push((s as u32, e as u32));
         } else {

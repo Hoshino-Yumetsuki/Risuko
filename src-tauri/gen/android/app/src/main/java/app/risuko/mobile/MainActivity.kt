@@ -349,13 +349,25 @@ class MainActivity : TauriActivity() {
       if (path.startsWith("content://") || path.startsWith("http://") || path.startsWith("https://")) {
         return Uri.parse(path)
       }
-      val filePath = if (path.startsWith("file://")) {
-        Uri.parse(path).path ?: path.removePrefix("file://")
-      } else {
-        path
-      }
-      return FileProvider.getUriForFile(activity, "${activity.packageName}.fileprovider", File(filePath))
-    }
+	      val filePath = if (path.startsWith("file://")) {
+	        Uri.parse(path).path ?: path.removePrefix("file://")
+	      } else {
+	        path
+	      }
+	      val file = File(filePath).canonicalFile
+	      val allowedRoots = listOfNotNull(
+	        activity.getExternalFilesDir(null),
+	        activity.cacheDir,
+	        activity.externalCacheDir,
+	      ).map { it.canonicalFile }
+	      val allowed = allowedRoots.any { root ->
+	        file == root || file.relativeToOrNull(root) != null
+	      }
+	      if (!allowed) {
+	        throw SecurityException("open_path only allows app-owned files")
+	      }
+	      return FileProvider.getUriForFile(activity, "${activity.packageName}.fileprovider", file)
+	    }
 
     private fun tryRevealFolder(activity: MainActivity, path: String): String {
       if (path.isBlank()) {

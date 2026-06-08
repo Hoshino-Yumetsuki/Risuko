@@ -81,7 +81,47 @@ impl Drop for Dht {
     }
 }
 
-type PendingMap = std::collections::HashMap<u16, (oneshot::Sender<KrpcResponse>, SocketAddr)>;
+type PendingMap = std::collections::HashMap<u16, PendingEntry>;
+
+#[derive(Clone)]
+struct PendingToken(Arc<()>);
+
+impl PendingToken {
+    fn new() -> Self {
+        Self(Arc::new(()))
+    }
+
+    fn matches(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+struct PendingEntry {
+    tx: oneshot::Sender<KrpcResponse>,
+    target: SocketAddr,
+    token: PendingToken,
+}
+
+/// Removes its transaction id from `pending` on drop
+///
+/// Keeps aborted lookup tasks from leaving orphaned pending entries
+struct PendingGuard {
+    pending: Arc<Mutex<PendingMap>>,
+    txn: u16,
+    token: PendingToken,
+}
+
+impl Drop for PendingGuard {
+    fn drop(&mut self) {
+        let mut pending = self.pending.lock();
+        let should_remove = pending
+            .get(&self.txn)
+            .is_some_and(|entry| entry.token.matches(&self.token));
+        if should_remove {
+            pending.remove(&self.txn);
+        }
+    }
+}
 
 struct KrpcResponse {
     from: SocketAddr,
@@ -383,8 +423,9 @@ impl Dht {
         target: SocketAddr,
         info_hash: Id20,
     ) -> Option<GetPeersReply> {
-        let (txn, rx) = self.register_transaction(target);
+        let (txn, rx, _guard) = self.register_transaction(target);
         let packet = build_get_peers(txn, &self.our_id, &info_hash);
+        // `_guard` removes `txn` from `pending`, including JoinSet aborts on budget timeout
         // Route via the appropriate socket family. If we target an IPv6
         // node but lack a v6 socket, drop the query.
         let send_res = match target {
@@ -393,19 +434,16 @@ impl Dht {
                 if let Some(s6) = &self.sock6 {
                     s6.send_to(&packet, target).await
                 } else {
-                    self.pending.lock().remove(&txn);
                     return None;
                 }
             }
         };
         if send_res.is_err() {
-            self.pending.lock().remove(&txn);
             return None;
         }
         let resp = match tokio::time::timeout(QUERY_TIMEOUT, rx).await {
             Ok(Ok(r)) => r,
             _ => {
-                self.pending.lock().remove(&txn);
                 return None;
             }
         };
@@ -413,26 +451,37 @@ impl Dht {
             .map(|(rid, peers, nodes, token)| (resp.from, rid, peers, nodes, token))
     }
 
-    fn register_transaction(&self, target: SocketAddr) -> (u16, oneshot::Receiver<KrpcResponse>) {
+    fn register_transaction(
+        &self,
+        target: SocketAddr,
+    ) -> (u16, oneshot::Receiver<KrpcResponse>, PendingGuard) {
         let (tx, rx) = oneshot::channel();
         let mut map = self.pending.lock();
         let mut txn: u16 = rand::rng().random();
         while map.contains_key(&txn) {
             txn = txn.wrapping_add(1);
         }
-        map.insert(txn, (tx, target));
-        (txn, rx)
+        let token = PendingToken::new();
+        map.insert(
+            txn,
+            PendingEntry {
+                tx,
+                target,
+                token: token.clone(),
+            },
+        );
+        let guard = PendingGuard {
+            pending: self.pending.clone(),
+            txn,
+            token,
+        };
+        (txn, rx, guard)
     }
 
     /// Number of unique nodes currently held in the Kademlia routing table
     /// Useful as a coarse health signal for DHT bootstrap progress
     pub fn routing_table_len(&self) -> usize {
         self.routing.lock().len()
-    }
-
-    /// Snapshot of the routing-table state for diagnostics.
-    pub fn routing_table_status(&self) -> RoutingTableStatus {
-        self.routing.lock().status()
     }
 
     /// Warm the routing table by performing an iterative lookup against our
@@ -473,12 +522,6 @@ pub(crate) struct RoutingTable {
     buckets: Vec<Vec<RoutingNode>>,
 }
 
-#[derive(Debug, Clone, Copy, Default)]
-pub struct RoutingTableStatus {
-    pub total_nodes: usize,
-    pub non_empty_buckets: usize,
-}
-
 impl RoutingTable {
     fn new(our_id: Id20) -> Self {
         let buckets = (0..NUM_BUCKETS)
@@ -489,21 +532,6 @@ impl RoutingTable {
 
     fn len(&self) -> usize {
         self.buckets.iter().map(|b| b.len()).sum()
-    }
-
-    fn status(&self) -> RoutingTableStatus {
-        let mut total = 0;
-        let mut non_empty = 0;
-        for b in &self.buckets {
-            if !b.is_empty() {
-                non_empty += 1;
-                total += b.len();
-            }
-        }
-        RoutingTableStatus {
-            total_nodes: total,
-            non_empty_buckets: non_empty,
-        }
     }
 
     fn bucket_index(&self, id: &Id20) -> Option<usize> {
@@ -747,9 +775,9 @@ async fn reader_loop(sock: Arc<UdpSocket>, pending: Arc<Mutex<PendingMap>>) {
         };
         let mut guard = pending.lock();
         if let Some(entry) = guard.get(&txn) {
-            if entry.1 == from {
-                if let Some((tx, _)) = guard.remove(&txn) {
-                    let _ = tx.send(KrpcResponse { from, body: msg });
+            if entry.target == from {
+                if let Some(entry) = guard.remove(&txn) {
+                    let _ = entry.tx.send(KrpcResponse { from, body: msg });
                 }
             }
             // Mismatch: ignore the packet, leave entry for the real responder
@@ -803,9 +831,6 @@ mod tests {
             );
         }
         assert_eq!(rt.len(), BUCKET_SIZE);
-        let st = rt.status();
-        assert_eq!(st.total_nodes, BUCKET_SIZE);
-        assert_eq!(st.non_empty_buckets, 1);
     }
 
     #[test]
@@ -940,5 +965,43 @@ mod tests {
         let labels: Vec<&[u8]> = want.iter().filter_map(|v| v.as_bytes()).collect();
         assert!(labels.contains(&(b"n4" as &[u8])));
         assert!(labels.contains(&(b"n6" as &[u8])));
+    }
+
+    #[test]
+    fn pending_guard_drop_does_not_remove_reused_transaction() {
+        let pending: Arc<Mutex<PendingMap>> = Arc::new(Mutex::new(Default::default()));
+        let txn = 0x1234;
+        let target: SocketAddr = "127.0.0.1:1".parse().unwrap();
+        let (old_tx, _old_rx) = oneshot::channel();
+        let (new_tx, _new_rx) = oneshot::channel();
+        let old_token = PendingToken::new();
+        let new_token = PendingToken::new();
+
+        pending.lock().insert(
+            txn,
+            PendingEntry {
+                tx: old_tx,
+                target,
+                token: old_token.clone(),
+            },
+        );
+        let guard = PendingGuard {
+            pending: pending.clone(),
+            txn,
+            token: old_token,
+        };
+        pending.lock().remove(&txn);
+        pending.lock().insert(
+            txn,
+            PendingEntry {
+                tx: new_tx,
+                target,
+                token: new_token,
+            },
+        );
+
+        drop(guard);
+
+        assert!(pending.lock().contains_key(&txn));
     }
 }

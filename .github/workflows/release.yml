@@ -276,12 +276,20 @@ jobs:
           "APP_ASSET=$asset" | Out-File -Append -FilePath $env:GITHUB_ENV -Encoding utf8
           "APP_PLATFORM_LABEL=${os}-${arch}" | Out-File -Append -FilePath $env:GITHUB_ENV -Encoding utf8
 
+      - name: Write app bundle SHA-256 sidecar
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/write-sha256-sidecar.mjs "$APP_ASSET"
+
       - name: Upload standardized app bundle to GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
-          files: ${{ env.APP_ASSET }}
+          files: |
+            ${{ env.APP_ASSET }}
+            ${{ env.APP_ASSET }}.sha256
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -290,7 +298,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: app-${{ env.APP_PLATFORM_LABEL }}
-          path: ${{ env.APP_ASSET }}
+          path: |
+            ${{ env.APP_ASSET }}
+            ${{ env.APP_ASSET }}.sha256
 
       # ── Package Windows portable exe (raw unpacked binary) ──
       # Naming: Risuko_{version}_win32_{arch}.portable.exe
@@ -316,12 +326,21 @@ jobs:
           Copy-Item $exe $asset
           "PORTABLE_ASSET=$asset" | Out-File -Append -FilePath $env:GITHUB_ENV -Encoding utf8
 
+      - name: Write Windows portable SHA-256 sidecar
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/write-sha256-sidecar.mjs "$PORTABLE_ASSET"
+
       - name: Upload Windows portable exe to GitHub Release
         if: runner.os == 'Windows' && startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
-          files: ${{ env.PORTABLE_ASSET }}
+          files: |
+            ${{ env.PORTABLE_ASSET }}
+            ${{ env.PORTABLE_ASSET }}.sha256
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -330,7 +349,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: app-portable-${{ env.APP_PLATFORM_LABEL }}
-          path: ${{ env.PORTABLE_ASSET }}
+          path: |
+            ${{ env.PORTABLE_ASSET }}
+            ${{ env.PORTABLE_ASSET }}.sha256
 
       # ── Build standalone risuko-cli binary ──
       - name: Build risuko-cli binary

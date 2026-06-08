@@ -241,6 +241,48 @@ impl RssManager {
         all_new
     }
 
+    /// Update feeds whose own interval elapsed
+    ///
+    /// The background poller uses this so slow feeds do not refetch at the global wake cadence
+    async fn update_due_feeds(&self) -> Vec<(String, Vec<RssItem>)> {
+        let now = now_secs();
+        let feeds: Vec<(String, bool, u64, Option<u64>)> = {
+            let s = self.store.lock().await;
+            s.feeds
+                .iter()
+                .map(|f| {
+                    (
+                        f.id.clone(),
+                        f.is_active,
+                        f.update_interval_secs,
+                        f.last_fetched_at,
+                    )
+                })
+                .collect()
+        };
+
+        let mut all_new = Vec::new();
+        for (feed_id, is_active, interval, last_fetched_at) in feeds {
+            if !is_active {
+                continue;
+            }
+            let due_at = last_fetched_at.unwrap_or(0).saturating_add(interval);
+            if now < due_at {
+                continue;
+            }
+            match self.update_feed(&feed_id).await {
+                Ok(new_items) if !new_items.is_empty() => {
+                    all_new.push((feed_id, new_items));
+                }
+                Ok(_) => {}
+                Err(e) => {
+                    log::warn!("Failed to update feed {}: {}", feed_id, e);
+                }
+            }
+        }
+        all_new
+    }
+
     pub async fn get_feeds(&self) -> Vec<RssFeed> {
         self.store.lock().await.feeds.clone()
     }
@@ -647,7 +689,8 @@ impl RssManager {
 
                 tokio::time::sleep(tokio::time::Duration::from_secs(min_interval)).await;
 
-                let new_items_per_feed = rss.update_all_feeds().await;
+                // The global minimum is only the wake cadence; each feed keeps its own interval
+                let new_items_per_feed = rss.update_due_feeds().await;
 
                 // Auto-download matching items via the v2 rule engine
                 for (feed_id, new_items) in &new_items_per_feed {

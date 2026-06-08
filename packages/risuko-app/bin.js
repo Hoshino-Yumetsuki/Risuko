@@ -16,30 +16,50 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const https = require("node:https");
+const crypto = require("node:crypto");
 const { execFileSync, spawn } = require("node:child_process");
 
 const PKG_VERSION = require("./package.json").version;
 const REPO = "YueMiyuki/risuko";
+const SHA256_SIDECAR_REQUIRED_VERSION = "0.4.0";
+
+class DownloadHttpError extends Error {
+	constructor(statusCode, url) {
+		super(
+			`Download failed: HTTP ${statusCode} — ${url}\n` +
+				`To download manually: https://github.com/${REPO}/releases/tag/v${version}`,
+		);
+		this.name = "DownloadHttpError";
+		this.statusCode = statusCode;
+		this.url = url;
+	}
+}
 
 // -- CLI arg parsing --
 
 const rawArgs = process.argv.slice(2);
 let version = PKG_VERSION;
 let noCache = false;
+let allowLegacyNoChecksum = false;
 const appArgs = [];
 
 for (let i = 0; i < rawArgs.length; i++) {
 	const arg = rawArgs[i];
 	if ((arg === "--version" || arg === "-v") && rawArgs[i + 1]) {
-		version = rawArgs[++i];
+		version = rawArgs[++i].replace(/^v/, "");
 	} else if (arg === "--no-cache") {
 		noCache = true;
+	} else if (arg === "--allow-legacy-no-checksum") {
+		allowLegacyNoChecksum = true;
 	} else if (arg === "--help" || arg === "-h") {
 		console.log(`Usage: risuko-app [launcher-options] [-- app-args...]
 
 Launcher options:
   --version <x.y.z>   Use a specific release version (default: ${PKG_VERSION})
   --no-cache          Re-download even if the binary is already cached
+  --allow-legacy-no-checksum
+                      Allow unsigned installs when SHA-256 sidecar is missing
+                      for legacy releases (pre-0.4.0 or prereleases)
   -h, --help          Show this help message
 
 Any arguments after -- are passed through to the Risuko app.
@@ -139,19 +159,17 @@ function download(url, destPath) {
 				if (
 					res.statusCode === 301 ||
 					res.statusCode === 302 ||
-					res.statusCode === 307
+					res.statusCode === 303 ||
+					res.statusCode === 307 ||
+					res.statusCode === 308
 				) {
 					req.destroy();
-					return download(res.headers.location, destPath).then(resolve, reject);
+					const nextUrl = new URL(res.headers.location, url).toString();
+					return download(nextUrl, destPath).then(resolve, reject);
 				}
 				if (res.statusCode !== 200) {
 					req.destroy();
-					return reject(
-						new Error(
-							`Download failed: HTTP ${res.statusCode} — ${url}\n` +
-								`To download manually: https://github.com/${REPO}/releases/tag/v${version}`,
-						),
-					);
+					return reject(new DownloadHttpError(res.statusCode, url));
 				}
 
 				const total = Number.parseInt(res.headers["content-length"] || "0", 10);
@@ -187,6 +205,166 @@ function download(url, destPath) {
 
 		req.on("error", reject);
 	});
+}
+
+function downloadText(url) {
+	const tmpDir = fs.mkdtempSync(
+		path.join(require("node:os").tmpdir(), "risuko-launcher-"),
+	);
+	const tmpPath = path.join(tmpDir, "download.txt");
+	return download(url, tmpPath)
+		.then(() => fs.readFileSync(tmpPath, "utf8"))
+		.finally(() => {
+			fs.rmSync(tmpDir, { recursive: true, force: true });
+		});
+}
+
+function sha256File(filePath) {
+	const hash = crypto.createHash("sha256");
+	const input = fs.createReadStream(filePath);
+	return new Promise((resolve, reject) => {
+		input.on("data", (chunk) => hash.update(chunk));
+		input.on("error", reject);
+		input.on("end", () => resolve(hash.digest("hex")));
+	});
+}
+
+function parseExpectedSha256(text, assetName) {
+	for (const line of text.split(/\r?\n/)) {
+		const trimmed = line.trim();
+		if (!trimmed) {
+			continue;
+		}
+		const [hash, fileName] = trimmed.split(/\s+/, 2);
+		if (
+			/^[a-fA-F0-9]{64}$/.test(hash) &&
+			(!fileName || fileName === assetName)
+		) {
+			return hash.toLowerCase();
+		}
+	}
+	throw new Error(`No SHA-256 digest found for ${assetName}`);
+}
+
+function compareReleaseVersions(left, right) {
+	const leftMatch = /^v?(\d+)\.(\d+)\.(\d+)(.*)/.exec(left);
+	const rightMatch = /^v?(\d+)\.(\d+)\.(\d+)(.*)/.exec(right);
+	if (!leftMatch || !rightMatch) {
+		return null;
+	}
+	for (let i = 1; i <= 3; i++) {
+		const diff = Number(leftMatch[i]) - Number(rightMatch[i]);
+		if (diff !== 0) {
+			return diff;
+		}
+	}
+
+	function parseSuffix(suffix) {
+		let prerelease = null;
+		let build = null;
+		const buildIdx = suffix.indexOf("+");
+		if (buildIdx !== -1) {
+			build = suffix.slice(buildIdx + 1);
+			suffix = suffix.slice(0, buildIdx);
+		}
+		if (suffix === "") {
+			return { prerelease, build };
+		}
+		if (suffix.startsWith("-")) {
+			prerelease = suffix.slice(1);
+		} else {
+			return null;
+		}
+		return { prerelease, build };
+	}
+
+	const leftParsed = parseSuffix(leftMatch[4]);
+	const rightParsed = parseSuffix(rightMatch[4]);
+	if (!leftParsed || !rightParsed) {
+		return null;
+	}
+
+	// Build metadata is ignored for precedence.
+	const pre1 = leftParsed.prerelease;
+	const pre2 = rightParsed.prerelease;
+	if (pre1 === pre2) {
+		return 0;
+	}
+	if (pre1 === null) {
+		return 1;
+	}
+	if (pre2 === null) {
+		return -1;
+	}
+
+	const parts1 = pre1.split(".");
+	const parts2 = pre2.split(".");
+	const len = Math.max(parts1.length, parts2.length);
+	for (let i = 0; i < len; i++) {
+		const p1 = parts1[i];
+		const p2 = parts2[i];
+		if (p1 === undefined) {
+			return -1;
+		}
+		if (p2 === undefined) {
+			return 1;
+		}
+
+		const isNum1 = /^[0-9]+$/.test(p1);
+		const isNum2 = /^[0-9]+$/.test(p2);
+
+		if (isNum1 && isNum2) {
+			const n1 = BigInt(p1);
+			const n2 = BigInt(p2);
+			if (n1 !== n2) {
+				return n1 < n2 ? -1 : 1;
+			}
+		} else if (isNum1 && !isNum2) {
+			return -1;
+		} else if (!isNum1 && isNum2) {
+			return 1;
+		} else {
+			if (p1 < p2) {
+				return -1;
+			}
+			if (p1 > p2) {
+				return 1;
+			}
+		}
+	}
+	return 0;
+}
+
+function isLegacyChecksumRelease(releaseVersion) {
+	const order = compareReleaseVersions(
+		releaseVersion,
+		SHA256_SIDECAR_REQUIRED_VERSION,
+	);
+	return order !== null && order < 0;
+}
+
+async function verifySha256(assetPath, checksumUrl, assetName) {
+	let checksumText;
+	try {
+		checksumText = await downloadText(checksumUrl);
+	} catch (err) {
+		if (err instanceof DownloadHttpError && err.statusCode === 404) {
+			if (isLegacyChecksumRelease(version) && allowLegacyNoChecksum) {
+				return false;
+			}
+			throw new Error(
+				`SHA-256 sidecar not found for ${assetName}: ${checksumUrl}`,
+			);
+		}
+		throw err;
+	}
+	const expected = parseExpectedSha256(checksumText, assetName);
+	const actual = await sha256File(assetPath);
+	if (actual !== expected) {
+		throw new Error(
+			`SHA-256 mismatch for ${assetName}: expected ${expected}, got ${actual}`,
+		);
+	}
 }
 
 function fmtBytes(n) {
@@ -242,6 +420,7 @@ async function main() {
 
 	if (!isCached || noCache) {
 		const assetUrl = `https://github.com/${REPO}/releases/download/v${version}/${entry.asset}`;
+		const checksumUrl = `${assetUrl}.sha256`;
 		const assetPath = path.join(cacheDir, entry.asset);
 		const tmpPath = `${assetPath}.download`;
 
@@ -250,8 +429,25 @@ async function main() {
 		console.log(`Downloading Risuko v${version} for ${platform}/${arch}…`);
 		console.log(`  From: ${assetUrl}`);
 
-		await download(assetUrl, tmpPath);
-		fs.renameSync(tmpPath, assetPath);
+		try {
+			await download(assetUrl, tmpPath);
+			const checksumVerified = await verifySha256(
+				tmpPath,
+				checksumUrl,
+				entry.asset,
+			);
+			if (checksumVerified === false) {
+				console.warn(
+					`  SHA-256 sidecar not found for legacy release v${version}; continuing without checksum verification`,
+				);
+			} else {
+				console.log("  Verified SHA-256 checksum");
+			}
+			fs.renameSync(tmpPath, assetPath);
+		} catch (err) {
+			fs.rmSync(tmpPath, { force: true });
+			throw err;
+		}
 		console.log("  Extracting…");
 		extract(entry, assetPath, cacheDir);
 		console.log(`  Cached to: ${cacheDir}`);

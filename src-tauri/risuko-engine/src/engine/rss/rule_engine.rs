@@ -1,5 +1,8 @@
 //! Rule evaluation: pure functions over `RssRule`, `RssItem`, `ParsedMeta`
 
+use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
+
 use globset::{GlobBuilder, GlobMatcher};
 use regex::Regex;
 
@@ -71,10 +74,13 @@ pub fn evaluate_rule(rule: &RssRule, item: &RssItem, parsed: &ParsedMeta) -> Rul
     // Series filter
     if let Some(ref want) = rule.series_filter {
         let want_norm = normalize_series(want);
-        let have_norm = parsed.series.as_deref().map(normalize_series);
-        match have_norm {
-            Some(have) if have.contains(&want_norm) || want_norm.contains(&have) => {}
-            _ => return reject("series filter mismatch"),
+        // Empty normalized filters would match every item, so treat them as no constraint
+        if !want_norm.is_empty() {
+            let have_norm = parsed.series.as_deref().map(normalize_series);
+            match have_norm {
+                Some(have) if have.contains(&want_norm) || want_norm.contains(&have) => {}
+                _ => return reject("series filter mismatch"),
+            }
         }
     }
 
@@ -173,7 +179,7 @@ fn pattern_matches(p: &Pattern, text: &str) -> bool {
             }
             normalize(text, p.case_sensitive).contains(&normalize(&p.value, p.case_sensitive))
         }
-        PatternKind::Glob => match build_glob(&p.value, p.case_sensitive) {
+        PatternKind::Glob => match cached_glob(&p.value, p.case_sensitive) {
             Some(matcher) => matcher.is_match(text),
             None => false,
         },
@@ -183,19 +189,56 @@ fn pattern_matches(p: &Pattern, text: &str) -> bool {
             } else {
                 format!("(?i){}", p.value)
             };
-            Regex::new(&pattern_src)
-                .map(|re| re.is_match(text))
-                .unwrap_or(false)
+            match cached_regex(&pattern_src) {
+                Some(re) => re.is_match(text),
+                None => false,
+            }
         }
     }
 }
 
-fn build_glob(value: &str, case_sensitive: bool) -> Option<GlobMatcher> {
-    GlobBuilder::new(value)
+/// Cap distinct user patterns retained per cache
+///
+/// On overflow, clear the cache instead of precise eviction; active rules reuse few patterns
+const PATTERN_CACHE_CAP: usize = 1024;
+
+/// Compile-once regex cache for rules
+///
+/// Caches invalid patterns too, keyed by fully-resolved source including `(?i)`
+fn cached_regex(pattern_src: &str) -> Option<Regex> {
+    static CACHE: OnceLock<Mutex<HashMap<String, Option<Regex>>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut map = cache.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(cached) = map.get(pattern_src) {
+        return cached.clone();
+    }
+    let compiled = Regex::new(pattern_src).ok();
+    if map.len() >= PATTERN_CACHE_CAP {
+        map.clear();
+    }
+    map.insert(pattern_src.to_string(), compiled.clone());
+    compiled
+}
+
+/// Compile-once glob cache for rules, keyed by value and case sensitivity
+fn cached_glob(value: &str, case_sensitive: bool) -> Option<GlobMatcher> {
+    static CACHE: OnceLock<Mutex<HashMap<(String, bool), Option<GlobMatcher>>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let key = (value.to_string(), case_sensitive);
+    let mut map = cache.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(cached) = map.get(&key) {
+        return cached.clone();
+    }
+    let compiled = GlobBuilder::new(value)
         .case_insensitive(!case_sensitive)
         .build()
         .ok()
-        .map(|g| g.compile_matcher())
+        .map(|g| g.compile_matcher());
+    if map.len() >= PATTERN_CACHE_CAP {
+        map.clear();
+    }
+    map.insert(key, compiled.clone());
+    compiled
 }
 
 fn episode_in_selector(sel: &EpisodeSelector, ep: Option<u32>) -> bool {

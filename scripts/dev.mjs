@@ -31,9 +31,10 @@ function greeting() {
 
 greeting();
 
-const child = spawn("pnpm", ["tauri", "dev"], {
+const pnpmBin = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
+const child = spawn(pnpmBin, ["tauri", "dev"], {
 	stdio: "inherit",
-	shell: true,
+	shell: false,
 	env: { ...process.env },
 });
 

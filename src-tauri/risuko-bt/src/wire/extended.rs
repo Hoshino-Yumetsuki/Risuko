@@ -6,9 +6,9 @@
 //! per-peer extension message types negotiated via the handshake's `m` dict
 
 use std::collections::HashMap;
-use std::net::IpAddr;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
-use bytes::{BufMut, Bytes, BytesMut};
+use bytes::Bytes;
 
 use super::super::bencode::{decode_all, encode_to_vec, Value};
 
@@ -16,12 +16,37 @@ pub const EXT_HANDSHAKE_ID: u8 = 0;
 
 pub const EXT_NAME_UT_METADATA: &[u8] = b"ut_metadata";
 pub const EXT_NAME_UT_PEX: &[u8] = b"ut_pex";
+pub const EXT_NAME_UT_HOLEPUNCH: &[u8] = b"ut_holepunch";
 
 /// ut_metadata message types (BEP-9)
 pub mod ut_metadata_type {
     pub const REQUEST: i64 = 0;
     pub const DATA: i64 = 1;
     pub const REJECT: i64 = 2;
+}
+
+/// ut_holepunch (BEP-55) message types. Unlike ut_metadata/ut_pex these are a
+/// fixed binary layout, NOT bencoded: `msg_type(1) addr_type(1) ip(4|16)
+/// port(2) [err_code(4) for Error]`
+pub mod holepunch_type {
+    /// Initiator -> relay: "help me reach this endpoint"
+    pub const RENDEZVOUS: u8 = 0;
+    /// Relay -> both ends: "connect to this endpoint now" (simultaneous open)
+    pub const CONNECT: u8 = 1;
+    /// Relay -> initiator: rendezvous failed
+    pub const ERROR: u8 = 2;
+}
+
+/// ut_holepunch (BEP-55) error codes carried by `holepunch_type::ERROR`
+pub mod holepunch_err {
+    /// The relay is not connected to the requested target
+    pub const NO_SUCH_PEER: u32 = 1;
+    /// The relay is connected to the target but in a state that can't relay
+    pub const NOT_CONNECTED: u32 = 2;
+    /// The target does not advertise ut_holepunch
+    pub const NO_SUPPORT: u32 = 3;
+    /// The target endpoint is the relay itself
+    pub const NO_SELF: u32 = 4;
 }
 
 #[derive(Debug, Clone, Default)]
@@ -61,6 +86,15 @@ impl ExtHandshake {
     /// helper used by the connection layer per dial / accept
     pub fn with_yourip(mut self, ip: IpAddr) -> Self {
         self.yourip = Some(ip);
+        self
+    }
+
+    /// Advertise `ut_holepunch` (BEP-55) with the message id we want peers to
+    /// use when sending us holepunch messages. Builder so callers can opt in
+    /// without churning the `new_outgoing` signature
+    pub fn with_holepunch(mut self, ut_holepunch_id: u8) -> Self {
+        self.supported
+            .insert(EXT_NAME_UT_HOLEPUNCH.to_vec(), ut_holepunch_id);
         self
     }
 
@@ -146,6 +180,10 @@ impl ExtHandshake {
 
     pub fn ut_pex_id(&self) -> Option<u8> {
         self.supported.get(EXT_NAME_UT_PEX).copied()
+    }
+
+    pub fn ut_holepunch_id(&self) -> Option<u8> {
+        self.supported.get(EXT_NAME_UT_HOLEPUNCH).copied()
     }
 }
 
@@ -255,21 +293,83 @@ pub fn parse_ut_pex(
     Some((v4, v6))
 }
 
-/// Encode a compact peer list as a bencoded ut_pex payload (just `added`)
-pub fn build_ut_pex(v4: &[std::net::SocketAddrV4]) -> Bytes {
-    let mut buf = BytesMut::with_capacity(v4.len() * 6);
-    for addr in v4 {
-        buf.put_slice(&addr.ip().octets());
-        buf.put_u16(addr.port());
+/// A decoded BEP-55 ut_holepunch message
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HolepunchMsg {
+    /// One of [`holepunch_type`]
+    pub msg_type: u8,
+    /// The endpoint the message refers to (rendezvous target / connect peer)
+    pub addr: SocketAddr,
+    /// One of [`holepunch_err`]; meaningful only for `holepunch_type::ERROR`
+    pub err_code: u32,
+}
+
+/// Encode a BEP-55 ut_holepunch message. `err_code` is only emitted for
+/// `holepunch_type::ERROR`
+pub fn build_holepunch(msg_type: u8, addr: SocketAddr, err_code: u32) -> Bytes {
+    let mut buf = Vec::with_capacity(24);
+    buf.push(msg_type);
+    match addr.ip() {
+        IpAddr::V4(v4) => {
+            buf.push(0);
+            buf.extend_from_slice(&v4.octets());
+        }
+        IpAddr::V6(v6) => {
+            buf.push(1);
+            buf.extend_from_slice(&v6.octets());
+        }
     }
-    let dict = Value::Dict(vec![(b"added".to_vec(), Value::Bytes(buf.to_vec()))]);
-    Bytes::from(encode_to_vec(&dict))
+    buf.extend_from_slice(&addr.port().to_be_bytes());
+    if msg_type == holepunch_type::ERROR {
+        buf.extend_from_slice(&err_code.to_be_bytes());
+    }
+    Bytes::from(buf)
+}
+
+/// Decode a BEP-55 ut_holepunch message. Returns `None` on a malformed/short
+/// payload or an unknown address family
+pub fn parse_holepunch(payload: &[u8]) -> Option<HolepunchMsg> {
+    if payload.len() < 2 {
+        return None;
+    }
+    let msg_type = payload[0];
+    let addr_type = payload[1];
+    let (ip, port_off): (IpAddr, usize) = match addr_type {
+        0 => {
+            if payload.len() < 2 + 4 + 2 {
+                return None;
+            }
+            let arr: [u8; 4] = payload[2..6].try_into().ok()?;
+            (IpAddr::V4(Ipv4Addr::from(arr)), 6)
+        }
+        1 => {
+            if payload.len() < 2 + 16 + 2 {
+                return None;
+            }
+            let arr: [u8; 16] = payload[2..18].try_into().ok()?;
+            (IpAddr::V6(Ipv6Addr::from(arr)), 18)
+        }
+        _ => return None,
+    };
+    let port = u16::from_be_bytes([payload[port_off], payload[port_off + 1]]);
+    let mut err_code = 0u32;
+    if msg_type == holepunch_type::ERROR {
+        let eo = port_off + 2;
+        if payload.len() < eo + 4 {
+            return None;
+        }
+        err_code = u32::from_be_bytes(payload[eo..eo + 4].try_into().ok()?);
+    }
+    Some(HolepunchMsg {
+        msg_type,
+        addr: SocketAddr::new(ip, port),
+        err_code,
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::net::SocketAddrV4;
 
     #[test]
     fn handshake_round_trip() {
@@ -330,14 +430,64 @@ mod tests {
     }
 
     #[test]
-    fn ut_pex_round_trip() {
-        let addrs = vec![
-            SocketAddrV4::new("1.2.3.4".parse().unwrap(), 6881),
-            SocketAddrV4::new("5.6.7.8".parse().unwrap(), 6882),
-        ];
-        let bytes = build_ut_pex(&addrs);
-        let (v4, _) = parse_ut_pex(&bytes).unwrap();
-        assert_eq!(v4.len(), 2);
-        assert_eq!(v4[0].port(), 6881);
+    fn holepunch_advertised_in_handshake() {
+        let out = ExtHandshake::new_outgoing(3, 4, None).with_holepunch(5);
+        let bytes = out.encode();
+        let parsed = ExtHandshake::decode(&bytes).unwrap();
+        assert_eq!(parsed.ut_holepunch_id(), Some(5));
+        // Existing extensions remain advertised alongside it
+        assert_eq!(parsed.ut_metadata_id(), Some(3));
+        assert_eq!(parsed.ut_pex_id(), Some(4));
+    }
+
+    #[test]
+    fn holepunch_handshake_absent_when_not_advertised() {
+        let out = ExtHandshake::new_outgoing(3, 4, None);
+        let parsed = ExtHandshake::decode(&out.encode()).unwrap();
+        assert_eq!(parsed.ut_holepunch_id(), None);
+    }
+
+    #[test]
+    fn holepunch_connect_v4_round_trip() {
+        let addr: SocketAddr = "203.0.113.7:51413".parse().unwrap();
+        let bytes = build_holepunch(holepunch_type::CONNECT, addr, 0);
+        // type(1) + addr_type(1) + ipv4(4) + port(2), no err_code for non-error
+        assert_eq!(bytes.len(), 8);
+        let parsed = parse_holepunch(&bytes).unwrap();
+        assert_eq!(parsed.msg_type, holepunch_type::CONNECT);
+        assert_eq!(parsed.addr, addr);
+        assert_eq!(parsed.err_code, 0);
+    }
+
+    #[test]
+    fn holepunch_rendezvous_v6_round_trip() {
+        let addr: SocketAddr = "[2001:db8::dead:beef]:6881".parse().unwrap();
+        let bytes = build_holepunch(holepunch_type::RENDEZVOUS, addr, 0);
+        // type(1) + addr_type(1) + ipv6(16) + port(2)
+        assert_eq!(bytes.len(), 20);
+        let parsed = parse_holepunch(&bytes).unwrap();
+        assert_eq!(parsed.msg_type, holepunch_type::RENDEZVOUS);
+        assert_eq!(parsed.addr, addr);
+    }
+
+    #[test]
+    fn holepunch_error_carries_code() {
+        let addr: SocketAddr = "198.51.100.9:1337".parse().unwrap();
+        let bytes = build_holepunch(holepunch_type::ERROR, addr, holepunch_err::NO_SUCH_PEER);
+        assert_eq!(bytes.len(), 12); // ...+ err_code(4)
+        let parsed = parse_holepunch(&bytes).unwrap();
+        assert_eq!(parsed.msg_type, holepunch_type::ERROR);
+        assert_eq!(parsed.addr, addr);
+        assert_eq!(parsed.err_code, holepunch_err::NO_SUCH_PEER);
+    }
+
+    #[test]
+    fn holepunch_rejects_truncated_and_unknown_family() {
+        assert!(parse_holepunch(&[]).is_none());
+        assert!(parse_holepunch(&[holepunch_type::CONNECT]).is_none());
+        // addr_type 0 (v4) but missing port bytes
+        assert!(parse_holepunch(&[holepunch_type::CONNECT, 0, 1, 2, 3, 4]).is_none());
+        // unknown address family
+        assert!(parse_holepunch(&[holepunch_type::CONNECT, 9, 1, 2, 3, 4, 0, 0]).is_none());
     }
 }

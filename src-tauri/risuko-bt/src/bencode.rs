@@ -249,7 +249,6 @@ impl<'a> Parser<'a> {
         debug_assert_eq!(self.buf[self.pos], b'd');
         self.pos += 1;
         let mut items: Vec<(Vec<u8>, Value)> = Vec::new();
-        let mut last: Option<Vec<u8>> = None;
         while self.peek()? != b'e' {
             let key_pos = self.pos;
             let key_val = self.parse_value()?.value;
@@ -257,13 +256,12 @@ impl<'a> Parser<'a> {
                 Value::Bytes(b) => b,
                 _ => return Err(Error::NonStringDictKey(key_pos)),
             };
-            if let Some(prev) = &last {
+            if let Some((prev, _)) = items.last() {
                 if prev.as_slice() >= key.as_slice() {
                     return Err(Error::BadDictOrder(key_pos));
                 }
             }
             let value = self.parse_value()?.value;
-            last = Some(key.clone());
             items.push((key, value));
         }
         self.pos += 1;

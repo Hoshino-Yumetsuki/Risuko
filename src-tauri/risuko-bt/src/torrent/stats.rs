@@ -1,6 +1,7 @@
 //! Per-torrent live stats
 
 use std::net::SocketAddr;
+use std::sync::Arc;
 use std::time::Instant;
 
 /// Snapshot of a single connected peer for UI consumption
@@ -8,7 +9,7 @@ use std::time::Instant;
 pub struct PeerSnapshot {
     pub addr: SocketAddr,
     /// Raw bitfield bytes; consumers can hex-encode for display
-    pub bitfield: Vec<u8>,
+    pub bitfield: Arc<[u8]>,
     pub am_choking: bool,
     pub am_interested: bool,
     pub peer_choking: bool,

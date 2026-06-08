@@ -155,6 +155,9 @@ impl Drop for Session {
         if let Some(h) = self.dht_bootstrap_handle.lock().take() {
             h.abort();
         }
+        if let Some(utp) = self.utp.take() {
+            utp.shutdown();
+        }
         // Dropping the UpnpHandle / LSD service / DHT triggers their cleanup.
         let _ = self.upnp_handle.lock().take();
         let _ = self.lsd.lock().take();

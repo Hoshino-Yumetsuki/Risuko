@@ -231,9 +231,11 @@ export default {
 		},
 		onInfoClick() {
 			const { task } = this;
-			// Open detail directly to avoid missing UI response when command listeners are not active.
-			useTaskStore().showTaskDetail(task);
-			commands.emit("show-task-info", { task });
+			// Prefer the command handler; open detail directly only when no listener handled it
+			const handled = commands.emit("show-task-info", { task });
+			if (!handled) {
+				useTaskStore().showTaskDetail(task);
+			}
 		},
 	},
 };

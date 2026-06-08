@@ -1,5 +1,5 @@
 use bytes::Bytes;
-use futures_util::Stream;
+use futures_util::{Stream, StreamExt};
 use http::{HeaderMap, StatusCode, Version};
 use http_body_util::BodyExt;
 use serde::de::DeserializeOwned;
@@ -84,9 +84,19 @@ impl Response {
         Ok(collected.to_bytes())
     }
 
+    pub(crate) async fn drain(mut self) -> Result<()> {
+        if let Some(body) = self.body.take() {
+            let mut stream = BodyStream::new(body);
+            while let Some(chunk) = stream.next().await {
+                chunk?;
+            }
+        }
+        Ok(())
+    }
+
     pub async fn text(self) -> Result<String> {
         let bytes = self.bytes().await?;
-        String::from_utf8(bytes.to_vec()).map_err(|e| Error::Decode(e.to_string()))
+        String::from_utf8(bytes.into()).map_err(|e| Error::Decode(e.to_string()))
     }
 
     pub async fn json<T: DeserializeOwned>(self) -> Result<T> {

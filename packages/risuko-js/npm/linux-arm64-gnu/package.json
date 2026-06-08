@@ -1,6 +1,6 @@
 {
 	"name": "@risuko/js-linux-arm64-gnu",
-	"version": "0.3.6",
+	"version": "0.4.0",
 	"description": "Risuko JS native module for Linux ARM64",
 	"repository": {
 		"type": "git",
@@ -15,6 +15,9 @@
 		"arm64"
 	],
 	"main": "risuko.linux-arm64-gnu.node",
+	"scripts": {
+		"prepack": "node ../../../../scripts/ensure-package-artifacts.mjs"
+	},
 	"files": [
 		"risuko.linux-arm64-gnu.node"
 	],

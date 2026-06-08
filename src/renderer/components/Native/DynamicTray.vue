@@ -64,10 +64,8 @@ export default {
 			return focused ? getInverseTheme(theme) : theme;
 		},
 		iconKey() {
-			const { bigSur, iconStatus, currentTheme } = this;
-			return bigSur
-				? "tray-icon-light-normal"
-				: `tray-icon-${currentTheme}-${iconStatus}`;
+			const { iconStatus, currentTheme } = this;
+			return `tray-icon-${currentTheme}-${iconStatus}`;
 		},
 	},
 	watch: {

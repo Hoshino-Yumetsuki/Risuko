@@ -274,10 +274,10 @@ export default {
 		const store = useRssStore();
 		store.initEventListeners();
 		await store.fetchFeeds();
-		for (const feed of store.feeds) {
-			await store.fetchItems(feed.id);
-		}
-		await store.fetchRules();
+		await Promise.allSettled([
+			...store.feeds.map((feed) => store.fetchItems(feed.id)),
+			store.fetchRules(),
+		]);
 	},
 	beforeUnmount() {
 		useRssStore().cleanupEventListeners();

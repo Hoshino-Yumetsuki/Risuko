@@ -19,6 +19,13 @@
 <script lang="ts">
 import { APP_RUN_MODE, APP_THEME } from "@shared/constants";
 import { getLanguage } from "@shared/locales";
+import {
+	DEFAULT_FONT_FAMILY,
+	DEFAULT_FONT_SIZE,
+	FONT_FAMILY_OPTIONS,
+	FONT_SIZE_OPTIONS,
+	normalizeConfigOption,
+} from "@shared/types/config";
 import { parseBooleanConfig } from "@shared/utils";
 import { invoke } from "@tauri-apps/api/core";
 import { getLocaleManager } from "@/components/Locale";
@@ -31,19 +38,6 @@ import { Toaster } from "@/components/ui/sonner";
 import is from "@/shims/platform";
 import { useAppStore } from "@/store/app";
 import { usePreferenceStore } from "@/store/preference";
-
-const FONT_FAMILY_OPTIONS = ["system", "rounded", "serif", "mono"];
-const FONT_SIZE_OPTIONS = ["small", "default", "large", "extra-large"];
-
-const normalizeOption = (
-	value: unknown,
-	options: string[],
-	fallback: string,
-) => {
-	return typeof value === "string" && options.includes(value)
-		? value
-		: fallback;
-};
 
 export default {
 	name: "risuko-app",
@@ -103,18 +97,18 @@ export default {
 			if (this.isAndroid) {
 				return "";
 			}
-			const family = normalizeOption(
+			const family = normalizeConfigOption(
 				usePreferenceStore().config.fontFamily,
 				FONT_FAMILY_OPTIONS,
-				"system",
+				DEFAULT_FONT_FAMILY,
 			);
 			return `font-family-${family}`;
 		},
 		fontSizeClass() {
-			const size = normalizeOption(
+			const size = normalizeConfigOption(
 				usePreferenceStore().config.fontSize,
 				FONT_SIZE_OPTIONS,
-				"default",
+				DEFAULT_FONT_SIZE,
 			);
 			return `font-size-${size}`;
 		},

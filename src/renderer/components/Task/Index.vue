@@ -96,12 +96,7 @@
 <script lang="ts">
 import { ArrowDownNarrowWide, ArrowUpNarrowWide, Search, X } from "@lucide/vue";
 import { ADD_TASK_TYPE } from "@shared/constants";
-import {
-	bytesToSize,
-	calcProgress,
-	getTaskUri,
-	parseHeader,
-} from "@shared/utils";
+import { bytesToSize, getTaskUri, parseHeader } from "@shared/utils";
 import logger from "@shared/utils/logger";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import api from "@/api";
@@ -250,24 +245,13 @@ export default {
 			);
 		},
 		totalLength() {
-			return useTaskStore().taskList.reduce(
-				(sum, task) => sum + Number(task.totalLength || 0),
-				0,
-			);
+			return useTaskStore().totalLength;
 		},
 		totalCompletedLength() {
-			return useTaskStore().taskList.reduce(
-				(sum, task) => sum + Number(task.completedLength || 0),
-				0,
-			);
+			return useTaskStore().totalCompletedLength;
 		},
 		totalProgressPercent() {
-			const result = calcProgress(
-				this.totalLength,
-				this.totalCompletedLength,
-				1,
-			);
-			return `${result}`.replace(/\.0$/, "");
+			return useTaskStore().totalProgressPercent;
 		},
 	},
 	watch: {
@@ -436,8 +420,8 @@ export default {
 						taskName,
 					}),
 				);
-			} catch ({ code }) {
-				if (code === 1) {
+			} catch (err) {
+				if ((err as { code?: number })?.code === 1) {
 					this.$msg.error(
 						this.$t("task.delete-task-fail", {
 							taskName,
@@ -454,8 +438,8 @@ export default {
 						taskName,
 					}),
 				);
-			} catch ({ code }) {
-				if (code === 1) {
+			} catch (err) {
+				if ((err as { code?: number })?.code === 1) {
 					this.$msg.error(
 						this.$t("task.remove-record-fail", {
 							taskName,
@@ -521,8 +505,8 @@ export default {
 			try {
 				await useTaskStore().batchRemoveTask(gids);
 				this.$msg.success(this.$t("task.batch-delete-task-success"));
-			} catch ({ code }) {
-				if (code === 1) {
+			} catch (err) {
+				if ((err as { code?: number })?.code === 1) {
 					this.$msg.error(this.$t("task.batch-delete-task-fail"));
 				}
 			}

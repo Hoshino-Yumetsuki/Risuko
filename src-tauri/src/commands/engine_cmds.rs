@@ -505,9 +505,9 @@ pub async fn probe_m3u8(url: String) -> Result<Value, String> {
 }
 
 #[tauri::command]
-pub fn get_engine_status(state: tauri::State<'_, crate::state::AppState>) -> Result<bool, String> {
-    let running = state.engine_running.lock().map_err(|e| e.to_string())?;
-    Ok(*running)
+pub fn get_engine_status() -> Result<bool, String> {
+    // Mirror the engine-owned liveness source used by the health report
+    Ok(engine::engine_uptime().is_some())
 }
 
 async fn add_torrent_by_path_inner(path: &str, options: Option<Value>) -> Result<String, String> {

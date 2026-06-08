@@ -637,7 +637,7 @@ impl DownloadTask {
 
     /// Build status response for `tellStatus`
     pub fn to_rpc_status(&self, keys: &[String]) -> Value {
-        let full = self.to_full_rpc_status();
+        let full = self.to_full_rpc_status(keys);
         if keys.is_empty() {
             return full;
         }
@@ -653,7 +653,9 @@ impl DownloadTask {
         Value::Object(filtered)
     }
 
-    fn to_full_rpc_status(&self) -> Value {
+    fn to_full_rpc_status(&self, keys: &[String]) -> Value {
+        // Skip serializing large `files` arrays when a non-empty key filter does not request them
+        let want_files = keys.is_empty() || keys.iter().any(|k| k == "files");
         let mut m = Map::new();
         m.insert("gid".into(), Value::String(self.gid.clone()));
         m.insert(
@@ -696,15 +698,17 @@ impl DownloadTask {
             m.insert("tag".into(), Value::String(tag.clone()));
         }
 
-        if !self.files.is_empty() {
-            let files_val: Vec<Value> = self
-                .files
-                .iter()
-                .map(|f| serde_json::to_value(f).unwrap_or(Value::Null))
-                .collect();
-            m.insert("files".into(), Value::Array(files_val));
-        } else {
-            m.insert("files".into(), Value::Array(Vec::new()));
+        if want_files {
+            if !self.files.is_empty() {
+                let files_val: Vec<Value> = self
+                    .files
+                    .iter()
+                    .map(|f| serde_json::to_value(f).unwrap_or(Value::Null))
+                    .collect();
+                m.insert("files".into(), Value::Array(files_val));
+            } else {
+                m.insert("files".into(), Value::Array(Vec::new()));
+            }
         }
 
         if let Some(ref code) = self.error_code {

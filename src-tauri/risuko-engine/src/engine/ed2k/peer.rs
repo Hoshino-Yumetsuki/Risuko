@@ -37,6 +37,7 @@ pub struct PeerConnection {
     server_ip: u32,
     server_port: u16,
     tx: Option<mpsc::Sender<Ed2kPacket>>,
+    tasks: Vec<tokio::task::JoinHandle<()>>,
 }
 
 impl PeerConnection {
@@ -56,6 +57,7 @@ impl PeerConnection {
             server_ip,
             server_port,
             tx: None,
+            tasks: Vec::new(),
         }
     }
 
@@ -87,7 +89,7 @@ impl PeerConnection {
         self.tx = Some(packet_tx.clone());
 
         // Writer task
-        tokio::spawn(async move {
+        let writer_task = tokio::spawn(async move {
             while let Some(packet) = packet_rx.recv().await {
                 if write_half.write_all(&packet.encode()).await.is_err() {
                     break;
@@ -97,7 +99,7 @@ impl PeerConnection {
 
         // Reader task
         let event_tx_clone = event_tx.clone();
-        tokio::spawn(async move {
+        let reader_task = tokio::spawn(async move {
             let mut reader = read_half;
             let mut buf = bytes::BytesMut::with_capacity(65536);
             loop {
@@ -126,6 +128,9 @@ impl PeerConnection {
             }
         });
 
+        self.tasks.push(writer_task);
+        self.tasks.push(reader_task);
+
         Ok((event_rx, packet_tx))
     }
 
@@ -138,9 +143,6 @@ impl PeerConnection {
                 if packet.payload.len() < 17 {
                     return Ok(());
                 }
-                let mut hash = [0u8; 16];
-                // Skip first byte (hash length = 0x10)
-                hash.copy_from_slice(&packet.payload[1..17]);
                 PeerEvent::HelloAnswer
             }
             OP_FILE_STATUS => {
@@ -222,5 +224,14 @@ impl PeerConnection {
         tx.send(build_request_parts(file_hash, ranges))
             .await
             .map_err(|_| "Send failed".to_string())
+    }
+}
+
+impl Drop for PeerConnection {
+    fn drop(&mut self) {
+        // Abort detached IO tasks so a half-open peer cannot park them after download teardown
+        for task in self.tasks.drain(..) {
+            task.abort();
+        }
     }
 }

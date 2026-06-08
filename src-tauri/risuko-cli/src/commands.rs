@@ -9,7 +9,7 @@ use risuko_engine::engine::manager::TaskManager;
 use risuko_engine::engine::options::EngineOptions;
 use risuko_engine::engine::rpc::RpcServer;
 
-use crate::progress::{self, format_size, format_size_speed};
+use crate::progress::{self, extract_filename, format_size, format_size_speed, parse_num};
 use crate::rpc_client::RpcClient;
 use crate::{
     ConfigAction, ConfigCommand, DownloadArgs, GidArgs, PauseArgs, RemoveArgs, ResumeArgs, RpcArgs,
@@ -22,18 +22,19 @@ fn resolve_rpc_secret(explicit: Option<String>) -> Option<String> {
         .or_else(read_secret_from_config)
 }
 
+fn rpc_client(port: u16, secret: Option<String>) -> RpcClient {
+    let host = resolve_rpc_host();
+    RpcClient::new_with_host(&host, port, secret)
+}
+
+fn resolve_rpc_host() -> String {
+    read_options_from_config().rpc_host()
+}
+
 /// Read rpc-secret from the config files, returning None if empty or absent
 /// user.json takes precedence over system.json
 fn read_secret_from_config() -> Option<String> {
-    let config_dir = get_config_dir();
-    let mut merged = load_config(&config_dir.join("system.json"), Map::new());
-    let user = load_config(&config_dir.join("user.json"), Map::new());
-    merged.extend(user);
-    let secret = merged
-        .get("rpc-secret")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
+    let secret = read_options_from_config().rpc_secret();
     if secret.is_empty() {
         None
     } else {
@@ -41,18 +42,25 @@ fn read_secret_from_config() -> Option<String> {
     }
 }
 
+fn read_options_from_config() -> EngineOptions {
+    let config_dir = get_config_dir();
+    let system = load_config(&config_dir.join("system.json"), defaults::system_defaults());
+    let user = load_config(&config_dir.join("user.json"), defaults::user_defaults());
+    EngineOptions::from_config(&system, &user)
+}
+
 // Download
 
 pub async fn download(args: DownloadArgs) -> Result<(), Box<dyn std::error::Error>> {
     let secret = resolve_rpc_secret(args.rpc_secret.clone());
-    let client = RpcClient::new(args.rpc_port, secret.clone());
+    let client = rpc_client(args.rpc_port, secret.clone());
     let mut headless_engine = None;
 
     if !client.is_engine_running().await {
         eprintln!("No running Risuko instance found. Starting headless engine...");
+        // `start_headless_engine` waits for the RPC bind and task manager init, so no readiness sleep is needed
         let engine = start_headless_engine(args.rpc_port).await?;
         headless_engine = Some(engine);
-        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
     }
 
     let result = do_download(&client, &args).await;
@@ -166,7 +174,7 @@ async fn do_download(
 
 pub async fn status(args: StatusArgs) -> Result<(), Box<dyn std::error::Error>> {
     let secret = resolve_rpc_secret(args.rpc_secret.clone());
-    let client = RpcClient::new(args.rpc_port, secret);
+    let client = rpc_client(args.rpc_port, secret);
     require_engine(&client).await?;
 
     if let Some(ref gid) = args.gid {
@@ -222,7 +230,7 @@ pub async fn status(args: StatusArgs) -> Result<(), Box<dyn std::error::Error>> 
 
 pub async fn pause(args: PauseArgs) -> Result<(), Box<dyn std::error::Error>> {
     let secret = resolve_rpc_secret(args.rpc_secret.clone());
-    let client = RpcClient::new(args.rpc_port, secret);
+    let client = rpc_client(args.rpc_port, secret);
     require_engine(&client).await?;
     client.call("risuko.pause", vec![json!(args.gid)]).await?;
     println!("Paused: {}", args.gid);
@@ -231,7 +239,7 @@ pub async fn pause(args: PauseArgs) -> Result<(), Box<dyn std::error::Error>> {
 
 pub async fn resume(args: ResumeArgs) -> Result<(), Box<dyn std::error::Error>> {
     let secret = resolve_rpc_secret(args.rpc_secret.clone());
-    let client = RpcClient::new(args.rpc_port, secret);
+    let client = rpc_client(args.rpc_port, secret);
     require_engine(&client).await?;
     client.call("risuko.unpause", vec![json!(args.gid)]).await?;
     println!("Resumed: {}", args.gid);
@@ -240,7 +248,7 @@ pub async fn resume(args: ResumeArgs) -> Result<(), Box<dyn std::error::Error>> 
 
 pub async fn remove(args: RemoveArgs) -> Result<(), Box<dyn std::error::Error>> {
     let secret = resolve_rpc_secret(args.rpc_secret.clone());
-    let client = RpcClient::new(args.rpc_port, secret);
+    let client = rpc_client(args.rpc_port, secret);
     require_engine(&client).await?;
     for gid in &args.gids {
         match client.call("risuko.remove", vec![json!(gid)]).await {
@@ -255,7 +263,7 @@ pub async fn remove(args: RemoveArgs) -> Result<(), Box<dyn std::error::Error>> 
 
 pub async fn pause_all(args: RpcArgs) -> Result<(), Box<dyn std::error::Error>> {
     let secret = resolve_rpc_secret(args.rpc_secret.clone());
-    let client = RpcClient::new(args.rpc_port, secret);
+    let client = rpc_client(args.rpc_port, secret);
     require_engine(&client).await?;
     client.call("risuko.pauseAll", vec![]).await?;
     println!("All downloads paused.");
@@ -264,7 +272,7 @@ pub async fn pause_all(args: RpcArgs) -> Result<(), Box<dyn std::error::Error>> 
 
 pub async fn resume_all(args: RpcArgs) -> Result<(), Box<dyn std::error::Error>> {
     let secret = resolve_rpc_secret(args.rpc_secret.clone());
-    let client = RpcClient::new(args.rpc_port, secret);
+    let client = rpc_client(args.rpc_port, secret);
     require_engine(&client).await?;
     client.call("risuko.unpauseAll", vec![]).await?;
     println!("All downloads resumed.");
@@ -275,7 +283,7 @@ pub async fn resume_all(args: RpcArgs) -> Result<(), Box<dyn std::error::Error>>
 
 pub async fn global_stat(args: RpcArgs) -> Result<(), Box<dyn std::error::Error>> {
     let secret = resolve_rpc_secret(args.rpc_secret.clone());
-    let client = RpcClient::new(args.rpc_port, secret);
+    let client = rpc_client(args.rpc_port, secret);
     require_engine(&client).await?;
     let stat = client.call("risuko.getGlobalStat", vec![]).await?;
 
@@ -306,7 +314,7 @@ pub async fn global_stat(args: RpcArgs) -> Result<(), Box<dyn std::error::Error>
 
 pub async fn files(args: GidArgs) -> Result<(), Box<dyn std::error::Error>> {
     let secret = resolve_rpc_secret(args.rpc_secret.clone());
-    let client = RpcClient::new(args.rpc_port, secret);
+    let client = rpc_client(args.rpc_port, secret);
     require_engine(&client).await?;
     let result = client
         .call("risuko.getFiles", vec![json!(args.gid)])
@@ -336,7 +344,7 @@ pub async fn files(args: GidArgs) -> Result<(), Box<dyn std::error::Error>> {
 
 pub async fn peers(args: GidArgs) -> Result<(), Box<dyn std::error::Error>> {
     let secret = resolve_rpc_secret(args.rpc_secret.clone());
-    let client = RpcClient::new(args.rpc_port, secret);
+    let client = rpc_client(args.rpc_port, secret);
     require_engine(&client).await?;
     let result = client
         .call("risuko.getPeers", vec![json!(args.gid)])
@@ -374,7 +382,7 @@ pub async fn peers(args: GidArgs) -> Result<(), Box<dyn std::error::Error>> {
 
 pub async fn purge(args: RpcArgs) -> Result<(), Box<dyn std::error::Error>> {
     let secret = resolve_rpc_secret(args.rpc_secret.clone());
-    let client = RpcClient::new(args.rpc_port, secret);
+    let client = rpc_client(args.rpc_port, secret);
     require_engine(&client).await?;
     client.call("risuko.purgeDownloadResult", vec![]).await?;
     println!("Purged completed/error/removed download results.");
@@ -444,7 +452,7 @@ pub async fn rss(cmd: RssCommand) -> Result<(), Box<dyn std::error::Error>> {
             rpc_secret,
         } => {
             let secret = resolve_rpc_secret(rpc_secret);
-            let client = RpcClient::new(rpc_port, secret);
+            let client = rpc_client(rpc_port, secret);
             require_engine(&client).await?;
             let result = client.call("risuko.addRssFeed", vec![json!(url)]).await?;
             println!("{}", serde_json::to_string_pretty(&result)?);
@@ -456,7 +464,7 @@ pub async fn rss(cmd: RssCommand) -> Result<(), Box<dyn std::error::Error>> {
             json,
         } => {
             let secret = resolve_rpc_secret(rpc_secret);
-            let client = RpcClient::new(rpc_port, secret);
+            let client = rpc_client(rpc_port, secret);
             require_engine(&client).await?;
             let result = client.call("risuko.getRssFeeds", vec![]).await?;
             if json {
@@ -480,7 +488,7 @@ pub async fn rss(cmd: RssCommand) -> Result<(), Box<dyn std::error::Error>> {
             rpc_secret,
         } => {
             let secret = resolve_rpc_secret(rpc_secret);
-            let client = RpcClient::new(rpc_port, secret);
+            let client = rpc_client(rpc_port, secret);
             require_engine(&client).await?;
             client.call("risuko.refreshAllRssFeeds", vec![]).await?;
             println!("RSS feeds refreshed.");
@@ -492,7 +500,7 @@ pub async fn rss(cmd: RssCommand) -> Result<(), Box<dyn std::error::Error>> {
             rpc_secret,
         } => {
             let secret = resolve_rpc_secret(rpc_secret);
-            let client = RpcClient::new(rpc_port, secret);
+            let client = rpc_client(rpc_port, secret);
             require_engine(&client).await?;
             client.call("risuko.removeRssFeed", vec![json!(id)]).await?;
             println!("Removed RSS feed: {}", id);
@@ -508,8 +516,17 @@ pub async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
     let engine = start_headless_engine(args.rpc_port).await?;
     tracing::info!("Risuko engine running, press Ctrl+C to stop");
 
-    tokio::signal::ctrl_c().await?;
-    tracing::info!("Received Ctrl+C, shutting down...");
+    // Shut down on Ctrl+C or RPC `risuko.shutdown`
+    // The `shutdown_requested()` borrow ends with `select!`, so `engine.shutdown()` can consume `engine`
+    tokio::select! {
+        res = tokio::signal::ctrl_c() => {
+            res?;
+            tracing::info!("Received Ctrl+C, shutting down...");
+        }
+        _ = engine.shutdown_requested() => {
+            tracing::info!("Shutdown requested via RPC, shutting down...");
+        }
+    }
     engine.shutdown().await;
     Ok(())
 }
@@ -518,7 +535,7 @@ pub async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
 
 pub async fn shutdown(args: RpcArgs) -> Result<(), Box<dyn std::error::Error>> {
     let secret = resolve_rpc_secret(args.rpc_secret.clone());
-    let client = RpcClient::new(args.rpc_port, secret);
+    let client = rpc_client(args.rpc_port, secret);
     require_engine(&client).await?;
     client.call("risuko.shutdown", vec![]).await?;
     println!("Shutdown request sent.");
@@ -532,9 +549,15 @@ struct HeadlessEngine {
     rpc_server: RpcServer,
     progress_task: tokio::task::JoinHandle<()>,
     auto_save_task: tokio::task::JoinHandle<()>,
+    shutdown_notify: Arc<tokio::sync::Notify>,
 }
 
 impl HeadlessEngine {
+    /// Future resolved by an RPC shutdown request
+    fn shutdown_requested(&self) -> impl std::future::Future<Output = ()> + '_ {
+        self.shutdown_notify.notified()
+    }
+
     async fn shutdown(mut self) {
         self.progress_task.abort();
         self.auto_save_task.abort();
@@ -577,7 +600,7 @@ async fn start_headless_engine(
 
     tracing::info!("Task manager ready");
 
-    let (rpc_shutdown_tx, _rpc_shutdown_rx) = tokio::sync::mpsc::channel::<()>(1);
+    let (rpc_shutdown_tx, mut rpc_shutdown_rx) = tokio::sync::mpsc::channel::<()>(1);
 
     let mut rpc_server = RpcServer::new(
         rpc_host.clone(),
@@ -614,11 +637,22 @@ async fn start_headless_engine(
         }
     });
 
+    // Monitor RPC shutdown requests, such as `risuko shutdown`
+    let shutdown_notify = Arc::new(tokio::sync::Notify::new());
+    let shutdown_notify_clone = shutdown_notify.clone();
+    tokio::spawn(async move {
+        if rpc_shutdown_rx.recv().await.is_some() {
+            tracing::info!("Shutdown requested via RPC");
+            shutdown_notify_clone.notify_one();
+        }
+    });
+
     Ok(HeadlessEngine {
         manager,
         rpc_server,
         progress_task,
         auto_save_task,
+        shutdown_notify,
     })
 }
 
@@ -653,27 +687,6 @@ fn load_config(path: &std::path::Path, defaults: Map<String, Value>) -> Map<Stri
     defaults
 }
 
-fn parse_num(val: &Value, key: &str) -> u64 {
-    val.get(key)
-        .and_then(|v| v.as_str().and_then(|s| s.parse().ok()).or(v.as_u64()))
-        .unwrap_or(0)
-}
-
-fn extract_name(task: &Value) -> String {
-    task.get("files")
-        .and_then(|f| f.as_array())
-        .and_then(|arr| arr.first())
-        .and_then(|f| f.get("path"))
-        .and_then(|p| p.as_str())
-        .and_then(|p| {
-            std::path::Path::new(p)
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-        })
-        .map(|n| n.strip_suffix(".part").unwrap_or(&n).to_string())
-        .unwrap_or_else(|| "-".into())
-}
-
 fn print_task_table(tasks: &[Value]) {
     println!(
         "{:<18} {:<10} {:<30} {:>9} {:>12} {:>10}",
@@ -687,7 +700,7 @@ fn print_task_table(tasks: &[Value]) {
         let total = parse_num(task, "totalLength");
         let completed = parse_num(task, "completedLength");
         let speed = parse_num(task, "downloadSpeed");
-        let name = extract_name(task);
+        let name = extract_filename(task, "-");
 
         let pct = if total > 0 {
             format!("{:.1}%", completed as f64 / total as f64 * 100.0)
@@ -727,7 +740,7 @@ fn print_task_detail(task: &Value) {
     let completed = parse_num(task, "completedLength");
     let dl_speed = parse_num(task, "downloadSpeed");
     let ul_speed = parse_num(task, "uploadSpeed");
-    let name = extract_name(task);
+    let name = extract_filename(task, "-");
 
     let pct = if total > 0 {
         format!("{:.1}%", completed as f64 / total as f64 * 100.0)

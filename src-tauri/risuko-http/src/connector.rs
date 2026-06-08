@@ -45,7 +45,7 @@ impl Connector {
 }
 
 pub(crate) enum MaybeTls {
-    Plain(TcpStream),
+    Plain(BoxedIo),
     Tls(Box<TlsStream<BoxedIo>>),
 }
 
@@ -61,6 +61,56 @@ impl<T: AsyncRead + AsyncWrite> AsyncReadWrite for T {}
 impl BoxedIo {
     fn new<T: AsyncRead + AsyncWrite + Send + Unpin + 'static>(t: T) -> Self {
         Self { inner: Box::new(t) }
+    }
+}
+
+struct PrefixedIo<T> {
+    prefix: io::Cursor<Vec<u8>>,
+    inner: T,
+}
+
+impl<T> PrefixedIo<T> {
+    fn new(prefix: Vec<u8>, inner: T) -> Self {
+        Self {
+            prefix: io::Cursor::new(prefix),
+            inner,
+        }
+    }
+}
+
+impl<T: AsyncRead + Unpin> AsyncRead for PrefixedIo<T> {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        if self.prefix.position() < self.prefix.get_ref().len() as u64 {
+            let position = self.prefix.position();
+            let remaining = &self.prefix.get_ref()[position as usize..];
+            let n = remaining.len().min(buf.remaining());
+            buf.put_slice(&remaining[..n]);
+            self.prefix.set_position(position + n as u64);
+            return Poll::Ready(Ok(()));
+        }
+        Pin::new(&mut self.inner).poll_read(cx, buf)
+    }
+}
+
+impl<T: AsyncWrite + Unpin> AsyncWrite for PrefixedIo<T> {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        Pin::new(&mut self.inner).poll_write(cx, buf)
+    }
+
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.inner).poll_flush(cx)
+    }
+
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.inner).poll_shutdown(cx)
     }
 }
 
@@ -198,7 +248,7 @@ impl Connector {
 
         let stream = match self.proxy.as_deref() {
             Some(p) => self.via_proxy(p, &host, port, is_https).await?,
-            None => self.direct(&host, port).await?,
+            None => BoxedIo::new(self.direct(&host, port).await?),
         };
 
         let final_io = if is_https {
@@ -207,9 +257,7 @@ impl Connector {
             // The TCP-connect timeout above doesn't cover the TLS
             // handshake, so apply the same budget here to avoid hangs on
             // half-open or misconfigured TLS servers
-            let handshake = self
-                .tls_connector()
-                .connect(server_name, BoxedIo::new(stream));
+            let handshake = self.tls_connector().connect(server_name, stream);
             let tls = match self.connect_timeout {
                 Some(d) => tokio::time::timeout(d, handshake)
                     .await
@@ -329,7 +377,7 @@ impl Connector {
         host: &str,
         port: u16,
         is_https: bool,
-    ) -> Result<TcpStream, Error> {
+    ) -> Result<BoxedIo, Error> {
         match proxy.scheme() {
             ProxyScheme::Http => {
                 let phost = proxy
@@ -338,11 +386,12 @@ impl Connector {
                     .ok_or_else(|| Error::Url("proxy missing host".into()))?
                     .to_string();
                 let pport = proxy.url().port().unwrap_or(80);
-                let mut stream = self.direct(&phost, pport).await?;
+                let stream = self.direct(&phost, pport).await?;
                 if is_https {
-                    http_connect(&mut stream, host, port, proxy, self.connect_timeout).await?;
+                    http_connect(stream, host, port, proxy, self.connect_timeout).await
+                } else {
+                    Ok(BoxedIo::new(stream))
                 }
-                Ok(stream)
             }
             ProxyScheme::Socks5 { resolve_locally } => {
                 let phost = proxy
@@ -395,19 +444,19 @@ impl Connector {
                     }
                 };
                 self.tune(&stream)?;
-                Ok(stream)
+                Ok(BoxedIo::new(stream))
             }
         }
     }
 }
 
 async fn http_connect(
-    stream: &mut TcpStream,
+    stream: TcpStream,
     host: &str,
     port: u16,
     proxy: &Proxy,
     timeout: Option<Duration>,
-) -> Result<(), Error> {
+) -> Result<BoxedIo, Error> {
     let fut = http_connect_inner(stream, host, port, proxy);
     match timeout {
         Some(d) => tokio::time::timeout(d, fut)
@@ -418,11 +467,11 @@ async fn http_connect(
 }
 
 async fn http_connect_inner(
-    stream: &mut TcpStream,
+    mut stream: TcpStream,
     host: &str,
     port: u16,
     proxy: &Proxy,
-) -> Result<(), Error> {
+) -> Result<BoxedIo, Error> {
     let mut req = format!("CONNECT {host}:{port} HTTP/1.1\r\nHost: {host}:{port}\r\n");
     if !proxy.url().username().is_empty() {
         // Percent-decode credentials per RFC 3986 before encoding to Basic;
@@ -440,24 +489,28 @@ async fn http_connect_inner(
         .await
         .map_err(|e| Error::Connect(format!("CONNECT write: {e}")))?;
 
-    let mut buf = Vec::with_capacity(256);
+    let mut buf = Vec::with_capacity(1024);
     loop {
-        let mut byte = [0u8; 1];
+        let mut chunk = [0u8; 1024];
         let n = stream
-            .read(&mut byte)
+            .read(&mut chunk)
             .await
             .map_err(|e| Error::Connect(format!("CONNECT read: {e}")))?;
         if n == 0 {
             return Err(Error::Connect("proxy closed during CONNECT".into()));
         }
-        buf.push(byte[0]);
-        if buf.ends_with(b"\r\n\r\n") {
+        buf.extend_from_slice(&chunk[..n]);
+        let header_end = find_header_end(&buf);
+        if header_end.is_some() {
             break;
         }
         if buf.len() > 16 * 1024 {
             return Err(Error::Connect("CONNECT response too large".into()));
         }
     }
+    let header_end = find_header_end(&buf)
+        .ok_or_else(|| Error::Connect("CONNECT response missing header terminator".into()))?;
+    let leftover = buf.split_off(header_end);
     let head = std::str::from_utf8(&buf).map_err(|e| Error::Connect(e.to_string()))?;
     let status_line = head.lines().next().unwrap_or("");
     let mut parts = status_line.split_whitespace();
@@ -466,7 +519,13 @@ async fn http_connect_inner(
     if !code.starts_with('2') {
         return Err(Error::Connect(format!("CONNECT failed: {status_line}")));
     }
-    Ok(())
+    Ok(BoxedIo::new(PrefixedIo::new(leftover, stream)))
+}
+
+fn find_header_end(buf: &[u8]) -> Option<usize> {
+    buf.windows(4)
+        .position(|w| w == b"\r\n\r\n")
+        .map(|pos| pos + 4)
 }
 
 /// Connect to a single address with the optional per-attempt timeout
@@ -531,10 +590,66 @@ fn percent_decode_str(s: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
+/// SOCKS5 connect with optional local DNS and username/password auth
+///
+/// Split out so the connect-timeout wrapper covers every path
+async fn socks5_connect(
+    proxy_addr: &str,
+    target_addr_str: &str,
+    host: &str,
+    port: u16,
+    resolve_locally: bool,
+    auth: Option<(&str, &str)>,
+    resolver: &SharedResolver,
+) -> Result<TcpStream, Error> {
+    if resolve_locally {
+        // Use the configured resolver instead of bypassing split-horizon or DoH on SOCKS5
+        let target_ip = resolver
+            .resolve(host)
+            .await?
+            .next()
+            .ok_or_else(|| Error::Connect(format!("no addrs for {host}")))?
+            .ip();
+        let target = SocketAddr::new(target_ip, port);
+        let _ = target_addr_str;
+        match auth {
+            Some((u, p)) => Ok(tokio_socks::tcp::Socks5Stream::connect_with_password(
+                proxy_addr, target, u, p,
+            )
+            .await
+            .map_err(|e| Error::Connect(e.to_string()))?
+            .into_inner()),
+            None => Ok(tokio_socks::tcp::Socks5Stream::connect(proxy_addr, target)
+                .await
+                .map_err(|e| Error::Connect(e.to_string()))?
+                .into_inner()),
+        }
+    } else {
+        match auth {
+            Some((u, p)) => Ok(tokio_socks::tcp::Socks5Stream::connect_with_password(
+                proxy_addr,
+                (host, port),
+                u,
+                p,
+            )
+            .await
+            .map_err(|e| Error::Connect(e.to_string()))?
+            .into_inner()),
+            None => Ok(
+                tokio_socks::tcp::Socks5Stream::connect(proxy_addr, (host, port))
+                    .await
+                    .map_err(|e| Error::Connect(e.to_string()))?
+                    .into_inner(),
+            ),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::net::{Ipv4Addr, Ipv6Addr};
+    use tokio::net::TcpListener;
 
     fn v4(n: u8) -> SocketAddr {
         SocketAddr::new(std::net::IpAddr::V4(Ipv4Addr::new(10, 0, 0, n)), 443)
@@ -621,62 +736,33 @@ mod tests {
         let res = c.happy_eyeballs("localhost", vec![dead1, dead2]).await;
         assert!(res.is_err());
     }
-}
 
-/// SOCKS5 connect with optional local DNS and optional username/password
-/// auth. Pulled out so the connect-timeout wrapper can apply the same
-/// budget to every code path
-async fn socks5_connect(
-    proxy_addr: &str,
-    target_addr_str: &str,
-    host: &str,
-    port: u16,
-    resolve_locally: bool,
-    auth: Option<(&str, &str)>,
-    resolver: &SharedResolver,
-) -> Result<TcpStream, Error> {
-    if resolve_locally {
-        // Honour the configured custom resolver instead of bypassing it via
-        // `tokio::net::lookup_host`. Otherwise a custom DNS resolver set on
-        // the client (e.g. for split-horizon or DoH) would silently be
-        // skipped on the SOCKS5 path
-        let target_ip = resolver
-            .resolve(host)
-            .await?
-            .next()
-            .ok_or_else(|| Error::Connect(format!("no addrs for {host}")))?
-            .ip();
-        let target = SocketAddr::new(target_ip, port);
-        let _ = target_addr_str;
-        match auth {
-            Some((u, p)) => Ok(tokio_socks::tcp::Socks5Stream::connect_with_password(
-                proxy_addr, target, u, p,
-            )
-            .await
-            .map_err(|e| Error::Connect(e.to_string()))?
-            .into_inner()),
-            None => Ok(tokio_socks::tcp::Socks5Stream::connect(proxy_addr, target)
+    #[tokio::test]
+    async fn http_connect_preserves_bytes_read_after_headers() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut req = [0u8; 256];
+            let n = socket.read(&mut req).await.unwrap();
+            assert!(std::str::from_utf8(&req[..n])
+                .unwrap()
+                .starts_with("CONNECT example.com:443 HTTP/1.1"));
+            socket
+                .write_all(b"HTTP/1.1 200 Connection Established\r\n\r\nhello")
                 .await
-                .map_err(|e| Error::Connect(e.to_string()))?
-                .into_inner()),
-        }
-    } else {
-        match auth {
-            Some((u, p)) => Ok(tokio_socks::tcp::Socks5Stream::connect_with_password(
-                proxy_addr,
-                (host, port),
-                u,
-                p,
-            )
+                .unwrap();
+        });
+
+        let stream = TcpStream::connect(addr).await.unwrap();
+        let proxy = Proxy::all("http://127.0.0.1:8080").unwrap();
+        let mut tunneled = http_connect(stream, "example.com", 443, &proxy, None)
             .await
-            .map_err(|e| Error::Connect(e.to_string()))?
-            .into_inner()),
-            None => Ok(
-                tokio_socks::tcp::Socks5Stream::connect(proxy_addr, (host, port))
-                    .await
-                    .map_err(|e| Error::Connect(e.to_string()))?
-                    .into_inner(),
-            ),
-        }
+            .unwrap();
+        let mut out = [0u8; 5];
+        tunneled.read_exact(&mut out).await.unwrap();
+
+        assert_eq!(&out, b"hello");
+        server.await.unwrap();
     }
 }

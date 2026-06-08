@@ -6,7 +6,6 @@ export type {
 	BrowserInfo,
 	CookieEntryView,
 	ImportedCookies,
-	ImportedCookieView,
 } from "./Api";
 
 export default api;

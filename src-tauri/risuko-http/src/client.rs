@@ -204,6 +204,7 @@ impl Client {
                 headers.remove(HOST);
             }
 
+            resp.drain().await?;
             url = next;
         }
     }

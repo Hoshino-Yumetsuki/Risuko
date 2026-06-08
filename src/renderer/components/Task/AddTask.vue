@@ -551,19 +551,25 @@ export default {
 		},
 		async tryFillFromClipboard() {
 			let text = "";
+			let timeoutId: ReturnType<typeof setTimeout> | undefined;
 			try {
 				// Race clipboard read against a timeout to prevent GTK main-thread
 				// deadlock on Linux (WebKitGTK clipboard IPC can block indefinitely
 				// if fired while the dialog portal is still mounting).
 				text = await Promise.race([
 					readText(),
-					new Promise<string>((_resolve, reject) =>
-						setTimeout(() => reject(new Error("clipboard timeout")), 1000),
-					),
+					new Promise<string>((_resolve, reject) => {
+						timeoutId = setTimeout(
+							() => reject(new Error("clipboard timeout")),
+							1000,
+						);
+					}),
 				]);
 			} catch (err) {
 				logger.warn("[Risuko] readText clipboard failed:", err);
 				return;
+			} finally {
+				clearTimeout(timeoutId);
 			}
 			if (!text || text.length > 4096) {
 				return;
