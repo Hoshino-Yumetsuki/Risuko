@@ -322,7 +322,6 @@ export default {
 						logger.warn(
 							"[Risuko] flyout add task failed for uri:",
 							`${uriPrefix}...`,
-							err,
 						);
 					}
 				}

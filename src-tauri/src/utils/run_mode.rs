@@ -1,9 +1,7 @@
 use tauri::{AppHandle, Manager};
 
 pub const RUN_MODE_STANDARD: i64 = 1;
-#[cfg(target_os = "macos")]
 pub const RUN_MODE_TRAY: i64 = 2;
-#[cfg(target_os = "macos")]
 pub const RUN_MODE_HIDE_TRAY_LEGACY: i64 = 3;
 
 /// Get the current run mode from app config (1 = standard, 2 = tray, 3 = hide tray legacy)
