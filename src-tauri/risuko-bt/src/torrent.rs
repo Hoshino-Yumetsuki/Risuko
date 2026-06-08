@@ -26,7 +26,10 @@ use super::piece::{ChunkTracker, PieceTracker};
 use super::storage::{FileSet, FilesystemStorage, StorageBackend};
 use super::tracker::{announce as tracker_announce, AnnounceEvent, AnnounceRequest};
 use super::utp::UtpSocket;
-use super::wire::extended::{ut_metadata_data, ut_metadata_type, ExtHandshake, EXT_HANDSHAKE_ID};
+use super::wire::extended::{
+    build_holepunch, holepunch_err, holepunch_type, parse_holepunch, ut_metadata_data,
+    ut_metadata_type, ExtHandshake, HolepunchMsg, EXT_HANDSHAKE_ID,
+};
 use super::wire::{Message, MessageEncoder};
 
 pub use stats::{
@@ -97,6 +100,15 @@ const OUR_UT_METADATA_ID: u8 = 3;
 /// we parse the `added`/`added6` fields and feed them into the dial path
 /// (see the Extended handler)
 const OUR_UT_PEX_ID: u8 = 4;
+/// Per-peer message id we advertise for `ut_holepunch` (BEP-55). Peers send
+/// `Extended { ext_id: OUR_UT_HOLEPUNCH_ID, .. }` to ask us to relay a
+/// rendezvous, or to tell us to connect to an endpoint (NAT hole punching)
+/// See the Extended handler and [`handle_holepunch`]
+const OUR_UT_HOLEPUNCH_ID: u8 = 5;
+/// Cap on the `pex_source` map (PEX-gossiped addr -> relay pid). Bounds memory
+/// on large swarms; once full we stop recording new gossip provenance, which
+/// only costs us holepunch initiation for late-discovered peers
+const MAX_PEX_SOURCE_ENTRIES: usize = 4096;
 /// BEP-9 metadata piece size: every ut_metadata DATA carries up to one
 /// 16 KiB block of the info dict, except possibly the last
 const META_PIECE_SIZE: usize = 16 * 1024;
@@ -235,6 +247,7 @@ pub async fn spawn(
         std::sync::Arc::new(move |peer_ip: std::net::IpAddr| {
             let hs =
                 ExtHandshake::new_outgoing(OUR_UT_METADATA_ID, OUR_UT_PEX_ID, Some(metadata_size))
+                    .with_holepunch(OUR_UT_HOLEPUNCH_ID)
                     .with_yourip(peer_ip);
             MessageEncoder::encode(&Message::Extended {
                 ext_id: EXT_HANDSHAKE_ID,
@@ -317,6 +330,11 @@ struct Peer {
     /// (info is already loaded) but record the id so the responder can
     /// echo it back on DATA / REJECT replies
     their_ut_metadata_id: Option<u8>,
+    /// Per-peer message id the remote advertised for `ut_holepunch` (BEP-55)
+    /// in its extended handshake. `None` if the peer does not support
+    /// holepunch. Used to address rendezvous / connect / error messages we
+    /// send this peer (as a relay endpoint or initiator)
+    their_ut_holepunch_id: Option<u8>,
 }
 
 /// Result of an off-runtime piece write + verify pass
@@ -454,6 +472,11 @@ async fn torrent_loop(
         ),
     };
     let max_peers = init.max_peers.unwrap_or(DEFAULT_MAX_PEERS).max(1);
+    log::info!(
+        target: "diag",
+        "torrent pipeline config: max_outstanding_per_peer={:?} -> floor={} cap={} max_peers={}",
+        init.max_outstanding_per_peer, pipeline_floor, pipeline_cap, max_peers
+    );
     let storage = Arc::new(FilesystemStorage::new(&info, &init.root_dir));
     if let Err(e) = storage.preallocate().await {
         log::warn!("preallocate failed for {info_hash}: {e}");
@@ -502,6 +525,7 @@ async fn torrent_loop(
         std::sync::Arc::new(move |peer_ip: std::net::IpAddr| {
             let hs =
                 ExtHandshake::new_outgoing(OUR_UT_METADATA_ID, OUR_UT_PEX_ID, Some(metadata_size))
+                    .with_holepunch(OUR_UT_HOLEPUNCH_ID)
                     .with_yourip(peer_ip);
             MessageEncoder::encode(&Message::Extended {
                 ext_id: EXT_HANDSHAKE_ID,
@@ -521,6 +545,9 @@ async fn torrent_loop(
     let mut peers: HashMap<u32, Peer> = HashMap::new();
     let mut next_pid: u32 = 1;
     let mut known_addrs: HashSet<SocketAddr> = HashSet::new();
+    // BEP-55
+    let mut pex_source: HashMap<SocketAddr, u32> = HashMap::new();
+    let mut holepunch_attempted: HashSet<SocketAddr> = HashSet::new();
     // Outbound dials that have been spawned but whose peer has not completed
     // the BT handshake yet. Tracked separately so the max-peer cap accounts
     // for in-flight connection bursts, not just handshook peers.
@@ -599,6 +626,8 @@ async fn torrent_loop(
                     }
                     pending_dials.clear();
                     known_addrs.clear();
+                    pex_source.clear();
+                    holepunch_attempted.clear();
                     // Wait for in-flight piece write tasks before closing handles
                     while let Some(result) = write_tasks.join_next().await {
                         if let Err(e) = result {
@@ -677,6 +706,7 @@ async fn torrent_loop(
                     &upload_tick,
                     &mut write_tasks,
                     &mut pending_dials, &mut known_addrs,
+                    &mut pex_source, &mut holepunch_attempted,
                     &peer_src_tx,
                     &verify_tx,
                     &verifier,
@@ -858,6 +888,18 @@ async fn torrent_loop(
                         s.peers = peer_snaps;
                     }
                 }
+                log::info!(
+                    target: "diag",
+                    "TICK summary peers={} pending_dials={} known={} endgame={} dl_bytes_tick={} ul_bytes_tick={} pending_chunks={} dt_ms={:.0}",
+                    peers.len(),
+                    pending_dials.len(),
+                    known_addrs.len(),
+                    chunk_tracker.endgame(),
+                    bytes_this_tick.0,
+                    bytes_this_tick.1,
+                    chunk_tracker.pending_chunks(),
+                    f64::from(dt) * 1000.0
+                );
                 bytes_this_tick = (0, 0);
                 if !paused {
                     drive_requests(&mut peers, &mut piece_tracker, &mut chunk_tracker).await;
@@ -1025,6 +1067,7 @@ async fn adopt_inbound_peer(
             last_recv: Instant::now(),
             snub_since: None,
             their_ut_metadata_id: None,
+            their_ut_holepunch_id: None,
         },
     );
     let bf = piece_tracker.bitfield();
@@ -1065,6 +1108,10 @@ async fn process_peer_event(
     write_tasks: &mut tokio::task::JoinSet<()>,
     pending_dials: &mut HashMap<u32, SocketAddr>,
     known_addrs: &mut HashSet<SocketAddr>,
+    // BEP-55: addr gossiped via PEX -> the relay pid that gossiped it
+    pex_source: &mut HashMap<SocketAddr, u32>,
+    // BEP-55: targets we've already asked a relay to rendezvous
+    holepunch_attempted: &mut HashSet<SocketAddr>,
     peer_src_tx: &mpsc::Sender<SocketAddr>,
     verify_tx: &mpsc::Sender<VerifyResult>,
     verifier: &PieceVerifier,
@@ -1130,6 +1177,7 @@ async fn process_peer_event(
                             last_recv: Instant::now(),
                             snub_since: None,
                             their_ut_metadata_id: None,
+                            their_ut_holepunch_id: None,
                         },
                     );
                     // Extended handshake (when peer supports BEP-10) is
@@ -1303,6 +1351,13 @@ async fn process_peer_event(
                     {
                         peer.max_outstanding = (peer.max_outstanding * 2).min(pipeline_cap);
                         peer.received_since_grow = 0;
+                        log::info!(
+                            target: "diag",
+                            "pipeline GROW pid={pid} addr={} {}->{} cap={pipeline_cap}",
+                            peer.addr,
+                            peer.max_outstanding / 2,
+                            peer.max_outstanding
+                        );
                     }
                     // Last use of `peer` — NLL releases the &mut peers borrow
                     // here so the cancel-scan below can re-borrow `peers`
@@ -1477,6 +1532,7 @@ async fn process_peer_event(
                     if ext_id == EXT_HANDSHAKE_ID {
                         if let Some(peer_ext) = ExtHandshake::decode(&payload) {
                             peer.their_ut_metadata_id = peer_ext.ut_metadata_id();
+                            peer.their_ut_holepunch_id = peer_ext.ut_holepunch_id();
                         }
                     } else if ext_id == OUR_UT_METADATA_ID {
                         serve_ut_metadata(peer, &payload, info_bytes);
@@ -1484,8 +1540,29 @@ async fn process_peer_event(
                         // A connected peer (often a seeder) gossips other swarm members
                         if let Some((v4, v6)) = super::wire::extended::parse_ut_pex(&payload) {
                             for addr in v4.into_iter().chain(v6) {
+                                if pex_source.len() < MAX_PEX_SOURCE_ENTRIES
+                                    || pex_source.contains_key(&addr)
+                                {
+                                    pex_source.insert(addr, pid);
+                                }
                                 let _ = peer_src_tx.try_send(addr);
                             }
+                        }
+                    } else if ext_id == OUR_UT_HOLEPUNCH_ID {
+                        // BEP-55 hole punching
+                        let from_addr = peer.addr;
+                        let from_hp_id = peer.their_ut_holepunch_id;
+                        let from_cmd = peer.cmd_tx.clone();
+                        if let Some(hp) = parse_holepunch(&payload) {
+                            handle_holepunch(
+                                hp,
+                                from_addr,
+                                from_hp_id,
+                                &from_cmd,
+                                peers,
+                                known_addrs,
+                                peer_src_tx,
+                            );
                         }
                     }
                 }
@@ -1495,9 +1572,9 @@ async fn process_peer_event(
         PeerEvent::Disconnected { reason } => {
             // Clear from either in-flight or live, and release the address for future
             // retries (otherwise a single drop permanently blacklists the peer)
-            let addr = pending_dials
-                .remove(&pid)
-                .or_else(|| peers.get(&pid).map(|p| p.addr));
+            let pending_addr = pending_dials.remove(&pid);
+            let was_pending_dial = pending_addr.is_some();
+            let addr = pending_addr.or_else(|| peers.get(&pid).map(|p| p.addr));
             if let Some(a) = addr {
                 // Log the disconnect cause at debug so the per-peer error —
                 // typically the MSE handshake outcome for unreachable /
@@ -1506,6 +1583,9 @@ async fn process_peer_event(
                 // re-deduce it from "trying mse" lines alone
                 log::debug!("peer {a} disconnected: {reason}");
                 known_addrs.remove(&a);
+                if was_pending_dial {
+                    try_initiate_holepunch(a, pex_source, holepunch_attempted, peers);
+                }
             }
             // Drop the registry slot in case the peer disconnected before
             // the Handshook event moved it into `peers`.
@@ -1616,6 +1696,109 @@ fn maybe_clear_endgame(chunk_tracker: &mut ChunkTracker) {
     if chunk_tracker.endgame() && chunk_tracker.pending_chunks() > 64 {
         chunk_tracker.set_endgame(false);
     }
+}
+
+/// Handle an inbound BEP-55 ut_holepunch message
+
+fn handle_holepunch(
+    hp: HolepunchMsg,
+    from_addr: SocketAddr,
+    from_hp_id: Option<u8>,
+    from_cmd: &mpsc::Sender<PeerCommand>,
+    peers: &HashMap<u32, Peer>,
+    known_addrs: &mut HashSet<SocketAddr>,
+    peer_src_tx: &mpsc::Sender<SocketAddr>,
+) {
+    match hp.msg_type {
+        holepunch_type::CONNECT => {
+            // A relay told us to connect to `hp.addr` now
+            known_addrs.remove(&hp.addr);
+            let _ = peer_src_tx.try_send(hp.addr);
+        }
+        holepunch_type::RENDEZVOUS => {
+            // We are the relay
+            enum Relay {
+                Connect(mpsc::Sender<PeerCommand>, u8),
+                Err(u32),
+            }
+            let action = if hp.addr == from_addr {
+                Relay::Err(holepunch_err::NO_SELF)
+            } else {
+                match peers.values().find(|p| p.addr == hp.addr) {
+                    Some(t) => match t.their_ut_holepunch_id {
+                        Some(thp) => Relay::Connect(t.cmd_tx.clone(), thp),
+                        None => Relay::Err(holepunch_err::NO_SUPPORT),
+                    },
+                    None => Relay::Err(holepunch_err::NO_SUCH_PEER),
+                }
+            };
+            match action {
+                Relay::Connect(target_cmd, target_hp) => {
+                    // Tell the target to connect to the initiator
+                    let _ = target_cmd.try_send(PeerCommand::Send(Message::Extended {
+                        ext_id: target_hp,
+                        payload: build_holepunch(holepunch_type::CONNECT, from_addr, 0),
+                    }));
+                    // and tell the initiator to connect to the target
+                    if let Some(fid) = from_hp_id {
+                        let _ = from_cmd.try_send(PeerCommand::Send(Message::Extended {
+                            ext_id: fid,
+                            payload: build_holepunch(holepunch_type::CONNECT, hp.addr, 0),
+                        }));
+                    }
+                }
+                Relay::Err(code) => {
+                    if let Some(fid) = from_hp_id {
+                        let _ = from_cmd.try_send(PeerCommand::Send(Message::Extended {
+                            ext_id: fid,
+                            payload: build_holepunch(holepunch_type::ERROR, hp.addr, code),
+                        }));
+                    }
+                }
+            }
+        }
+        holepunch_type::ERROR => {
+            log::debug!(
+                target: "diag",
+                "holepunch ERROR from {from_addr} target={} code={}",
+                hp.addr, hp.err_code
+            );
+        }
+        _ => {}
+    }
+}
+
+/// On a failed direct dial to `target`, ask the peer that gossiped it via
+/// PEX to perform a BEP-55 rendezvous
+fn try_initiate_holepunch(
+    target: SocketAddr,
+    pex_source: &HashMap<SocketAddr, u32>,
+    holepunch_attempted: &mut HashSet<SocketAddr>,
+    peers: &HashMap<u32, Peer>,
+) {
+    if holepunch_attempted.contains(&target) {
+        return;
+    }
+    // Only peers we learned via PEX have a known relay; tracker/DHT peers that
+    // fail to connect have no rendezvous path we can use.
+    let Some(&relay_pid) = pex_source.get(&target) else {
+        return;
+    };
+    let Some(relay) = peers.get(&relay_pid) else {
+        return; // the gossiper has since disconnected
+    };
+    let Some(relay_hp) = relay.their_ut_holepunch_id else {
+        return; // relay doesn't support holepunch
+    };
+    holepunch_attempted.insert(target);
+    let _ = relay.cmd_tx.try_send(PeerCommand::Send(Message::Extended {
+        ext_id: relay_hp,
+        payload: build_holepunch(holepunch_type::RENDEZVOUS, target, 0),
+    }));
+    log::debug!(
+        target: "diag",
+        "holepunch RENDEZVOUS initiate target={target} via relay pid={relay_pid}"
+    );
 }
 
 async fn send_interested_if_useful(peer: &mut Peer, piece_tracker: &mut PieceTracker) {
@@ -2062,6 +2245,14 @@ fn spawn_tracker_pollers(
                     };
                     match tracker_announce(&url, &req, Duration::from_secs(30)).await {
                         Ok(resp) => {
+                            // DIAG: per-URL peer yield — quantifies whether Risuko's
+                            // (default-empty) tracker set is starving the swarm vs BitComet's.
+                            log::info!(
+                                target: "diag",
+                                "tracker ANNOUNCE ok url={url} event={event:?} peers={} interval_s={}",
+                                resp.peers.len(),
+                                resp.interval.as_secs()
+                            );
                             if matches!(event, AnnounceEvent::Completed) {
                                 sent_completed = true;
                             }
@@ -2073,7 +2264,7 @@ fn spawn_tracker_pollers(
                             tokio::time::sleep(resp.interval).await;
                         }
                         Err(e) => {
-                            log::debug!("tracker {url} failed: {e}");
+                            log::info!(target: "diag", "tracker ANNOUNCE fail url={url} event={event:?} err={e}");
                             tokio::time::sleep(Duration::from_secs(120)).await;
                         }
                     }

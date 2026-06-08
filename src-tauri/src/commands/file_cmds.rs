@@ -1167,6 +1167,12 @@ fn resolve_task_candidate_dirs(task: &Value) -> Vec<String> {
 }
 
 fn trash_generated_torrent_sidecars_in_dir(dir: &Path, normalized_info_hash: Option<&str>) -> u32 {
+    // Without a target info-hash we cannot tell this task's generated sidecar
+    // apart from unrelated .torrent files, so match nothing
+    let Some(hash) = normalized_info_hash else {
+        return 0;
+    };
+
     let entries = match std::fs::read_dir(dir) {
         Ok(entries) => entries,
         Err(_) => return 0,
@@ -1187,20 +1193,20 @@ fn trash_generated_torrent_sidecars_in_dir(dir: &Path, normalized_info_hash: Opt
         let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
             continue;
         };
-        // Only clean up generated sidecars (hex-stem torrents) to avoid removing
-        // user-provided source torrent files with descriptive names
-        let Some(stem) = generated_torrent_hex_stem(file_name) else {
+        if !file_name.to_ascii_lowercase().ends_with(".torrent") {
             continue;
-        };
+        }
 
-        let matched = normalized_info_hash
-            .map(|hash| {
-                let matched_by_name = stem == hash;
-                let matched_by_content =
-                    !matched_by_name && matches_generated_torrent_sidecar_by_content(&path, hash);
-                matched_by_name || matched_by_content
-            })
+        // The saved sidecar is named after the torrent's DISPLAY name (see
+        // `save_torrent_metadata_if_enabled`), not its info-hash, so a hex-stem
+        // filename check alone misses it. Match either by a generated hex-stem
+        // name (`<infohash>.torrent`) OR by content — hashing the file's `info`
+        // dict and comparing to this task's info-hash identifies the sidecar
+        // precisely, and never touches an unrelated torrent (different hash).
+        let matched_by_name = generated_torrent_hex_stem(file_name)
+            .map(|stem| stem == hash)
             .unwrap_or(false);
+        let matched = matched_by_name || matches_generated_torrent_sidecar_by_content(&path, hash);
 
         if matched && delete_file_best_effort(&path) {
             deleted += 1;
@@ -1504,5 +1510,53 @@ mod tests {
         let bytes = b"d4:infod6:lengthi100eee";
         let (_, name) = inspect_torrent_metadata(bytes, "my_fallback").unwrap();
         assert_eq!(name, "my_fallback");
+    }
+
+    // The engine saves a generated sidecar named after the torrent's DISPLAY
+    // name (not its hex info-hash), so cleanup must match by content info-hash
+    // rather than only by a hex-stem filename. Regression for the sidecar that
+    // survived "delete with files"
+    #[test]
+    fn cleanup_deletes_descriptively_named_generated_sidecar() {
+        let dir = tempfile::tempdir().unwrap();
+
+        // Build a v1 torrent whose `info` dict hashes (SHA1) to a known
+        // info-hash, computed the same way production does
+        let info_dict = b"d6:lengthi123e4:name9:test.filee";
+        let hash = bytes_to_lower_hex(Sha1::digest(info_dict).as_ref());
+        let mut torrent = Vec::from(*b"d4:info");
+        torrent.extend_from_slice(info_dict);
+        torrent.push(b'e');
+
+        // Saved under the torrent's display name, NOT "<infohash>.torrent"
+        let sidecar = dir.path().join("Some Movie (2026).torrent");
+        std::fs::write(&sidecar, &torrent).unwrap();
+
+        // An unrelated .torrent (different info-hash) in the same dir must survive
+        let mut unrelated = Vec::from(*b"d4:info");
+        unrelated.extend_from_slice(b"d6:lengthi999e4:name5:othere");
+        unrelated.push(b'e');
+        let unrelated_path = dir.path().join("Unrelated.torrent");
+        std::fs::write(&unrelated_path, &unrelated).unwrap();
+
+        let deleted = trash_generated_torrent_sidecars_in_dir(dir.path(), Some(&hash));
+        assert_eq!(deleted, 1);
+        assert!(
+            !sidecar.exists(),
+            "descriptively-named sidecar should be removed"
+        );
+        assert!(
+            unrelated_path.exists(),
+            "unrelated torrent with a different info-hash must be left alone"
+        );
+    }
+
+    #[test]
+    fn cleanup_without_info_hash_matches_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("anything.torrent");
+        std::fs::write(&path, b"d4:infod6:lengthi1eee").unwrap();
+        assert_eq!(trash_generated_torrent_sidecars_in_dir(dir.path(), None), 0);
+        assert!(path.exists());
     }
 }
