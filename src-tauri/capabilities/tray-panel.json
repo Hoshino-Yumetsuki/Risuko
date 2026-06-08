@@ -1,0 +1,13 @@
+{
+	"identifier": "tray-panel",
+	"description": "Minimal capabilities for the tray flyout panel.",
+	"windows": ["tray-panel"],
+	"permissions": [
+		"core:default",
+		"core:window:allow-show",
+		"core:window:allow-hide",
+		"core:window:allow-set-focus",
+		"core:window:allow-start-dragging",
+		"store:default"
+	]
+}

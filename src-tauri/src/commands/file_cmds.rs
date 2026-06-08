@@ -1204,7 +1204,10 @@ fn trash_generated_torrent_sidecars_in_dir(dir: &Path, normalized_info_hash: Opt
         // dict and comparing to this task's info-hash identifies the sidecar
         // precisely, and never touches an unrelated torrent (different hash).
         let hex_stem = generated_torrent_hex_stem(file_name);
-        let matched_by_name = hex_stem.as_deref().map(|stem| stem == hash).unwrap_or(false);
+        let matched_by_name = hex_stem
+            .as_deref()
+            .map(|stem| stem == hash)
+            .unwrap_or(false);
         // Only probe content when the filename has no hex-infohash stem.
         // A hex-named .torrent whose stem differs from our hash is definitively
         // a different torrent; content-matching it would be a false positive that

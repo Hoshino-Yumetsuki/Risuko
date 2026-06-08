@@ -1700,7 +1700,6 @@ fn maybe_clear_endgame(chunk_tracker: &mut ChunkTracker) {
 }
 
 /// Handle an inbound BEP-55 ut_holepunch message
-
 fn handle_holepunch(
     hp: HolepunchMsg,
     from_addr: SocketAddr,
@@ -1791,10 +1790,14 @@ fn try_initiate_holepunch(
     let Some(relay_hp) = relay.their_ut_holepunch_id else {
         return; // relay doesn't support holepunch
     };
-    if relay.cmd_tx.try_send(PeerCommand::Send(Message::Extended {
-        ext_id: relay_hp,
-        payload: build_holepunch(holepunch_type::RENDEZVOUS, target, 0),
-    })).is_ok() {
+    if relay
+        .cmd_tx
+        .try_send(PeerCommand::Send(Message::Extended {
+            ext_id: relay_hp,
+            payload: build_holepunch(holepunch_type::RENDEZVOUS, target, 0),
+        }))
+        .is_ok()
+    {
         holepunch_attempted.insert(target);
         log::debug!(
             target: "diag",

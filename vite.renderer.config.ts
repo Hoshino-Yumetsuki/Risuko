@@ -58,6 +58,12 @@ export default defineConfig({
 		sourcemap: false,
 		chunkSizeWarningLimit: 2000,
 		minify: "terser",
+		rollupOptions: {
+			input: {
+				index: path.resolve(rootDir, "index.html"),
+				tray: path.resolve(rootDir, "tray.html"),
+			},
+		},
 	},
 	define: {
 		"process.env.NODE_ENV": JSON.stringify(

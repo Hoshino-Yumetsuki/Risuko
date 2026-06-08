@@ -42,7 +42,11 @@ panic = "abort"
 
 [dependencies]
 risuko-engine = { workspace = true }
-tauri = { version = "2", features = ["tray-icon", "image-png"] }
+tauri = { version = "2", features = [
+	"tray-icon",
+	"image-png",
+	"macos-private-api",
+] }
 tauri-plugin-store = "2"
 tauri-plugin-deep-link = "2"
 tauri-plugin-dialog = "2"

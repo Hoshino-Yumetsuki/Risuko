@@ -3,6 +3,7 @@ pub mod cli;
 mod commands;
 mod managers;
 mod state;
+mod utils;
 
 // Re-export risuko_engine modules for use by commands and other app code
 pub use risuko_engine::config;
@@ -338,6 +339,8 @@ pub fn run() {
 
         managers::tray::setup_tray(app)?;
 
+        managers::flyout::setup_flyout(app)?;
+
         // Start RSS background polling
         if let Ok(guard) = app.state::<state::AppState>().rss.lock() {
             if let Some(rss) = guard.clone() {
@@ -353,6 +356,15 @@ pub fn run() {
     })
     .on_window_event(|window, event| {
         if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+            #[cfg(not(target_os = "android"))]
+            if window.label() == managers::flyout::FLYOUT_LABEL {
+                api.prevent_close();
+                let _ = window.hide();
+                return;
+            }
+            if window.label() != "main" {
+                return;
+            }
             let quitting = window
                 .app_handle()
                 .state::<state::AppState>()
@@ -363,6 +375,23 @@ pub fn run() {
             }
             api.prevent_close();
             let _ = commands::app_cmds::hide_main_window(window.app_handle());
+        }
+
+        if let tauri::WindowEvent::Focused(false) = event {
+            #[cfg(not(target_os = "android"))]
+            if window.label() == managers::flyout::FLYOUT_LABEL {
+                #[cfg(target_os = "macos")]
+                {
+                    // Only set Accessory policy when in tray mode
+                    let run_mode = utils::run_mode::current_run_mode(window.app_handle());
+                    if utils::run_mode::is_tray_mode(run_mode) {
+                        let _ = window
+                            .app_handle()
+                            .set_activation_policy(tauri::ActivationPolicy::Accessory);
+                    }
+                }
+                let _ = window.hide();
+            }
         }
     })
     .invoke_handler(tauri::generate_handler![

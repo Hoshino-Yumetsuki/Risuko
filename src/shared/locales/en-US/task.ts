@@ -152,6 +152,8 @@ export default {
 	"pause-task-success": 'Successfully paused task "{{taskName}}"',
 	"pause-task-fail": 'Failed to pause task "{{taskName}}"',
 	"resume-task": "Resume Task",
+	"stop-seeding": "Stop Seeding",
+	"open-task": "Open File",
 	"resume-task-success": 'Successfully resumed task "{{taskName}}"',
 	"resume-task-fail": 'Failed to resume task "{{taskName}}"',
 	"delete-task": "Delete Task",

@@ -230,11 +230,11 @@ export const NONE_SELECTED_FILES = "none";
 export const SELECTED_ALL_FILES = "all";
 
 export const TRAY_CANVAS_CONFIG = {
-	WIDTH: 66,
+	WIDTH: 56,
 	HEIGHT: 16,
 	ICON_WIDTH: 16,
 	ICON_HEIGHT: 16,
-	TEXT_WIDTH: 46,
+	TEXT_WIDTH: 42,
 	TEXT_FONT_SIZE: 8,
 };
 

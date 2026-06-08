@@ -28,6 +28,11 @@ export default {
 	"hide-others": "Hide Others",
 	unhide: "Show All",
 	show: "Show Risuko",
+	"quick-panel": "Quick Panel",
+	"flyout-active-count": "{{count}} active",
+	"flyout-empty": "No tasks here",
+	"flyout-no-match": "No matching tasks",
+	"total-transfer-speed": "Total transfer speed",
 	quit: "Quit Risuko",
 	"quit-confirm": "Are you sure you want to quit Risuko?",
 	"quit-confirm-active":

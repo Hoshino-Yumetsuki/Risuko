@@ -1,41 +1,10 @@
 use std::sync::atomic::Ordering;
 use tauri::{AppHandle, Manager};
 
-const RUN_MODE_STANDARD: i64 = 1;
-#[cfg(target_os = "macos")]
-const RUN_MODE_TRAY: i64 = 2;
-#[cfg(target_os = "macos")]
-const RUN_MODE_HIDE_TRAY_LEGACY: i64 = 3;
-
-fn current_run_mode(handle: &AppHandle) -> i64 {
-    handle
-        .state::<crate::state::AppState>()
-        .config
-        .lock()
-        .ok()
-        .and_then(|cfg| {
-            cfg.get_user_config()
-                .get("run-mode")
-                .and_then(|value| value.as_i64())
-        })
-        .unwrap_or(RUN_MODE_STANDARD)
-}
-
-#[cfg(target_os = "macos")]
-fn update_macos_activation_policy_for_mode(handle: &AppHandle, run_mode: i64) {
-    let policy = if matches!(run_mode, RUN_MODE_TRAY | RUN_MODE_HIDE_TRAY_LEGACY) {
-        tauri::ActivationPolicy::Accessory
-    } else {
-        tauri::ActivationPolicy::Regular
-    };
-    let _ = handle.set_activation_policy(policy);
-}
-
-#[cfg(not(target_os = "macos"))]
-fn update_macos_activation_policy_for_mode(_handle: &AppHandle, _run_mode: i64) {}
+pub use crate::utils::run_mode::{current_run_mode, update_macos_activation_policy_for_mode};
 
 pub fn show_main_window(handle: &AppHandle) -> Result<(), String> {
-    update_macos_activation_policy_for_mode(handle, RUN_MODE_STANDARD);
+    update_macos_activation_policy_for_mode(handle, crate::utils::run_mode::RUN_MODE_STANDARD);
     if let Some(window) = handle.get_webview_window("main") {
         window.show().map_err(|e| e.to_string())?;
         window.set_focus().map_err(|e| e.to_string())?;
