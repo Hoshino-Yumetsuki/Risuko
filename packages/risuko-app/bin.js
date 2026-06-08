@@ -40,6 +40,7 @@ class DownloadHttpError extends Error {
 const rawArgs = process.argv.slice(2);
 let version = PKG_VERSION;
 let noCache = false;
+let allowLegacyNoChecksum = false;
 const appArgs = [];
 
 for (let i = 0; i < rawArgs.length; i++) {
@@ -48,12 +49,17 @@ for (let i = 0; i < rawArgs.length; i++) {
 		version = rawArgs[++i];
 	} else if (arg === "--no-cache") {
 		noCache = true;
+	} else if (arg === "--allow-legacy-no-checksum") {
+		allowLegacyNoChecksum = true;
 	} else if (arg === "--help" || arg === "-h") {
 		console.log(`Usage: risuko-app [launcher-options] [-- app-args...]
 
 Launcher options:
   --version <x.y.z>   Use a specific release version (default: ${PKG_VERSION})
   --no-cache          Re-download even if the binary is already cached
+  --allow-legacy-no-checksum
+                      Allow unsigned installs when SHA-256 sidecar is missing
+                      for legacy releases (pre-0.4.0 or prereleases)
   -h, --help          Show this help message
 
 Any arguments after -- are passed through to the Risuko app.
@@ -241,8 +247,8 @@ function parseExpectedSha256(text, assetName) {
 }
 
 function compareReleaseVersions(left, right) {
-	const leftMatch = /^v?(\d+)\.(\d+)\.(\d+)/.exec(left);
-	const rightMatch = /^v?(\d+)\.(\d+)\.(\d+)/.exec(right);
+	const leftMatch = /^v?(\d+)\.(\d+)\.(\d+)(.*)/.exec(left);
+	const rightMatch = /^v?(\d+)\.(\d+)\.(\d+)(.*)/.exec(right);
 	if (!leftMatch || !rightMatch) {
 		return null;
 	}
@@ -252,7 +258,18 @@ function compareReleaseVersions(left, right) {
 			return diff;
 		}
 	}
-	return 0;
+	const leftSuffix = leftMatch[4];
+	const rightSuffix = rightMatch[4];
+	if (leftSuffix === rightSuffix) {
+		return 0;
+	}
+	if (leftSuffix === "") {
+		return 1;
+	}
+	if (rightSuffix === "") {
+		return -1;
+	}
+	return leftSuffix < rightSuffix ? -1 : 1;
 }
 
 function isLegacyChecksumRelease(releaseVersion) {
@@ -269,7 +286,7 @@ async function verifySha256(assetPath, checksumUrl, assetName) {
 		checksumText = await downloadText(checksumUrl);
 	} catch (err) {
 		if (err instanceof DownloadHttpError && err.statusCode === 404) {
-			if (isLegacyChecksumRelease(version)) {
+			if (isLegacyChecksumRelease(version) && allowLegacyNoChecksum) {
 				return false;
 			}
 			throw new Error(
