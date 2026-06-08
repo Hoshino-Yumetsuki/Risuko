@@ -1791,15 +1791,16 @@ fn try_initiate_holepunch(
     let Some(relay_hp) = relay.their_ut_holepunch_id else {
         return; // relay doesn't support holepunch
     };
-    holepunch_attempted.insert(target);
-    let _ = relay.cmd_tx.try_send(PeerCommand::Send(Message::Extended {
+    if relay.cmd_tx.try_send(PeerCommand::Send(Message::Extended {
         ext_id: relay_hp,
         payload: build_holepunch(holepunch_type::RENDEZVOUS, target, 0),
-    }));
-    log::debug!(
-        target: "diag",
-        "holepunch RENDEZVOUS initiate target={target} via relay pid={relay_pid}"
-    );
+    })).is_ok() {
+        holepunch_attempted.insert(target);
+        log::debug!(
+            target: "diag",
+            "holepunch RENDEZVOUS initiate target={target} via relay pid={relay_pid}"
+        );
+    }
 }
 
 async fn send_interested_if_useful(peer: &mut Peer, piece_tracker: &mut PieceTracker) {

@@ -340,7 +340,19 @@ function isLegacyChecksumRelease(releaseVersion) {
 		releaseVersion,
 		SHA256_SIDECAR_REQUIRED_VERSION,
 	);
-	return order !== null && order < 0;
+	if (order === null) {
+		return false;
+	}
+	if (order < 0) {
+		return true;
+	}
+	// A prerelease of the exact threshold version (e.g. 0.4.0-beta.1) predates
+	// the stable release that introduced checksums and must also be treated as legacy.
+	if (order === 0) {
+		const match = /^v?\d+\.\d+\.\d+(-[^+]*)/.exec(releaseVersion);
+		return match !== null;
+	}
+	return false;
 }
 
 async function verifySha256(assetPath, checksumUrl, assetName) {
