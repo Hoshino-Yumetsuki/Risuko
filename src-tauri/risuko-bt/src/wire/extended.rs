@@ -355,9 +355,10 @@ pub fn parse_holepunch(payload: &[u8]) -> Option<HolepunchMsg> {
     let mut err_code = 0u32;
     if msg_type == holepunch_type::ERROR {
         let eo = port_off + 2;
-        if payload.len() >= eo + 4 {
-            err_code = u32::from_be_bytes(payload[eo..eo + 4].try_into().ok()?);
+        if payload.len() < eo + 4 {
+            return None;
         }
+        err_code = u32::from_be_bytes(payload[eo..eo + 4].try_into().ok()?);
     }
     Some(HolepunchMsg {
         msg_type,

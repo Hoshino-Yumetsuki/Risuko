@@ -267,14 +267,22 @@ function compareReleaseVersions(left, right) {
 			build = suffix.slice(buildIdx + 1);
 			suffix = suffix.slice(0, buildIdx);
 		}
+		if (suffix === "") {
+			return { prerelease, build };
+		}
 		if (suffix.startsWith("-")) {
 			prerelease = suffix.slice(1);
+		} else {
+			return null;
 		}
 		return { prerelease, build };
 	}
 
 	const leftParsed = parseSuffix(leftMatch[4]);
 	const rightParsed = parseSuffix(rightMatch[4]);
+	if (!leftParsed || !rightParsed) {
+		return null;
+	}
 
 	// Build metadata is ignored for precedence.
 	const pre1 = leftParsed.prerelease;
@@ -306,10 +314,10 @@ function compareReleaseVersions(left, right) {
 		const isNum2 = /^[0-9]+$/.test(p2);
 
 		if (isNum1 && isNum2) {
-			const n1 = Number(p1);
-			const n2 = Number(p2);
+			const n1 = BigInt(p1);
+			const n2 = BigInt(p2);
 			if (n1 !== n2) {
-				return n1 - n2;
+				return n1 < n2 ? -1 : 1;
 			}
 		} else if (isNum1 && !isNum2) {
 			return -1;

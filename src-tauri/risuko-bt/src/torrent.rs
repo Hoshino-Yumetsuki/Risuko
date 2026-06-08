@@ -888,7 +888,7 @@ async fn torrent_loop(
                         s.peers = peer_snaps;
                     }
                 }
-                log::info!(
+                log::debug!(
                     target: "diag",
                     "TICK summary peers={} pending_dials={} known={} endgame={} dl_bytes_tick={} ul_bytes_tick={} pending_chunks={} dt_ms={:.0}",
                     peers.len(),
@@ -1583,6 +1583,7 @@ async fn process_peer_event(
                 // re-deduce it from "trying mse" lines alone
                 log::debug!("peer {a} disconnected: {reason}");
                 known_addrs.remove(&a);
+                pex_source.retain(|_, relay| *relay != pid);
                 if was_pending_dial {
                     try_initiate_holepunch(a, pex_source, holepunch_attempted, peers);
                 }

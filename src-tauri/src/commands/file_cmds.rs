@@ -1203,10 +1203,14 @@ fn trash_generated_torrent_sidecars_in_dir(dir: &Path, normalized_info_hash: Opt
         // name (`<infohash>.torrent`) OR by content — hashing the file's `info`
         // dict and comparing to this task's info-hash identifies the sidecar
         // precisely, and never touches an unrelated torrent (different hash).
-        let matched_by_name = generated_torrent_hex_stem(file_name)
-            .map(|stem| stem == hash)
-            .unwrap_or(false);
-        let matched = matched_by_name || matches_generated_torrent_sidecar_by_content(&path, hash);
+        let hex_stem = generated_torrent_hex_stem(file_name);
+        let matched_by_name = hex_stem.as_deref().map(|stem| stem == hash).unwrap_or(false);
+        // Only probe content when the filename has no hex-infohash stem.
+        // A hex-named .torrent whose stem differs from our hash is definitively
+        // a different torrent; content-matching it would be a false positive that
+        // could delete a user-provided source file.
+        let matched = matched_by_name
+            || (hex_stem.is_none() && matches_generated_torrent_sidecar_by_content(&path, hash));
 
         if matched && delete_file_best_effort(&path) {
             deleted += 1;
