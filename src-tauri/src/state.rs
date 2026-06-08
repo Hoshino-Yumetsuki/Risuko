@@ -16,6 +16,7 @@ pub struct AppState {
     pub upload_sinks: Mutex<Option<Arc<UploadSinkManager>>>,
     pub vault: Arc<VaultManager>,
     pub log_dir: PathBuf,
+    pub tray_anchor: Mutex<Option<(f64, f64, f64, f64)>>,
     /// Keeps the file logger alive; dropped when AppState is dropped.
     pub _log_guard: Option<tracing_appender::non_blocking::WorkerGuard>,
 }
@@ -43,6 +44,7 @@ impl AppState {
             upload_sinks: Mutex::new(Some(Arc::new(upload_manager))),
             vault: Arc::new(VaultManager::new()),
             log_dir,
+            tray_anchor: Mutex::new(None),
             _log_guard: Some(log_guard),
         })
     }

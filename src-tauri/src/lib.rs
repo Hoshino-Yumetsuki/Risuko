@@ -338,6 +338,8 @@ pub fn run() {
 
         managers::tray::setup_tray(app)?;
 
+        managers::flyout::setup_flyout(app)?;
+
         // Start RSS background polling
         if let Ok(guard) = app.state::<state::AppState>().rss.lock() {
             if let Some(rss) = guard.clone() {
@@ -353,6 +355,9 @@ pub fn run() {
     })
     .on_window_event(|window, event| {
         if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+            if window.label() != "main" {
+                return;
+            }
             let quitting = window
                 .app_handle()
                 .state::<state::AppState>()
@@ -363,6 +368,13 @@ pub fn run() {
             }
             api.prevent_close();
             let _ = commands::app_cmds::hide_main_window(window.app_handle());
+        }
+
+        if let tauri::WindowEvent::Focused(false) = event {
+            #[cfg(not(target_os = "android"))]
+            if window.label() == managers::flyout::FLYOUT_LABEL {
+                let _ = window.hide();
+            }
         }
     })
     .invoke_handler(tauri::generate_handler![

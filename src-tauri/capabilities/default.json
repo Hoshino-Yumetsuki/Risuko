@@ -1,7 +1,7 @@
 {
 	"identifier": "default",
 	"description": "Default capabilities for Risuko",
-	"windows": ["main"],
+	"windows": ["main", "tray-panel"],
 	"permissions": [
 		"core:default",
 		"core:window:default",

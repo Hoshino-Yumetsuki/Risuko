@@ -5,24 +5,24 @@ use tauri::{
     image::Image,
     menu::{Menu, MenuBuilder, MenuItemBuilder, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    App, AppHandle, Emitter, Manager,
+    App, AppHandle, Emitter,
 };
 
 #[cfg(target_os = "android")]
 use tauri::{App, AppHandle};
 
 #[cfg(not(target_os = "android"))]
-use super::{emit_command, show_and_emit};
+use super::{emit_command, flyout, show_and_emit};
 
 #[cfg(not(target_os = "android"))]
-fn toggle_main_window(app: &AppHandle) {
-    if let Some(window) = app.get_webview_window("main") {
-        let is_visible = window.is_visible().unwrap_or(false);
-        if is_visible {
-            let _ = crate::commands::app_cmds::hide_main_window(app);
-        } else {
-            let _ = crate::commands::app_cmds::show_main_window(app);
-        }
+fn tray_event_rect(event: &TrayIconEvent) -> Option<(&tauri::Rect, (f64, f64))> {
+    match event {
+        TrayIconEvent::Click { rect, position, .. }
+        | TrayIconEvent::DoubleClick { rect, position, .. }
+        | TrayIconEvent::Enter { rect, position, .. }
+        | TrayIconEvent::Move { rect, position, .. }
+        | TrayIconEvent::Leave { rect, position, .. } => Some((rect, (position.x, position.y))),
+        _ => None,
     }
 }
 
@@ -62,6 +62,11 @@ fn build_tray_menu(
         get_tray_menu_text(labels, "tray-show", "Show Risuko"),
     )
     .build(handle)?;
+    let quick_panel = MenuItemBuilder::with_id(
+        "tray-quick-panel",
+        get_tray_menu_text(labels, "tray-quick-panel", "Quick Panel"),
+    )
+    .build(handle)?;
     let manual = MenuItemBuilder::with_id(
         "tray-manual",
         get_tray_menu_text(labels, "tray-manual", "Manual"),
@@ -95,6 +100,7 @@ fn build_tray_menu(
             &open_file,
             &sep1,
             &show,
+            &quick_panel,
             &manual,
             &check_updates,
             &sep2,
@@ -123,13 +129,26 @@ pub fn setup_tray(app: &App) -> Result<(), Box<dyn std::error::Error>> {
         .icon_as_template(true)
         .show_menu_on_left_click(false)
         .on_tray_icon_event(|tray, event| {
+            let app = tray.app_handle();
+            // Cache the tray icon rect from any positional event so the flyout
+            // can anchor near the tray even when opened from the menu item
+            if let Some((rect, point)) = tray_event_rect(&event) {
+                let scale = app
+                    .monitor_from_point(point.0, point.1)
+                    .ok()
+                    .flatten()
+                    .map(|m| m.scale_factor())
+                    .unwrap_or(1.0);
+                flyout::cache_tray_rect(app, rect, scale);
+            }
+
             if let TrayIconEvent::Click {
                 button: MouseButton::Left,
                 button_state: MouseButtonState::Up,
                 ..
             } = event
             {
-                toggle_main_window(tray.app_handle());
+                flyout::toggle_flyout(app);
             }
         })
         .on_menu_event(move |app, event| {
@@ -141,6 +160,7 @@ pub fn setup_tray(app: &App) -> Result<(), Box<dyn std::error::Error>> {
                 "tray-show" => {
                     let _ = crate::commands::app_cmds::show_main_window(app);
                 }
+                "tray-quick-panel" => flyout::toggle_flyout(app),
                 "tray-manual" => {
                     let _ = open::that("https://github.com/YueMiyuki/Risuko/wiki");
                 }

@@ -1,3 +1,4 @@
+pub mod flyout;
 pub mod menu;
 pub mod tray;
 pub mod vault;

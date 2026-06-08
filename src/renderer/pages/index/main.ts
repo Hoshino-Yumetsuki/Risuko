@@ -48,6 +48,7 @@ const updateTrayMenuLabels = (i18n: { t: (key: string) => string }) => {
 		"tray-new-bt-task": i18n.t("task.new-bt-task"),
 		"tray-open-file": i18n.t("task.open-file"),
 		"tray-show": i18n.t("app.show"),
+		"tray-quick-panel": i18n.t("app.quick-panel"),
 		"tray-manual": i18n.t("help.manual"),
 		"tray-check-updates": i18n.t("app.check-for-updates"),
 		"tray-task-list": i18n.t("app.task-list"),
