@@ -1,0 +1,13 @@
+{
+	"identifier": "tray-panel",
+	"description": "Minimal capabilities for the tray flyout panel. Grants only window management, store access, and the invoke channel needed for flyout commands (show_window, get_global_stat, tell_active, tell_waiting, tell_stopped, pause/unpause/remove task, add_uri, open_path, reveal_in_folder). No filesystem, shell, process, OS, or dialog access.",
+	"windows": ["tray-panel"],
+	"permissions": [
+		"core:default",
+		"core:window:allow-show",
+		"core:window:allow-hide",
+		"core:window:allow-set-focus",
+		"core:window:allow-start-dragging",
+		"store:default"
+	]
+}

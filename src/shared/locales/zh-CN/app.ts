@@ -30,6 +30,8 @@ export default {
 	"quick-panel": "快捷面板",
 	"flyout-active-count": "{{count}} 个进行中",
 	"flyout-empty": "暂无任务",
+	"flyout-no-match": "没有匹配的任务",
+	"total-transfer-speed": "总传输速度",
 	quit: "退出 Risuko",
 	"quit-confirm": "确定要退出 Risuko 吗？",
 	"quit-confirm-active": "还有 {{count}} 个下载任务正在进行中，确定要退出吗？",

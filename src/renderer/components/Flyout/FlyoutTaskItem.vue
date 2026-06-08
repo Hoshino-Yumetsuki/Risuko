@@ -37,6 +37,7 @@
         type="button"
         class="flyout-task-action"
         :title="actionTitle(action)"
+        :aria-label="actionTitle(action)"
         @click.stop="onActionClick(action)"
       >
         <Pause v-if="action === 'PAUSE'" :size="14" />

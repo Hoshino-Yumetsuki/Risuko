@@ -355,6 +355,12 @@ pub fn run() {
     })
     .on_window_event(|window, event| {
         if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+            #[cfg(not(target_os = "android"))]
+            if window.label() == managers::flyout::FLYOUT_LABEL {
+                api.prevent_close();
+                let _ = window.hide();
+                return;
+            }
             if window.label() != "main" {
                 return;
             }
@@ -373,6 +379,10 @@ pub fn run() {
         if let tauri::WindowEvent::Focused(false) = event {
             #[cfg(not(target_os = "android"))]
             if window.label() == managers::flyout::FLYOUT_LABEL {
+                #[cfg(target_os = "macos")]
+                let _ = window
+                    .app_handle()
+                    .set_activation_policy(tauri::ActivationPolicy::Accessory);
                 let _ = window.hide();
             }
         }

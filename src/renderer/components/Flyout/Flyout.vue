@@ -5,7 +5,7 @@
         <span class="flyout-title-text">{{ activeTabLabel }}</span>
         <span v-if="activeTabCount > 0" class="flyout-title-count">{{ activeTabCount }}</span>
       </div>
-      <div class="flyout-summary" aria-label="Total transfer speed">
+      <div class="flyout-summary" :aria-label="$t('app.total-transfer-speed')">
         <span class="flyout-summary-speed" :title="$t('task.task-download-speed')">
           <ArrowDown :size="13" aria-hidden="true" />
           {{ formatBytes(stat.downloadSpeed) }}/s
@@ -43,25 +43,70 @@
       </button>
     </nav>
 
+    <div class="flyout-search">
+      <Search :size="14" aria-hidden="true" />
+      <input
+        v-model="search"
+        type="search"
+        class="flyout-search-input"
+        :placeholder="$t('task.filter-placeholder')"
+        :aria-label="$t('task.filter-placeholder')"
+      />
+      <button
+        v-if="search"
+        type="button"
+        class="flyout-search-clear"
+        :aria-label="$t('app.cancel')"
+        @click="search = ''"
+      >
+        <X :size="13" aria-hidden="true" />
+      </button>
+    </div>
+
     <main
       class="flyout-list"
       role="list"
       :aria-label="activeTabLabel"
       tabindex="0"
     >
-      <template v-if="taskList.length > 0">
+      <template v-if="visibleTasks.length > 0">
         <mo-flyout-task-item
-          v-for="task in taskList"
-          :key="task.gid"
+          v-for="task in visibleTasks"
+          :key="task._displayKey || task.gid"
           role="listitem"
           :task="task"
         />
       </template>
       <div v-else class="flyout-empty">
         <Inbox :size="34" aria-hidden="true" />
-        <span>{{ $t('app.flyout-empty') }}</span>
+        <span>{{ search ? $t('app.flyout-no-match') : $t('app.flyout-empty') }}</span>
       </div>
     </main>
+
+    <section v-if="addOpen" class="flyout-add">
+      <input
+        ref="addInput"
+        v-model="addValue"
+        type="text"
+        class="flyout-add-input"
+        :class="{ 'has-error': !!addError }"
+        :placeholder="$t('task.uri-task-tips')"
+        :aria-label="$t('app.add-task')"
+        :disabled="adding"
+        @keydown.enter.prevent="submitAdd"
+        @keydown.esc.prevent="closeAdd"
+        @input="addError = ''"
+      />
+      <button
+        type="button"
+        class="flyout-add-submit"
+        :disabled="adding || !addValue.trim()"
+        @click="submitAdd"
+      >
+        {{ $t('app.add-task') }}
+      </button>
+    </section>
+    <p v-if="addError" class="flyout-add-error" role="alert">{{ addError }}</p>
 
     <footer class="flyout-footer" role="toolbar" :aria-label="$t('menu.task')">
       <button type="button" class="flyout-action" :aria-label="$t('task.pause-all-task')" :title="$t('task.pause-all-task')" @click="pauseAll">
@@ -70,7 +115,15 @@
       <button type="button" class="flyout-action" :aria-label="$t('task.resume-all-task')" :title="$t('task.resume-all-task')" @click="resumeAll">
         <Play :size="17" aria-hidden="true" />
       </button>
-      <button type="button" class="flyout-action" :aria-label="$t('task.new-task')" :title="$t('task.new-task')" @click="newTask">
+      <button
+        type="button"
+        class="flyout-action"
+        :class="{ active: addOpen }"
+        :aria-label="$t('task.new-task')"
+        :aria-expanded="addOpen"
+        :title="$t('task.new-task')"
+        @click="toggleAdd"
+      >
         <Plus :size="17" aria-hidden="true" />
       </button>
       <div class="flyout-footer-spacer"></div>
@@ -99,18 +152,26 @@ import {
 	Play,
 	Plus,
 	Power,
+	Search,
 	Settings,
 	Square,
+	X,
 } from "@lucide/vue";
 import { bytesToSize } from "@shared/utils";
 import logger from "@shared/utils/logger";
 import { invoke } from "@tauri-apps/api/core";
 import { emit } from "@tauri-apps/api/event";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
-import { markRaw } from "vue";
+import { type Component, markRaw } from "vue";
 import { useAppStore } from "@/store/app";
 import { useTaskStore } from "@/store/task";
 import FlyoutTaskItem from "./FlyoutTaskItem.vue";
+
+interface FlyoutTab {
+	key: string;
+	icon: Component;
+	label: string;
+}
 
 export default {
 	name: "mo-flyout",
@@ -124,7 +185,17 @@ export default {
 		Play,
 		Plus,
 		Power,
+		Search,
 		Settings,
+		X,
+	},
+	data() {
+		return {
+			addOpen: false,
+			addValue: "",
+			adding: false,
+			addError: "",
+		};
 	},
 	computed: {
 		stat() {
@@ -133,10 +204,18 @@ export default {
 		currentList(): string {
 			return useTaskStore().currentList;
 		},
-		taskList() {
-			return useTaskStore().taskList;
+		visibleTasks() {
+			return useTaskStore().filteredTaskList;
 		},
-		tabs() {
+		search: {
+			get(): string {
+				return useTaskStore().filterText;
+			},
+			set(value: string) {
+				useTaskStore().setFilterText(value);
+			},
+		},
+		tabs(): FlyoutTab[] {
 			return [
 				{ key: "all", icon: markRaw(LayoutList), label: this.$t("task.all") },
 				{ key: "active", icon: markRaw(Play), label: this.$t("task.active") },
@@ -159,8 +238,8 @@ export default {
 		},
 		activeTabLabel(): string {
 			return (
-				this.tabs.find((tab) => tab.key === this.currentList)?.label ||
-				this.$t("task.all")
+				this.tabs.find((tab: FlyoutTab) => tab.key === this.currentList)
+					?.label || this.$t("task.all")
 			);
 		},
 		activeTabCount(): number {
@@ -178,7 +257,7 @@ export default {
 			useTaskStore().changeCurrentList(key);
 		},
 		onTabKeydown(event: KeyboardEvent): void {
-			const keys = this.tabs.map((tab) => tab.key);
+			const keys = this.tabs.map((tab: FlyoutTab) => tab.key);
 			const current = keys.indexOf(this.currentList);
 			let next = -1;
 			if (event.key === "ArrowRight" || event.key === "ArrowDown") {
@@ -202,6 +281,49 @@ export default {
 				buttons?.[next]?.focus();
 			});
 		},
+		toggleAdd(): void {
+			this.addOpen = !this.addOpen;
+			this.addError = "";
+			if (this.addOpen) {
+				this.$nextTick(() => {
+					(this.$refs.addInput as HTMLInputElement | undefined)?.focus();
+				});
+			}
+		},
+		closeAdd(): void {
+			this.addOpen = false;
+			this.addValue = "";
+			this.addError = "";
+		},
+		async submitAdd(): Promise<void> {
+			if (this.adding) {
+				return;
+			}
+			const uris = this.addValue
+				.split(/\s+/)
+				.map((value: string) => value.trim())
+				.filter(Boolean);
+			if (uris.length === 0) {
+				return;
+			}
+
+			this.adding = true;
+			this.addError = "";
+			const taskStore = useTaskStore();
+			try {
+				for (const uri of uris) {
+					await taskStore.addUri({ uris: [uri], outs: [], options: {} });
+				}
+				this.addValue = "";
+				this.addOpen = false;
+				taskStore.changeCurrentList("active");
+			} catch (err: unknown) {
+				this.addError = (err as Error)?.message || `${err}`;
+				logger.warn("[Risuko] flyout add task failed:", err);
+			} finally {
+				this.adding = false;
+			}
+		},
 		pauseAll(): void {
 			useTaskStore().pauseAllTask();
 		},
@@ -222,23 +344,24 @@ export default {
 				logger.warn("[Risuko] show_window failed:", err);
 			}
 		},
-		async newTask(): Promise<void> {
-			await this.showMain();
-			await emit("command", { command: "application:new-task" });
-			await this.hideFlyout();
-		},
 		async openMain(): Promise<void> {
 			await this.showMain();
 			await this.hideFlyout();
 		},
 		async openPreferences(): Promise<void> {
-			await this.showMain();
-			await emit("command", { command: "application:preferences" });
-			await this.hideFlyout();
+			try {
+				await this.showMain();
+				await emit("command", { command: "application:preferences" });
+			} finally {
+				await this.hideFlyout();
+			}
 		},
 		async quit(): Promise<void> {
-			await emit("confirm-quit");
-			await this.hideFlyout();
+			try {
+				await emit("confirm-quit");
+			} finally {
+				await this.hideFlyout();
+			}
 		},
 	},
 };

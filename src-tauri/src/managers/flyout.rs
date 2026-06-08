@@ -19,7 +19,7 @@ const FLYOUT_HEIGHT: f64 = 540.0;
 
 /// Gap in physical pixels between the tray icon and the flyout edge
 #[cfg(not(target_os = "android"))]
-const FLYOUT_GAP: i32 = 4;
+const FLYOUT_GAP: i32 = 0;
 
 /// Create the flyout window
 #[cfg(not(target_os = "android"))]
@@ -79,6 +79,8 @@ pub fn toggle_flyout(app: &AppHandle) {
     };
 
     if window.is_visible().unwrap_or(false) {
+        #[cfg(target_os = "macos")]
+        let _ = app.set_activation_policy(tauri::ActivationPolicy::Accessory);
         let _ = window.hide();
         return;
     }

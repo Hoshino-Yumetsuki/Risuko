@@ -13,14 +13,14 @@ body,
 
 .flyout-root {
 	position: absolute;
-	inset: 10px;
+	inset: 0 10px 10px;
 	display: flex;
 	flex-direction: column;
 	overflow: hidden;
 	background-color: var(--popover);
 	color: var(--popover-foreground);
 	border: 1px solid var(--border);
-	border-radius: 14px;
+	border-radius: 0 0 calc(var(--radius) - 2px) calc(var(--radius) - 2px);
 	box-shadow:
 		0 12px 32px -8px rgba(0, 0, 0, 0.32),
 		0 4px 12px -4px rgba(0, 0, 0, 0.18);
@@ -35,7 +35,7 @@ body,
 .flyout-root :focus-visible {
 	outline: 2px solid var(--ring);
 	outline-offset: 2px;
-	border-radius: 8px;
+	border-radius: calc(var(--radius) - 2px);
 }
 
 .flyout-header {
@@ -115,7 +115,7 @@ body,
 	justify-content: center;
 	height: 34px;
 	border: none;
-	border-radius: 9px;
+	border-radius: calc(var(--radius) - 2px) !important;
 	background: var(--muted);
 	color: var(--muted-foreground);
 	cursor: pointer;
@@ -156,6 +156,115 @@ body,
 .flyout-tab.active .flyout-tab-badge {
 	background-color: var(--popover);
 	color: var(--primary);
+}
+
+.flyout-search {
+	display: flex;
+	align-items: center;
+	gap: 7px;
+	margin: 0 12px 8px;
+	padding: 0 10px;
+	height: 32px;
+	border-radius: calc(var(--radius) - 2px);
+	background-color: var(--muted);
+	color: var(--muted-foreground);
+	flex-shrink: 0;
+}
+
+.flyout-search-input {
+	flex: 1;
+	min-width: 0;
+	border: none;
+	background: transparent;
+	color: var(--foreground);
+	font-size: 13px;
+	outline: none;
+}
+
+.flyout-search-input::placeholder {
+	color: var(--muted-foreground);
+}
+
+.flyout-search-input::-webkit-search-cancel-button {
+	display: none;
+}
+
+.flyout-search-clear {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 20px;
+	height: 20px;
+	border: none;
+	border-radius: calc(var(--radius) - 2px) !important;
+	background: transparent;
+	color: var(--muted-foreground);
+	cursor: pointer;
+}
+
+.flyout-search-clear:hover {
+	background-color: var(--accent);
+	color: var(--accent-foreground);
+}
+
+.flyout-add {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	margin: 0 12px 8px;
+	padding: 8px;
+	border-radius: calc(var(--radius) - 2px);
+	background-color: var(--muted);
+	flex-shrink: 0;
+}
+
+.flyout-add-input {
+	flex: 1;
+	min-width: 0;
+	height: 30px;
+	border: 1px solid transparent;
+	border-radius: calc(var(--radius) - 2px);
+	padding: 0 10px;
+	background-color: var(--background);
+	color: var(--foreground);
+	font-size: 13px;
+	outline: none;
+}
+
+.flyout-add-input:focus {
+	border-color: var(--ring);
+}
+
+.flyout-add-input.has-error {
+	border-color: #ef4444;
+}
+
+.flyout-add-submit {
+	flex-shrink: 0;
+	height: 30px;
+	padding: 0 14px;
+	border: none;
+	border-radius: calc(var(--radius) - 2px) !important;
+	background-color: var(--primary);
+	color: var(--primary-foreground);
+	font-size: 12px;
+	font-weight: 600;
+	cursor: pointer;
+	transition: opacity 0.12s ease;
+}
+
+.flyout-add-submit:disabled {
+	opacity: 0.5;
+	cursor: not-allowed;
+}
+
+.flyout-add-error {
+	margin: -2px 14px 8px;
+	color: #ef4444;
+	font-size: 11px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
 }
 
 .flyout-list {
@@ -199,7 +308,7 @@ body,
 	align-items: center;
 	gap: 11px;
 	padding: 9px 10px;
-	border-radius: 10px;
+	border-radius: calc(var(--radius) - 2px);
 	transition: background-color 0.12s ease;
 }
 
@@ -215,7 +324,7 @@ body,
 	display: flex;
 	align-items: center;
 	justify-content: center;
-	border-radius: 9px;
+	border-radius: calc(var(--radius) - 2px);
 	background-color: var(--muted);
 	color: var(--muted-foreground);
 }
@@ -314,7 +423,7 @@ body,
 	width: 28px;
 	height: 28px;
 	border: none;
-	border-radius: 7px;
+	border-radius: calc(var(--radius) - 2px) !important;
 	background: transparent;
 	color: var(--muted-foreground);
 	cursor: pointer;
@@ -348,7 +457,7 @@ body,
 	width: 32px;
 	height: 32px;
 	border: none;
-	border-radius: 8px;
+	border-radius: calc(var(--radius) - 2px) !important;
 	background: transparent;
 	color: var(--muted-foreground);
 	cursor: pointer;
@@ -360,6 +469,11 @@ body,
 .flyout-action:hover {
 	background-color: var(--accent);
 	color: var(--accent-foreground);
+}
+
+.flyout-action.active {
+	background-color: var(--primary);
+	color: var(--primary-foreground);
 }
 
 .flyout-action-danger:hover {
