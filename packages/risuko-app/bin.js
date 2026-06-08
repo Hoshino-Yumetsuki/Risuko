@@ -46,7 +46,7 @@ const appArgs = [];
 for (let i = 0; i < rawArgs.length; i++) {
 	const arg = rawArgs[i];
 	if ((arg === "--version" || arg === "-v") && rawArgs[i + 1]) {
-		version = rawArgs[++i];
+		version = rawArgs[++i].replace(/^v/, "");
 	} else if (arg === "--no-cache") {
 		noCache = true;
 	} else if (arg === "--allow-legacy-no-checksum") {
@@ -258,18 +258,73 @@ function compareReleaseVersions(left, right) {
 			return diff;
 		}
 	}
-	const leftSuffix = leftMatch[4];
-	const rightSuffix = rightMatch[4];
-	if (leftSuffix === rightSuffix) {
+
+	function parseSuffix(suffix) {
+		let prerelease = null;
+		let build = null;
+		const buildIdx = suffix.indexOf("+");
+		if (buildIdx !== -1) {
+			build = suffix.slice(buildIdx + 1);
+			suffix = suffix.slice(0, buildIdx);
+		}
+		if (suffix.startsWith("-")) {
+			prerelease = suffix.slice(1);
+		}
+		return { prerelease, build };
+	}
+
+	const leftParsed = parseSuffix(leftMatch[4]);
+	const rightParsed = parseSuffix(rightMatch[4]);
+
+	// Build metadata is ignored for precedence.
+	const pre1 = leftParsed.prerelease;
+	const pre2 = rightParsed.prerelease;
+	if (pre1 === pre2) {
 		return 0;
 	}
-	if (leftSuffix === "") {
+	if (pre1 === null) {
 		return 1;
 	}
-	if (rightSuffix === "") {
+	if (pre2 === null) {
 		return -1;
 	}
-	return leftSuffix < rightSuffix ? -1 : 1;
+
+	const parts1 = pre1.split(".");
+	const parts2 = pre2.split(".");
+	const len = Math.max(parts1.length, parts2.length);
+	for (let i = 0; i < len; i++) {
+		const p1 = parts1[i];
+		const p2 = parts2[i];
+		if (p1 === undefined) {
+			return -1;
+		}
+		if (p2 === undefined) {
+			return 1;
+		}
+
+		const isNum1 = /^[0-9]+$/.test(p1);
+		const isNum2 = /^[0-9]+$/.test(p2);
+
+		if (isNum1 && isNum2) {
+			const n1 = Number(p1);
+			const n2 = Number(p2);
+			if (n1 !== n2) {
+				return n1 - n2;
+			}
+		} else if (isNum1 && !isNum2) {
+			return -1;
+		} else if (!isNum1 && isNum2) {
+			return 1;
+		} else {
+			if (p1 < p2) {
+				return -1;
+			}
+			if (p1 > p2) {
+				return 1;
+			}
+		}
+	}
+	return 0;
 }
 
 function isLegacyChecksumRelease(releaseVersion) {
