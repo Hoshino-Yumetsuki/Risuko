@@ -124,55 +124,17 @@ importers:
         specifier: ^5.1.0
         version: 5.1.0(@vue/compiler-sfc@3.5.35)(pinia@3.0.4(typescript@6.0.3)(vue@3.5.35(typescript@6.0.3)))(vite@8.0.16(@types/node@25.9.2)(jiti@2.7.0)(sass@1.100.0)(terser@5.48.0)(yaml@2.9.0))(vue@3.5.35(typescript@6.0.3))
       vue-tsc:
-        specifier: ^3.3.3
-        version: 3.3.3(typescript@6.0.3)
+        specifier: ^3.3.4
+        version: 3.3.4(typescript@6.0.3)
       vue-virtual-scroller:
         specifier: 3.0.4
         version: 3.0.4(vue@3.5.35(typescript@6.0.3))
 
   packages/risuko-app: {}
 
-  packages/risuko-cli:
-    optionalDependencies:
-      '@risuko/cli-darwin-arm64':
-        specifier: 0.4.0
-        version: 0.4.0
-      '@risuko/cli-darwin-x64':
-        specifier: 0.4.0
-        version: 0.4.0
-      '@risuko/cli-linux-arm64-gnu':
-        specifier: 0.4.0
-        version: 0.4.0
-      '@risuko/cli-linux-x64-gnu':
-        specifier: 0.4.0
-        version: 0.4.0
-      '@risuko/cli-win32-arm64-msvc':
-        specifier: 0.4.0
-        version: 0.4.0
-      '@risuko/cli-win32-x64-msvc':
-        specifier: 0.4.0
-        version: 0.4.0
+  packages/risuko-cli: {}
 
-  packages/risuko-js:
-    optionalDependencies:
-      '@risuko/js-darwin-arm64':
-        specifier: 0.4.0
-        version: 0.4.0
-      '@risuko/js-darwin-x64':
-        specifier: 0.4.0
-        version: 0.4.0
-      '@risuko/js-linux-arm64-gnu':
-        specifier: 0.4.0
-        version: 0.4.0
-      '@risuko/js-linux-x64-gnu':
-        specifier: 0.4.0
-        version: 0.4.0
-      '@risuko/js-win32-arm64-msvc':
-        specifier: 0.4.0
-        version: 0.4.0
-      '@risuko/js-win32-x64-msvc':
-        specifier: 0.4.0
-        version: 0.4.0
+  packages/risuko-js: {}
 
 packages:
 
@@ -364,68 +326,6 @@ packages:
   '@parcel/watcher@2.5.6':
     resolution: {integrity: sha512-tmmZ3lQxAe/k/+rNnXQRawJ4NjxO2hqiOLTHvWchtGZULp4RyFeh6aU4XdOYBFe2KE1oShQTv4AblOs2iOrNnQ==}
     engines: {node: '>= 10.0.0'}
-
-  '@risuko/cli-darwin-arm64@0.4.0':
-    resolution: {integrity: sha512-+lqlK0HmZwaHIgwjFTmuKeiFXCLJEoXWdwDF/sXI3u6YrHmg7X5/yIg6XRpKXp2nRAMil546YB6D7WOjT3j4dQ==}
-    cpu: [arm64]
-    os: [darwin]
-
-  '@risuko/cli-darwin-x64@0.4.0':
-    resolution: {integrity: sha512-fxOutYcaz/9YzeYJJ0/U1+SkE6PUaj1NpEHZ5GBCQ7nE+eqI+ByfVG4egTQr+jWMnAwWHlgcRjX2hp2eQW15Pw==}
-    cpu: [x64]
-    os: [darwin]
-
-  '@risuko/cli-linux-arm64-gnu@0.4.0':
-    resolution: {integrity: sha512-+G/s8yZ6dVtVHPfCz+hkXx3xuP2MUjcrNqgJU+f+Yh6yXLTqkgUIji4sZj7amBSbq7uYRksuVgewC9BAakTqaQ==}
-    cpu: [arm64]
-    os: [linux]
-
-  '@risuko/cli-linux-x64-gnu@0.4.0':
-    resolution: {integrity: sha512-QUUXEcDLZxFZhLemuuarAx4oE/GrmpX0fVbxYeV9MNYBoaz3q1lj4PXjqu7yiRFjngV4lon6FKDgModYfkEOhQ==}
-    cpu: [x64]
-    os: [linux]
-
-  '@risuko/cli-win32-arm64-msvc@0.4.0':
-    resolution: {integrity: sha512-2ruMq5BLj16y2uRnx7nRnyyy1zZOFJwARJ3OrTbbE7A3jLFU9vy5+JFm3QwTBD/gAkwWZ9lRmf6hbiIefXZAnQ==}
-    cpu: [arm64]
-    os: [win32]
-
-  '@risuko/cli-win32-x64-msvc@0.4.0':
-    resolution: {integrity: sha512-p6E8umPY5q9i4ZcHK2m6aqU1+od491PbCiqT7kTdxUVQVbpUam5wmwuHb8C9PX65bsGwhHucnxXqi/+O8xZuDg==}
-    cpu: [x64]
-    os: [win32]
-
-  '@risuko/js-darwin-arm64@0.4.0':
-    resolution: {integrity: sha512-t4a2cnk8lCJ3Gpst6Fht2uhMa3QQalvKHl10EnePo4nUppApZKn536cdFGFwyZCUMQiIVSjfbFEZDus+SkFTqw==}
-    cpu: [arm64]
-    os: [darwin]
-
-  '@risuko/js-darwin-x64@0.4.0':
-    resolution: {integrity: sha512-veU/vMKzGDnDg7NpLmWAYzyYHa0tGqiSchWbKAFJ/jwd6P4FWfxnIQjoiir9d60HC6tgPDoVB8lZw+/Kpra5Kw==}
-    cpu: [x64]
-    os: [darwin]
-
-  '@risuko/js-linux-arm64-gnu@0.4.0':
-    resolution: {integrity: sha512-Ipc6F0gJTweauGlNbtv8AJ9m0Y4381hKLsOxrTX13BNQwFGiLuUIois8fQyb7BXL40Ay//G2rz0IWKjFT6KVfA==}
-    cpu: [arm64]
-    os: [linux]
-    libc: [glibc]
-
-  '@risuko/js-linux-x64-gnu@0.4.0':
-    resolution: {integrity: sha512-ePptz6CzNwCNUziJRNNWH+KWJi4FKSCkbZOkPAW4X2/7PRstHHOYQnCxgLbluTK8Kb4TMAnmncfxQ8WBJwR7eA==}
-    cpu: [x64]
-    os: [linux]
-    libc: [glibc]
-
-  '@risuko/js-win32-arm64-msvc@0.4.0':
-    resolution: {integrity: sha512-TiFjQf8WnN/vs5m6gSOcCcj4y4GfvMlHK6RM0FfKlO6AwPiabcGy1yX6/BlNrfNtvdxR8DVhFGDR3u5cYoQDiA==}
-    cpu: [arm64]
-    os: [win32]
-
-  '@risuko/js-win32-x64-msvc@0.4.0':
-    resolution: {integrity: sha512-m8FK5yQyD7Xyih0hhRPnGkb42kw0npspGDn3Fco443XTwpTUNnrtveQBQYECPPmmNSpuIgqDihefyGDHKp+87g==}
-    cpu: [x64]
-    os: [win32]
 
   '@rolldown/binding-android-arm64@1.0.3':
     resolution: {integrity: sha512-454rs7jHngixp/NMxd5srYD57OnzSlZ/eFTETjORQHLwJG1lRtmNOJcBerZlfu4GjKqeq8aCCIQrMdHyhI51Hw==}
@@ -789,8 +689,8 @@ packages:
   '@vue/devtools-shared@8.1.2':
     resolution: {integrity: sha512-X9RyVFYAdkBe4IUf5v48TxBF/6QPmF8CmWrDAjXzfUHrgQ/HGfTC1A6TqgXqZ03ye66l3AD51BAGD69IvKM9sw==}
 
-  '@vue/language-core@3.3.3':
-    resolution: {integrity: sha512-X6p+7nfY7vVT6dQwUJ+v0Jfq/lwIfhL2jMi91dQ3ln4hnlGXlxsDu/FNkeyHYgvYtyQy18ZX76IZy7X4diDbiQ==}
+  '@vue/language-core@3.3.4':
+    resolution: {integrity: sha512-IuHqQ5zGGOE7CXP72VX6A42IVeIzYv4WAhO6arej11TRNqtdZfGyH8Yr2FOCaDX0dSQG+JwULLoFHGY1igYVjQ==}
 
   '@vue/reactivity@3.5.35':
     resolution: {integrity: sha512-tVc+SsHConvh/Lz64qq1pP3rYArBmK42xonovEcxY74SQtvctZodG/zhq54P5dr38cVuw25d27cPNRdlMidpGQ==}
@@ -1579,8 +1479,8 @@ packages:
       nuxt:
         optional: true
 
-  vue-tsc@3.3.3:
-    resolution: {integrity: sha512-SWUEG7YRUeDJHT7Xsuhf02elYX2gxPzzAII7OxDAh4KNOr4QHQ0Lls0YfnaO5GNd560CwVa2HTfdqmA5MqvRqQ==}
+  vue-tsc@3.3.4:
+    resolution: {integrity: sha512-XA/JqmQwS2GZmfgpjOEGdrKwaTSEuPwxpHa7/t6f4yiGrJb3gVHTPb9wBfByMNZwQ+xDXs41b8gaS2DKsOozUw==}
     hasBin: true
     peerDependencies:
       typescript: '>=5.0.0'
@@ -1792,42 +1692,6 @@ snapshots:
       '@parcel/watcher-win32-arm64': 2.5.6
       '@parcel/watcher-win32-ia32': 2.5.6
       '@parcel/watcher-win32-x64': 2.5.6
-    optional: true
-
-  '@risuko/cli-darwin-arm64@0.4.0':
-    optional: true
-
-  '@risuko/cli-darwin-x64@0.4.0':
-    optional: true
-
-  '@risuko/cli-linux-arm64-gnu@0.4.0':
-    optional: true
-
-  '@risuko/cli-linux-x64-gnu@0.4.0':
-    optional: true
-
-  '@risuko/cli-win32-arm64-msvc@0.4.0':
-    optional: true
-
-  '@risuko/cli-win32-x64-msvc@0.4.0':
-    optional: true
-
-  '@risuko/js-darwin-arm64@0.4.0':
-    optional: true
-
-  '@risuko/js-darwin-x64@0.4.0':
-    optional: true
-
-  '@risuko/js-linux-arm64-gnu@0.4.0':
-    optional: true
-
-  '@risuko/js-linux-x64-gnu@0.4.0':
-    optional: true
-
-  '@risuko/js-win32-arm64-msvc@0.4.0':
-    optional: true
-
-  '@risuko/js-win32-x64-msvc@0.4.0':
     optional: true
 
   '@rolldown/binding-android-arm64@1.0.3':
@@ -2125,7 +1989,7 @@ snapshots:
 
   '@vue/devtools-shared@8.1.2': {}
 
-  '@vue/language-core@3.3.3':
+  '@vue/language-core@3.3.4':
     dependencies:
       '@volar/language-core': 2.4.28
       '@vue/compiler-dom': 3.5.35
@@ -2839,10 +2703,10 @@ snapshots:
 
   vue-sonner@2.0.9: {}
 
-  vue-tsc@3.3.3(typescript@6.0.3):
+  vue-tsc@3.3.4(typescript@6.0.3):
     dependencies:
       '@volar/typescript': 2.4.28
-      '@vue/language-core': 3.3.3
+      '@vue/language-core': 3.3.4
       typescript: 6.0.3
 
   vue-virtual-scroller@3.0.4(vue@3.5.35(typescript@6.0.3)):

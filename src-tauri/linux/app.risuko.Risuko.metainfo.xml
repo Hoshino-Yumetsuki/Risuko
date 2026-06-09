@@ -17,7 +17,7 @@
   </provides>
   <screenshots>
     <screenshot type="default">
-      <image>https://raw.githubusercontent.com/YueMiyuki/Risuko/v0.4.0/static/readme/UI.png</image>
+      <image>https://raw.githubusercontent.com/YueMiyuki/Risuko/v0.4.1/static/readme/UI.png</image>
       <caption>Main Risuko window</caption>
     </screenshot>
   </screenshots>
@@ -26,9 +26,9 @@
   <url type="vcs-browser">https://github.com/YueMiyuki/Risuko</url>
   <content_rating type="oars-1.1" />
   <releases>
-    <release version="0.4.0" date="2026-06-09">
+    <release version="0.4.1" date="2026-06-09">
       <description>
-        <p>Release 0.4.0.</p>
+        <p>Release 0.4.1</p>
       </description>
     </release>
   </releases>
