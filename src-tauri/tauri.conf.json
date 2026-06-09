@@ -1,8 +1,8 @@
 {
 	"$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
 	"productName": "Risuko",
-	"version": "0.4.0",
-	"identifier": "app.risuko.native",
+	"version": "0.4.1",
+	"identifier": "app.risuko.Risuko",
 	"build": {
 		"devUrl": "http://127.0.0.1:9080",
 		"frontendDist": "../dist/outputs",

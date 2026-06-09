@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>app.risuko.Risuko</id>
+  <name>Risuko</name>
+  <summary>Download manager</summary>
+  <metadata_license>MIT</metadata_license>
+  <project_license>MIT</project_license>
+  <developer id="app.risuko">
+    <name>YueMiyuki</name>
+  </developer>
+  <description>
+    <p>Risuko is a download manager for HTTP downloads, BitTorrent files, and magnet links.</p>
+  </description>
+  <launchable type="desktop-id">app.risuko.Risuko.desktop</launchable>
+  <provides>
+    <binary>risuko</binary>
+  </provides>
+  <screenshots>
+    <screenshot type="default">
+      <image>https://raw.githubusercontent.com/YueMiyuki/Risuko/v0.4.1/static/readme/UI.png</image>
+      <caption>Main Risuko window</caption>
+    </screenshot>
+  </screenshots>
+  <url type="homepage">https://risuko.app</url>
+  <url type="bugtracker">https://github.com/YueMiyuki/Risuko/issues</url>
+  <url type="vcs-browser">https://github.com/YueMiyuki/Risuko</url>
+  <content_rating type="oars-1.1" />
+  <releases>
+    <release version="0.4.1" date="2026-06-09">
+      <description>
+        <p>Release 0.4.1</p>
+      </description>
+    </release>
+  </releases>
+</component>
