@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Risuko
+GenericName=Download Manager
+Comment=A full-featured download manager
+Exec=risuko %U
+Icon=app.risuko.Risuko
+Terminal=false
+Categories=Network;FileTransfer;
+MimeType=application/x-bittorrent;x-scheme-handler/mo;x-scheme-handler/risuko;x-scheme-handler/magnet;x-scheme-handler/thunder;x-scheme-handler/ed2k;x-scheme-handler/adc;x-scheme-handler/adcs;x-scheme-handler/dchub;x-scheme-handler/nmdc;x-scheme-handler/gnutella;x-scheme-handler/gnet;x-scheme-handler/g2;
+StartupNotify=true
