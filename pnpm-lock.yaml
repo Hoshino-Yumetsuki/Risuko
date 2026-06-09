@@ -33,8 +33,8 @@ importers:
         specifier: ^5.0.4
         version: 5.0.4
       motion-v:
-        specifier: ^2.2.1
-        version: 2.2.1(@vueuse/core@14.3.0(vue@3.5.35(typescript@6.0.3)))(vue@3.5.35(typescript@6.0.3))
+        specifier: ^2.3.0
+        version: 2.3.0(@vueuse/core@14.3.0(vue@3.5.35(typescript@6.0.3)))(vue@3.5.35(typescript@6.0.3))
       reka-ui:
         specifier: ^2.9.9
         version: 2.9.9(vue@3.5.35(typescript@6.0.3))
@@ -132,9 +132,47 @@ importers:
 
   packages/risuko-app: {}
 
-  packages/risuko-cli: {}
+  packages/risuko-cli:
+    optionalDependencies:
+      '@risuko/cli-darwin-arm64':
+        specifier: 0.4.1
+        version: 0.4.1
+      '@risuko/cli-darwin-x64':
+        specifier: 0.4.1
+        version: 0.4.1
+      '@risuko/cli-linux-arm64-gnu':
+        specifier: 0.4.1
+        version: 0.4.1
+      '@risuko/cli-linux-x64-gnu':
+        specifier: 0.4.1
+        version: 0.4.1
+      '@risuko/cli-win32-arm64-msvc':
+        specifier: 0.4.1
+        version: 0.4.1
+      '@risuko/cli-win32-x64-msvc':
+        specifier: 0.4.1
+        version: 0.4.1
 
-  packages/risuko-js: {}
+  packages/risuko-js:
+    optionalDependencies:
+      '@risuko/js-darwin-arm64':
+        specifier: 0.4.1
+        version: 0.4.1
+      '@risuko/js-darwin-x64':
+        specifier: 0.4.1
+        version: 0.4.1
+      '@risuko/js-linux-arm64-gnu':
+        specifier: 0.4.1
+        version: 0.4.1
+      '@risuko/js-linux-x64-gnu':
+        specifier: 0.4.1
+        version: 0.4.1
+      '@risuko/js-win32-arm64-msvc':
+        specifier: 0.4.1
+        version: 0.4.1
+      '@risuko/js-win32-x64-msvc':
+        specifier: 0.4.1
+        version: 0.4.1
 
 packages:
 
@@ -326,6 +364,68 @@ packages:
   '@parcel/watcher@2.5.6':
     resolution: {integrity: sha512-tmmZ3lQxAe/k/+rNnXQRawJ4NjxO2hqiOLTHvWchtGZULp4RyFeh6aU4XdOYBFe2KE1oShQTv4AblOs2iOrNnQ==}
     engines: {node: '>= 10.0.0'}
+
+  '@risuko/cli-darwin-arm64@0.4.1':
+    resolution: {integrity: sha512-iXkA5+dAu3sdso4ykpjK0hQJk4bCmxTgBcDe3/HSJjbn1HuZEfH5WdlOfCLhgK6D+TlAjHioHNMGQ9RpR0OWjA==}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@risuko/cli-darwin-x64@0.4.1':
+    resolution: {integrity: sha512-enp0e0gsR5CPHZaUYRY4++reY85I5ZzgeHm40GJ/OG2vnhvn8qMtnPV/64VYbU42sgJGPvbzOcf13iqmlIlJkA==}
+    cpu: [x64]
+    os: [darwin]
+
+  '@risuko/cli-linux-arm64-gnu@0.4.1':
+    resolution: {integrity: sha512-mWH8wxYmyGibqM08W6WBBlgVIvPsBKwx6ozCa+8+zL7LoH52vFhSEWa3t0RZXwcagxcUeRnWkN2nFHT56bYOCg==}
+    cpu: [arm64]
+    os: [linux]
+
+  '@risuko/cli-linux-x64-gnu@0.4.1':
+    resolution: {integrity: sha512-VcfLnzkLhWIflfIDqbVejDrVbpRW4V8LjIujGqcpfDVGgdKX7G9v3m5w6QxpSryLwA5+2YV9eGU8exjeBQ8CSw==}
+    cpu: [x64]
+    os: [linux]
+
+  '@risuko/cli-win32-arm64-msvc@0.4.1':
+    resolution: {integrity: sha512-98xpSbndg2z8qhA3OQdgXRRntwlX1i0XLD5EJ0TP0VXfiGbfRbY8jMpi68Yqk2LUdjSruzTbc6CLBVgOw0G7dw==}
+    cpu: [arm64]
+    os: [win32]
+
+  '@risuko/cli-win32-x64-msvc@0.4.1':
+    resolution: {integrity: sha512-rw5YPCjueSqkmhmtbakG7ljODH4vM40J+4hoKdkW+1G648hEv2ihcoVFe4eOGI05iRsDQmF1L09YVWvAlsYQJg==}
+    cpu: [x64]
+    os: [win32]
+
+  '@risuko/js-darwin-arm64@0.4.1':
+    resolution: {integrity: sha512-k0gW2HhqGSNV1Gk15wEQmudNOBQq3NEylxJakzvOzxYUmJFsqt6gOqWESO8Pqz6I7xI09beu2C6EjTCJOM/XTQ==}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@risuko/js-darwin-x64@0.4.1':
+    resolution: {integrity: sha512-3bI0+Q5gww/d6tWpVj4cAyICY2et3/Rx3uD+m8HO+dYZxUc8pD6qnOEsc3rE1ChdFCahScvzi05YVU7xl6jBmw==}
+    cpu: [x64]
+    os: [darwin]
+
+  '@risuko/js-linux-arm64-gnu@0.4.1':
+    resolution: {integrity: sha512-TTdXOUMru8Y+qiVFGI4Od/Vr7SNR00hD1JG1fYGMJaY2oErCLKICz+qR9i/PS136rzzMTeTZVTAqxm6mONwhPQ==}
+    cpu: [arm64]
+    os: [linux]
+    libc: [glibc]
+
+  '@risuko/js-linux-x64-gnu@0.4.1':
+    resolution: {integrity: sha512-Bb+/w47WHF6e5aIoIw+67IfoLa1sky16oZjwr3YK+qX1fX2mpth9nYm2AN4szd4gMF8uQWxniJrSP9Bxfeg+0g==}
+    cpu: [x64]
+    os: [linux]
+    libc: [glibc]
+
+  '@risuko/js-win32-arm64-msvc@0.4.1':
+    resolution: {integrity: sha512-LFlcXwvBVpidEfWxkw1TvUwZyUMP472YwzUBr6+9Tp6f3LBShyXjReluB5xb8hT6VZHOV4youNIGmpT2PRnZOw==}
+    cpu: [arm64]
+    os: [win32]
+
+  '@risuko/js-win32-x64-msvc@0.4.1':
+    resolution: {integrity: sha512-NmoUYgh8YM0/vQZCs/cDxm3k0qtFVzJduwGkwpEnlXvxExmZoAv4N0gypLRTDlHcjDuw6OhM0APtE9FOtZ6xVw==}
+    cpu: [x64]
+    os: [win32]
 
   '@rolldown/binding-android-arm64@1.0.3':
     resolution: {integrity: sha512-454rs7jHngixp/NMxd5srYD57OnzSlZ/eFTETjORQHLwJG1lRtmNOJcBerZlfu4GjKqeq8aCCIQrMdHyhI51Hw==}
@@ -1175,8 +1275,8 @@ packages:
   motion-utils@12.39.0:
     resolution: {integrity: sha512-8nadJAJjTtqRkmRF36FoJTrywK9nnFmnPwnSMyxaOCU7GDjN9RTMJIxx9De8ErM+vpPhMccr/6fo5WciyQLnMQ==}
 
-  motion-v@2.2.1:
-    resolution: {integrity: sha512-BYbABe1Ep/u33dHOrK+8SoVU2MuiQqT94JOYsgrge8QbrwkKf2lS6rHW2QyzP6t89wcyBvzZeLQQwfrx76dj9A==}
+  motion-v@2.3.0:
+    resolution: {integrity: sha512-J0CCfXtICCni9RjotDUBOs57xNpYI9yyBSohEOxaRHrmjwOtlw291fhRu/mdgEdSasys96R028YDDOAtWBbRaA==}
     peerDependencies:
       '@vueuse/core': '>=10.0.0'
       vue: '>=3.0.0'
@@ -1692,6 +1792,42 @@ snapshots:
       '@parcel/watcher-win32-arm64': 2.5.6
       '@parcel/watcher-win32-ia32': 2.5.6
       '@parcel/watcher-win32-x64': 2.5.6
+    optional: true
+
+  '@risuko/cli-darwin-arm64@0.4.1':
+    optional: true
+
+  '@risuko/cli-darwin-x64@0.4.1':
+    optional: true
+
+  '@risuko/cli-linux-arm64-gnu@0.4.1':
+    optional: true
+
+  '@risuko/cli-linux-x64-gnu@0.4.1':
+    optional: true
+
+  '@risuko/cli-win32-arm64-msvc@0.4.1':
+    optional: true
+
+  '@risuko/cli-win32-x64-msvc@0.4.1':
+    optional: true
+
+  '@risuko/js-darwin-arm64@0.4.1':
+    optional: true
+
+  '@risuko/js-darwin-x64@0.4.1':
+    optional: true
+
+  '@risuko/js-linux-arm64-gnu@0.4.1':
+    optional: true
+
+  '@risuko/js-linux-x64-gnu@0.4.1':
+    optional: true
+
+  '@risuko/js-win32-arm64-msvc@0.4.1':
+    optional: true
+
+  '@risuko/js-win32-x64-msvc@0.4.1':
     optional: true
 
   '@rolldown/binding-android-arm64@1.0.3':
@@ -2428,7 +2564,7 @@ snapshots:
 
   motion-utils@12.39.0: {}
 
-  motion-v@2.2.1(@vueuse/core@14.3.0(vue@3.5.35(typescript@6.0.3)))(vue@3.5.35(typescript@6.0.3)):
+  motion-v@2.3.0(@vueuse/core@14.3.0(vue@3.5.35(typescript@6.0.3)))(vue@3.5.35(typescript@6.0.3)):
     dependencies:
       '@vueuse/core': 14.3.0(vue@3.5.35(typescript@6.0.3))
       framer-motion: 12.40.0

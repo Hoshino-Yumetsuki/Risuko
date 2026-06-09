@@ -43,7 +43,7 @@
 		"class-variance-authority": "^0.7.1",
 		"clsx": "^2.1.1",
 		"eventemitter3": "^5.0.4",
-		"motion-v": "^2.2.1",
+		"motion-v": "^2.3.0",
 		"reka-ui": "^2.9.9",
 		"tailwind-merge": "^3.6.0",
 		"tauri-plugin-nosleep-api": "^0.1.1",
