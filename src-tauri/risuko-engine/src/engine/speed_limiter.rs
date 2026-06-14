@@ -99,13 +99,15 @@ impl SpeedLimiter {
         if bytes == 0 {
             return;
         }
-        loop {
+        let mut remaining = bytes as u64;
+        while remaining > 0 {
             let limit = self.limit_bps.load(Ordering::Relaxed);
             if limit == 0 {
                 return;
             }
-            match self.try_consume(bytes as u64, limit) {
-                Ok(()) => return,
+            let take = remaining.min(limit);
+            match self.try_consume(take, limit) {
+                Ok(()) => remaining -= take,
                 // Cap sleep to 1s to stay responsive to runtime limit changes.
                 Err(wait_secs) => {
                     tokio::time::sleep(std::time::Duration::from_secs_f64(wait_secs.min(1.0)))
@@ -178,6 +180,14 @@ mod tests {
         let start = std::time::Instant::now();
         lim.acquire(10 * 1024 * 1024).await;
         assert!(start.elapsed() < std::time::Duration::from_millis(100));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn oversized_acquire_eventually_completes() {
+        let lim = SpeedLimiter::new(1024);
+        tokio::time::timeout(std::time::Duration::from_secs(60), lim.acquire(8 * 1024))
+            .await
+            .expect("oversized acquire must not hang");
     }
 
     #[tokio::test]
