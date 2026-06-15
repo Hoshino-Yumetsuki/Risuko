@@ -2303,7 +2303,9 @@ async fn run_single_download(
 
     if status == 416 && existing_size > 0 {
         tracing::warn!("Got 416 with existing_size={existing_size}, deleting stale .part");
-        let _ = fs::remove_file(part_path);
+        if let Err(e) = fs::remove_file(part_path) {
+            return Err(format!("Failed to delete stale .part: {e}"));
+        }
         return Err(format!("Download will retry: {STALE_PART_REMOVED}"));
     }
 
@@ -2346,7 +2348,9 @@ async fn run_single_download(
                  deleting stale .part and retrying"
             );
             drain_response_body(resp).await;
-            let _ = fs::remove_file(part_path);
+            if let Err(e) = fs::remove_file(part_path) {
+                return Err(format!("Failed to delete stale .part: {e}"));
+            }
             return Err(format!("Download will retry: {STALE_PART_REMOVED}"));
         }
         existing_size
