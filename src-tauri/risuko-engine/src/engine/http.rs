@@ -562,8 +562,17 @@ fn load_cookie_jar(options: &Map<String, Value>) -> Option<std::sync::Arc<risuko
 fn build_headers(options: &Map<String, Value>) -> HeaderMap {
     let mut headers = HeaderMap::new();
 
-    if let Some(header_val) = options.get("header").and_then(|v| v.as_str()) {
-        for h in header_val.split('\n') {
+    // `header` arrives as an aria2 array of strings, or a newline-joined
+    // string. Accept both — string-only silently dropped headers (#106).
+    if let Some(header_val) = options.get("header") {
+        let lines: Vec<&str> = if let Some(s) = header_val.as_str() {
+            s.split('\n').collect()
+        } else if let Some(arr) = header_val.as_array() {
+            arr.iter().filter_map(|v| v.as_str()).collect()
+        } else {
+            Vec::new()
+        };
+        for h in lines {
             let trimmed = h.trim();
             if let Some(colon) = trimmed.find(':') {
                 let name = trimmed[..colon].trim();
@@ -2294,7 +2303,9 @@ async fn run_single_download(
 
     if status == 416 && existing_size > 0 {
         tracing::warn!("Got 416 with existing_size={existing_size}, deleting stale .part");
-        let _ = fs::remove_file(part_path);
+        if let Err(e) = fs::remove_file(part_path) {
+            return Err(format!("Failed to delete stale .part: {e}"));
+        }
         return Err(format!("Download will retry: {STALE_PART_REMOVED}"));
     }
 
@@ -2308,6 +2319,44 @@ async fn run_single_download(
         );
         return Err(format!("HTTP error: {status}"));
     }
+
+    let write_offset = if existing_size > 0 && status != 206 {
+        tracing::warn!(
+            "Server ignored Range resume request (status {status}, existing={existing_size}); \
+             restarting download from scratch"
+        );
+        completed.store(0, Ordering::Relaxed);
+        0
+    } else if existing_size > 0 && status == 206 {
+        // Validate Content-Range matches requested offset
+        let range_valid = resp
+            .headers()
+            .get(CONTENT_RANGE)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|cr| {
+                // Parse "bytes START-END/TOTAL"
+                let cr = cr.strip_prefix("bytes ")?;
+                let dash = cr.find('-')?;
+                let start_str = &cr[..dash];
+                start_str.parse::<u64>().ok()
+            })
+            .map_or(false, |start| start == existing_size);
+
+        if !range_valid {
+            tracing::warn!(
+                "Server returned 206 with mismatched Content-Range (expected start={existing_size}); \
+                 deleting stale .part and retrying"
+            );
+            drain_response_body(resp).await;
+            if let Err(e) = fs::remove_file(part_path) {
+                return Err(format!("Failed to delete stale .part: {e}"));
+            }
+            return Err(format!("Download will retry: {STALE_PART_REMOVED}"));
+        }
+        existing_size
+    } else {
+        existing_size
+    };
 
     let resp_last_modified = resp
         .headers()
@@ -2327,12 +2376,12 @@ async fn run_single_download(
     // Update total from Content-Length
     if let Some(cl) = resp.content_length() {
         if cl > 0 {
-            total.store(existing_size + cl, Ordering::Relaxed);
+            total.store(write_offset + cl, Ordering::Relaxed);
         }
     }
 
     // Open file as a sync handle for positioned writes. We start writing at
-    // `existing_size` to resume in place \u2014 no append mode, no shared cursor
+    // `write_offset` to resume in place \u2014 no append mode, no shared cursor
     let file = {
         let f = fs::OpenOptions::new()
             .create(true)
@@ -2340,6 +2389,10 @@ async fn run_single_download(
             .truncate(false)
             .open(part_path)
             .map_err(|e| format!("Failed to open file: {e}"))?;
+        if write_offset == 0 && existing_size > 0 {
+            f.set_len(0)
+                .map_err(|e| format!("Failed to truncate stale .part: {e}"))?;
+        }
         Arc::new(f)
     };
 
@@ -2367,7 +2420,7 @@ async fn run_single_download(
     // rather than corrupting other regions.
     let writer = ChunkWriter::spawn(
         Arc::clone(&file),
-        existing_size,
+        write_offset,
         None,
         Arc::clone(&completed),
         None,
@@ -2935,6 +2988,50 @@ mod tests {
         assert_eq!(
             filename_from_content_disposition(&headers).as_deref(),
             Some("Storage Peek.jar")
+        );
+    }
+
+    #[test]
+    fn build_headers_parses_header_array() {
+        let mut options = Map::new();
+        options.insert(
+            "header".to_string(),
+            Value::Array(vec![
+                Value::String("User-Agent: pan.baidu.com".to_string()),
+                Value::String("Referer: https://pan.baidu.com/disk/home".to_string()),
+                Value::String("Cookie: BDUSS=deadbeef".to_string()),
+            ]),
+        );
+        let headers = build_headers(&options);
+        assert_eq!(
+            headers.get(risuko_http::header::USER_AGENT).unwrap(),
+            "pan.baidu.com"
+        );
+        assert_eq!(
+            headers.get(risuko_http::header::REFERER).unwrap(),
+            "https://pan.baidu.com/disk/home"
+        );
+        assert_eq!(
+            headers.get(risuko_http::header::COOKIE).unwrap(),
+            "BDUSS=deadbeef"
+        );
+    }
+
+    #[test]
+    fn build_headers_parses_header_string() {
+        let mut options = Map::new();
+        options.insert(
+            "header".to_string(),
+            Value::String("User-Agent: pan.baidu.com\nReferer: https://pan.baidu.com/".to_string()),
+        );
+        let headers = build_headers(&options);
+        assert_eq!(
+            headers.get(risuko_http::header::USER_AGENT).unwrap(),
+            "pan.baidu.com"
+        );
+        assert_eq!(
+            headers.get(risuko_http::header::REFERER).unwrap(),
+            "https://pan.baidu.com/"
         );
     }
 

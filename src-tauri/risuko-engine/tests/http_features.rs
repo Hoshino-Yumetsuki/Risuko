@@ -757,6 +757,87 @@ async fn spawn_flaky_server(payload: Arc<Vec<u8>>) -> SocketAddr {
     addr
 }
 
+/// Server that ignores `Range` entirely and always replies `200 OK` with the
+/// full body — the behavior of many naive app servers.
+async fn handle_range_ignoring(
+    _req: Request<Incoming>,
+    payload: Arc<Vec<u8>>,
+) -> Result<Response<Full<Bytes>>, Infallible> {
+    Ok(Response::builder()
+        .status(StatusCode::OK)
+        .header("Content-Length", payload.len().to_string())
+        .body(Full::new(Bytes::from(payload.as_ref().clone())))
+        .unwrap())
+}
+
+async fn spawn_range_ignoring_server(payload: Arc<Vec<u8>>) -> SocketAddr {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        loop {
+            let (stream, _) = match listener.accept().await {
+                Ok(p) => p,
+                Err(_) => return,
+            };
+            let payload = payload.clone();
+            tokio::spawn(async move {
+                let io = TokioIo::new(stream);
+                let _ = http1::Builder::new()
+                    .serve_connection(
+                        io,
+                        service_fn(move |req| handle_range_ignoring(req, payload.clone())),
+                    )
+                    .await;
+            });
+        }
+    });
+    addr
+}
+
+#[tokio::test]
+async fn restarts_from_scratch_when_server_ignores_range_resume() {
+    // Regression: with a stale `.part` on disk the engine sends
+    // `Range: bytes=N-`. A server that ignores Range replies 200 with the
+    // FULL body; writing that at offset N would duplicate the first N bytes
+    // and corrupt the file. The engine must detect the 200 and restart from 0.
+    let payload = Arc::new(small_payload(4000));
+    let addr = spawn_range_ignoring_server(payload.clone()).await;
+    tokio::task::yield_now().await;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().to_string_lossy().to_string();
+    std::fs::write(tmp.path().join("out.bin.part"), vec![0xFFu8; 1000]).unwrap();
+
+    let uris = vec![format!("http://{addr}/stream")];
+    let options = options_with(vec![("split", json!("1"))]);
+    let (total, completed, speed, cancelled, conns, ct, gl, tl, cc) = dummy_state();
+
+    let result = run_http_download_multi(
+        &uris,
+        &dir,
+        "out.bin",
+        &options,
+        total,
+        completed,
+        speed,
+        cancelled,
+        conns,
+        ct,
+        gl,
+        tl,
+        cc,
+        std::sync::Arc::new(parking_lot::Mutex::new(None)),
+    )
+    .await
+    .expect("download should succeed by restarting from scratch");
+
+    let got = std::fs::read(&result).unwrap();
+    assert_eq!(
+        got, *payload,
+        "stale partial bytes must not survive a 200-on-resume restart"
+    );
+}
+
 #[tokio::test]
 async fn single_connection_auto_retries_and_resumes_on_reset() {
     // Regression for "requires manual resume": a single-connection download
