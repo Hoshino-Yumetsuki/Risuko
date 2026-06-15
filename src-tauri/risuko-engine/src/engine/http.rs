@@ -2325,6 +2325,31 @@ async fn run_single_download(
         );
         completed.store(0, Ordering::Relaxed);
         0
+    } else if existing_size > 0 && status == 206 {
+        // Validate Content-Range matches requested offset
+        let range_valid = resp
+            .headers()
+            .get(CONTENT_RANGE)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|cr| {
+                // Parse "bytes START-END/TOTAL"
+                let cr = cr.strip_prefix("bytes ")?;
+                let dash = cr.find('-')?;
+                let start_str = &cr[..dash];
+                start_str.parse::<u64>().ok()
+            })
+            .map_or(false, |start| start == existing_size);
+
+        if !range_valid {
+            tracing::warn!(
+                "Server returned 206 with mismatched Content-Range (expected start={existing_size}); \
+                 restarting download from scratch"
+            );
+            completed.store(0, Ordering::Relaxed);
+            0
+        } else {
+            existing_size
+        }
     } else {
         existing_size
     };
