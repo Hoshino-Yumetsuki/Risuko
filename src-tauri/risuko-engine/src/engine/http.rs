@@ -2343,13 +2343,13 @@ async fn run_single_download(
         if !range_valid {
             tracing::warn!(
                 "Server returned 206 with mismatched Content-Range (expected start={existing_size}); \
-                 restarting download from scratch"
+                 deleting stale .part and retrying"
             );
-            completed.store(0, Ordering::Relaxed);
-            0
-        } else {
-            existing_size
+            drain_response_body(resp).await;
+            let _ = fs::remove_file(part_path);
+            return Err(format!("Download will retry: {STALE_PART_REMOVED}"));
         }
+        existing_size
     } else {
         existing_size
     };
