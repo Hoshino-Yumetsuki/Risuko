@@ -26,9 +26,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
-use jni::objects::{JClass, JObject, JString, JValue};
-use jni::sys::{jint, jstring, JNI_VERSION_1_6};
-use jni::{JNIEnv, JavaVM};
+use jni::errors::LogErrorAndDefault;
+use jni::objects::{JClass, JObject, JString, Reference};
+use jni::sys::{jint, JNI_VERSION_1_6};
+use jni::{jni_sig, jni_str, Env, EnvUnowned, JValue, JavaVM};
 
 static JAVA_VM: OnceLock<JavaVM> = OnceLock::new();
 static DIRECTORY_PICKERS: OnceLock<
@@ -43,44 +44,37 @@ static DIRECTORY_PICKER_COUNTER: AtomicU64 = AtomicU64::new(1);
 /// Return `JNI_VERSION_1_6`, the lowest version we need
 #[no_mangle]
 pub extern "system" fn JNI_OnLoad(vm: *mut jni::sys::JavaVM, _: *mut c_void) -> jint {
-    // SAFETY: Android gives us a process-lifetime `JavaVM*`
-    if let Ok(vm) = unsafe { JavaVM::from_raw(vm) } {
-        let _ = JAVA_VM.set(vm);
-    }
+    // SAFETY: Android gives us a process-lifetime `JavaVM*`. In jni 0.22,
+    // `JavaVM::from_raw` initializes the crate-wide singleton and returns an
+    // owned handle directly (it no longer returns a `Result`).
+    let vm = unsafe { JavaVM::from_raw(vm) };
+    let _ = JAVA_VM.set(vm);
     JNI_VERSION_1_6
 }
 
 #[no_mangle]
-pub extern "system" fn Java_app_risuko_mobile_MainActivity_nativeOnDirectoryPicked(
-    mut env: JNIEnv,
-    _activity: JObject,
-    request_id: jstring,
-    uri: jstring,
+pub extern "system" fn Java_app_risuko_mobile_MainActivity_nativeOnDirectoryPicked<'local>(
+    mut env: EnvUnowned<'local>,
+    _activity: JObject<'local>,
+    request_id: JString<'local>,
+    uri: JString<'local>,
 ) {
-    let request_id = if request_id.is_null() {
-        String::new()
-    } else {
-        let request_id = unsafe { JString::from_raw(request_id) };
-        env.get_string(&request_id)
-            .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_default()
-    };
-    let uri = if uri.is_null() {
-        None
-    } else {
-        let uri = unsafe { JString::from_raw(uri) };
-        env.get_string(&uri)
-            .map(|s| s.to_string_lossy().into_owned())
-            .ok()
-    };
-    if request_id.is_empty() {
-        return;
-    }
-    if let Ok(mut pending) = directory_pickers().lock() {
-        if let Some(tx) = pending.remove(&request_id) {
-            let _ = tx.send(uri);
+    env.with_env(|env| -> jni::errors::Result<()> {
+        // `try_to_string` returns an error for a null `JString`, so a null
+        // `request_id` collapses to an empty string and a null `uri` to `None`.
+        let request_id = request_id.try_to_string(env).unwrap_or_default();
+        if request_id.is_empty() {
+            return Ok(());
         }
-    }
+        let uri = uri.try_to_string(env).ok();
+        if let Ok(mut pending) = directory_pickers().lock() {
+            if let Some(tx) = pending.remove(&request_id) {
+                let _ = tx.send(uri);
+            }
+        }
+        Ok(())
+    })
+    .resolve::<LogErrorAndDefault>();
 }
 
 fn directory_pickers(
@@ -123,23 +117,19 @@ fn start_directory_picker(request_id: &str) -> Result<(), String> {
     let vm = JAVA_VM
         .get()
         .ok_or_else(|| "JavaVM not captured (JNI_OnLoad didn't run?)".to_string())?;
-    let mut env = vm
-        .attach_current_thread()
-        .map_err(|e| format!("attach thread: {e}"))?;
-    let activity = main_activity_class(&mut env)?;
-    let request_id = env
-        .new_string(request_id)
-        .map_err(|e| format!("new_string request_id: {e}"))?;
-    let started = env
-        .call_static_method(
-            activity,
-            "pickDirectory",
-            "(Ljava/lang/String;)Z",
-            &[JValue::Object(&request_id)],
-        )
-        .map_err(|e| format!("MainActivity.pickDirectory: {e}"))?
-        .z()
-        .map_err(|e| format!("pickDirectory result: {e}"))?;
+    let started = vm
+        .attach_current_thread(|env| -> jni::errors::Result<bool> {
+            let activity = main_activity_class(env)?;
+            let request_id = env.new_string(request_id)?;
+            env.call_static_method(
+                &activity,
+                jni_str!("pickDirectory"),
+                jni_sig!("(Ljava/lang/String;)Z"),
+                &[JValue::Object(&request_id)],
+            )?
+            .z()
+        })
+        .map_err(|e: jni::errors::Error| format!("MainActivity.pickDirectory: {e}"))?;
     if started {
         Ok(())
     } else {
@@ -151,34 +141,34 @@ pub fn set_system_bars(dark_mode: bool) -> Result<(), String> {
     let vm = JAVA_VM
         .get()
         .ok_or_else(|| "JavaVM not captured (JNI_OnLoad didn't run?)".to_string())?;
-    let mut env = vm
-        .attach_current_thread()
-        .map_err(|e| format!("attach thread: {e}"))?;
-    let activity = main_activity_class(&mut env)?;
-    env.call_static_method(
-        activity,
-        "setSystemBars",
-        "(Z)V",
-        &[JValue::Bool(if dark_mode { 1 } else { 0 })],
-    )
-    .map_err(|e| format!("MainActivity.setSystemBars: {e}"))?;
-    Ok(())
+    vm.attach_current_thread(|env| -> jni::errors::Result<()> {
+        let activity = main_activity_class(env)?;
+        env.call_static_method(
+            &activity,
+            jni_str!("setSystemBars"),
+            jni_sig!("(Z)V"),
+            &[JValue::Bool(dark_mode)],
+        )?;
+        Ok(())
+    })
+    .map_err(|e: jni::errors::Error| format!("MainActivity.setSystemBars: {e}"))
 }
 
 pub fn ensure_all_files_access() -> Result<bool, String> {
     let vm = JAVA_VM
         .get()
         .ok_or_else(|| "JavaVM not captured (JNI_OnLoad didn't run?)".to_string())?;
-    let mut env = vm
-        .attach_current_thread()
-        .map_err(|e| format!("attach thread: {e}"))?;
-    let activity = main_activity_class(&mut env)?;
-    let granted = env
-        .call_static_method(activity, "requestAllFilesAccess", "()Z", &[])
-        .map_err(|e| format!("MainActivity.requestAllFilesAccess: {e}"))?
+    vm.attach_current_thread(|env| -> jni::errors::Result<bool> {
+        let activity = main_activity_class(env)?;
+        env.call_static_method(
+            &activity,
+            jni_str!("requestAllFilesAccess"),
+            jni_sig!("()Z"),
+            &[],
+        )?
         .z()
-        .map_err(|e| format!("requestAllFilesAccess result: {e}"))?;
-    Ok(granted)
+    })
+    .map_err(|e: jni::errors::Error| format!("MainActivity.requestAllFilesAccess: {e}"))
 }
 
 pub fn show_download_notification(
@@ -189,38 +179,39 @@ pub fn show_download_notification(
     let vm = JAVA_VM
         .get()
         .ok_or_else(|| "JavaVM not captured (JNI_OnLoad didn't run?)".to_string())?;
-    let mut env = vm
-        .attach_current_thread()
-        .map_err(|e| format!("attach thread: {e}"))?;
-    let activity = main_activity_class(&mut env)?;
-    let detail = env
-        .new_string(detail)
-        .map_err(|e| format!("new_string detail: {e}"))?;
-    env.call_static_method(
-        activity,
-        "showDownloadNotification",
-        "(IILjava/lang/String;)V",
-        &[
-            JValue::Int(progress.min(100) as i32),
-            JValue::Int(active_count.min(i32::MAX as u32) as i32),
-            JValue::Object(&detail),
-        ],
-    )
-    .map_err(|e| format!("MainActivity.showDownloadNotification: {e}"))?;
-    Ok(())
+    vm.attach_current_thread(|env| -> jni::errors::Result<()> {
+        let activity = main_activity_class(env)?;
+        let detail = env.new_string(detail)?;
+        env.call_static_method(
+            &activity,
+            jni_str!("showDownloadNotification"),
+            jni_sig!("(IILjava/lang/String;)V"),
+            &[
+                JValue::Int(progress.min(100) as i32),
+                JValue::Int(active_count.min(i32::MAX as u32) as i32),
+                JValue::Object(&detail),
+            ],
+        )?;
+        Ok(())
+    })
+    .map_err(|e: jni::errors::Error| format!("MainActivity.showDownloadNotification: {e}"))
 }
 
 pub fn hide_download_notification() -> Result<(), String> {
     let vm = JAVA_VM
         .get()
         .ok_or_else(|| "JavaVM not captured (JNI_OnLoad didn't run?)".to_string())?;
-    let mut env = vm
-        .attach_current_thread()
-        .map_err(|e| format!("attach thread: {e}"))?;
-    let activity = main_activity_class(&mut env)?;
-    env.call_static_method(activity, "hideDownloadNotification", "()V", &[])
-        .map_err(|e| format!("MainActivity.hideDownloadNotification: {e}"))?;
-    Ok(())
+    vm.attach_current_thread(|env| -> jni::errors::Result<()> {
+        let activity = main_activity_class(env)?;
+        env.call_static_method(
+            &activity,
+            jni_str!("hideDownloadNotification"),
+            jni_sig!("()V"),
+            &[],
+        )?;
+        Ok(())
+    })
+    .map_err(|e: jni::errors::Error| format!("MainActivity.hideDownloadNotification: {e}"))
 }
 
 /// Open `path` in a system file manager via `MainActivity.revealFolder`
@@ -236,32 +227,26 @@ pub fn reveal_folder(path: &str) -> Result<(), String> {
     let vm = JAVA_VM
         .get()
         .ok_or_else(|| "JavaVM not captured (JNI_OnLoad didn't run?)".to_string())?;
-    let mut env = vm
-        .attach_current_thread()
-        .map_err(|e| format!("attach thread: {e}"))?;
-    let activity = main_activity_class(&mut env)?;
-    let path_str = env
-        .new_string(path)
-        .map_err(|e| format!("new_string path: {e}"))?;
-    let value = env
-        .call_static_method(
-            activity,
-            "revealFolder",
-            "(Ljava/lang/String;)Ljava/lang/String;",
-            &[JValue::Object(&path_str)],
-        )
-        .map_err(|e| format!("MainActivity.revealFolder: {e}"))?
-        .l()
-        .map_err(|e| format!("revealFolder result not object: {e}"))?;
-    if value.is_null() {
-        return Err("revealFolder returned null".to_string());
-    }
-    let value_str = JString::from(value);
-    let outcome = env
-        .get_string(&value_str)
-        .map_err(|e| format!("get_string revealFolder: {e}"))?
-        .to_string_lossy()
-        .into_owned();
+    let outcome = vm
+        .attach_current_thread(|env| -> jni::errors::Result<Option<String>> {
+            let activity = main_activity_class(env)?;
+            let path_str = env.new_string(path)?;
+            let value = env
+                .call_static_method(
+                    &activity,
+                    jni_str!("revealFolder"),
+                    jni_sig!("(Ljava/lang/String;)Ljava/lang/String;"),
+                    &[JValue::Object(&path_str)],
+                )?
+                .l()?;
+            if value.is_null() {
+                return Ok(None);
+            }
+            let value_str = JString::cast_local(env, value)?;
+            Ok(Some(value_str.try_to_string(env)?))
+        })
+        .map_err(|e: jni::errors::Error| format!("MainActivity.revealFolder: {e}"))?;
+    let outcome = outcome.ok_or_else(|| "revealFolder returned null".to_string())?;
     if outcome == "ok" {
         Ok(())
     } else {
@@ -274,35 +259,27 @@ pub fn open_file(path: &str, mime: &str) -> Result<(), String> {
     let vm = JAVA_VM
         .get()
         .ok_or_else(|| "JavaVM not captured (JNI_OnLoad didn't run?)".to_string())?;
-    let mut env = vm
-        .attach_current_thread()
-        .map_err(|e| format!("attach thread: {e}"))?;
-    let activity = main_activity_class(&mut env)?;
-    let path_str = env
-        .new_string(path)
-        .map_err(|e| format!("new_string path: {e}"))?;
-    let mime_str = env
-        .new_string(mime)
-        .map_err(|e| format!("new_string mime: {e}"))?;
-    let value = env
-        .call_static_method(
-            activity,
-            "openFile",
-            "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;",
-            &[JValue::Object(&path_str), JValue::Object(&mime_str)],
-        )
-        .map_err(|e| format!("MainActivity.openFile: {e}"))?
-        .l()
-        .map_err(|e| format!("openFile result not object: {e}"))?;
-    if value.is_null() {
-        return Err("openFile returned null".to_string());
-    }
-    let value_str = JString::from(value);
-    let outcome = env
-        .get_string(&value_str)
-        .map_err(|e| format!("get_string openFile: {e}"))?
-        .to_string_lossy()
-        .into_owned();
+    let outcome = vm
+        .attach_current_thread(|env| -> jni::errors::Result<Option<String>> {
+            let activity = main_activity_class(env)?;
+            let path_str = env.new_string(path)?;
+            let mime_str = env.new_string(mime)?;
+            let value = env
+                .call_static_method(
+                    &activity,
+                    jni_str!("openFile"),
+                    jni_sig!("(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;"),
+                    &[JValue::Object(&path_str), JValue::Object(&mime_str)],
+                )?
+                .l()?;
+            if value.is_null() {
+                return Ok(None);
+            }
+            let value_str = JString::cast_local(env, value)?;
+            Ok(Some(value_str.try_to_string(env)?))
+        })
+        .map_err(|e: jni::errors::Error| format!("MainActivity.openFile: {e}"))?;
+    let outcome = outcome.ok_or_else(|| "openFile returned null".to_string())?;
     if outcome == "ok" {
         Ok(())
     } else {
@@ -311,43 +288,47 @@ pub fn open_file(path: &str, mime: &str) -> Result<(), String> {
     }
 }
 
-fn main_activity_class<'env>(env: &mut JNIEnv<'env>) -> Result<JClass<'env>, String> {
-    let app = current_application(env).map_err(|e| format!("get application: {e}"))?;
+fn main_activity_class<'local>(env: &mut Env<'local>) -> jni::errors::Result<JClass<'local>> {
+    let app = current_application(env)?;
     let class_loader = env
-        .call_method(&app, "getClassLoader", "()Ljava/lang/ClassLoader;", &[])
-        .map_err(|e| format!("getClassLoader: {e}"))?
-        .l()
-        .map_err(|e| format!("classLoader not object: {e}"))?;
-    let class_name = env
-        .new_string("app.risuko.mobile.MainActivity")
-        .map_err(|e| format!("new_string class_name: {e}"))?;
+        .call_method(
+            &app,
+            jni_str!("getClassLoader"),
+            jni_sig!("()Ljava/lang/ClassLoader;"),
+            &[],
+        )?
+        .l()?;
+    let class_name = env.new_string("app.risuko.mobile.MainActivity")?;
     let activity = env
         .call_method(
-            class_loader,
-            "loadClass",
-            "(Ljava/lang/String;)Ljava/lang/Class;",
+            &class_loader,
+            jni_str!("loadClass"),
+            jni_sig!("(Ljava/lang/String;)Ljava/lang/Class;"),
             &[JValue::Object(&class_name)],
-        )
-        .map_err(|e| format!("load MainActivity: {e}"))?
-        .l()
-        .map_err(|e| format!("MainActivity class not object: {e}"))?;
-    Ok(JClass::from(activity))
+        )?
+        .l()?;
+    JClass::cast_local(env, activity)
 }
 
 /// Resolve the current `Application` through `ActivityThread`
 /// Background Rust threads do not hold an `Activity`, so helpers resolve the app context first
-fn current_application<'env>(env: &mut JNIEnv<'env>) -> jni::errors::Result<JObject<'env>> {
-    let class = env.find_class("android/app/ActivityThread")?;
+fn current_application<'local>(env: &mut Env<'local>) -> jni::errors::Result<JObject<'local>> {
+    let class = env.find_class(jni_str!("android/app/ActivityThread"))?;
     let thread = env
         .call_static_method(
-            class,
-            "currentActivityThread",
-            "()Landroid/app/ActivityThread;",
+            &class,
+            jni_str!("currentActivityThread"),
+            jni_sig!("()Landroid/app/ActivityThread;"),
             &[],
         )?
         .l()?;
     let app = env
-        .call_method(thread, "getApplication", "()Landroid/app/Application;", &[])?
+        .call_method(
+            &thread,
+            jni_str!("getApplication"),
+            jni_sig!("()Landroid/app/Application;"),
+            &[],
+        )?
         .l()?;
     Ok(app)
 }

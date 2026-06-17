@@ -2,7 +2,7 @@
 members = ["risuko-engine", "risuko-bt", "risuko-cli", "risuko-napi", "risuko-http", "risuko-cookies"]
 
 [workspace.package]
-version = "0.4.1"
+version = "0.4.2"
 authors = ["YueMiyuki"]
 edition = "2021"
 rust-version = "1.82"
@@ -69,7 +69,7 @@ tauri-plugin-clipboard-manager = "2.3.2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-appender = "0.2"
-regex = "1.12.3"
+regex = "1.12.4"
 risuko-http = { workspace = true }
 risuko-cookies = { workspace = true }
 base64 = "0.22"
@@ -100,7 +100,7 @@ tauri-plugin-single-instance = "2"
 # and `Intent.createChooser`. `tauri-plugin-shell::open` only calls
 # `Intent(ACTION_VIEW, uri)` with no extras, which lets generic
 # wildcard-MIME apps like Messages intercept any content URI we send.
-jni = "0.21"
+jni = "0.22"
 ndk-context = "0.1"
 
 [dev-dependencies]
