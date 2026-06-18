@@ -27,7 +27,14 @@ use std::collections::HashSet;
 const MAGNET_METADATA_ATTEMPT_TIMEOUT_SECS: u64 = 60;
 const MAGNET_METADATA_RETRY_DELAY_SECS: u64 = 15;
 
+static WORKER_EPOCH: AtomicU64 = AtomicU64::new(1);
+
+fn next_worker_epoch() -> u64 {
+    WORKER_EPOCH.fetch_add(1, Ordering::Relaxed)
+}
+
 struct ActiveDownload {
+    epoch: u64,
     cancel: Arc<AtomicBool>,
     cancel_token: CancellationToken,
     total: Arc<AtomicU64>,
@@ -925,8 +932,10 @@ impl TaskManager {
             _ => "p2p",
         };
 
+        let worker_epoch = next_worker_epoch();
         let completion_handle = tokio::spawn(async move {
             let ad = ActiveDownload {
+                epoch: worker_epoch,
                 cancel,
                 cancel_token: cancel_token.clone(),
                 total,
@@ -1003,8 +1012,15 @@ impl TaskManager {
                 _ => Err("Unsupported protocol".to_string()),
             };
 
+            let is_current =
+                active.read().await.get(&gid_clone).map(|ad| ad.epoch) == Some(worker_epoch);
+
             let mut tasks_guard = tasks.write().await;
-            if let Some(task) = tasks_guard.iter_mut().find(|t| t.gid == gid_clone) {
+            if let Some(task) = tasks_guard
+                .iter_mut()
+                .find(|t| t.gid == gid_clone)
+                .filter(|_| is_current)
+            {
                 task.total_length = total_ref.load(Ordering::Relaxed);
                 task.completed_length = completed_ref.load(Ordering::Relaxed);
                 task.download_speed = 0;
@@ -1039,12 +1055,12 @@ impl TaskManager {
                     }
                     Err(e) => {
                         if e.contains("cancelled") {
-                            if task.status != TaskStatus::Removed {
+                            if task.status == TaskStatus::Active {
                                 task.status = TaskStatus::Paused;
+                                events.send(EngineEvent::DownloadPause {
+                                    gid: gid_clone.clone(),
+                                });
                             }
-                            events.send(EngineEvent::DownloadPause {
-                                gid: gid_clone.clone(),
-                            });
                         } else {
                             tracing::error!(
                                 "[{}] Download failed for {}: {}",
@@ -1064,7 +1080,10 @@ impl TaskManager {
             }
             drop(tasks_guard);
 
-            active.write().await.remove(&gid_clone);
+            let mut active_guard = active.write().await;
+            if active_guard.get(&gid_clone).map(|ad| ad.epoch) == Some(worker_epoch) {
+                active_guard.remove(&gid_clone);
+            }
         });
 
         drop(completion_handle);
@@ -1258,8 +1277,10 @@ impl TaskManager {
         let adopted_filename: Arc<parking_lot::Mutex<Option<String>>> =
             Arc::new(parking_lot::Mutex::new(None));
         let adopted_filename_dl = adopted_filename.clone();
+        let worker_epoch = next_worker_epoch();
         let completion_handle = tokio::spawn(async move {
             let ad = ActiveDownload {
+                epoch: worker_epoch,
                 cancel,
                 cancel_token: cancel_token.clone(),
                 total,
@@ -1290,8 +1311,15 @@ impl TaskManager {
             .await;
 
             // Update task status
+            let is_current =
+                active.read().await.get(&gid_clone).map(|ad| ad.epoch) == Some(worker_epoch);
+
             let mut tasks_guard = tasks.write().await;
-            if let Some(task) = tasks_guard.iter_mut().find(|t| t.gid == gid_clone) {
+            if let Some(task) = tasks_guard
+                .iter_mut()
+                .find(|t| t.gid == gid_clone)
+                .filter(|_| is_current)
+            {
                 task.total_length = total_ref.load(Ordering::Relaxed);
                 task.completed_length = completed_ref.load(Ordering::Relaxed);
                 task.download_speed = 0;
@@ -1360,13 +1388,12 @@ impl TaskManager {
                     }
                     Err(e) => {
                         if e.contains("cancelled") {
-                            // Don't overwrite Removed status from remove()
-                            if task.status != TaskStatus::Removed {
+                            if task.status == TaskStatus::Active {
                                 task.status = TaskStatus::Paused;
+                                events.send(EngineEvent::DownloadPause {
+                                    gid: gid_clone.clone(),
+                                });
                             }
-                            events.send(EngineEvent::DownloadPause {
-                                gid: gid_clone.clone(),
-                            });
                         } else {
                             tracing::error!("Download failed for {}: {}", gid_clone, e);
                             task.status = TaskStatus::Error;
@@ -1405,8 +1432,10 @@ impl TaskManager {
             }
             drop(tasks_guard);
 
-            // Remove from active downloads
-            active.write().await.remove(&gid_clone);
+            let mut active_guard = active.write().await;
+            if active_guard.get(&gid_clone).map(|ad| ad.epoch) == Some(worker_epoch) {
+                active_guard.remove(&gid_clone);
+            }
         });
 
         // Detach, the completion_handle runs independently
@@ -1442,8 +1471,10 @@ impl TaskManager {
 
         let active_for_insert = active.clone();
         let gid_for_insert = gid.clone();
+        let worker_epoch = next_worker_epoch();
         let completion_handle = tokio::spawn(async move {
             let ad = ActiveDownload {
+                epoch: worker_epoch,
                 cancel,
                 cancel_token: cancel_token.clone(),
                 total,
@@ -1481,8 +1512,15 @@ impl TaskManager {
             };
 
             // Update task status
+            let is_current =
+                active.read().await.get(&gid_clone).map(|ad| ad.epoch) == Some(worker_epoch);
+
             let mut tasks_guard = tasks.write().await;
-            if let Some(task) = tasks_guard.iter_mut().find(|t| t.gid == gid_clone) {
+            if let Some(task) = tasks_guard
+                .iter_mut()
+                .find(|t| t.gid == gid_clone)
+                .filter(|_| is_current)
+            {
                 task.total_length = total_ref.load(Ordering::Relaxed);
                 task.completed_length = completed_ref.load(Ordering::Relaxed);
                 task.download_speed = 0;
@@ -1516,13 +1554,12 @@ impl TaskManager {
                     }
                     Err(e) => {
                         if e.contains("cancelled") {
-                            // Don't overwrite Removed status from remove()
-                            if task.status != TaskStatus::Removed {
+                            if task.status == TaskStatus::Active {
                                 task.status = TaskStatus::Paused;
+                                events.send(EngineEvent::DownloadPause {
+                                    gid: gid_clone.clone(),
+                                });
                             }
-                            events.send(EngineEvent::DownloadPause {
-                                gid: gid_clone.clone(),
-                            });
                         } else {
                             tracing::error!("[ed2k] Download failed for {}: {}", gid_clone, e);
                             task.status = TaskStatus::Error;
@@ -1537,8 +1574,10 @@ impl TaskManager {
             }
             drop(tasks_guard);
 
-            // Remove from active downloads
-            active.write().await.remove(&gid_clone);
+            let mut active_guard = active.write().await;
+            if active_guard.get(&gid_clone).map(|ad| ad.epoch) == Some(worker_epoch) {
+                active_guard.remove(&gid_clone);
+            }
         });
 
         drop(completion_handle);
@@ -1597,8 +1636,10 @@ impl TaskManager {
 
         let active_for_insert = active.clone();
         let gid_for_insert = gid.clone();
+        let worker_epoch = next_worker_epoch();
         let completion_handle = tokio::spawn(async move {
             let ad = ActiveDownload {
+                epoch: worker_epoch,
                 cancel,
                 cancel_token: cancel_token.clone(),
                 total,
@@ -1631,8 +1672,15 @@ impl TaskManager {
             )
             .await;
 
+            let is_current =
+                active.read().await.get(&gid_clone).map(|ad| ad.epoch) == Some(worker_epoch);
+
             let mut tasks_guard = tasks.write().await;
-            if let Some(task) = tasks_guard.iter_mut().find(|t| t.gid == gid_clone) {
+            if let Some(task) = tasks_guard
+                .iter_mut()
+                .find(|t| t.gid == gid_clone)
+                .filter(|_| is_current)
+            {
                 task.total_length = total_ref.load(Ordering::Relaxed);
                 task.completed_length = completed_ref.load(Ordering::Relaxed);
                 task.download_speed = 0;
@@ -1673,12 +1721,12 @@ impl TaskManager {
                     }
                     Err(e) => {
                         if e.contains("cancelled") {
-                            if task.status != TaskStatus::Removed {
+                            if task.status == TaskStatus::Active {
                                 task.status = TaskStatus::Paused;
+                                events.send(EngineEvent::DownloadPause {
+                                    gid: gid_clone.clone(),
+                                });
                             }
-                            events.send(EngineEvent::DownloadPause {
-                                gid: gid_clone.clone(),
-                            });
                         } else {
                             tracing::error!("[media] Download failed for {}: {}", gid_clone, e);
                             task.status = TaskStatus::Error;
@@ -1693,7 +1741,10 @@ impl TaskManager {
             }
             drop(tasks_guard);
 
-            active.write().await.remove(&gid_clone);
+            let mut active_guard = active.write().await;
+            if active_guard.get(&gid_clone).map(|ad| ad.epoch) == Some(worker_epoch) {
+                active_guard.remove(&gid_clone);
+            }
         });
 
         drop(completion_handle);
@@ -1735,8 +1786,10 @@ impl TaskManager {
 
         let active_for_insert = active.clone();
         let gid_for_insert = gid.clone();
+        let worker_epoch = next_worker_epoch();
         let completion_handle = tokio::spawn(async move {
             let ad = ActiveDownload {
+                epoch: worker_epoch,
                 cancel,
                 cancel_token: cancel_token.clone(),
                 total,
@@ -1764,8 +1817,15 @@ impl TaskManager {
             )
             .await;
 
+            let is_current =
+                active.read().await.get(&gid_clone).map(|ad| ad.epoch) == Some(worker_epoch);
+
             let mut tasks_guard = tasks.write().await;
-            if let Some(task) = tasks_guard.iter_mut().find(|t| t.gid == gid_clone) {
+            if let Some(task) = tasks_guard
+                .iter_mut()
+                .find(|t| t.gid == gid_clone)
+                .filter(|_| is_current)
+            {
                 task.total_length = total_ref.load(Ordering::Relaxed);
                 task.completed_length = completed_ref.load(Ordering::Relaxed);
                 task.download_speed = 0;
@@ -1799,13 +1859,12 @@ impl TaskManager {
                     }
                     Err(e) => {
                         if e.contains("cancelled") {
-                            // Don't overwrite Removed status from remove()
-                            if task.status != TaskStatus::Removed {
+                            if task.status == TaskStatus::Active {
                                 task.status = TaskStatus::Paused;
+                                events.send(EngineEvent::DownloadPause {
+                                    gid: gid_clone.clone(),
+                                });
                             }
-                            events.send(EngineEvent::DownloadPause {
-                                gid: gid_clone.clone(),
-                            });
                         } else {
                             tracing::error!("[m3u8] Download failed for {}: {}", gid_clone, e);
                             task.status = TaskStatus::Error;
@@ -1820,7 +1879,10 @@ impl TaskManager {
             }
             drop(tasks_guard);
 
-            active.write().await.remove(&gid_clone);
+            let mut active_guard = active.write().await;
+            if active_guard.get(&gid_clone).map(|ad| ad.epoch) == Some(worker_epoch) {
+                active_guard.remove(&gid_clone);
+            }
         });
 
         drop(completion_handle);
@@ -1862,8 +1924,10 @@ impl TaskManager {
 
         let active_for_insert = active.clone();
         let gid_for_insert = gid.clone();
+        let worker_epoch = next_worker_epoch();
         let completion_handle = tokio::spawn(async move {
             let ad = ActiveDownload {
+                epoch: worker_epoch,
                 cancel,
                 cancel_token: cancel_token.clone(),
                 total,
@@ -1891,8 +1955,15 @@ impl TaskManager {
             )
             .await;
 
+            let is_current =
+                active.read().await.get(&gid_clone).map(|ad| ad.epoch) == Some(worker_epoch);
+
             let mut tasks_guard = tasks.write().await;
-            if let Some(task) = tasks_guard.iter_mut().find(|t| t.gid == gid_clone) {
+            if let Some(task) = tasks_guard
+                .iter_mut()
+                .find(|t| t.gid == gid_clone)
+                .filter(|_| is_current)
+            {
                 task.total_length = total_ref.load(Ordering::Relaxed);
                 task.completed_length = completed_ref.load(Ordering::Relaxed);
                 task.download_speed = 0;
@@ -1926,13 +1997,12 @@ impl TaskManager {
                     }
                     Err(e) => {
                         if e.contains("cancelled") {
-                            // Don't overwrite Removed status from remove()
-                            if task.status != TaskStatus::Removed {
+                            if task.status == TaskStatus::Active {
                                 task.status = TaskStatus::Paused;
+                                events.send(EngineEvent::DownloadPause {
+                                    gid: gid_clone.clone(),
+                                });
                             }
-                            events.send(EngineEvent::DownloadPause {
-                                gid: gid_clone.clone(),
-                            });
                         } else {
                             tracing::error!("[ftp] Download failed for {}: {}", gid_clone, e);
                             task.status = TaskStatus::Error;
@@ -1947,7 +2017,10 @@ impl TaskManager {
             }
             drop(tasks_guard);
 
-            active.write().await.remove(&gid_clone);
+            let mut active_guard = active.write().await;
+            if active_guard.get(&gid_clone).map(|ad| ad.epoch) == Some(worker_epoch) {
+                active_guard.remove(&gid_clone);
+            }
         });
 
         drop(completion_handle);
@@ -3498,6 +3571,7 @@ mod tests {
         mgr.active_downloads.write().await.insert(
             "gid1".to_string(),
             ActiveDownload {
+                epoch: next_worker_epoch(),
                 cancel: cancel.clone(),
                 cancel_token: cancel_token.clone(),
                 total: Arc::new(AtomicU64::new(0)),
