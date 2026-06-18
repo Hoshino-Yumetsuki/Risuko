@@ -1012,10 +1012,9 @@ impl TaskManager {
                 _ => Err("Unsupported protocol".to_string()),
             };
 
+            let mut tasks_guard = tasks.write().await;
             let is_current =
                 active.read().await.get(&gid_clone).map(|ad| ad.epoch) == Some(worker_epoch);
-
-            let mut tasks_guard = tasks.write().await;
             if let Some(task) = tasks_guard
                 .iter_mut()
                 .find(|t| t.gid == gid_clone)
@@ -1311,10 +1310,9 @@ impl TaskManager {
             .await;
 
             // Update task status
+            let mut tasks_guard = tasks.write().await;
             let is_current =
                 active.read().await.get(&gid_clone).map(|ad| ad.epoch) == Some(worker_epoch);
-
-            let mut tasks_guard = tasks.write().await;
             if let Some(task) = tasks_guard
                 .iter_mut()
                 .find(|t| t.gid == gid_clone)
@@ -1512,10 +1510,9 @@ impl TaskManager {
             };
 
             // Update task status
+            let mut tasks_guard = tasks.write().await;
             let is_current =
                 active.read().await.get(&gid_clone).map(|ad| ad.epoch) == Some(worker_epoch);
-
-            let mut tasks_guard = tasks.write().await;
             if let Some(task) = tasks_guard
                 .iter_mut()
                 .find(|t| t.gid == gid_clone)
@@ -1672,10 +1669,9 @@ impl TaskManager {
             )
             .await;
 
+            let mut tasks_guard = tasks.write().await;
             let is_current =
                 active.read().await.get(&gid_clone).map(|ad| ad.epoch) == Some(worker_epoch);
-
-            let mut tasks_guard = tasks.write().await;
             if let Some(task) = tasks_guard
                 .iter_mut()
                 .find(|t| t.gid == gid_clone)
@@ -1817,10 +1813,9 @@ impl TaskManager {
             )
             .await;
 
+            let mut tasks_guard = tasks.write().await;
             let is_current =
                 active.read().await.get(&gid_clone).map(|ad| ad.epoch) == Some(worker_epoch);
-
-            let mut tasks_guard = tasks.write().await;
             if let Some(task) = tasks_guard
                 .iter_mut()
                 .find(|t| t.gid == gid_clone)
@@ -1955,10 +1950,9 @@ impl TaskManager {
             )
             .await;
 
+            let mut tasks_guard = tasks.write().await;
             let is_current =
                 active.read().await.get(&gid_clone).map(|ad| ad.epoch) == Some(worker_epoch);
-
-            let mut tasks_guard = tasks.write().await;
             if let Some(task) = tasks_guard
                 .iter_mut()
                 .find(|t| t.gid == gid_clone)
