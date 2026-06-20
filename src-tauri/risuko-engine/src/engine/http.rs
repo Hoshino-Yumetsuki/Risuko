@@ -669,6 +669,21 @@ fn apply_netrc_auth(headers: &mut HeaderMap, uri: &str, options: &Map<String, Va
     }
 }
 
+fn build_mirror_headers(
+    all_uris: &[String],
+    base_headers: &HeaderMap,
+    options: &Map<String, Value>,
+) -> Vec<HeaderMap> {
+    all_uris
+        .iter()
+        .map(|u| {
+            let mut h = base_headers.clone();
+            apply_netrc_auth(&mut h, u, options);
+            h
+        })
+        .collect()
+}
+
 /// Run an HTTP/FTP download. This is the main entry point called from manager.rs
 /// Returns the final file path on success
 pub async fn run_http_download(
@@ -1018,14 +1033,7 @@ async fn run_single_uri_download(
                 tracing::debug!(
                     "run_single_uri_download calling run_multi_chunk: part_path={part_path:?}, filename={filename:?}"
                 );
-                let mirror_headers: Vec<HeaderMap> = all_uris
-                    .iter()
-                    .map(|u| {
-                        let mut h = base_headers.clone();
-                        apply_netrc_auth(&mut h, u, options);
-                        h
-                    })
-                    .collect();
+                let mirror_headers = build_mirror_headers(all_uris, &base_headers, options);
                 let result = run_multi_chunk(
                     &range_client,
                     all_uris,
@@ -1181,14 +1189,7 @@ async fn run_single_uri_download(
                         }
                         connections.store(split as u32, Ordering::Relaxed);
                         // Per-mirror headers: base + host-specific netrc auth.
-                        let mirror_headers: Vec<HeaderMap> = all_uris
-                            .iter()
-                            .map(|u| {
-                                let mut h = base_headers.clone();
-                                apply_netrc_auth(&mut h, u, options);
-                                h
-                            })
-                            .collect();
+                        let mirror_headers = build_mirror_headers(all_uris, &base_headers, options);
                         let mc_result = run_multi_chunk(
                             &range_client,
                             all_uris,
@@ -1975,9 +1976,7 @@ async fn piece_worker(
             }
         };
         let uri = pool.uris[mirror_idx].clone();
-        let headers = mirror_headers
-            .get(mirror_idx)
-            .unwrap_or(&mirror_headers[0]);
+        let headers = mirror_headers.get(mirror_idx).unwrap_or(&mirror_headers[0]);
         let started = std::time::Instant::now();
 
         let outcome = download_piece_stream(
