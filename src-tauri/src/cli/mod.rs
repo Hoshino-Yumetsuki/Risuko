@@ -40,8 +40,9 @@ pub enum Command {
 
 #[derive(clap::Args)]
 pub struct DownloadArgs {
-    /// URL, magnet link, or path to a .torrent file
-    pub url: String,
+    /// URL(s), magnet link, or path to a .torrent file
+    #[arg(required = true, num_args = 1..)]
+    pub urls: Vec<String>,
 
     /// Number of connections per download (maps to split)
     #[arg(short = 't', long, default_value_t = 16)]

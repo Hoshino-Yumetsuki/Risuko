@@ -135,4 +135,9 @@ export default {
 	"download-fail-notify": "Download mislukt",
 	"completion-script-override":
 		"Voltooiingsscript voor deze taak overschrijven",
+	"mirror-add": "Spiegel toevoegen",
+	"mirror-remove": "Spiegel verwijderen",
+	"mirror-placeholder": "Spiegel-URL (zelfde bestand, andere server)",
+	"mirror-hint":
+		"Voeg spiegel-URL's toe die naar hetzelfde bestand verwijzen om van meerdere bronnen tegelijk te downloaden.",
 };

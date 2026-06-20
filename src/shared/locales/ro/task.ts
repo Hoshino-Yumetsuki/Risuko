@@ -135,4 +135,9 @@ export default {
 	"download-fail-notify": "Descărcarea nu a reușit",
 	"completion-script-override":
 		"Suprascrie scriptul de finalizare pentru această sarcină",
+	"mirror-add": "Adaugă oglindă",
+	"mirror-remove": "Elimină oglinda",
+	"mirror-placeholder": "URL oglindă (același fișier, alt server)",
+	"mirror-hint":
+		"Adaugă URL-uri de oglindă care indică același fișier pentru a descărca din mai multe surse în paralel.",
 };

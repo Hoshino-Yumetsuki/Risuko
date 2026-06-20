@@ -133,4 +133,9 @@ export default {
 	"download-fail-message": "Kunne ikke laste ned {{taskName}}",
 	"download-fail-notify": "Nedlasting feilet",
 	"completion-script-override": "Overstyr fullføringsskript for denne oppgaven",
+	"mirror-add": "Legg til speil",
+	"mirror-remove": "Fjern speil",
+	"mirror-placeholder": "Speil-URL (samme fil, annen tjener)",
+	"mirror-hint":
+		"Legg til speil-URL-er som peker til samme fil for å laste ned fra flere kilder samtidig.",
 };

@@ -134,4 +134,9 @@ export default {
 	"download-fail-message": "Nie udało się pobrać {{taskName}}",
 	"download-fail-notify": "Nie udało się pobrać",
 	"completion-script-override": "Nadpisz skrypt końcowy dla tego zadania",
+	"mirror-add": "Dodaj serwer lustrzany",
+	"mirror-remove": "Usuń serwer lustrzany",
+	"mirror-placeholder": "URL serwera lustrzanego (ten sam plik, inny serwer)",
+	"mirror-hint":
+		"Dodaj adresy URL serwerów lustrzanych wskazujące ten sam plik, aby pobierać z wielu źródeł równolegle.",
 };

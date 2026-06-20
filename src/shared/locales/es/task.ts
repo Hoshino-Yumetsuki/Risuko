@@ -134,4 +134,9 @@ export default {
 	"download-fail-message": "No se pudo descargar {{taskName}}",
 	"download-fail-notify": "Descarga fallida",
 	"completion-script-override": "Anular script de finalización para esta tarea",
+	"mirror-add": "Añadir réplica",
+	"mirror-remove": "Eliminar réplica",
+	"mirror-placeholder": "URL de la réplica (mismo archivo, otro servidor)",
+	"mirror-hint":
+		"Añade URL de réplicas que apunten al mismo archivo para descargar desde múltiples fuentes en paralelo.",
 };

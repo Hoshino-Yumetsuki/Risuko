@@ -127,4 +127,9 @@ export default {
 	"download-fail-notify": "فشل التحميل",
 	"completion-script-override":
 		"تجاوز إعداد البرنامج النصي عند الاكتمال لهذه المهمة",
+	"mirror-add": "إضافة مرآة",
+	"mirror-remove": "إزالة المرآة",
+	"mirror-placeholder": "رابط المرآة (نفس الملف، خادم آخر)",
+	"mirror-hint":
+		"أضف روابط مرآة تشير إلى نفس الملف للتنزيل من عدة مصادر في وقت واحد.",
 };

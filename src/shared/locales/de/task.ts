@@ -135,4 +135,9 @@ export default {
 	"download-fail-notify": "Download fehlgeschlagen",
 	"completion-script-override":
 		"Abschluss-Skript für diese Aufgabe überschreiben",
+	"mirror-add": "Spiegel hinzufügen",
+	"mirror-remove": "Spiegel entfernen",
+	"mirror-placeholder": "Spiegel-URL (gleiche Datei, anderer Server)",
+	"mirror-hint":
+		"Fügen Sie Spiegel-URLs hinzu, die auf dieselbe Datei verweisen, um von mehreren Quellen gleichzeitig herunterzuladen.",
 };

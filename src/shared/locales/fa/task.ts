@@ -128,4 +128,9 @@ export default {
 	"download-fail-message": "بارگیری {{taskName}} شکست خورد",
 	"download-fail-notify": "بارگیری شکست خورد",
 	"completion-script-override": "نادیده‌گرفتن اسکریپت اتمام برای این وظیفه",
+	"mirror-add": "افزودن آینه",
+	"mirror-remove": "حذف آینه",
+	"mirror-placeholder": "نشانی آینه (همان فایل، سرور دیگر)",
+	"mirror-hint":
+		"نشانی‌های آینه را که به همان فایل اشاره می‌کنند اضافه کنید تا از چند منبع به‌طور همزمان دانلود کنید.",
 };

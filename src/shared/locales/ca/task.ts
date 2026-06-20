@@ -136,4 +136,9 @@ export default {
 	"download-fail-notify": "Descàrrega fallida",
 	"completion-script-override":
 		"Substitueix l’script de finalització per a aquesta tasca",
+	"mirror-add": "Afegeix una rèplica",
+	"mirror-remove": "Elimina la rèplica",
+	"mirror-placeholder": "URL de la rèplica (mateix fitxer, un altre servidor)",
+	"mirror-hint":
+		"Afegeix URL de rèpliques que apuntin al mateix fitxer per descarregar des de múltiples fonts en paral·lel.",
 };

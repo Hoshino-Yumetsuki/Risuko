@@ -132,4 +132,9 @@ export default {
 	"download-fail-notify": "İndirme başarısız",
 	"completion-script-override":
 		"Bu görev için tamamlanma betiğini geçersiz kıl",
+	"mirror-add": "Yansı ekle",
+	"mirror-remove": "Yansıyı kaldır",
+	"mirror-placeholder": "Yansı URL'si (aynı dosya, başka sunucu)",
+	"mirror-hint":
+		"Birden fazla kaynaktan paralel indirmek için aynı dosyaya işaret eden yansı URL'leri ekleyin.",
 };

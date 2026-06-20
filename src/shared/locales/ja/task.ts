@@ -131,4 +131,9 @@ export default {
 	"download-fail-message": "{{taskName}} のダウンロードに失敗",
 	"download-fail-notify": "ダウンロード失敗",
 	"completion-script-override": "このタスクの完了時スクリプトを上書き",
+	"mirror-add": "ミラーを追加",
+	"mirror-remove": "ミラーを削除",
+	"mirror-placeholder": "ミラーURL(同じファイル、別のサーバー)",
+	"mirror-hint":
+		"同じファイルを指すミラーURLを追加すると、複数のソースから並列でダウンロードできます。",
 };

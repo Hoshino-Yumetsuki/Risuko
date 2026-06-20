@@ -669,6 +669,21 @@ fn apply_netrc_auth(headers: &mut HeaderMap, uri: &str, options: &Map<String, Va
     }
 }
 
+fn build_mirror_headers(
+    all_uris: &[String],
+    base_headers: &HeaderMap,
+    options: &Map<String, Value>,
+) -> Vec<HeaderMap> {
+    all_uris
+        .iter()
+        .map(|u| {
+            let mut h = base_headers.clone();
+            apply_netrc_auth(&mut h, u, options);
+            h
+        })
+        .collect()
+}
+
 /// Run an HTTP/FTP download. This is the main entry point called from manager.rs
 /// Returns the final file path on success
 pub async fn run_http_download(
@@ -762,6 +777,7 @@ pub async fn run_http_download_multi(
         let start_bytes = completed.load(Ordering::Relaxed);
         let result = run_single_uri_download(
             uri,
+            uris,
             dir,
             out,
             options,
@@ -812,6 +828,7 @@ pub async fn run_http_download_multi(
 #[allow(clippy::too_many_arguments)]
 async fn run_single_uri_download(
     uri: &str,
+    all_uris: &[String],
     dir: &str,
     out: &str,
     options: &Map<String, Value>,
@@ -877,6 +894,17 @@ async fn run_single_uri_download(
         .map(|v| v.max(1).min(u64::from(u32::MAX)) as u32)
         .unwrap_or(CHUNK_MAX_RETRIES);
 
+    // aria2-compatible `max-connection-per-server`
+    let max_conn_per_server = options
+        .get("max-connection-per-server")
+        .and_then(|v| {
+            v.as_u64()
+                .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+        })
+        .map(|v| v.max(1).min(u64::from(u32::MAX)) as usize)
+        .unwrap_or(split);
+    let mirror_strategy = super::uri_selector::strategy_from_options(options);
+
     // aria2-compatible `min-split-size` (bytes, with K/M suffixes accepted).
     // Default 1 MiB — smaller files use a single connection.
     let min_split_size = parse_size_option(options.get("min-split-size"))
@@ -893,7 +921,8 @@ async fn run_single_uri_download(
     } else {
         client.clone()
     };
-    let mut headers = build_headers(options);
+    let base_headers = build_headers(options);
+    let mut headers = base_headers.clone();
     apply_netrc_auth(&mut headers, uri, options);
     let headers = headers;
     let stall = StallWatchdog::from_options(options);
@@ -1004,13 +1033,16 @@ async fn run_single_uri_download(
                 tracing::debug!(
                     "run_single_uri_download calling run_multi_chunk: part_path={part_path:?}, filename={filename:?}"
                 );
+                let mirror_headers = build_mirror_headers(all_uris, &base_headers, options);
                 let result = run_multi_chunk(
                     &range_client,
-                    uri,
+                    all_uris,
+                    mirror_strategy,
+                    max_conn_per_server,
                     &part_path,
                     probe.content_length,
                     split,
-                    &headers,
+                    &mirror_headers,
                     total,
                     completed,
                     speed,
@@ -1156,13 +1188,17 @@ async fn run_single_uri_download(
                             last_modified_header = probe.last_modified.clone();
                         }
                         connections.store(split as u32, Ordering::Relaxed);
+                        // Per-mirror headers: base + host-specific netrc auth.
+                        let mirror_headers = build_mirror_headers(all_uris, &base_headers, options);
                         let mc_result = run_multi_chunk(
                             &range_client,
-                            uri,
+                            all_uris,
+                            mirror_strategy,
+                            max_conn_per_server,
                             &part_path,
                             probe.content_length,
                             split,
-                            &headers,
+                            &mirror_headers,
                             total,
                             completed,
                             speed,
@@ -1181,6 +1217,23 @@ async fn run_single_uri_download(
                         if let Ok(ref path) = mc_result {
                             if let Some(ref lm) = last_modified_header {
                                 apply_remote_file_time(path, lm);
+                            }
+                            if let Some(ref expected) = piece_checksums {
+                                if let Err(e) =
+                                    verify_piece_checksums(path, probe.content_length, expected)
+                                        .await
+                                {
+                                    tracing::warn!("piece checksum failed, deleting output: {e}");
+                                    let _ = fs::remove_file(path);
+                                    return Err(e);
+                                }
+                            }
+                            if let Some(ref expected) = whole_checksum {
+                                if let Err(e) = verify_whole_file(path, expected).await {
+                                    tracing::warn!("integrity check failed, deleting output: {e}");
+                                    let _ = fs::remove_file(path);
+                                    return Err(e);
+                                }
                             }
                         }
                         return mc_result;
@@ -1217,6 +1270,25 @@ async fn run_single_uri_download(
             if use_remote_time {
                 if let Some(ref lm_str) = lm {
                     apply_remote_file_time(&path, lm_str);
+                }
+            }
+            // Piece-level integrity for the single-connection path. Use the
+            // finished file's own size as content_length so the last (short)
+            // piece is hashed correctly. Mirrors the multi-chunk path so piece
+            // enforcement is consistent across all download paths.
+            if let Some(ref expected) = piece_checksums {
+                match fs::metadata(&path) {
+                    Ok(meta) => {
+                        if let Err(e) = verify_piece_checksums(&path, meta.len(), expected).await {
+                            tracing::warn!("piece checksum failed, deleting output: {e}");
+                            let _ = fs::remove_file(&path);
+                            return Err(e);
+                        }
+                    }
+                    Err(e) => {
+                        let _ = fs::remove_file(&path);
+                        return Err(format!("stat for piece verify: {e}"));
+                    }
                 }
             }
             // Whole-file integrity: hash the final renamed file. On
@@ -1524,6 +1596,118 @@ async fn probe_range_support(
     Ok(no_range)
 }
 
+fn endpoint_key(uri: &str) -> String {
+    match url::Url::parse(uri) {
+        Ok(u) => {
+            let host = u.host_str().unwrap_or("").to_ascii_lowercase();
+            match u.port_or_known_default() {
+                Some(p) => format!("{host}:{p}"),
+                None if host.is_empty() => uri.to_string(),
+                None => host,
+            }
+        }
+        Err(_) => uri.to_string(),
+    }
+}
+
+struct MirrorPool {
+    uris: Vec<String>,
+    keys: Vec<String>,
+    strategy: super::uri_selector::Strategy,
+    stats: parking_lot::Mutex<super::uri_selector::ServerStats>,
+    active: parking_lot::Mutex<std::collections::HashMap<String, usize>>,
+    max_conn_per_server: usize,
+}
+
+impl MirrorPool {
+    fn new(
+        uris: Vec<String>,
+        strategy: super::uri_selector::Strategy,
+        max_conn_per_server: usize,
+    ) -> Self {
+        let keys = uris.iter().map(|u| endpoint_key(u)).collect();
+        Self {
+            uris,
+            keys,
+            strategy,
+            stats: parking_lot::Mutex::new(super::uri_selector::ServerStats::default()),
+            active: parking_lot::Mutex::new(std::collections::HashMap::new()),
+            max_conn_per_server: max_conn_per_server.max(1),
+        }
+    }
+
+    fn distinct_endpoints(&self) -> usize {
+        let mut s = std::collections::HashSet::new();
+        for k in &self.keys {
+            s.insert(k.as_str());
+        }
+        s.len().max(1)
+    }
+
+    fn has_live(&self) -> bool {
+        if self.uris.is_empty() {
+            return false;
+        }
+        if self.strategy == super::uri_selector::Strategy::Inorder {
+            return true;
+        }
+        let stats = self.stats.lock();
+        self.keys.iter().any(|k| !stats.is_blacklisted(k))
+    }
+
+    fn acquire(&self) -> Option<(usize, String)> {
+        let stats = self.stats.lock();
+        let mut active = self.active.lock();
+        let eligible: Vec<usize> = (0..self.uris.len())
+            .filter(|&i| {
+                let k = &self.keys[i];
+                let at_cap = active.get(k).copied().unwrap_or(0) >= self.max_conn_per_server;
+                let blacklisted = self.strategy != super::uri_selector::Strategy::Inorder
+                    && stats.is_blacklisted(k);
+                !at_cap && !blacklisted
+            })
+            .collect();
+        let chosen = *eligible.first()?;
+        let active_of = |i: usize| active.get(&self.keys[i]).copied().unwrap_or(0);
+        let ema_of = |i: usize| stats.get(&self.keys[i]).map(|s| s.ema_bps).unwrap_or(0.0);
+        let chosen = match self.strategy {
+            super::uri_selector::Strategy::Inorder => eligible[0],
+            super::uri_selector::Strategy::Adaptive => *eligible
+                .iter()
+                .min_by(|&&a, &&b| {
+                    active_of(a).cmp(&active_of(b)).then(
+                        ema_of(b)
+                            .partial_cmp(&ema_of(a))
+                            .unwrap_or(std::cmp::Ordering::Equal),
+                    )
+                })
+                .unwrap_or(&chosen),
+            // Round-robin: always hand the next connection to the least-loaded
+            // mirror. This is what makes the default behavior truly concurrent
+            super::uri_selector::Strategy::Feedback => *eligible
+                .iter()
+                .min_by_key(|&&i| (active_of(i), i))
+                .unwrap_or(&chosen),
+        };
+        let key = self.keys[chosen].clone();
+        *active.entry(key.clone()).or_insert(0) += 1;
+        Some((chosen, key))
+    }
+
+    fn release(&self, key: &str) {
+        let mut active = self.active.lock();
+        if let Some(c) = active.get_mut(key) {
+            *c = c.saturating_sub(1);
+        }
+    }
+    fn record_success(&self, key: &str, bytes: u64, secs: f64) {
+        self.stats.lock().record_success(key, bytes, secs);
+    }
+    fn record_failure(&self, key: &str) {
+        self.stats.lock().record_failure(key);
+    }
+}
+
 /// Multi-chunk parallel download using a piece queue + worker pool.
 ///
 /// The file is divided into PIECE_SIZE-byte pieces. `split` workers share
@@ -1533,11 +1717,13 @@ async fn probe_range_support(
 /// than the in-flight bytes of one piece per worker
 async fn run_multi_chunk(
     client: &Client,
-    uri: &str,
+    uris: &[String],
+    strategy: super::uri_selector::Strategy,
+    max_conn_per_server: usize,
     part_path: &Path,
     content_length: u64,
     split: usize,
-    headers: &HeaderMap,
+    mirror_headers: &[HeaderMap],
     total: Arc<AtomicU64>,
     completed: Arc<AtomicU64>,
     speed: Arc<AtomicU64>,
@@ -1637,28 +1823,49 @@ async fn run_multi_chunk(
         }
     });
 
-    // Spawn N=split worker tasks. Each worker pulls pieces off the shared
-    // queue until it is exhausted (or the task is cancelled / fails).
+    // Build the shared mirror pool.
+    let multi_mirror = uris.len() > 1;
+    let pool = Arc::new(MirrorPool::new(
+        uris.to_vec(),
+        strategy,
+        max_conn_per_server,
+    ));
+    // Per-mirror headers, indexed parallel to pool.uris. Shared read-only.
+    let mirror_headers = Arc::new(mirror_headers.to_vec());
+    let piece_etag = if multi_mirror {
+        None
+    } else {
+        expected_etag.clone()
+    };
+    let expected_total = if multi_mirror {
+        Some(content_length)
+    } else {
+        None
+    };
+    let effective_workers = split
+        .min(max_conn_per_server.saturating_mul(pool.distinct_endpoints()))
+        .max(1);
+
     let mut workers = futures_util::stream::FuturesUnordered::new();
-    for w in 0..split {
+    for w in 0..effective_workers {
         let client = client.clone();
-        let uri = uri.to_string();
-        let headers = headers.clone();
+        let pool = Arc::clone(&pool);
+        let mirror_headers = Arc::clone(&mirror_headers);
         let file = Arc::clone(&file);
         let queue = Arc::clone(&queue);
         let completed = Arc::clone(&completed);
         let cancel_token = cancel_token.clone();
         let gl = Arc::clone(&global_limiter);
         let tl = Arc::clone(&task_limiter);
-        let etag = expected_etag.clone();
+        let etag = piece_etag.clone();
         let wc = chunk_completed.get(w).cloned();
 
         workers.push(tokio::spawn(async move {
             piece_worker(
                 w,
                 &client,
-                &uri,
-                &headers,
+                pool,
+                &mirror_headers,
                 file,
                 queue,
                 completed,
@@ -1666,6 +1873,7 @@ async fn run_multi_chunk(
                 gl,
                 tl,
                 etag,
+                expected_total,
                 wc,
                 max_retries,
             )
@@ -1739,15 +1947,15 @@ async fn run_multi_chunk(
     finalize_download(part_path, filename, dir_path)
 }
 
-/// Worker loop: claim a piece, download it, mark it done; repeat.
+/// Worker loop: claim a piece, pick a mirror, download it, mark it done; repeat.
 /// Returns Ok(()) when the queue is exhausted (this worker is finished),
 /// or Err on cancellation or after exceeding retry budget on one piece.
 #[allow(clippy::too_many_arguments)]
 async fn piece_worker(
     worker_id: usize,
     client: &Client,
-    uri: &str,
-    headers: &HeaderMap,
+    pool: Arc<MirrorPool>,
+    mirror_headers: &[HeaderMap],
     file: Arc<std::fs::File>,
     queue: Arc<PieceQueue>,
     completed: Arc<AtomicU64>,
@@ -1755,6 +1963,7 @@ async fn piece_worker(
     global_limiter: Arc<SpeedLimiter>,
     task_limiter: Arc<SpeedLimiter>,
     expected_etag: Option<String>,
+    expected_total: Option<u64>,
     worker_completed: Option<Arc<AtomicU64>>,
     max_retries: u32,
 ) -> Result<(), String> {
@@ -1784,9 +1993,31 @@ async fn piece_worker(
             piece_offset + piece_length as u64 - 1,
         );
 
+        let (mirror_idx, mirror_key) = loop {
+            match pool.acquire() {
+                Some(picked) => break picked,
+                None => {
+                    if !pool.has_live() {
+                        queue.release(idx);
+                        return Err(format!(
+                            "Worker {worker_id}: all mirrors failed on piece {idx}"
+                        ));
+                    }
+                    if cancel_token.is_cancelled() {
+                        queue.release(idx);
+                        return Err("Download cancelled".to_string());
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                }
+            }
+        };
+        let uri = pool.uris[mirror_idx].clone();
+        let headers = mirror_headers.get(mirror_idx).unwrap_or(&mirror_headers[0]);
+        let started = std::time::Instant::now();
+
         let outcome = download_piece_stream(
             client,
-            uri,
+            &uri,
             headers,
             range,
             &file,
@@ -1797,20 +2028,25 @@ async fn piece_worker(
             expected_etag.as_deref(),
             worker_completed.as_ref(),
             &piece_completed,
+            expected_total,
         )
         .await;
+        pool.release(&mirror_key);
 
         // The writer task already incremented piece_completed per Bytes flushed.
         let now_completed = piece_completed.load(Ordering::Relaxed);
+        let downloaded = (now_completed as u64).saturating_sub(already as u64);
 
         match outcome.error {
             None => {
                 if now_completed >= piece_length {
+                    pool.record_success(&mirror_key, downloaded, started.elapsed().as_secs_f64());
                     queue.complete(idx);
                     retry_count = 0;
                 } else if now_completed > already {
                     // Early EOF made progress; return the piece with progress intact
                     // Keep retry budget because per-piece resume moves toward piece_length
+                    pool.record_success(&mirror_key, downloaded, started.elapsed().as_secs_f64());
                     queue.release(idx);
                     retry_count = 0;
                 } else {
@@ -1835,6 +2071,7 @@ async fn piece_worker(
                 return Err(e);
             }
             Some(e) => {
+                pool.record_failure(&mirror_key);
                 queue.release(idx);
                 retry_count += 1;
                 if retry_count > max_retries {
@@ -1844,7 +2081,7 @@ async fn piece_worker(
                     ));
                 }
                 tracing::warn!(
-                    "Worker {worker_id} piece {idx} attempt \
+                    "Worker {worker_id} piece {idx} on {mirror_key} attempt \
                      {retry_count}/{max_retries}: {e}, will retry"
                 );
                 tokio::time::sleep(std::time::Duration::from_secs(retry_count as u64)).await;
@@ -1870,6 +2107,7 @@ async fn download_piece_stream(
     expected_etag: Option<&str>,
     worker_completed: Option<&Arc<AtomicU64>>,
     piece_completed: &Arc<AtomicU32>,
+    expected_total: Option<u64>,
 ) -> StreamOutcome {
     let mut req = client
         .get(uri)
@@ -1998,6 +2236,23 @@ async fn download_piece_stream(
                                 range.start
                             )),
                         };
+                    }
+                }
+            }
+        }
+        if let Some(want_total) = expected_total {
+            if let Some(slash) = cr.rfind('/') {
+                let tail = cr[slash + 1..].trim();
+                if tail != "*" {
+                    if let Ok(got_total) = tail.parse::<u64>() {
+                        if got_total != want_total {
+                            return StreamOutcome {
+                                error: Some(format!(
+                                    "mirror size mismatch: expected total {want_total} but got \
+                                     {got_total} (serving a different file)"
+                                )),
+                            };
+                        }
                     }
                 }
             }

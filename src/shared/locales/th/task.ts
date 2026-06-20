@@ -124,4 +124,8 @@ export default {
 	"download-fail-message": "ไม่สามารถดาวน์โหลด {{taskName}}",
 	"download-fail-notify": "ดาวน์โหลดล้มเหลว",
 	"completion-script-override": "แทนที่สคริปต์เมื่อเสร็จสิ้นสำหรับงานนี้",
+	"mirror-add": "เพิ่มมิเรอร์",
+	"mirror-remove": "ลบมิเรอร์",
+	"mirror-placeholder": "URL มิเรอร์ (ไฟล์เดียวกัน เซิร์ฟเวอร์อื่น)",
+	"mirror-hint": "เพิ่ม URL มิเรอร์ที่ชี้ไปยังไฟล์เดียวกันเพื่อดาวน์โหลดจากหลายแหล่งพร้อมกัน",
 };

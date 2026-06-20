@@ -135,10 +135,27 @@ async fn do_download(
         options.insert("header".into(), json!(all_headers));
     }
 
-    let is_torrent = args.url.ends_with(".torrent") && std::path::Path::new(&args.url).exists();
+    let primary = args.urls.first().map(String::as_str).unwrap_or_default();
+    let is_torrent = primary.ends_with(".torrent") && std::path::Path::new(primary).exists();
+    let is_media = risuko_engine::engine::media::is_media_uri(primary.trim());
+
+    if args.urls.len() > 1 {
+        let any_special = args.force_ytdlp
+            || args.urls.iter().any(|u| {
+                (u.ends_with(".torrent") && std::path::Path::new(u).exists())
+                    || risuko_engine::engine::media::is_media_uri(u.trim())
+            });
+        if any_special {
+            return Err(
+                "Torrent, media, and yt-dlp downloads accept only one input; \
+                 multiple URLs are supported only as HTTP mirrors"
+                    .into(),
+            );
+        }
+    }
 
     let gid = if is_torrent {
-        let torrent_data = std::fs::read(&args.url)?;
+        let torrent_data = std::fs::read(primary)?;
         let b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &torrent_data);
         let result = client
             .call(
@@ -147,14 +164,14 @@ async fn do_download(
             )
             .await?;
         result.as_str().unwrap_or("").to_string()
-    } else if risuko_engine::engine::media::is_media_uri(&args.url) || args.force_ytdlp {
+    } else if is_media || args.force_ytdlp {
         let result = client
-            .call("risuko.addMedia", vec![json!(&args.url), json!(options)])
+            .call("risuko.addMedia", vec![json!(primary), json!(options)])
             .await?;
         result.as_str().unwrap_or("").to_string()
     } else {
         let result = client
-            .call("risuko.addUri", vec![json!([&args.url]), json!(options)])
+            .call("risuko.addUri", vec![json!(&args.urls), json!(options)])
             .await?;
         result.as_str().unwrap_or("").to_string()
     };

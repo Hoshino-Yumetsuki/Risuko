@@ -121,6 +121,45 @@
         <div v-else class="rounded-md border border-dashed border-border/60 px-3 py-4 text-xs text-muted-foreground">
           <div class="break-all font-mono">{{ item.uri }}</div>
           <div class="mt-2">{{ $t('task.batch-uri-body') }}</div>
+          <div class="mt-3 rounded-md border border-border/60 px-3 py-2.5">
+            <div class="text-[11px] text-muted-foreground">{{ $t('task.mirror-hint') }}</div>
+            <ul v-if="mirrors.length" class="mt-2 flex flex-col gap-1.5">
+              <li
+                v-for="(mirror, idx) in mirrors"
+                :key="idx"
+                class="flex items-center gap-2"
+              >
+                <span class="min-w-0 flex-1 truncate font-mono text-[11px] text-foreground" :title="mirror">{{ mirror }}</span>
+                <button
+                  type="button"
+                  class="shrink-0 rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
+                  :aria-label="$t('task.mirror-remove')"
+                  :disabled="disabled"
+                  @click.stop="removeMirror(idx)"
+                >
+                  <X :size="12" />
+                </button>
+              </li>
+            </ul>
+            <div class="mt-2 flex items-center gap-2">
+              <Input
+                v-model="mirrorDraft"
+                :placeholder="$t('task.mirror-placeholder')"
+                :disabled="disabled"
+                class="h-8 flex-1 text-xs"
+                @keydown.enter.prevent="addMirror"
+              />
+              <Button
+                variant="outline"
+                size="sm"
+                class="h-8 shrink-0 px-2 text-[11px]"
+                :disabled="disabled || !canAddMirror"
+                @click.stop="addMirror"
+              >
+                {{ $t('task.mirror-add') }}
+              </Button>
+            </div>
+          </div>
           <!-- Let users force any plain URL through yt-dlp. -->
           <div
             v-if="canOfferYtdlp"
@@ -156,6 +195,7 @@ import {
 	AccordionTrigger,
 } from "@/components/ui/accordion";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
 	Select,
 	SelectContent,
@@ -175,6 +215,7 @@ export default {
 		AccordionTrigger,
 		AccordionContent,
 		Button,
+		Input,
 		Select,
 		SelectContent,
 		SelectItem,
@@ -194,7 +235,12 @@ export default {
 			default: false,
 		},
 	},
-	emits: ["remove", "update:selectFile", "update:media"],
+	emits: ["remove", "update:selectFile", "update:media", "update:mirrors"],
+	data() {
+		return {
+			mirrorDraft: "",
+		};
+	},
 	computed: {
 		kindIcon() {
 			if (this.item.kind === "torrent") {
@@ -207,6 +253,29 @@ export default {
 				return Video;
 			}
 			return Link2;
+		},
+		mirrors(): string[] {
+			return this.item.mirrors ?? [];
+		},
+		canAddMirror(): boolean {
+			const candidate = this.mirrorDraft.trim();
+			let parsed: URL;
+			try {
+				parsed = new URL(candidate);
+			} catch {
+				return false;
+			}
+			if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+				return false;
+			}
+			if (!parsed.hostname) {
+				return false;
+			}
+			const lower = candidate.toLowerCase();
+			if (this.item.uri && this.item.uri.trim().toLowerCase() === lower) {
+				return false;
+			}
+			return !this.mirrors.some((m) => m.trim().toLowerCase() === lower);
 		},
 		// Show the full picker for allowlisted media hosts or any URL the user
 		// has explicitly forced through yt-dlp
@@ -272,6 +341,18 @@ export default {
 		},
 		onMagnetSelectionChange(selectFile: string) {
 			this.$emit("update:selectFile", this.item.id, selectFile);
+		},
+		addMirror() {
+			if (!this.canAddMirror) {
+				return;
+			}
+			const next = [...this.mirrors, this.mirrorDraft.trim()];
+			this.mirrorDraft = "";
+			this.$emit("update:mirrors", this.item.id, next);
+		},
+		removeMirror(idx: number) {
+			const next = this.mirrors.filter((_, i) => i !== idx);
+			this.$emit("update:mirrors", this.item.id, next);
 		},
 		onToggleForce(value: boolean) {
 			this.$emit("update:media", this.item.id, {
