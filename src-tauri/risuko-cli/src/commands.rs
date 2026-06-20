@@ -137,6 +137,15 @@ async fn do_download(
 
     let primary = args.urls.first().map(String::as_str).unwrap_or_default();
     let is_torrent = primary.ends_with(".torrent") && std::path::Path::new(primary).exists();
+    let is_media = risuko_engine::engine::media::is_media_uri(primary);
+
+    if (is_torrent || is_media || args.force_ytdlp) && args.urls.len() > 1 {
+        return Err(
+            "Torrent, media, and yt-dlp downloads accept only one input; \
+             multiple URLs are supported only as HTTP mirrors"
+                .into(),
+        );
+    }
 
     let gid = if is_torrent {
         let torrent_data = std::fs::read(primary)?;
@@ -148,7 +157,7 @@ async fn do_download(
             )
             .await?;
         result.as_str().unwrap_or("").to_string()
-    } else if risuko_engine::engine::media::is_media_uri(primary) || args.force_ytdlp {
+    } else if is_media || args.force_ytdlp {
         let result = client
             .call("risuko.addMedia", vec![json!(primary), json!(options)])
             .await?;

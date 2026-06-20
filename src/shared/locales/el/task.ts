@@ -136,9 +136,9 @@ export default {
 	"download-fail-notify": "Η λήψη απέτυχε",
 	"completion-script-override":
 		"Παράκαμψη σεναρίου ολοκλήρωσης για αυτήν την εργασία",
-	"mirror-add": "Add mirror",
-	"mirror-remove": "Remove mirror",
-	"mirror-placeholder": "Mirror URL (same file, another server)",
+	"mirror-add": "Προσθήκη ειδώλου",
+	"mirror-remove": "Αφαίρεση ειδώλου",
+	"mirror-placeholder": "URL ειδώλου (ίδιο αρχείο, άλλος διακομιστής)",
 	"mirror-hint":
-		"Add mirror URLs that point to the same file to download from multiple sources in parallel.",
+		"Προσθέστε URL ειδώλων που δείχνουν στο ίδιο αρχείο για λήψη από πολλές πηγές ταυτόχρονα.",
 };

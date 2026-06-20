@@ -132,9 +132,9 @@ export default {
 	"download-fail-notify": "Помилка завантаження",
 	"completion-script-override":
 		"Перевизначити скрипт завершення для цього завдання",
-	"mirror-add": "Add mirror",
-	"mirror-remove": "Remove mirror",
-	"mirror-placeholder": "Mirror URL (same file, another server)",
+	"mirror-add": "Додати дзеркало",
+	"mirror-remove": "Видалити дзеркало",
+	"mirror-placeholder": "URL дзеркала (той самий файл, інший сервер)",
 	"mirror-hint":
-		"Add mirror URLs that point to the same file to download from multiple sources in parallel.",
+		"Додайте URL дзеркал, що вказують на той самий файл, щоб завантажувати з кількох джерел одночасно.",
 };

@@ -259,7 +259,16 @@ export default {
 		},
 		canAddMirror(): boolean {
 			const candidate = this.mirrorDraft.trim();
-			if (!/^https?:\/\//i.test(candidate)) {
+			let parsed: URL;
+			try {
+				parsed = new URL(candidate);
+			} catch {
+				return false;
+			}
+			if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+				return false;
+			}
+			if (!parsed.hostname) {
 				return false;
 			}
 			const lower = candidate.toLowerCase();

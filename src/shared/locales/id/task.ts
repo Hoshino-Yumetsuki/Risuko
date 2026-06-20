@@ -130,9 +130,9 @@ export default {
 	"download-fail-message": "Gagal mengunduh {{taskName}}",
 	"download-fail-notify": "Unduhan Gagal",
 	"completion-script-override": "Timpa skrip selesai untuk tugas ini",
-	"mirror-add": "Add mirror",
-	"mirror-remove": "Remove mirror",
-	"mirror-placeholder": "Mirror URL (same file, another server)",
+	"mirror-add": "Tambah mirror",
+	"mirror-remove": "Hapus mirror",
+	"mirror-placeholder": "URL mirror (berkas sama, server lain)",
 	"mirror-hint":
-		"Add mirror URLs that point to the same file to download from multiple sources in parallel.",
+		"Tambahkan URL mirror yang menunjuk ke berkas yang sama untuk mengunduh dari beberapa sumber secara paralel.",
 };

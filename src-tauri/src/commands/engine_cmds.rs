@@ -684,7 +684,13 @@ pub async fn add_uri(
     let manager = engine::get_manager().await.ok_or("Engine not running")?;
 
     // Mirror group
+    let distinct_outs = out_list
+        .iter()
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+        .collect::<std::collections::HashSet<_>>();
     if normalized_uris.len() >= 2
+        && distinct_outs.len() <= 1
         && normalized_uris
             .iter()
             .all(|u| is_plain_http_mirror_uri(u, &base_options))

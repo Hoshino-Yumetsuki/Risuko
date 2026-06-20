@@ -134,9 +134,9 @@ export default {
 	"download-fail-message": "Nie udało się pobrać {{taskName}}",
 	"download-fail-notify": "Nie udało się pobrać",
 	"completion-script-override": "Nadpisz skrypt końcowy dla tego zadania",
-	"mirror-add": "Add mirror",
-	"mirror-remove": "Remove mirror",
-	"mirror-placeholder": "Mirror URL (same file, another server)",
+	"mirror-add": "Dodaj serwer lustrzany",
+	"mirror-remove": "Usuń serwer lustrzany",
+	"mirror-placeholder": "URL serwera lustrzanego (ten sam plik, inny serwer)",
 	"mirror-hint":
-		"Add mirror URLs that point to the same file to download from multiple sources in parallel.",
+		"Dodaj adresy URL serwerów lustrzanych wskazujące ten sam plik, aby pobierać z wielu źródeł równolegle.",
 };

@@ -133,9 +133,9 @@ export default {
 	"download-fail-message": "Kunne ikke laste ned {{taskName}}",
 	"download-fail-notify": "Nedlasting feilet",
 	"completion-script-override": "Overstyr fullføringsskript for denne oppgaven",
-	"mirror-add": "Add mirror",
-	"mirror-remove": "Remove mirror",
-	"mirror-placeholder": "Mirror URL (same file, another server)",
+	"mirror-add": "Legg til speil",
+	"mirror-remove": "Fjern speil",
+	"mirror-placeholder": "Speil-URL (samme fil, annen tjener)",
 	"mirror-hint":
-		"Add mirror URLs that point to the same file to download from multiple sources in parallel.",
+		"Legg til speil-URL-er som peker til samme fil for å laste ned fra flere kilder samtidig.",
 };

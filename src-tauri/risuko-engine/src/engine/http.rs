@@ -906,7 +906,8 @@ async fn run_single_uri_download(
     } else {
         client.clone()
     };
-    let mut headers = build_headers(options);
+    let base_headers = build_headers(options);
+    let mut headers = base_headers.clone();
     apply_netrc_auth(&mut headers, uri, options);
     let headers = headers;
     let stall = StallWatchdog::from_options(options);
@@ -1017,6 +1018,14 @@ async fn run_single_uri_download(
                 tracing::debug!(
                     "run_single_uri_download calling run_multi_chunk: part_path={part_path:?}, filename={filename:?}"
                 );
+                let mirror_headers: Vec<HeaderMap> = all_uris
+                    .iter()
+                    .map(|u| {
+                        let mut h = base_headers.clone();
+                        apply_netrc_auth(&mut h, u, options);
+                        h
+                    })
+                    .collect();
                 let result = run_multi_chunk(
                     &range_client,
                     all_uris,
@@ -1025,7 +1034,7 @@ async fn run_single_uri_download(
                     &part_path,
                     probe.content_length,
                     split,
-                    &headers,
+                    &mirror_headers,
                     total,
                     completed,
                     speed,
@@ -1171,6 +1180,15 @@ async fn run_single_uri_download(
                             last_modified_header = probe.last_modified.clone();
                         }
                         connections.store(split as u32, Ordering::Relaxed);
+                        // Per-mirror headers: base + host-specific netrc auth.
+                        let mirror_headers: Vec<HeaderMap> = all_uris
+                            .iter()
+                            .map(|u| {
+                                let mut h = base_headers.clone();
+                                apply_netrc_auth(&mut h, u, options);
+                                h
+                            })
+                            .collect();
                         let mc_result = run_multi_chunk(
                             &range_client,
                             all_uris,
@@ -1179,7 +1197,7 @@ async fn run_single_uri_download(
                             &part_path,
                             probe.content_length,
                             split,
-                            &headers,
+                            &mirror_headers,
                             total,
                             completed,
                             speed,
@@ -1668,7 +1686,7 @@ async fn run_multi_chunk(
     part_path: &Path,
     content_length: u64,
     split: usize,
-    headers: &HeaderMap,
+    mirror_headers: &[HeaderMap],
     total: Arc<AtomicU64>,
     completed: Arc<AtomicU64>,
     speed: Arc<AtomicU64>,
@@ -1775,6 +1793,8 @@ async fn run_multi_chunk(
         strategy,
         max_conn_per_server,
     ));
+    // Per-mirror headers, indexed parallel to pool.uris. Shared read-only.
+    let mirror_headers = Arc::new(mirror_headers.to_vec());
     let piece_etag = if multi_mirror {
         None
     } else {
@@ -1793,7 +1813,7 @@ async fn run_multi_chunk(
     for w in 0..effective_workers {
         let client = client.clone();
         let pool = Arc::clone(&pool);
-        let headers = headers.clone();
+        let mirror_headers = Arc::clone(&mirror_headers);
         let file = Arc::clone(&file);
         let queue = Arc::clone(&queue);
         let completed = Arc::clone(&completed);
@@ -1808,7 +1828,7 @@ async fn run_multi_chunk(
                 w,
                 &client,
                 pool,
-                &headers,
+                &mirror_headers,
                 file,
                 queue,
                 completed,
@@ -1898,7 +1918,7 @@ async fn piece_worker(
     worker_id: usize,
     client: &Client,
     pool: Arc<MirrorPool>,
-    headers: &HeaderMap,
+    mirror_headers: &[HeaderMap],
     file: Arc<std::fs::File>,
     queue: Arc<PieceQueue>,
     completed: Arc<AtomicU64>,
@@ -1955,6 +1975,9 @@ async fn piece_worker(
             }
         };
         let uri = pool.uris[mirror_idx].clone();
+        let headers = mirror_headers
+            .get(mirror_idx)
+            .unwrap_or(&mirror_headers[0]);
         let started = std::time::Instant::now();
 
         let outcome = download_piece_stream(

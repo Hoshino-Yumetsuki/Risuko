@@ -135,9 +135,9 @@ export default {
 	"download-fail-notify": "Descărcarea nu a reușit",
 	"completion-script-override":
 		"Suprascrie scriptul de finalizare pentru această sarcină",
-	"mirror-add": "Add mirror",
-	"mirror-remove": "Remove mirror",
-	"mirror-placeholder": "Mirror URL (same file, another server)",
+	"mirror-add": "Adaugă oglindă",
+	"mirror-remove": "Elimină oglinda",
+	"mirror-placeholder": "URL oglindă (același fișier, alt server)",
 	"mirror-hint":
-		"Add mirror URLs that point to the same file to download from multiple sources in parallel.",
+		"Adaugă URL-uri de oglindă care indică același fișier pentru a descărca din mai multe surse în paralel.",
 };

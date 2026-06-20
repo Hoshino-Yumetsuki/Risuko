@@ -136,9 +136,9 @@ export default {
 	"download-fail-notify": "Descàrrega fallida",
 	"completion-script-override":
 		"Substitueix l’script de finalització per a aquesta tasca",
-	"mirror-add": "Add mirror",
-	"mirror-remove": "Remove mirror",
-	"mirror-placeholder": "Mirror URL (same file, another server)",
+	"mirror-add": "Afegeix una rèplica",
+	"mirror-remove": "Elimina la rèplica",
+	"mirror-placeholder": "URL de la rèplica (mateix fitxer, un altre servidor)",
 	"mirror-hint":
-		"Add mirror URLs that point to the same file to download from multiple sources in parallel.",
+		"Afegeix URL de rèpliques que apuntin al mateix fitxer per descarregar des de múltiples fonts en paral·lel.",
 };

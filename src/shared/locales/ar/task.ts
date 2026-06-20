@@ -127,9 +127,9 @@ export default {
 	"download-fail-notify": "فشل التحميل",
 	"completion-script-override":
 		"تجاوز إعداد البرنامج النصي عند الاكتمال لهذه المهمة",
-	"mirror-add": "Add mirror",
-	"mirror-remove": "Remove mirror",
-	"mirror-placeholder": "Mirror URL (same file, another server)",
+	"mirror-add": "إضافة مرآة",
+	"mirror-remove": "إزالة المرآة",
+	"mirror-placeholder": "رابط المرآة (نفس الملف، خادم آخر)",
 	"mirror-hint":
-		"Add mirror URLs that point to the same file to download from multiple sources in parallel.",
+		"أضف روابط مرآة تشير إلى نفس الملف للتنزيل من عدة مصادر في وقت واحد.",
 };

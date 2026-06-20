@@ -128,9 +128,9 @@ export default {
 	"download-fail-message": "بارگیری {{taskName}} شکست خورد",
 	"download-fail-notify": "بارگیری شکست خورد",
 	"completion-script-override": "نادیده‌گرفتن اسکریپت اتمام برای این وظیفه",
-	"mirror-add": "Add mirror",
-	"mirror-remove": "Remove mirror",
-	"mirror-placeholder": "Mirror URL (same file, another server)",
+	"mirror-add": "افزودن آینه",
+	"mirror-remove": "حذف آینه",
+	"mirror-placeholder": "نشانی آینه (همان فایل، سرور دیگر)",
 	"mirror-hint":
-		"Add mirror URLs that point to the same file to download from multiple sources in parallel.",
+		"نشانی‌های آینه را که به همان فایل اشاره می‌کنند اضافه کنید تا از چند منبع به‌طور همزمان دانلود کنید.",
 };

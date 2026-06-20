@@ -131,9 +131,9 @@ export default {
 	"download-fail-message": "Không thể tải xuống {{taskName}}",
 	"download-fail-notify": "Tải xuống thất bại",
 	"completion-script-override": "Ghi đè script hoàn tất cho tác vụ này",
-	"mirror-add": "Add mirror",
-	"mirror-remove": "Remove mirror",
-	"mirror-placeholder": "Mirror URL (same file, another server)",
+	"mirror-add": "Thêm máy chủ gương",
+	"mirror-remove": "Xóa máy chủ gương",
+	"mirror-placeholder": "URL máy chủ gương (cùng tệp, máy chủ khác)",
 	"mirror-hint":
-		"Add mirror URLs that point to the same file to download from multiple sources in parallel.",
+		"Thêm các URL máy chủ gương trỏ đến cùng một tệp để tải xuống từ nhiều nguồn song song.",
 };

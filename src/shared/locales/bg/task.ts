@@ -131,9 +131,9 @@ export default {
 	"download-fail-message": "не може да бъде изтеглено {{taskName}}",
 	"download-fail-notify": "грешка при зареждане",
 	"completion-script-override": "Замени скрипта при завършване за тази задача",
-	"mirror-add": "Add mirror",
-	"mirror-remove": "Remove mirror",
-	"mirror-placeholder": "Mirror URL (same file, another server)",
+	"mirror-add": "Добавяне на огледало",
+	"mirror-remove": "Премахване на огледало",
+	"mirror-placeholder": "URL на огледало (същият файл, друг сървър)",
 	"mirror-hint":
-		"Add mirror URLs that point to the same file to download from multiple sources in parallel.",
+		"Добавете URL адреси на огледала, които сочат към същия файл, за да изтегляте от няколко източника едновременно.",
 };
