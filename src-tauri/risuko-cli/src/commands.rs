@@ -139,12 +139,19 @@ async fn do_download(
     let is_torrent = primary.ends_with(".torrent") && std::path::Path::new(primary).exists();
     let is_media = risuko_engine::engine::media::is_media_uri(primary);
 
-    if (is_torrent || is_media || args.force_ytdlp) && args.urls.len() > 1 {
-        return Err(
-            "Torrent, media, and yt-dlp downloads accept only one input; \
-             multiple URLs are supported only as HTTP mirrors"
-                .into(),
-        );
+    if args.urls.len() > 1 {
+        let any_special = args.force_ytdlp
+            || args.urls.iter().any(|u| {
+                (u.ends_with(".torrent") && std::path::Path::new(u).exists())
+                    || risuko_engine::engine::media::is_media_uri(u)
+            });
+        if any_special {
+            return Err(
+                "Torrent, media, and yt-dlp downloads accept only one input; \
+                 multiple URLs are supported only as HTTP mirrors"
+                    .into(),
+            );
+        }
     }
 
     let gid = if is_torrent {

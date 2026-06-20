@@ -1218,6 +1218,23 @@ async fn run_single_uri_download(
                             if let Some(ref lm) = last_modified_header {
                                 apply_remote_file_time(path, lm);
                             }
+                            if let Some(ref expected) = piece_checksums {
+                                if let Err(e) =
+                                    verify_piece_checksums(path, probe.content_length, expected)
+                                        .await
+                                {
+                                    tracing::warn!("piece checksum failed, deleting output: {e}");
+                                    let _ = fs::remove_file(path);
+                                    return Err(e);
+                                }
+                            }
+                            if let Some(ref expected) = whole_checksum {
+                                if let Err(e) = verify_whole_file(path, expected).await {
+                                    tracing::warn!("integrity check failed, deleting output: {e}");
+                                    let _ = fs::remove_file(path);
+                                    return Err(e);
+                                }
+                            }
                         }
                         return mc_result;
                     }

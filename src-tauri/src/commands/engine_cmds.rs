@@ -697,9 +697,10 @@ pub async fn add_uri(
     {
         let mut task_options = base_options.clone();
         let preferred_out = out_list
-            .first()
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty())
+            .iter()
+            .map(|value| value.trim())
+            .find(|value| !value.is_empty())
+            .map(|value| value.to_string())
             .or_else(|| {
                 task_options
                     .get("out")
