@@ -126,4 +126,9 @@ export default {
 	"download-fail-notify": "Letöltés sikertelen volt",
 	"completion-script-override":
 		"Befejezési szkript felülírása ennél a feladatnál",
+	"mirror-add": "Add mirror",
+	"mirror-remove": "Remove mirror",
+	"mirror-placeholder": "Mirror URL (same file, another server)",
+	"mirror-hint":
+		"Add mirror URLs that point to the same file to download from multiple sources in parallel.",
 };

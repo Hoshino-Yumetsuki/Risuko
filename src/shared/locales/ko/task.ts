@@ -128,4 +128,9 @@ export default {
 	"download-fail-message": "{{taskName}} 다운로드 실패",
 	"download-fail-notify": "다운로드 실패",
 	"completion-script-override": "이 작업의 완료 스크립트 재정의",
+	"mirror-add": "Add mirror",
+	"mirror-remove": "Remove mirror",
+	"mirror-placeholder": "Mirror URL (same file, another server)",
+	"mirror-hint":
+		"Add mirror URLs that point to the same file to download from multiple sources in parallel.",
 };

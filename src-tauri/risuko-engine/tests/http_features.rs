@@ -15,6 +15,7 @@
 use std::convert::Infallible;
 use std::io::Write;
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 
@@ -296,6 +297,270 @@ async fn cookie_jar_loaded_from_netscape_file() {
         json!(cookies_path.to_string_lossy()),
     )]);
     assert!(opts.get("load-cookies").and_then(|v| v.as_str()).is_some());
+}
+
+// Concurrent multi-source (aria2 mirror URIs)
+struct CountingState {
+    payload: Arc<Vec<u8>>,
+    range_hits: AtomicU64,
+    in_flight: AtomicU64,
+    max_in_flight: AtomicU64,
+    fail_after: Option<u64>,
+    override_total: Option<u64>,
+    delay_ms: u64,
+}
+
+impl CountingState {
+    fn healthy(payload: Arc<Vec<u8>>, delay_ms: u64) -> Arc<Self> {
+        Arc::new(Self {
+            payload,
+            range_hits: AtomicU64::new(0),
+            in_flight: AtomicU64::new(0),
+            max_in_flight: AtomicU64::new(0),
+            fail_after: None,
+            override_total: None,
+            delay_ms,
+        })
+    }
+    fn hits(&self) -> u64 {
+        self.range_hits.load(Ordering::SeqCst)
+    }
+    fn peak(&self) -> u64 {
+        self.max_in_flight.load(Ordering::SeqCst)
+    }
+}
+
+fn range_response(st: &CountingState, req: &Request<Incoming>) -> Response<Full<Bytes>> {
+    let len = st.payload.len() as u64;
+    let reported_total = st.override_total.unwrap_or(len);
+    if let Some(range) = req.headers().get(hyper::header::RANGE) {
+        if let Ok(s) = range.to_str() {
+            if let Some(rest) = s.strip_prefix("bytes=") {
+                let mut parts = rest.split('-');
+                let start: u64 = parts.next().unwrap_or("0").parse().unwrap_or(0);
+                let end_str = parts.next().unwrap_or("");
+                let end: u64 = if end_str.is_empty() {
+                    len - 1
+                } else {
+                    end_str.parse().unwrap_or(len - 1)
+                };
+                let end = end.min(len - 1);
+                let slice = st.payload[start as usize..=end as usize].to_vec();
+                return Response::builder()
+                    .status(StatusCode::PARTIAL_CONTENT)
+                    .header("Accept-Ranges", "bytes")
+                    .header("Content-Length", slice.len().to_string())
+                    .header(
+                        "Content-Range",
+                        format!("bytes {start}-{end}/{reported_total}"),
+                    )
+                    .header("ETag", "\"v1\"")
+                    .body(Full::new(Bytes::from(slice)))
+                    .unwrap();
+            }
+        }
+    }
+    Response::builder()
+        .status(StatusCode::OK)
+        .header("Accept-Ranges", "bytes")
+        .header("Content-Length", len.to_string())
+        .header("ETag", "\"v1\"")
+        .body(Full::new(Bytes::from(st.payload.as_ref().clone())))
+        .unwrap()
+}
+
+async fn handle_counting(
+    req: Request<Incoming>,
+    st: Arc<CountingState>,
+) -> Result<Response<Full<Bytes>>, Infallible> {
+    let hit = st.range_hits.fetch_add(1, Ordering::SeqCst) + 1;
+    if let Some(fa) = st.fail_after {
+        if hit > fa {
+            return Ok(Response::builder()
+                .status(StatusCode::SERVICE_UNAVAILABLE)
+                .body(Full::new(Bytes::from_static(b"down")))
+                .unwrap());
+        }
+    }
+    let cur = st.in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+    st.max_in_flight.fetch_max(cur, Ordering::SeqCst);
+    if st.delay_ms > 0 {
+        tokio::time::sleep(std::time::Duration::from_millis(st.delay_ms)).await;
+    }
+    let resp = range_response(&st, &req);
+    st.in_flight.fetch_sub(1, Ordering::SeqCst);
+    Ok(resp)
+}
+
+async fn spawn_counting_server(st: Arc<CountingState>) -> SocketAddr {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        loop {
+            let (stream, _) = match listener.accept().await {
+                Ok(p) => p,
+                Err(_) => return,
+            };
+            let st = st.clone();
+            tokio::spawn(async move {
+                let io = TokioIo::new(stream);
+                let _ = http1::Builder::new()
+                    .serve_connection(io, service_fn(move |req| handle_counting(req, st.clone())))
+                    .await;
+            });
+        }
+    });
+    addr
+}
+
+#[allow(clippy::type_complexity)]
+async fn run_mirrors(
+    uris: &[String],
+    dir: &str,
+    options: &Map<String, Value>,
+) -> Result<PathBuf, String> {
+    let (total, completed, speed, cancelled, conns, ct, gl, tl, cc) = dummy_state();
+    run_http_download_multi(
+        uris,
+        dir,
+        "file.bin",
+        options,
+        total,
+        completed,
+        speed,
+        cancelled,
+        conns,
+        ct,
+        gl,
+        tl,
+        cc,
+        std::sync::Arc::new(parking_lot::Mutex::new(None)),
+    )
+    .await
+}
+
+#[tokio::test]
+async fn concurrent_multi_source_distributes_pieces() {
+    let payload = Arc::new(make_payload());
+    let expected = payload_sha256_hex(&payload);
+    let a = CountingState::healthy(payload.clone(), 15);
+    let b = CountingState::healthy(payload.clone(), 15);
+    let addr_a = spawn_counting_server(a.clone()).await;
+    let addr_b = spawn_counting_server(b.clone()).await;
+    tokio::task::yield_now().await;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().to_string_lossy().to_string();
+    let uris = vec![
+        format!("http://{addr_a}/file.bin"),
+        format!("http://{addr_b}/file.bin"),
+    ];
+    let options = options_with(vec![]);
+
+    let path = run_mirrors(&uris, &dir, &options)
+        .await
+        .expect("concurrent multi-source download should succeed");
+
+    let bytes = std::fs::read(&path).unwrap();
+    assert_eq!(
+        payload_sha256_hex(&bytes),
+        expected,
+        "content must be correct"
+    );
+    // The headline property: BOTH mirrors actually served data — pieces were
+    // pulled in parallel, not failover (which would leave the 2nd mirror idle)
+    assert!(a.hits() > 0, "mirror A should have served pieces");
+    assert!(
+        b.hits() > 0,
+        "mirror B should have served pieces (concurrent multi-source), got 0 hits"
+    );
+}
+
+#[tokio::test]
+async fn max_connection_per_server_caps_host() {
+    let payload = Arc::new(make_payload());
+    let expected = payload_sha256_hex(&payload);
+    let a = CountingState::healthy(payload.clone(), 40);
+    let b = CountingState::healthy(payload.clone(), 40);
+    let addr_a = spawn_counting_server(a.clone()).await;
+    let addr_b = spawn_counting_server(b.clone()).await;
+    tokio::task::yield_now().await;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().to_string_lossy().to_string();
+    let uris = vec![
+        format!("http://{addr_a}/file.bin"),
+        format!("http://{addr_b}/file.bin"),
+    ];
+    let options = options_with(vec![("max-connection-per-server", json!("1"))]);
+
+    let path = run_mirrors(&uris, &dir, &options)
+        .await
+        .expect("download should succeed under per-server connection cap");
+
+    let bytes = std::fs::read(&path).unwrap();
+    assert_eq!(
+        payload_sha256_hex(&bytes),
+        expected,
+        "content must be correct"
+    );
+    assert!(
+        a.peak() <= 1,
+        "mirror A exceeded max-connection-per-server=1: peak {}",
+        a.peak()
+    );
+    assert!(
+        b.peak() <= 1,
+        "mirror B exceeded max-connection-per-server=1: peak {}",
+        b.peak()
+    );
+}
+
+#[tokio::test]
+async fn size_mismatch_mirror_is_dropped() {
+    let payload = Arc::new(make_payload());
+    let expected = payload_sha256_hex(&payload);
+    // index 0 (probe/primary) is healthy and defines the canonical length
+    let good = CountingState::healthy(payload.clone(), 10);
+    // index 1 reports a bogus Content-Range total — a different file. It must
+    // be detected and dropped without corrupting the output
+    let bad = Arc::new(CountingState {
+        payload: payload.clone(),
+        range_hits: AtomicU64::new(0),
+        in_flight: AtomicU64::new(0),
+        max_in_flight: AtomicU64::new(0),
+        fail_after: None,
+        override_total: Some(payload.len() as u64 + 999_999),
+        delay_ms: 10,
+    });
+    let addr_good = spawn_counting_server(good.clone()).await;
+    let addr_bad = spawn_counting_server(bad.clone()).await;
+    tokio::task::yield_now().await;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().to_string_lossy().to_string();
+    let uris = vec![
+        format!("http://{addr_good}/file.bin"),
+        format!("http://{addr_bad}/file.bin"),
+    ];
+    let options = options_with(vec![("checksum", json!(format!("sha-256={expected}")))]);
+
+    let path = run_mirrors(&uris, &dir, &options)
+        .await
+        .expect("download should complete from the good mirror despite a bad one");
+
+    let bytes = std::fs::read(&path).unwrap();
+    assert_eq!(
+        payload_sha256_hex(&bytes),
+        expected,
+        "output must be byte-correct (bad mirror's data never written)"
+    );
+    // Proves the bad mirror was actually contacted (concurrent path), then
+    // dropped — not merely ignored because failover never reached it
+    assert!(
+        bad.hits() > 0,
+        "bad mirror should have been contacted and rejected via the size guard"
+    );
 }
 
 async fn handle_with_disposition(

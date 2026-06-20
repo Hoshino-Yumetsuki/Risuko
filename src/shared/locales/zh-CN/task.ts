@@ -269,4 +269,8 @@ export default {
 	"batch-torrent-too-large": "种子文件过大，无法预览",
 	"batch-uri-body": "该 URL 将使用下方的共享选项进行下载。",
 	"completion-script-override": "为此任务覆盖完成后脚本",
+	"mirror-add": "添加镜像",
+	"mirror-remove": "移除镜像",
+	"mirror-placeholder": "镜像地址（同一文件的其他服务器）",
+	"mirror-hint": "添加指向同一文件的镜像地址，从多个源并行下载。",
 };

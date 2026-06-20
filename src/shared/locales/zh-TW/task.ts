@@ -269,4 +269,8 @@ export default {
 	"batch-torrent-too-large": "種子檔案過大，無法預覽",
 	"batch-uri-body": "該 URL 將使用下方的共用選項進行下載。",
 	"completion-script-override": "為此任務覆寫完成後腳本",
+	"mirror-add": "新增鏡像",
+	"mirror-remove": "移除鏡像",
+	"mirror-placeholder": "鏡像網址（同一檔案的其他伺服器）",
+	"mirror-hint": "新增指向同一檔案的鏡像網址，從多個來源並行下載。",
 };

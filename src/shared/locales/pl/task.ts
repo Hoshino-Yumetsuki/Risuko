@@ -134,4 +134,9 @@ export default {
 	"download-fail-message": "Nie udało się pobrać {{taskName}}",
 	"download-fail-notify": "Nie udało się pobrać",
 	"completion-script-override": "Nadpisz skrypt końcowy dla tego zadania",
+	"mirror-add": "Add mirror",
+	"mirror-remove": "Remove mirror",
+	"mirror-placeholder": "Mirror URL (same file, another server)",
+	"mirror-hint":
+		"Add mirror URLs that point to the same file to download from multiple sources in parallel.",
 };

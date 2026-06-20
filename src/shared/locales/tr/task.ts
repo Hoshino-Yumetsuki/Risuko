@@ -132,4 +132,9 @@ export default {
 	"download-fail-notify": "İndirme başarısız",
 	"completion-script-override":
 		"Bu görev için tamamlanma betiğini geçersiz kıl",
+	"mirror-add": "Add mirror",
+	"mirror-remove": "Remove mirror",
+	"mirror-placeholder": "Mirror URL (same file, another server)",
+	"mirror-hint":
+		"Add mirror URLs that point to the same file to download from multiple sources in parallel.",
 };

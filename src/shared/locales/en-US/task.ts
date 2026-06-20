@@ -297,4 +297,9 @@ export default {
 	"batch-torrent-too-large": "Torrent is too large to preview",
 	"batch-uri-body":
 		"This URL will be downloaded with the shared options below.",
+	"mirror-add": "Add mirror",
+	"mirror-remove": "Remove mirror",
+	"mirror-placeholder": "Mirror URL (same file, another server)",
+	"mirror-hint":
+		"Add mirror URLs that point to the same file to download from multiple sources in parallel.",
 };

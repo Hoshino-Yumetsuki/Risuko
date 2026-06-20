@@ -635,6 +635,29 @@ pub async fn add_torrents_by_paths(
     Ok(results)
 }
 
+fn is_plain_http_mirror_uri(uri: &str, options: &Map<String, Value>) -> bool {
+    let is_http = uri.starts_with("http://") || uri.starts_with("https://");
+    if !is_http {
+        return false;
+    }
+    if torrent::is_magnet_uri(uri)
+        || engine::m3u8::is_m3u8_uri(uri)
+        || engine::ed2k::is_ed2k_uri(uri)
+        || engine::ftp::is_ftp_uri(uri)
+        || engine::adc::is_adc_uri(uri)
+        || engine::gnutella::is_gnutella_uri(uri)
+        || engine::g2::is_g2_uri(uri)
+        || engine::gift::is_gift_uri(uri)
+    {
+        return false;
+    }
+    // yt-dlp routing
+    if engine::media::is_media_uri(uri) || engine::media::is_force_ytdlp(options) {
+        return false;
+    }
+    true
+}
+
 #[tauri::command]
 pub async fn add_uri(
     _state: tauri::State<'_, crate::state::AppState>,
@@ -659,6 +682,38 @@ pub async fn add_uri(
     };
 
     let manager = engine::get_manager().await.ok_or("Engine not running")?;
+
+    // Mirror group
+    if normalized_uris.len() >= 2
+        && normalized_uris
+            .iter()
+            .all(|u| is_plain_http_mirror_uri(u, &base_options))
+    {
+        let mut task_options = base_options.clone();
+        let preferred_out = out_list
+            .first()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .or_else(|| {
+                task_options
+                    .get("out")
+                    .and_then(|value| value.as_str())
+                    .map(|value| value.trim().to_string())
+                    .filter(|value| !value.is_empty())
+            })
+            .unwrap_or_else(|| infer_out_from_uri_inner(&normalized_uris[0]));
+        let temp_out = ensure_temp_download_suffix(&preferred_out);
+        if !temp_out.is_empty() {
+            task_options.insert("out".to_string(), Value::String(temp_out));
+        }
+        return match manager
+            .add_http_task(normalized_uris.clone(), task_options)
+            .await
+        {
+            Ok(gid) => Ok(Value::Array(vec![Value::Array(vec![Value::String(gid)])])),
+            Err(e) => Err(e),
+        };
+    }
 
     let mut results = Vec::with_capacity(normalized_uris.len());
 
@@ -1451,5 +1506,51 @@ mod tests {
         assert_eq!(resolve_file_category_inner(""), "");
         assert_eq!(resolve_file_category_inner("noext"), "");
         assert_eq!(resolve_file_category_inner("file.unknownext"), "");
+    }
+
+    // -- is_plain_http_mirror_uri --
+
+    #[test]
+    fn plain_http_urls_are_mirror_eligible() {
+        let opts = Map::new();
+        assert!(is_plain_http_mirror_uri(
+            "http://example.com/file.zip",
+            &opts
+        ));
+        assert!(is_plain_http_mirror_uri(
+            "https://mirror.example.org/path/file.zip",
+            &opts
+        ));
+    }
+
+    #[test]
+    fn special_schemes_are_not_mirror_eligible() {
+        let opts = Map::new();
+        assert!(!is_plain_http_mirror_uri(
+            "magnet:?xt=urn:btih:abcdef",
+            &opts
+        ));
+        assert!(!is_plain_http_mirror_uri(
+            "ed2k://|file|x|1|0123456789ABCDEF0123456789ABCDEF|/",
+            &opts
+        ));
+        assert!(!is_plain_http_mirror_uri(
+            "ftp://example.com/file.zip",
+            &opts
+        ));
+        assert!(!is_plain_http_mirror_uri(
+            "https://host/stream/playlist.m3u8",
+            &opts
+        ));
+    }
+
+    #[test]
+    fn force_ytdlp_disables_mirror_grouping() {
+        let mut opts = Map::new();
+        opts.insert("force-ytdlp".to_string(), Value::Bool(true));
+        assert!(!is_plain_http_mirror_uri(
+            "http://example.com/video.mp4",
+            &opts
+        ));
     }
 }

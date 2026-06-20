@@ -135,4 +135,9 @@ export default {
 	"download-fail-notify": "Download mislukt",
 	"completion-script-override":
 		"Voltooiingsscript voor deze taak overschrijven",
+	"mirror-add": "Add mirror",
+	"mirror-remove": "Remove mirror",
+	"mirror-placeholder": "Mirror URL (same file, another server)",
+	"mirror-hint":
+		"Add mirror URLs that point to the same file to download from multiple sources in parallel.",
 };

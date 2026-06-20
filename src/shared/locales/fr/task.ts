@@ -130,4 +130,9 @@ export default {
 	"download-fail-message": "{{taskName}} téléchargement échoué",
 	"download-fail-notify": "Téléchargement Échoué",
 	"completion-script-override": "Remplacer le script de fin pour cette tâche",
+	"mirror-add": "Add mirror",
+	"mirror-remove": "Remove mirror",
+	"mirror-placeholder": "Mirror URL (same file, another server)",
+	"mirror-hint":
+		"Add mirror URLs that point to the same file to download from multiple sources in parallel.",
 };

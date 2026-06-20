@@ -128,4 +128,9 @@ export default {
 	"download-fail-message": "بارگیری {{taskName}} شکست خورد",
 	"download-fail-notify": "بارگیری شکست خورد",
 	"completion-script-override": "نادیده‌گرفتن اسکریپت اتمام برای این وظیفه",
+	"mirror-add": "Add mirror",
+	"mirror-remove": "Remove mirror",
+	"mirror-placeholder": "Mirror URL (same file, another server)",
+	"mirror-hint":
+		"Add mirror URLs that point to the same file to download from multiple sources in parallel.",
 };

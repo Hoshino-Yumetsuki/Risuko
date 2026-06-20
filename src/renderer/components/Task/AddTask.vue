@@ -89,6 +89,7 @@
                   @remove="removeItem"
                   @update:select-file="updateSelection"
                   @update:media="updateMedia"
+                  @update:mirrors="updateMirrors"
                 />
               </Motion>
             </AnimatePresence>
@@ -747,6 +748,9 @@ export default {
 		updateMedia(id: string, patch: Record<string, unknown>) {
 			useAppStore().updateBatchItem(id, patch);
 		},
+		updateMirrors(id: string, mirrors: string[]) {
+			useAppStore().updateBatchItem(id, { mirrors });
+		},
 		handleHistoryDirectorySelected(dir: string) {
 			this.form.dir = dir;
 		},
@@ -873,6 +877,11 @@ export default {
 			for (const it of uriItems) {
 				try {
 					const uri = it.uri as string;
+					// Primary URL plus any user-added mirrors (same file, other
+					// servers) submitted as one task's mirror array.
+					const uris = [uri, ...(it.mirrors ?? [])]
+						.map((s) => s.trim())
+						.filter(Boolean);
 					const sharedOpts = this.buildSharedOptions();
 					const sel = it.selectFile;
 					if (
@@ -892,7 +901,7 @@ export default {
 					}
 					const outs = it.out ? [it.out] : [];
 					await taskStore.addUri({
-						uris: [uri],
+						uris,
 						outs,
 						options: sharedOpts as Record<string, string>,
 					});
