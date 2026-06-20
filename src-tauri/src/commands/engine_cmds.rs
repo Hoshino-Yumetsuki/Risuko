@@ -684,11 +684,22 @@ pub async fn add_uri(
     let manager = engine::get_manager().await.ok_or("Engine not running")?;
 
     // Mirror group
-    let distinct_outs = out_list
+    let mut distinct_outs = out_list
         .iter()
         .map(|value| value.trim())
         .filter(|value| !value.is_empty())
         .collect::<std::collections::HashSet<_>>();
+    // preferred_out falls back to options["out"], so the uniformity check must
+    // account for it too — otherwise a per-uri out that differs from the global
+    // "out" would be merged into one mirror group despite naming two outputs.
+    if let Some(out) = base_options
+        .get("out")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        distinct_outs.insert(out);
+    }
     if normalized_uris.len() >= 2
         && distinct_outs.len() <= 1
         && normalized_uris

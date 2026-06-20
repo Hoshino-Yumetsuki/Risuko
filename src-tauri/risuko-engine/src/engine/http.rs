@@ -1272,6 +1272,25 @@ async fn run_single_uri_download(
                     apply_remote_file_time(&path, lm_str);
                 }
             }
+            // Piece-level integrity for the single-connection path. Use the
+            // finished file's own size as content_length so the last (short)
+            // piece is hashed correctly. Mirrors the multi-chunk path so piece
+            // enforcement is consistent across all download paths.
+            if let Some(ref expected) = piece_checksums {
+                match fs::metadata(&path) {
+                    Ok(meta) => {
+                        if let Err(e) = verify_piece_checksums(&path, meta.len(), expected).await {
+                            tracing::warn!("piece checksum failed, deleting output: {e}");
+                            let _ = fs::remove_file(&path);
+                            return Err(e);
+                        }
+                    }
+                    Err(e) => {
+                        let _ = fs::remove_file(&path);
+                        return Err(format!("stat for piece verify: {e}"));
+                    }
+                }
+            }
             // Whole-file integrity: hash the final renamed file. On
             // mismatch, delete it so retry doesn't pick up corrupted bytes
             // as "resumable progress"

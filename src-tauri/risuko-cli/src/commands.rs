@@ -137,13 +137,13 @@ async fn do_download(
 
     let primary = args.urls.first().map(String::as_str).unwrap_or_default();
     let is_torrent = primary.ends_with(".torrent") && std::path::Path::new(primary).exists();
-    let is_media = risuko_engine::engine::media::is_media_uri(primary);
+    let is_media = risuko_engine::engine::media::is_media_uri(primary.trim());
 
     if args.urls.len() > 1 {
         let any_special = args.force_ytdlp
             || args.urls.iter().any(|u| {
                 (u.ends_with(".torrent") && std::path::Path::new(u).exists())
-                    || risuko_engine::engine::media::is_media_uri(u)
+                    || risuko_engine::engine::media::is_media_uri(u.trim())
             });
         if any_special {
             return Err(
