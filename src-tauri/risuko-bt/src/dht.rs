@@ -155,7 +155,7 @@ impl Dht {
         let sock6 = match UdpSocket::bind("[::]:0").await {
             Ok(s) => Some(Arc::new(s)),
             Err(e) => {
-                log::debug!("dht: no ipv6 socket: {e}");
+                tracing::debug!("dht: no ipv6 socket: {e}");
                 None
             }
         };
@@ -194,7 +194,7 @@ impl Dht {
             *this.reader6_handle.lock() = Some(reader6_handle);
         }
 
-        log::debug!(
+        tracing::debug!(
             "DHT started: id={}, bootstrap={} nodes, ipv6={}",
             hex::encode(our_id.as_bytes()),
             this.bootstrap.len(),
@@ -271,7 +271,7 @@ impl Dht {
             }
         }
         if addrs.is_empty() {
-            log::debug!("dht: no bootstrap nodes resolved");
+            tracing::debug!("dht: no bootstrap nodes resolved");
             return;
         }
 
@@ -387,7 +387,7 @@ impl Dht {
             }
         }
 
-        log::debug!(
+        tracing::debug!(
             "dht get_peers: peers={} nodes_learned={} nodes_queried={}",
             total_peers,
             total_nodes,

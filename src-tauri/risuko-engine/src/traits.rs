@@ -41,7 +41,7 @@ pub struct LogEventSink;
 
 impl EventSink for LogEventSink {
     fn emit(&self, event: &str, payload: Value) {
-        log::info!("Engine event: {} {}", event, payload);
+        tracing::info!("Engine event: {} {}", event, payload);
     }
 }
 

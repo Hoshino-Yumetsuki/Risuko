@@ -137,7 +137,7 @@ async fn fill_from_vault(
             }
             Ok(None) => {}
             Err(e) => {
-                log::warn!("Failed to load vault entry for sink {id}: {e}, trying fallback");
+                tracing::warn!("Failed to load vault entry for sink {id}: {e}, trying fallback");
             }
         }
     }
@@ -164,29 +164,29 @@ async fn persist_sink_secrets(
                     Ok(()) => {
                         // Vault succeeded — clear any stale fallback entry
                         if let Err(e) = mgr.remove_sink_secret_fallback(id).await {
-                            log::warn!("Failed to clear stale fallback for sink {id}: {e}");
+                            tracing::warn!("Failed to clear stale fallback for sink {id}: {e}");
                         }
                         return;
                     }
                     Err(e) => {
-                        log::warn!(
+                        tracing::warn!(
                             "Failed to store sink secrets in vault for {id}: {e}, falling back"
                         );
                     }
                 }
             }
             if let Err(e) = mgr.put_sink_secret_fallback(id, &v).await {
-                log::warn!("Failed to store sink secrets in fallback for {id}: {e}");
+                tracing::warn!("Failed to store sink secrets in fallback for {id}: {e}");
             }
         }
         None => {
             if vault.enabled() {
                 if let Err(e) = vault.remove_sink(id) {
-                    log::warn!("Failed to clear vault entry for sink {id}: {e}");
+                    tracing::warn!("Failed to clear vault entry for sink {id}: {e}");
                 }
             }
             if let Err(e) = mgr.remove_sink_secret_fallback(id).await {
-                log::warn!("Failed to clear fallback secrets for sink {id}: {e}");
+                tracing::warn!("Failed to clear fallback secrets for sink {id}: {e}");
             }
         }
     }
@@ -209,7 +209,7 @@ pub async fn rehydrate_upload_sinks(mgr: &UploadSinkManager, vault: &VaultManage
                 Ok(Some(v)) => secrets = Some(v),
                 Ok(None) => {}
                 Err(e) => {
-                    log::warn!(
+                    tracing::warn!(
                         "Failed to load vault entry for sink {}: {e}, trying fallback",
                         record.id
                     );
@@ -223,7 +223,7 @@ pub async fn rehydrate_upload_sinks(mgr: &UploadSinkManager, vault: &VaultManage
         let id = record.id.clone();
         apply_sink_secrets(&mut record.config, &secrets);
         if let Err(e) = mgr.update_sink(record).await {
-            log::warn!("Failed to inject secrets into upload manager for sink {id}: {e}");
+            tracing::warn!("Failed to inject secrets into upload manager for sink {id}: {e}");
         }
     }
 }
@@ -273,7 +273,7 @@ pub async fn remove_upload_sink(state: State<'_, AppState>, id: String) -> Resul
     let vault = state.vault.clone();
     mgr.remove_sink(&id).await?;
     if let Err(e) = vault.remove_sink(&id) {
-        log::warn!("Failed to remove vault entry for sink {id}: {e}");
+        tracing::warn!("Failed to remove vault entry for sink {id}: {e}");
     }
     Ok(())
 }

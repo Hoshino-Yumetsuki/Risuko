@@ -36,6 +36,12 @@ pub enum Command {
 
     /// Start headless engine (RPC server only, no GUI)
     Serve(ServeArgs),
+
+    /// Internal: extract browser cookies and print them as JSON. Used by the
+    /// Windows elevated helper to decrypt app-bound (Chrome v20) cookies.
+    /// Hidden from `--help`.
+    #[command(hide = true)]
+    ExtractCookies(ExtractCookiesArgs),
 }
 
 #[derive(clap::Args)]
@@ -182,6 +188,23 @@ pub struct ServeArgs {
     pub rpc_port: u16,
 }
 
+#[derive(clap::Args)]
+pub struct ExtractCookiesArgs {
+    /// Browser id (chrome, chromium, brave, edge, vivaldi, opera, arc,
+    /// firefox, librewolf, zen, ...)
+    #[arg(long)]
+    pub browser: String,
+
+    /// Target URL or bare host to scope the cookies to
+    #[arg(long)]
+    pub url: String,
+
+    /// Write the resulting HostCookies JSON to this file instead of stdout.
+    /// The GUI passes a temp path here when relaunching elevated.
+    #[arg(long)]
+    pub out: Option<String>,
+}
+
 pub async fn run(command: Command) -> Result<(), Box<dyn std::error::Error>> {
     match command {
         Command::Download(args) => commands::download(args).await,
@@ -190,5 +213,6 @@ pub async fn run(command: Command) -> Result<(), Box<dyn std::error::Error>> {
         Command::Resume(args) => commands::resume(args).await,
         Command::Remove(args) => commands::remove(args).await,
         Command::Serve(args) => commands::serve(args).await,
+        Command::ExtractCookies(args) => commands::extract_cookies(args).await,
     }
 }

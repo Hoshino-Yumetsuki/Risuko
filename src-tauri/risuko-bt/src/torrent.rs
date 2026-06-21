@@ -227,7 +227,7 @@ pub async fn spawn(
     // `only_files` reaches TorrentInit, but the scheduler still fetches every piece
     // Warn so callers do not think a subset-only download is active
     if init.only_files.is_some() {
-        log::warn!(
+        tracing::warn!(
             "torrent {id}: selective download (only_files) is not yet supported; \
              downloading all files"
         );
@@ -429,7 +429,7 @@ async fn torrent_loop(
                     ) {
                         Ok(t) => tbls.push(t),
                         Err(e) => {
-                            log::warn!("hybrid torrent {info_hash}: could not build Merkle table for serving: {e}");
+                            tracing::warn!("hybrid torrent {info_hash}: could not build Merkle table for serving: {e}");
                             ok = false;
                             break;
                         }
@@ -472,14 +472,14 @@ async fn torrent_loop(
         ),
     };
     let max_peers = init.max_peers.unwrap_or(DEFAULT_MAX_PEERS).max(1);
-    log::info!(
+    tracing::info!(
         target: "diag",
         "torrent pipeline config: max_outstanding_per_peer={:?} -> floor={} cap={} max_peers={}",
         init.max_outstanding_per_peer, pipeline_floor, pipeline_cap, max_peers
     );
     let storage = Arc::new(FilesystemStorage::new(&info, &init.root_dir));
     if let Err(e) = storage.preallocate().await {
-        log::warn!("preallocate failed for {info_hash}: {e}");
+        tracing::warn!("preallocate failed for {info_hash}: {e}");
     }
     let mut piece_tracker = PieceTracker::new(lengths);
     let mut chunk_tracker = ChunkTracker::new(lengths);
@@ -631,12 +631,12 @@ async fn torrent_loop(
                     // Wait for in-flight piece write tasks before closing handles
                     while let Some(result) = write_tasks.join_next().await {
                         if let Err(e) = result {
-                            log::warn!("write task failed during pause: {e}");
+                            tracing::warn!("write task failed during pause: {e}");
                         }
                     }
                     // Release the cached file descriptors
                     if let Err(e) = storage.close_handles().await {
-                        log::warn!("failed to close storage handles on pause: {e}");
+                        tracing::warn!("failed to close storage handles on pause: {e}");
                     }
                     let _ = ack.send(());
                 }
@@ -652,7 +652,7 @@ async fn torrent_loop(
                     while let Some(result) = tracker_tasks.join_next().await {
                         if let Err(e) = result {
                             if !e.is_cancelled() {
-                                log::warn!("tracker task failed during stop: {e}");
+                                tracing::warn!("tracker task failed during stop: {e}");
                             }
                         }
                     }
@@ -664,12 +664,12 @@ async fn torrent_loop(
                     // Wait for in-flight write/verify tasks before Stop acknowledges disk completion
                     while let Some(result) = write_tasks.join_next().await {
                         if let Err(e) = result {
-                            log::warn!("write task failed during stop: {e}");
+                            tracing::warn!("write task failed during stop: {e}");
                         }
                     }
                     // Flush and release cached file descriptors
                     if let Err(e) = storage.close_handles().await {
-                        log::warn!("failed to close storage handles on stop: {e}");
+                        tracing::warn!("failed to close storage handles on stop: {e}");
                     }
                     let _ = ack.send(());
                     break;
@@ -735,7 +735,7 @@ async fn torrent_loop(
             result = outbound_tasks.join_next(), if !outbound_tasks.is_empty() => {
                 if let Some(Err(e)) = result {
                     if !e.is_cancelled() {
-                        log::warn!("outbound peer task failed: {e}");
+                        tracing::warn!("outbound peer task failed: {e}");
                     }
                 }
             }
@@ -888,7 +888,7 @@ async fn torrent_loop(
                         s.peers = peer_snaps;
                     }
                 }
-                log::debug!(
+                tracing::debug!(
                     target: "diag",
                     "TICK summary peers={} pending_dials={} known={} endgame={} dl_bytes_tick={} ul_bytes_tick={} pending_chunks={} dt_ms={:.0}",
                     peers.len(),
@@ -1156,7 +1156,7 @@ async fn process_peer_event(
                         let _ = cmd_tx.send(PeerCommand::Disconnect).await;
                         return false;
                     }
-                    log::debug!(
+                    tracing::debug!(
                         "peer connected: {addr} (encrypted={encrypted}, peers={}/{max_peers})",
                         peers.len() + 1
                     );
@@ -1206,7 +1206,7 @@ async fn process_peer_event(
             // and recycle their slot to a fresh dial \u2014 see the eviction
             // sweep in the `tick.tick()` arm
             peer.last_recv = Instant::now();
-            if log::log_enabled!(target: "diag", log::Level::Debug) {
+            if tracing::enabled!(target: "diag", tracing::Level::DEBUG) {
                 let kind = match &msg {
                     Message::KeepAlive => "KeepAlive".to_string(),
                     Message::Choke => "Choke".to_string(),
@@ -1226,7 +1226,7 @@ async fn process_peer_event(
                     }
                     other => format!("{other:?}"),
                 };
-                log::debug!(
+                tracing::debug!(
                     target: "diag",
                     "RX {} {kind} am_interested={} peer_choking={} am_choking={}",
                     peer.addr, peer.am_interested, peer.peer_choking, peer.am_choking
@@ -1351,7 +1351,7 @@ async fn process_peer_event(
                     {
                         peer.max_outstanding = (peer.max_outstanding * 2).min(pipeline_cap);
                         peer.received_since_grow = 0;
-                        log::info!(
+                        tracing::info!(
                             target: "diag",
                             "pipeline GROW pid={pid} addr={} {}->{} cap={pipeline_cap}",
                             peer.addr,
@@ -1581,7 +1581,7 @@ async fn process_peer_event(
                 // encryption-only peers — is visible to operators
                 // troubleshooting "0 KB/s" reports without us having to
                 // re-deduce it from "trying mse" lines alone
-                log::debug!("peer {a} disconnected: {reason}");
+                tracing::debug!("peer {a} disconnected: {reason}");
                 known_addrs.remove(&a);
                 pex_source.retain(|_, relay| *relay != pid);
                 if was_pending_dial {
@@ -1644,7 +1644,7 @@ async fn process_verify_result(
     // failed verification can reallocate a fresh assembly on retry
     piece_assemblies.remove(&vr.piece_index);
     if vr.write_failed {
-        log::warn!(
+        tracing::warn!(
             "piece {} disk write failed; will re-request",
             vr.piece_index
         );
@@ -1678,7 +1678,7 @@ async fn process_verify_result(
         }
         s.finished = piece_tracker.is_complete();
     } else {
-        log::debug!("piece {} verify failed", vr.piece_index);
+        tracing::debug!("piece {} verify failed", vr.piece_index);
         // Same reasoning as write_failed: stale chunks from the prior
         // attempt would interleave with the re-request
         cancel_piece_outstanding(peers, vr.piece_index);
@@ -1758,7 +1758,7 @@ fn handle_holepunch(
             }
         }
         holepunch_type::ERROR => {
-            log::debug!(
+            tracing::debug!(
                 target: "diag",
                 "holepunch ERROR from {from_addr} target={} code={}",
                 hp.addr, hp.err_code
@@ -1799,7 +1799,7 @@ fn try_initiate_holepunch(
         .is_ok()
     {
         holepunch_attempted.insert(target);
-        log::debug!(
+        tracing::debug!(
             target: "diag",
             "holepunch RENDEZVOUS initiate target={target} via relay pid={relay_pid}"
         );
@@ -1809,7 +1809,7 @@ fn try_initiate_holepunch(
 async fn send_interested_if_useful(peer: &mut Peer, piece_tracker: &mut PieceTracker) {
     let useful = piece_tracker.choose_piece(&peer.bitfield).is_some();
     let set_bits: u32 = peer.bitfield.iter().map(|x| x.count_ones()).sum();
-    log::debug!(
+    tracing::debug!(
         target: "diag",
         "send_interested_if_useful {} am_interested={} useful={} my_bitfield_set={}",
         peer.addr, peer.am_interested, useful, set_bits
@@ -2252,7 +2252,7 @@ fn spawn_tracker_pollers(
                         Ok(resp) => {
                             // DIAG: per-URL peer yield — quantifies whether Risuko's
                             // (default-empty) tracker set is starving the swarm vs BitComet's.
-                            log::info!(
+                            tracing::info!(
                                 target: "diag",
                                 "tracker ANNOUNCE ok url={url} event={event:?} peers={} interval_s={}",
                                 resp.peers.len(),
@@ -2269,7 +2269,7 @@ fn spawn_tracker_pollers(
                             tokio::time::sleep(resp.interval).await;
                         }
                         Err(e) => {
-                            log::info!(target: "diag", "tracker ANNOUNCE fail url={url} event={event:?} err={e}");
+                            tracing::info!(target: "diag", "tracker ANNOUNCE fail url={url} event={event:?} err={e}");
                             tokio::time::sleep(Duration::from_secs(120)).await;
                         }
                     }

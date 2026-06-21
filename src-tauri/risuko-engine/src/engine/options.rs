@@ -22,7 +22,7 @@ fn apply_engine_overrides(global: &mut Map<String, Value>, user: &Map<String, Va
             global.insert(k.clone(), v.clone());
         }
     } else if let Some(value) = user.get("engine-overrides") {
-        log::warn!(
+        tracing::warn!(
             "Ignoring invalid engine-overrides value: expected object, got {}",
             value
         );

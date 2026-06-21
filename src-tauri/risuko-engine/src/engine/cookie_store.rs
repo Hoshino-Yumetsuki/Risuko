@@ -65,14 +65,14 @@ impl CookieStore {
                 // empty. Sidestep the file by renaming it with a
                 // timestamped `.corrupt-N` suffix so the user can recover
                 // it manually, and start with an empty in-memory store
-                log::warn!(
+                tracing::warn!(
                     "cookie store load failed for {}: {err}. Backing up to .corrupt and starting empty",
                     path.display()
                 );
                 if path.exists() {
                     let backup = corrupt_backup_path(&path);
                     if let Err(rename_err) = std::fs::rename(&path, &backup) {
-                        log::error!(
+                        tracing::error!(
                             "cookie store backup failed (rename {} -> {}): {rename_err}; refusing to overwrite",
                             path.display(),
                             backup.display()
@@ -86,7 +86,7 @@ impl CookieStore {
                             state: RwLock::new(StoreFile::default()),
                         };
                     }
-                    log::info!("cookie store backup created at {}", backup.display());
+                    tracing::info!("cookie store backup created at {}", backup.display());
                 }
                 StoreFile::default()
             }

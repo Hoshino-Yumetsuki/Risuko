@@ -22,16 +22,6 @@ use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 use risuko_engine::engine::rss::RssManager;
 
 #[cfg(not(target_os = "android"))]
-fn with_nosleep_plugin<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
-    builder.plugin(tauri_plugin_nosleep::init())
-}
-
-#[cfg(target_os = "android")]
-fn with_nosleep_plugin<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
-    builder
-}
-
-#[cfg(not(target_os = "android"))]
 fn with_desktop_plugins<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
     builder
         .plugin(tauri_plugin_autostart::init(
@@ -45,7 +35,7 @@ fn with_desktop_plugins<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri:
 
                 if let Some(path) = args.get(1) {
                     if std::path::Path::new(path).exists() {
-                        log::info!("Single instance received file: {}", path);
+                        tracing::info!("Single instance received file: {}", path);
                         let _ = window.emit("open-file", path);
                     }
                 }
@@ -172,16 +162,12 @@ pub fn run() {
     #[cfg(target_os = "linux")]
     apply_linux_webkit_workarounds();
 
-    let app = with_desktop_plugins(with_nosleep_plugin(
+    let app = with_desktop_plugins(
         tauri::Builder::default()
             .plugin(tauri_plugin_store::Builder::default().build())
             .plugin(tauri_plugin_dialog::init())
-            .plugin(tauri_plugin_shell::init())
-            .plugin(tauri_plugin_fs::init())
-            .plugin(tauri_plugin_process::init())
-            .plugin(tauri_plugin_os::init())
-            .plugin(tauri_plugin_notification::init()),
-    ))
+            .plugin(tauri_plugin_shell::init()),
+    )
     .plugin(tauri_plugin_clipboard_manager::init())
     .plugin(tauri_plugin_deep_link::init())
     .setup(|app| {
@@ -220,13 +206,13 @@ pub fn run() {
 
         let log_guard = init_logging(&log_dir, &log_level);
         if log_dir != default_log_dir {
-            log::info!(
+            tracing::info!(
                 "Log directory: {} (override of {})",
                 log_dir.display(),
                 default_log_dir.display()
             );
         } else {
-            log::info!("Log directory: {}", log_dir.display());
+            tracing::info!("Log directory: {}", log_dir.display());
         }
 
         let app_state = state::AppState::new(config, storage.clone(), log_dir, log_guard)?;
@@ -299,7 +285,7 @@ pub fn run() {
                 let config = match risuko_engine::config::ConfigManager::with_dir(config_dir) {
                     Ok(c) => c,
                     Err(e) => {
-                        log::error!("Failed to create ConfigManager: {}", e);
+                        tracing::error!("Failed to create ConfigManager: {}", e);
                         return;
                     }
                 };
@@ -311,7 +297,7 @@ pub fn run() {
                 )
                 .await
                 {
-                    log::error!("Failed to start engine: {}", e);
+                    tracing::error!("Failed to start engine: {}", e);
                 }
             });
         }
@@ -460,6 +446,7 @@ pub fn run() {
         commands::engine_cmds::resolve_file_category,
         commands::cookie_cmds::list_browsers_cmd,
         commands::cookie_cmds::import_browser_cookies,
+        commands::cookie_cmds::import_browser_cookies_elevated,
         commands::cookie_cmds::list_cookie_entries,
         commands::cookie_cmds::delete_cookie_entry,
         commands::cookie_cmds::clear_cookie_entries,
@@ -471,7 +458,6 @@ pub fn run() {
         commands::engine_cmds::remove_routing_rule,
         commands::engine_cmds::resolve_routing,
         commands::event_cmds::on_download_status_change,
-        commands::event_cmds::set_sleep_inhibit_flag,
         commands::event_cmds::on_speed_change,
         commands::event_cmds::on_progress_change,
         commands::event_cmds::on_task_download_complete,
@@ -575,7 +561,7 @@ fn sync_open_at_login_setting(app: &tauri::App) {
         };
 
         if let Err(err) = result {
-            log::warn!("Failed to sync open-at-login setting: {}", err);
+            tracing::warn!("Failed to sync open-at-login setting: {}", err);
         }
     }
 }

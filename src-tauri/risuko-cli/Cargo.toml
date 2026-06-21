@@ -16,7 +16,6 @@ clap = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
-log = { workspace = true }
 dirs = { workspace = true }
 risuko-http = { workspace = true }
 base64 = "0.22"

@@ -163,7 +163,7 @@ impl TaskManager {
         let torrent_engine = TorrentEngine::new_with_tuning(Path::new(&output_dir), tuning)
             .await
             .map_err(|e| {
-                log::warn!("Torrent engine init failed (non-fatal): {}", e);
+                tracing::warn!("Torrent engine init failed (non-fatal): {}", e);
                 e
             })
             .ok();
@@ -228,7 +228,7 @@ impl TaskManager {
                         if task.status == TaskStatus::Paused {
                             task.status = TaskStatus::Active;
                         }
-                        log::info!(
+                        tracing::info!(
                             "Restored torrent mapping: gid={} -> torrent_id={} ({})",
                             task.gid,
                             torrent_id,
@@ -243,7 +243,7 @@ impl TaskManager {
                 }
             }
 
-            log::info!(
+            tracing::info!(
                 "Restored {} torrent mappings out of {} persisted torrents ({} orphan)",
                 ids.len(),
                 managed.len(),
@@ -260,13 +260,13 @@ impl TaskManager {
             let removal_result = te.remove(torrent_id, delete_files).await;
             let removal_failed = removal_result.is_err();
             match removal_result {
-                Ok(()) => log::info!(
+                Ok(()) => tracing::info!(
                     "Purged orphan persisted torrent: torrent_id={} ({}) [delete_files={}]",
                     torrent_id,
                     info_hash,
                     delete_files
                 ),
-                Err(e) => log::warn!(
+                Err(e) => tracing::warn!(
                     "Failed to purge orphan torrent torrent_id={} ({}): {}",
                     torrent_id,
                     info_hash,
@@ -309,7 +309,7 @@ impl TaskManager {
         options: Map<String, Value>,
     ) -> Result<String, String> {
         let gid = generate_gid();
-        log::info!("[task:{}] Adding HTTP task, uris={:?}", gid, uris);
+        tracing::info!("[task:{}] Adding HTTP task, uris={:?}", gid, uris);
         let out = options
             .get("out")
             .and_then(|v| v.as_str())
@@ -352,7 +352,7 @@ impl TaskManager {
         options: Map<String, Value>,
     ) -> Result<String, String> {
         let gid = generate_gid();
-        log::info!("[task:{}] Adding media task, uri={}", gid, uri);
+        tracing::info!("[task:{}] Adding media task, uri={}", gid, uri);
         let out = options
             .get("out")
             .and_then(|v| v.as_str())
@@ -419,7 +419,7 @@ impl TaskManager {
         if let Some(ref te) = *te_guard {
             match te.add_torrent_bytes(&torrent_data, &merged).await {
                 Ok(handle) => {
-                    log::info!(
+                    tracing::info!(
                         "Torrent task {} added: id={}, info_hash={:?}",
                         gid,
                         handle.id,
@@ -435,14 +435,14 @@ impl TaskManager {
                     task.status = TaskStatus::Active;
                 }
                 Err(e) => {
-                    log::error!("Torrent task {} failed to add: {}", gid, e);
+                    tracing::error!("Torrent task {} failed to add: {}", gid, e);
                     task.status = TaskStatus::Error;
                     task.error_code = Some(classify_error(&e, "torrent").to_string());
                     task.error_message = Some(e);
                 }
             }
         } else {
-            log::error!("Torrent task {} failed: engine not available", gid);
+            tracing::error!("Torrent task {} failed: engine not available", gid);
             task.status = TaskStatus::Error;
             task.error_code = Some(super::error_code::ErrorCode::ENGINE_NOT_RUNNING.to_string());
             task.error_message = Some("Torrent engine not available".to_string());
@@ -1026,7 +1026,7 @@ impl TaskManager {
 
                 match download_result {
                     Ok(path) => {
-                        log::info!(
+                        tracing::info!(
                             "[task:{}] {} download complete: {}",
                             gid_clone,
                             proto_label,
@@ -1161,14 +1161,14 @@ impl TaskManager {
             return;
         };
         let Some(entry) = self.cookie_store.find_for_url(uri) else {
-            log::debug!("apply_stored_cookies: no entry for uri={uri}");
+            tracing::debug!("apply_stored_cookies: no entry for uri={uri}");
             return;
         };
 
         // Cookie names and the destination host together leak more than
         // we want at info level (recognizable session keys, plus what
         // the user is downloading from). Stick to debug and elide names
-        log::debug!(
+        tracing::debug!(
             "apply_stored_cookies: matched stored entry (browser={}, {} cookie(s))",
             entry.browser_id,
             entry.cookies.len(),
@@ -1185,14 +1185,14 @@ impl TaskManager {
         if !has_cookie {
             let cookie_header = super::cookie_store::cookies_to_header(&entry.cookies);
             if !cookie_header.is_empty() {
-                log::debug!(
+                tracing::debug!(
                     "apply_stored_cookies: injecting cookie header ({} bytes)",
                     cookie_header.len(),
                 );
                 merged.insert("cookie".to_string(), Value::String(cookie_header));
             }
         } else {
-            log::debug!(
+            tracing::debug!(
                 "apply_stored_cookies: cookie already set on task, leaving stored entry untouched"
             );
         }
@@ -1353,7 +1353,7 @@ impl TaskManager {
 
                 match download_result {
                     Ok(path) => {
-                        log::info!(
+                        tracing::info!(
                             "[task:{}] HTTP download complete: {}",
                             gid_clone,
                             path.display()
@@ -1412,7 +1412,7 @@ impl TaskManager {
                                     });
                                 if let Some(entry) = cookie_store.find_for_url(&lookup_url) {
                                     if let Err(err) = cookie_store.remove(&entry.host) {
-                                        log::warn!(
+                                        tracing::warn!(
                                             "[task:{gid_clone}] cookie store remove({}) failed: {err}",
                                             entry.host
                                         );
@@ -1524,7 +1524,7 @@ impl TaskManager {
 
                 match download_result {
                     Ok(path) => {
-                        log::info!(
+                        tracing::info!(
                             "[task:{}] ED2K download complete: {}",
                             gid_clone,
                             path.display()
@@ -1690,7 +1690,7 @@ impl TaskManager {
                                 task.total_length = file_size;
                             }
                         }
-                        log::info!(
+                        tracing::info!(
                             "[task:{}] Media download complete: {}",
                             gid_clone,
                             path.display()
@@ -1827,7 +1827,7 @@ impl TaskManager {
 
                 match download_result {
                     Ok(path) => {
-                        log::info!(
+                        tracing::info!(
                             "[task:{}] M3U8 download complete: {}",
                             gid_clone,
                             path.display()
@@ -1964,7 +1964,7 @@ impl TaskManager {
 
                 match download_result {
                     Ok(path) => {
-                        log::info!(
+                        tracing::info!(
                             "[task:{}] FTP download complete: {}",
                             gid_clone,
                             path.display()
@@ -2408,7 +2408,7 @@ impl TaskManager {
         let mut tasks = self.tasks.write().await;
         if let Some(task) = tasks.iter_mut().find(|t| t.gid == gid) {
             if task.status == TaskStatus::Active || task.status == TaskStatus::Waiting {
-                log::info!("[task:{}] Paused (was {:?})", gid, task.status);
+                tracing::info!("[task:{}] Paused (was {:?})", gid, task.status);
                 task.status = TaskStatus::Paused;
                 task.download_speed = 0;
                 task.upload_speed = 0;
@@ -2422,7 +2422,7 @@ impl TaskManager {
     }
 
     pub async fn unpause(&self, gid: &str) -> Result<(), String> {
-        log::info!("[task:{}] Resuming", gid);
+        tracing::info!("[task:{}] Resuming", gid);
         let is_torrent;
         {
             let mut tasks = self.tasks.write().await;
@@ -2477,7 +2477,7 @@ impl TaskManager {
         cookie: Option<String>,
         user_agent: Option<String>,
     ) -> Result<(), String> {
-        log::info!("[task:{}] Retrying with imported cookies", gid);
+        tracing::info!("[task:{}] Retrying with imported cookies", gid);
         let was_active;
         {
             let mut tasks = self.tasks.write().await;
@@ -2522,7 +2522,7 @@ impl TaskManager {
     }
 
     pub async fn remove(&self, gid: &str) -> Result<(), String> {
-        log::info!("[task:{}] Removing", gid);
+        tracing::info!("[task:{}] Removing", gid);
         // Cancel any active download
         {
             let active = self.active_downloads.read().await;
@@ -2940,7 +2940,7 @@ impl TaskManager {
                 let size: u64 = match f.length.parse::<u64>() {
                     Ok(n) => n,
                     Err(e) => {
-                        log::warn!(
+                        tracing::warn!(
                             "Skipping upload entry with unparseable size: path={} length={:?} err={}",
                             f.path,
                             f.length,
@@ -2967,7 +2967,7 @@ impl TaskManager {
                     .components()
                     .any(|c| matches!(c, std::path::Component::ParentDir))
                 {
-                    log::warn!(
+                    tracing::warn!(
                         "Skipping upload entry with parent-directory segment: path={}",
                         f.path
                     );
@@ -3130,7 +3130,7 @@ impl TaskManager {
         let te_guard = self.torrent_engine.read().await;
         if let Some(ref te) = *te_guard {
             if let Err(e) = te.remove(tid, false).await {
-                log::warn!(
+                tracing::warn!(
                     "[task:{}] failed to drop torrent engine entry (id={}): {}",
                     gid,
                     tid,
@@ -3245,7 +3245,7 @@ impl TaskManager {
     }
 
     pub async fn shutdown(&self) {
-        log::info!("Engine shutting down");
+        tracing::info!("Engine shutting down");
         // Cancel all active downloads
         let active = self.active_downloads.read().await;
         for (_, ad) in active.iter() {
@@ -3256,7 +3256,7 @@ impl TaskManager {
 
         // Save session
         if let Err(e) = self.save_session().await {
-            log::error!("Failed to save session on shutdown: {}", e);
+            tracing::error!("Failed to save session on shutdown: {}", e);
         }
 
         // Shut down torrent engine

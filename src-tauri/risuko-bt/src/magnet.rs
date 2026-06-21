@@ -119,12 +119,12 @@ pub async fn resolve_with_peers(
         tracker_set.spawn(async move {
             match announce(&url, &req, per_tracker).await {
                 Ok(r) => {
-                    log::debug!("tracker {url} returned {} peers", r.peers.len());
+                    tracing::debug!("tracker {url} returned {} peers", r.peers.len());
                     for p in r.peers {
                         let _ = tx.send(p);
                     }
                 }
-                Err(e) => log::debug!("tracker {url} failed: {e}"),
+                Err(e) => tracing::debug!("tracker {url} failed: {e}"),
             }
         });
     }
@@ -144,7 +144,7 @@ pub async fn resolve_with_peers(
             }))
         }
         None => {
-            log::debug!("dht unavailable for magnet resolution");
+            tracing::debug!("dht unavailable for magnet resolution");
             None
         }
     };
@@ -237,7 +237,7 @@ pub async fn resolve_with_peers(
                                 None => true,
                             };
                             if !sha1_ok || !sha256_ok {
-                                log::debug!(
+                                tracing::debug!(
                                     "peer {addr}: info hash mismatch (sha1_ok={sha1_ok} sha256_ok={sha256_ok})"
                                 );
                                 return;
@@ -254,7 +254,7 @@ pub async fn resolve_with_peers(
                                 // not serve every required piece layer; let
                                 // another peer try
                                 layers_failed.store(true, std::sync::atomic::Ordering::Relaxed);
-                                log::debug!("peer {addr}: piece layers incomplete; will try other peers");
+                                tracing::debug!("peer {addr}: piece layers incomplete; will try other peers");
                                 return;
                             }
                             if let Some(tx) = result_tx.lock().take() {
@@ -287,7 +287,7 @@ pub async fn resolve_with_peers(
 
     match winner {
         Some((info_bytes, piece_layers)) => {
-            log::info!("Resolved magnet in {:?}", started.elapsed());
+            tracing::info!("Resolved magnet in {:?}", started.elapsed());
             Ok(Resolved {
                 info_hash,
                 info_hash_v2: want_v2,
@@ -498,7 +498,7 @@ async fn try_fetch_from_peer_inner(
         return Some((info_bytes, BTreeMap::new(), true));
     };
     if !peer_supports_v2 {
-        log::debug!("peer does not advertise v2; cannot serve piece layers");
+        tracing::debug!("peer does not advertise v2; cannot serve piece layers");
         return Some((info_bytes, BTreeMap::new(), false));
     }
     let layers = fetch_piece_layers(handle, &mut rx, &v2).await;
@@ -602,7 +602,7 @@ async fn fetch_piece_layers(
                         }
                     }
                     Err(e) => {
-                        log::debug!("piece-layer verify failed for {root:?}: {e}");
+                        tracing::debug!("piece-layer verify failed for {root:?}: {e}");
                     }
                 }
             }
@@ -611,7 +611,7 @@ async fn fetch_piece_layers(
                 if wanted.contains_key(&root) && !out.contains_key(&root) {
                     // Single rejection is terminal for this peer — the
                     // caller will fall back to another seeder
-                    log::debug!("peer rejected piece-layer request for {root:?}");
+                    tracing::debug!("peer rejected piece-layer request for {root:?}");
                     return Some(out);
                 }
             }

@@ -24,16 +24,6 @@ pub fn on_download_status_change(
     Ok(())
 }
 
-/// Reports the sleep-inhibit state from the renderer when the inhibit was
-/// applied via the JS nosleep plugin (which doesn't go through
-/// `apply_download_inhibit`). Keeps the health check's view in sync without
-/// double-applying the platform inhibit
-#[tauri::command]
-pub fn set_sleep_inhibit_flag(active: bool) -> Result<(), String> {
-    SLEEP_INHIBIT_ACTIVE.store(active, std::sync::atomic::Ordering::Relaxed);
-    Ok(())
-}
-
 #[tauri::command]
 pub fn on_speed_change(
     handle: AppHandle,
@@ -277,7 +267,7 @@ fn macos_apply_download_inhibit(downloading: bool) {
                     *child_guard = Some(child);
                 }
                 Err(err) => {
-                    log::warn!("Failed to spawn caffeinate: {}", err);
+                    tracing::warn!("Failed to spawn caffeinate: {}", err);
                 }
             }
         }
@@ -327,17 +317,17 @@ fn linux_apply_download_inhibit(downloading: bool) {
                         if let Some(cookie) = parse_dbus_uint32(&output.stdout) {
                             *cookie_guard = Some(cookie);
                         } else {
-                            log::warn!("Failed to parse DBus inhibit cookie from response");
+                            tracing::warn!("Failed to parse DBus inhibit cookie from response");
                         }
                     } else {
-                        log::warn!(
+                        tracing::warn!(
                             "DBus Inhibit call failed with status {:?}",
                             output.status.code()
                         );
                     }
                 }
                 Err(err) => {
-                    log::warn!("Failed to invoke DBus Inhibit call: {}", err);
+                    tracing::warn!("Failed to invoke DBus Inhibit call: {}", err);
                 }
             }
         }
@@ -358,7 +348,7 @@ fn linux_apply_download_inhibit(downloading: bool) {
                 if output.status.success() {
                     *cookie_guard = None;
                 } else {
-                    log::warn!(
+                    tracing::warn!(
                         "DBus UnInhibit call failed with status {:?}, keeping cookie {} for retry",
                         output.status.code(),
                         cookie
@@ -366,7 +356,7 @@ fn linux_apply_download_inhibit(downloading: bool) {
                 }
             }
             Err(err) => {
-                log::warn!(
+                tracing::warn!(
                     "Failed to invoke DBus UnInhibit call, keeping cookie {} for retry: {}",
                     cookie,
                     err
@@ -420,7 +410,7 @@ fn windows_inhibit_worker() -> &'static WindowsInhibitWorker {
 fn windows_apply_download_inhibit(downloading: bool) {
     let worker = windows_inhibit_worker();
     if let Err(err) = worker.tx.send(downloading) {
-        log::warn!("Failed to update Windows sleep inhibit state: {}", err);
+        tracing::warn!("Failed to update Windows sleep inhibit state: {}", err);
     }
 }
 

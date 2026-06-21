@@ -234,7 +234,7 @@ impl UploadSink for WebdavSink {
         }
         // RFC 4918: any DAV-compliant server must include `DAV:` header
         if !resp.headers().contains_key("dav") {
-            log::warn!("WebDAV test: server reachable but missing DAV header");
+            tracing::warn!("WebDAV test: server reachable but missing DAV header");
         }
         Ok(())
     }

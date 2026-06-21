@@ -200,7 +200,7 @@ impl RssManager {
             Err(e) => {
                 feed.error_count += 1;
                 if feed.error_count >= MAX_CONSECUTIVE_ERRORS {
-                    log::warn!(
+                    tracing::warn!(
                         "Feed '{}' disabled after {} consecutive errors",
                         feed.title,
                         feed.error_count
@@ -234,7 +234,7 @@ impl RssManager {
                 }
                 Ok(_) => {}
                 Err(e) => {
-                    log::warn!("Failed to update feed {}: {}", feed_id, e);
+                    tracing::warn!("Failed to update feed {}: {}", feed_id, e);
                 }
             }
         }
@@ -276,7 +276,7 @@ impl RssManager {
                 }
                 Ok(_) => {}
                 Err(e) => {
-                    log::warn!("Failed to update feed {}: {}", feed_id, e);
+                    tracing::warn!("Failed to update feed {}: {}", feed_id, e);
                 }
             }
         }
@@ -404,7 +404,7 @@ impl RssManager {
             let p = std::path::Path::new(&path);
             if p.exists() {
                 if let Err(e) = tokio::fs::remove_file(p).await {
-                    log::warn!("Failed to delete downloaded file {}: {}", path, e);
+                    tracing::warn!("Failed to delete downloaded file {}: {}", path, e);
                 }
             }
         }
@@ -440,7 +440,7 @@ impl RssManager {
             let p = std::path::Path::new(path);
             if p.exists() {
                 if let Err(e) = tokio::fs::remove_file(p).await {
-                    log::warn!("Failed to delete downloaded file {}: {}", path, e);
+                    tracing::warn!("Failed to delete downloaded file {}: {}", path, e);
                 }
             }
         }
@@ -729,7 +729,7 @@ impl RssManager {
         let now = now_secs();
         if let Some(ref sched) = rule.schedule {
             if !schedule_allows(sched, now) {
-                log::debug!(
+                tracing::debug!(
                     "RSS rule '{}' matched '{}' but schedule denies",
                     rule.name,
                     item.title
@@ -752,7 +752,7 @@ impl RssManager {
 
         match decision {
             DedupeDecision::Skip(reason) => {
-                log::debug!(
+                tracing::debug!(
                     "RSS rule '{}' skipped '{}': {}",
                     rule.name,
                     item.title,
@@ -769,7 +769,7 @@ impl RssManager {
         }
 
         let Some(manager) = super::get_manager().await else {
-            log::warn!("RSS auto-download: engine not available");
+            tracing::warn!("RSS auto-download: engine not available");
             return;
         };
 
@@ -793,13 +793,13 @@ impl RssManager {
             let html = build_article_html(item);
             let dir_path = std::path::Path::new(&dir);
             if let Err(e) = tokio::fs::create_dir_all(dir_path).await {
-                log::warn!("Auto-download: failed to create dir {}: {}", dir, e);
+                tracing::warn!("Auto-download: failed to create dir {}: {}", dir, e);
                 return;
             }
             let file_path = dir_path.join(&filename);
             let path_str = file_path.to_string_lossy().to_string();
             if let Err(e) = tokio::fs::write(&file_path, html.as_bytes()).await {
-                log::warn!("Auto-download: failed to write article html: {}", e);
+                tracing::warn!("Auto-download: failed to write article html: {}", e);
                 return;
             }
             // Fan out inline media + the (thumbnail) enclosure as siblings
@@ -819,7 +819,7 @@ impl RssManager {
                     .add_http_task(vec![extra.clone()], media_opts.clone())
                     .await
                 {
-                    log::warn!("Auto-download extra media failed for '{}': {}", extra, e);
+                    tracing::warn!("Auto-download extra media failed for '{}': {}", extra, e);
                 }
             }
             Some(path_str)
@@ -827,14 +827,14 @@ impl RssManager {
             let url = match self.get_item_download_url(&item.feed_id, &item.id).await {
                 Ok(u) => u,
                 Err(e) => {
-                    log::warn!("RSS auto-download: no URL for '{}': {}", item.title, e);
+                    tracing::warn!("RSS auto-download: no URL for '{}': {}", item.title, e);
                     return;
                 }
             };
             let gid = match manager.add_http_task(vec![url.clone()], opts.clone()).await {
                 Ok(g) => g,
                 Err(e) => {
-                    log::warn!("Auto-download failed for '{}': {}", item.title, e);
+                    tracing::warn!("Auto-download failed for '{}': {}", item.title, e);
                     return;
                 }
             };
@@ -851,7 +851,7 @@ impl RssManager {
                     .add_http_task(vec![extra.clone()], media_opts.clone())
                     .await
                 {
-                    log::warn!("Auto-download extra media failed for '{}': {}", extra, e);
+                    tracing::warn!("Auto-download extra media failed for '{}': {}", extra, e);
                 }
             }
 
@@ -955,7 +955,7 @@ impl RssManager {
                             let wrapper = serde_json::json!({ "data": *s });
                             drop(s);
                             let _ = mon_storage.save(RSS_STORE_KEY, &wrapper);
-                            log::info!(
+                            tracing::info!(
                                 "Auto-downloaded '{}' via rule '{}'",
                                 mon_item_title,
                                 mon_rule_name
@@ -963,7 +963,7 @@ impl RssManager {
                             return;
                         }
                         "error" | "removed" => {
-                            log::warn!(
+                            tracing::warn!(
                                 "RSS auto-download task {} for '{}' ended with status '{}'",
                                 gid,
                                 mon_item_title,
@@ -975,7 +975,7 @@ impl RssManager {
                     }
                 }
 
-                log::warn!(
+                tracing::warn!(
                     "RSS auto-download monitor for '{}' (gid={}) timed out",
                     mon_item_title,
                     gid
@@ -1033,7 +1033,7 @@ impl RssManager {
         }
         drop(s);
         let _ = self.save().await;
-        log::info!("Auto-downloaded '{}' via rule '{}'", item.title, rule.name);
+        tracing::info!("Auto-downloaded '{}' via rule '{}'", item.title, rule.name);
     }
 }
 

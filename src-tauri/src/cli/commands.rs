@@ -3,7 +3,9 @@ use serde_json::{json, Map, Value};
 use super::headless;
 use super::progress::{self, format_size, format_size_speed};
 use super::rpc_client::RpcClient;
-use super::{DownloadArgs, PauseArgs, RemoveArgs, ResumeArgs, ServeArgs, StatusArgs};
+use super::{
+    DownloadArgs, ExtractCookiesArgs, PauseArgs, RemoveArgs, ResumeArgs, ServeArgs, StatusArgs,
+};
 use risuko_engine::config::defaults;
 use risuko_engine::engine::media::is_media_uri;
 use risuko_engine::engine::options::EngineOptions;
@@ -476,5 +478,23 @@ pub async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
     }
     eprintln!("\nShutting down...");
     engine.shutdown().await;
+    Ok(())
+}
+
+/// Extract browser cookies for `--url` from `--browser` and emit them as JSON
+/// (to `--out` if given, else stdout).
+///
+/// This is the worker side of the Windows UAC-elevation flow: when a Chrome
+/// profile uses app-bound (v20) encryption, the GUI relaunches itself elevated
+/// as `risuko extract-cookies --browser .. --url .. --out <tmp>` so the keys
+/// can be decrypted as administrator, then reads the JSON back. Runs entirely
+/// in `main`'s CLI branch and exits before Tauri/single-instance initializes.
+pub async fn extract_cookies(args: ExtractCookiesArgs) -> Result<(), Box<dyn std::error::Error>> {
+    let host_cookies = risuko_cookies::cookies_for_url(&args.browser, &args.url).await?;
+    let json = serde_json::to_string(&host_cookies)?;
+    match args.out {
+        Some(path) => std::fs::write(&path, json)?,
+        None => println!("{json}"),
+    }
     Ok(())
 }

@@ -235,14 +235,14 @@ pub async fn run_completion_script(
     tauri::async_runtime::spawn(async move {
         let result = execute(&handle_clone, &command, args, env, timeout_ms).await;
         if result.success {
-            log::info!(
+            tracing::info!(
                 "[completion-script] ok exit={:?} dur={}ms path={}",
                 result.exit_code,
                 result.duration_ms,
                 path
             );
         } else {
-            log::warn!(
+            tracing::warn!(
                 "[completion-script] failed exit={:?} timed_out={} dur={}ms msg={:?} stderr={}",
                 result.exit_code,
                 result.timed_out,

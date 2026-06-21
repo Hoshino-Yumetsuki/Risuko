@@ -43,7 +43,7 @@ impl TauriEventSink {
 impl EventSink for TauriEventSink {
     fn emit(&self, event: &str, payload: Value) {
         if let Err(e) = self.handle.emit(event, payload) {
-            log::warn!("Failed to emit Tauri event {}: {}", event, e);
+            tracing::warn!("Failed to emit Tauri event {}: {}", event, e);
         }
     }
 }

@@ -116,17 +116,17 @@ pub async fn run_ed2k_download(
             None => continue,
         };
 
-        log::info!("[ed2k] Trying server {} ({})", entry.name, addr);
+        tracing::info!("[ed2k] Trying server {} ({})", entry.name, addr);
         let mut conn = ServerConnection::new(addr, client_hash, client_port);
         let (event_rx, _packet_tx) = match conn.connect().await {
             Ok(pair) => pair,
             Err(e) => {
-                log::warn!("[ed2k] Failed to connect to {}: {}", entry.name, e);
+                tracing::warn!("[ed2k] Failed to connect to {}: {}", entry.name, e);
                 last_error = format!("Failed to connect to {}: {}", entry.name, e);
                 continue;
             }
         };
-        log::info!("[ed2k] Connected to server {}", entry.name);
+        tracing::info!("[ed2k] Connected to server {}", entry.name);
 
         let server_ip = u32::from_le_bytes(addr.ip().octets());
         let server_port_val = addr.port();
@@ -157,7 +157,7 @@ pub async fn run_ed2k_download(
             Ok(path) => return Ok(path),
             Err(e) if e == "cancelled" => return Err(e),
             Err(e) => {
-                log::warn!("[ed2k] Server {} session ended: {}", entry.name, e);
+                tracing::warn!("[ed2k] Server {} session ended: {}", entry.name, e);
                 last_error = e;
                 // Continue to next server
             }
@@ -165,7 +165,7 @@ pub async fn run_ed2k_download(
     }
 
     // All servers exhausted — wait for peers if any are active
-    log::info!("[ed2k] All servers tried, waiting for active peers to finish");
+    tracing::info!("[ed2k] All servers tried, waiting for active peers to finish");
     let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
     loop {
         if cancel.load(Ordering::Relaxed) || cancel_token.is_cancelled() {
@@ -240,7 +240,7 @@ async fn run_server_session(
             event = event_rx.recv() => {
                 match event {
                     Some(ServerEvent::Connected { client_id: cid }) => {
-                        log::info!("[ed2k] Got client ID: {} ({})",
+                        tracing::info!("[ed2k] Got client ID: {} ({})",
                             cid,
                             if is_high_id(cid) { "High" } else { "Low" }
                         );
@@ -251,7 +251,7 @@ async fn run_server_session(
                     }
                     Some(ServerEvent::FoundSources { file_hash: fh, sources }) => {
                         if fh == file_hash {
-                            log::info!("[ed2k] Found {} sources", sources.len());
+                            tracing::info!("[ed2k] Found {} sources", sources.len());
                             for &(ip, port) in &sources {
                                 if !is_high_id(ip) {
                                     continue;
@@ -276,14 +276,14 @@ async fn run_server_session(
                         }
                     }
                     Some(ServerEvent::ServerMessage(msg)) => {
-                        log::info!("[ed2k] Server message: {}", msg);
+                        tracing::info!("[ed2k] Server message: {}", msg);
                     }
                     Some(ServerEvent::ServerStatus { users, files }) => {
-                        log::info!("[ed2k] Server: {} users, {} files", users, files);
+                        tracing::info!("[ed2k] Server: {} users, {} files", users, files);
                     }
                     Some(ServerEvent::ServerList) => {}
                     Some(ServerEvent::Disconnected(reason)) => {
-                        log::warn!("[ed2k] Server disconnected: {:?}", reason);
+                        tracing::warn!("[ed2k] Server disconnected: {:?}", reason);
                         return Err(format!("Server disconnected: {:?}", reason));
                     }
                     None => {
@@ -344,7 +344,7 @@ fn spawn_peer_task(
         peer_count.fetch_sub(1, Ordering::Relaxed);
 
         if let Err(e) = result {
-            log::debug!("[ed2k] Peer {} finished: {}", addr, e);
+            tracing::debug!("[ed2k] Peer {} finished: {}", addr, e);
         }
     });
 }
@@ -454,7 +454,7 @@ async fn run_peer_download(
                 peer.request_slot(file_hash).await?;
             }
             Some(PeerEvent::QueueRanking(rank)) => {
-                log::debug!("[ed2k] Peer {} queue rank: {}", addr, rank);
+                tracing::debug!("[ed2k] Peer {} queue rank: {}", addr, rank);
             }
             Some(PeerEvent::Disconnected(reason)) => {
                 return Err(format!("disconnected: {:?}", reason));

@@ -85,14 +85,14 @@ impl LocalServiceDiscovery {
         let v4 = match bind_v4() {
             Ok(s) => Some(Arc::new(s)),
             Err(e) => {
-                log::warn!("lsd: failed to bind IPv4 socket: {e}");
+                tracing::warn!("lsd: failed to bind IPv4 socket: {e}");
                 None
             }
         };
         let v6 = match bind_v6() {
             Ok(s) => Some(Arc::new(s)),
             Err(e) => {
-                log::warn!("lsd: failed to bind IPv6 socket: {e}");
+                tracing::warn!("lsd: failed to bind IPv6 socket: {e}");
                 None
             }
         };

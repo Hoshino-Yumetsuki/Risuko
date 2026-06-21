@@ -31,11 +31,11 @@ impl AppState {
         let event_sink: Arc<dyn risuko_engine::EventSink> = Arc::new(risuko_engine::NoopEventSink);
         let rss_manager = RssManager::new(storage.clone(), event_sink.clone());
         if let Err(e) = rss_manager.load() {
-            log::warn!("Failed to load RSS data: {}", e);
+            tracing::warn!("Failed to load RSS data: {}", e);
         }
         let upload_manager = UploadSinkManager::new(storage, event_sink);
         if let Err(e) = upload_manager.load() {
-            log::warn!("Failed to load upload sinks: {}", e);
+            tracing::warn!("Failed to load upload sinks: {}", e);
         }
         Ok(Self {
             config: Mutex::new(config),

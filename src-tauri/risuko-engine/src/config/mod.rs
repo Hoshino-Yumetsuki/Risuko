@@ -29,7 +29,7 @@ impl ConfigManager {
 
         if manager.migrate_legacy_keep_seeding_defaults() {
             if let Err(err) = manager.save_system() {
-                log::warn!(
+                tracing::warn!(
                     "Failed to persist legacy keep-seeding migration; continuing startup: {}",
                     err
                 );
@@ -55,7 +55,7 @@ impl ConfigManager {
 
         if manager.migrate_legacy_keep_seeding_defaults() {
             if let Err(err) = manager.save_system() {
-                log::warn!(
+                tracing::warn!(
                     "Failed to persist legacy keep-seeding migration; continuing startup: {}",
                     err
                 );

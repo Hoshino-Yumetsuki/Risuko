@@ -839,7 +839,7 @@ pub async fn add_uri(
             return Err(first_error_message.unwrap_or_else(|| "task.new-task-fail".to_string()));
         }
 
-        log::warn!(
+        tracing::warn!(
             "[Risuko] add_uri partially failed: {} succeeded, {} failed",
             success_count,
             failed_count

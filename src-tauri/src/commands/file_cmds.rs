@@ -269,7 +269,7 @@ fn guess_android_mime(path: &str) -> String {
 pub fn trash_item(path: String) -> Result<bool, String> {
     let p = std::path::Path::new(&path);
     if !p.exists() {
-        log::debug!("trash_item: path does not exist, skipped: {}", path);
+        tracing::debug!("trash_item: path does not exist, skipped: {}", path);
         // Still try to clean up .chunks sidecar even if .part is gone
         if path.ends_with(TEMP_DOWNLOAD_SUFFIX) {
             let chunks_path = format!("{}{}", path, CHUNK_META_SUFFIX);

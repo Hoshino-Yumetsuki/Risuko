@@ -157,7 +157,7 @@ pub async fn connect_with_utp_fallback(
         Ok(v) => Ok(v),
         Err(tcp_err) => match utp.connect_timeout(addr, utp_timeout).await {
             Ok(stream) => {
-                log::debug!("tcp dial to {addr} failed ({tcp_err}); connected via µTP");
+                tracing::debug!("tcp dial to {addr} failed ({tcp_err}); connected via µTP");
                 connect_utp_plaintext(stream, spawn).await
             }
             // Surface the TCP error — it's usually the more actionable one.
@@ -416,7 +416,7 @@ async fn drive_handshake(
                     std::io::Error::new(std::io::ErrorKind::TimedOut, "plaintext handshake timeout")
                 }
             };
-            log::debug!("plaintext handshake to {addr} failed: {fallback_err}; trying mse");
+            tracing::debug!("plaintext handshake to {addr} failed: {fallback_err}; trying mse");
             let stream = timeout(spawn.connect_timeout, TcpStream::connect(spawn.addr))
                 .await
                 .map_err(|_| {
@@ -430,11 +430,11 @@ async fn drive_handshake(
             // download is slow for some other reason
             match connect_mse(stream, addr, &spawn).await {
                 Ok(v) => {
-                    log::debug!("mse handshake to {addr} succeeded");
+                    tracing::debug!("mse handshake to {addr} succeeded");
                     Ok(v)
                 }
                 Err(e) => {
-                    log::debug!("mse handshake to {addr} failed: {e}");
+                    tracing::debug!("mse handshake to {addr} failed: {e}");
                     Err(e)
                 }
             }

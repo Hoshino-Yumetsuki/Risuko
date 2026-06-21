@@ -56,7 +56,7 @@ impl SessionManager {
                     .collect()
             }
             Err(e) => {
-                log::warn!("Failed to parse engine session: {}", e);
+                tracing::warn!("Failed to parse engine session: {}", e);
                 Vec::new()
             }
         }

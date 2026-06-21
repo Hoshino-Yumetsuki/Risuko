@@ -35,7 +35,7 @@ pub async fn start_headless_engine(
     let rpc_secret = options.rpc_secret();
     let rpc_secret_clone = rpc_secret.clone();
 
-    log::info!("Starting headless engine on port {}", rpc_port);
+    tracing::info!("Starting headless engine on port {}", rpc_port);
 
     let manager = Arc::new(
         TaskManager::new(&config_dir, options, events.clone())
@@ -75,7 +75,7 @@ pub async fn start_headless_engine(
         loop {
             interval.tick().await;
             if let Err(e) = mgr_save.save_session().await {
-                log::warn!("Auto-save session failed: {}", e);
+                tracing::warn!("Auto-save session failed: {}", e);
             }
         }
     });
@@ -85,7 +85,7 @@ pub async fn start_headless_engine(
     let shutdown_notify_clone = shutdown_notify.clone();
     tokio::spawn(async move {
         if rpc_shutdown_rx.recv().await.is_some() {
-            log::info!("Shutdown requested via RPC (headless)");
+            tracing::info!("Shutdown requested via RPC (headless)");
             shutdown_notify_clone.notify_one();
         }
     });
@@ -129,7 +129,7 @@ impl HeadlessEngine {
         self.auto_save_task.abort();
         self.rpc_server.stop();
         self.manager.shutdown().await;
-        log::info!("Headless engine stopped");
+        tracing::info!("Headless engine stopped");
     }
 }
 
