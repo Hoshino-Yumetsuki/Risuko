@@ -237,7 +237,7 @@ impl S3Sink {
         if result.is_err() {
             // Best-effort abort; log errors without replacing the original failure
             if let Err(e) = self.abort_multipart(&url, &upload_id).await {
-                log::warn!("S3 abort multipart {upload_id}: {e}");
+                tracing::warn!("S3 abort multipart {upload_id}: {e}");
             }
         }
 

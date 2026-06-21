@@ -43,7 +43,7 @@ enum ServerPacketError {
 impl ServerConnection {
     fn parse_packet_error(opcode: u8, err: String) -> ServerPacketError {
         let msg = format!("opcode 0x{opcode:02x}: {err}");
-        log::warn!("[ed2k] Server packet parse error: {}", msg);
+        tracing::warn!("[ed2k] Server packet parse error: {}", msg);
         ServerPacketError::Parse(msg)
     }
 
@@ -111,7 +111,7 @@ impl ServerConnection {
                             match Self::handle_server_packet(&event_tx_clone, &packet).await {
                                 Ok(()) => {}
                                 Err(ServerPacketError::Parse(message)) => {
-                                    log::debug!(
+                                    tracing::debug!(
                                         "[ed2k] Ignoring malformed server packet: {}",
                                         message
                                     );

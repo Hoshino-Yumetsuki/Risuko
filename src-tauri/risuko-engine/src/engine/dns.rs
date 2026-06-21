@@ -115,7 +115,7 @@ pub fn apply_settings(settings: &DohSettings) {
         match risuko_http::DohResolver::new(cfg) {
             Ok(resolver) => {
                 risuko_http::set_global_resolver(Some(std::sync::Arc::new(resolver)));
-                log::info!(
+                tracing::info!(
                     "DoH enabled: endpoint={} bootstrap={} fallback={}",
                     redacted_url_host(&settings.url),
                     settings.bootstrap.len(),
@@ -123,16 +123,16 @@ pub fn apply_settings(settings: &DohSettings) {
                 );
             }
             Err(e) => {
-                log::warn!("DoH config invalid ({}); leaving DNS resolver unchanged", e);
+                tracing::warn!("DoH config invalid ({}); leaving DNS resolver unchanged", e);
                 return;
             }
         }
     } else {
         risuko_http::set_global_resolver(None);
         if settings.enabled {
-            log::warn!("DoH enabled but no endpoint URL set; using system DNS");
+            tracing::warn!("DoH enabled but no endpoint URL set; using system DNS");
         } else {
-            log::info!("DoH disabled: using system DNS");
+            tracing::info!("DoH disabled: using system DNS");
         }
     }
 

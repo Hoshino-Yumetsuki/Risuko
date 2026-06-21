@@ -81,19 +81,74 @@ pub async fn import_browser_cookies(
     persist: Option<bool>,
     user_agent: Option<String>,
 ) -> Result<ImportedCookies, String> {
-    log::info!("import_browser_cookies: browser={browser}");
+    tracing::info!("import_browser_cookies: browser={browser}");
+    let host_cookies = match cookies_for_url(&browser, &url).await {
+        Ok(hc) => hc,
+        Err(e) => {
+            // Windows Chrome v20 (app-bound) profiles can only be decrypted as
+            // administrator. Surface a stable code so the renderer can ask the
+            // user to approve elevation and retry via the elevated command.
+            if e.contains(risuko_cookies::ELEVATION_REQUIRED) {
+                tracing::info!(
+                    "import_browser_cookies: app-bound cookies require elevation (browser={browser})"
+                );
+                return Err("ELEVATION_REQUIRED".to_string());
+            }
+            return Err(e);
+        }
+    };
+    build_imported_cookies(host_cookies, &browser, persist, user_agent).await
+}
+
+/// Run cookie extraction through a UAC-elevated helper process, then import the
+/// result. Windows-only (app-bound / Chrome v20). The renderer calls this after
+/// the user agrees to the elevation prompt that `import_browser_cookies`
+/// requested via the `ELEVATION_REQUIRED` code. The elevated child is this same
+/// binary invoked as `extract-cookies`, which decrypts the keys as admin and
+/// writes the cookies back as JSON.
+#[tauri::command]
+pub async fn import_browser_cookies_elevated(
+    browser: String,
+    url: String,
+    persist: Option<bool>,
+    user_agent: Option<String>,
+) -> Result<ImportedCookies, String> {
+    #[cfg(target_os = "windows")]
+    {
+        tracing::info!("import_browser_cookies_elevated: browser={browser}");
+        let host_cookies = elevate::extract_cookies_elevated(&browser, &url).await?;
+        build_imported_cookies(host_cookies, &browser, persist, user_agent).await
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = (&url, &persist, &user_agent);
+        Err(format!(
+            "elevated cookie import for {browser} is only supported on Windows"
+        ))
+    }
+}
+
+/// Shared tail of both import paths: turn extracted `HostCookies` into the
+/// renderer-facing `ImportedCookies`, optionally persisting them in the engine
+/// cookie store.
+async fn build_imported_cookies(
+    host_cookies: HostCookies,
+    browser: &str,
+    persist: Option<bool>,
+    user_agent: Option<String>,
+) -> Result<ImportedCookies, String> {
     let HostCookies {
         host,
         user_agent: browser_user_agent,
         cookies,
-    } = cookies_for_url(&browser, &url).await?;
+    } = host_cookies;
 
-    log::debug!(
-        "import_browser_cookies: rookie returned {} cookie(s) for browser={browser}",
+    tracing::debug!(
+        "import_browser_cookies: extractor returned {} cookie(s) for browser={browser}",
         cookies.len()
     );
     for c in cookies.iter() {
-        log::debug!(
+        tracing::debug!(
             "  imported cookie name={} domain={} path={} secure={} http_only={} value_len={}",
             c.name,
             c.domain,
@@ -126,14 +181,14 @@ pub async fn import_browser_cookies(
         .any(|c| c.name.eq_ignore_ascii_case("cf_clearance"));
     let cookie_names: Vec<String> = stored.iter().map(|c| c.name.clone()).collect();
 
-    log::debug!(
+    tracing::debug!(
         "import_browser_cookies: {} cookie(s) imported (cf_clearance present: {has_cf_clearance})",
         cookie_names.len()
     );
 
-    // Caller-supplied UA wins (e.g. Cloudflare dialog passes the
-    // textarea's edited value). Falls back to whatever rookie reports
-    // for the browser so empty hand-offs still get a sensible default
+    // Caller-supplied UA wins (e.g. Cloudflare dialog passes the textarea's
+    // edited value). Falls back to the browser's built-in default so empty
+    // hand-offs still get a sensible default
     let effective_user_agent = user_agent
         .as_ref()
         .map(|s| s.trim().to_string())
@@ -146,7 +201,7 @@ pub async fn import_browser_cookies(
             .ok_or_else(|| "cookie persistence failed: engine manager unavailable".to_string())?;
         let entry = CookieEntry {
             host: host.clone(),
-            browser_id: browser.clone(),
+            browser_id: browser.to_string(),
             user_agent: effective_user_agent.clone(),
             cookies: stored.clone(),
             imported_at: 0,
@@ -172,7 +227,7 @@ pub async fn import_browser_cookies(
         host,
         user_agent: effective_user_agent,
         cookie_header,
-        count: cookies.len(),
+        count: stored.len(),
         has_cf_clearance,
         cookie_names,
         cookies: cookies_view,
@@ -228,7 +283,7 @@ pub struct CapturedUserAgent {
 /// then shuts down. Times out after 60s if nothing connects
 #[tauri::command]
 pub async fn capture_user_agent() -> Result<CapturedUserAgent, String> {
-    log::info!("capture_user_agent: starting one-shot listener");
+    tracing::info!("capture_user_agent: starting one-shot listener");
     let listener = TcpListener::bind("127.0.0.1:0")
         .await
         .map_err(|e| format!("bind localhost listener failed: {e}"))?;
@@ -241,7 +296,7 @@ pub async fn capture_user_agent() -> Result<CapturedUserAgent, String> {
     // Open in the user's default browser. Best effort; the user can also
     // paste the URL into a different browser if they prefer
     if let Err(e) = open::that(&url) {
-        log::warn!("capture_user_agent: open::that({url}) failed: {e}");
+        tracing::warn!("capture_user_agent: open::that({url}) failed: {e}");
         // Keep the listener alive in case the user pastes the URL manually
     }
 
@@ -253,11 +308,11 @@ pub async fn capture_user_agent() -> Result<CapturedUserAgent, String> {
             let (mut stream, peer) = match listener.accept().await {
                 Ok(v) => v,
                 Err(e) => {
-                    log::warn!("capture_user_agent: accept failed: {e}");
+                    tracing::warn!("capture_user_agent: accept failed: {e}");
                     continue;
                 }
             };
-            log::debug!("capture_user_agent: connection from {peer}");
+            tracing::debug!("capture_user_agent: connection from {peer}");
 
             let mut buf = vec![0u8; 4096];
             let mut total = 0usize;
@@ -304,7 +359,7 @@ pub async fn capture_user_agent() -> Result<CapturedUserAgent, String> {
     .await
     .map_err(|_| "timed out waiting for browser to open the capture URL".to_string())?;
 
-    log::info!("capture_user_agent: captured ua={captured}");
+    tracing::info!("capture_user_agent: captured ua={captured}");
     Ok(CapturedUserAgent {
         user_agent: captured,
     })
@@ -335,4 +390,97 @@ fn parse_request(buf: &[u8]) -> Option<(String, String)> {
         }
     }
     Some((path, user_agent))
+}
+
+/// Windows UAC elevation: relaunch this binary elevated as `extract-cookies` to
+/// decrypt app-bound (Chrome v20) cookies, then read the JSON it writes back.
+#[cfg(target_os = "windows")]
+mod elevate {
+    use risuko_cookies::HostCookies;
+    use std::ffi::OsStr;
+    use std::os::windows::ffi::OsStrExt;
+
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::Threading::{WaitForSingleObject, INFINITE};
+    use windows_sys::Win32::UI::Shell::{
+        ShellExecuteExW, SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW,
+    };
+    use windows_sys::Win32::UI::WindowsAndMessaging::SW_HIDE;
+
+    fn to_wide(s: &str) -> Vec<u16> {
+        OsStr::new(s)
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect()
+    }
+
+    /// Relaunch this binary elevated, wait for it, and parse the cookies it
+    /// wrote. The OS shows the UAC consent dialog; if the user declines,
+    /// `ShellExecuteExW` fails and we return a friendly error rather than hang.
+    pub async fn extract_cookies_elevated(browser: &str, url: &str) -> Result<HostCookies, String> {
+        let browser = browser.to_string();
+        let url = url.to_string();
+        tokio::task::spawn_blocking(move || run_elevated(&browser, &url))
+            .await
+            .map_err(|e| format!("join error: {e}"))?
+    }
+
+    fn run_elevated(browser: &str, url: &str) -> Result<HostCookies, String> {
+        let exe = std::env::current_exe().map_err(|e| format!("current_exe failed: {e}"))?;
+
+        // Temp file the elevated child writes the cookies JSON to. We create
+        // (and auto-remove) it; the elevated process only needs to write it.
+        let out_path = tempfile::Builder::new()
+            .prefix("risuko-cookies-")
+            .suffix(".json")
+            .tempfile()
+            .map_err(|e| format!("create temp file failed: {e}"))?
+            .into_temp_path();
+
+        // Quote values and strip embedded quotes so a value can't break out of
+        // its argument (browser comes from a fixed allowlist; url is user data).
+        let params = format!(
+            "extract-cookies --browser \"{}\" --url \"{}\" --out \"{}\"",
+            browser.replace('"', ""),
+            url.replace('"', ""),
+            out_path.to_string_lossy().replace('"', "")
+        );
+
+        let verb = to_wide("runas");
+        let file = to_wide(&exe.to_string_lossy());
+        let params_w = to_wide(&params);
+
+        let mut info: SHELLEXECUTEINFOW = unsafe { std::mem::zeroed() };
+        info.cbSize = std::mem::size_of::<SHELLEXECUTEINFOW>() as u32;
+        info.fMask = SEE_MASK_NOCLOSEPROCESS;
+        info.lpVerb = verb.as_ptr();
+        info.lpFile = file.as_ptr();
+        info.lpParameters = params_w.as_ptr();
+        info.nShow = SW_HIDE;
+
+        let ok = unsafe { ShellExecuteExW(&mut info) };
+        if ok == 0 {
+            // Most commonly ERROR_CANCELLED (1223): the user dismissed UAC.
+            return Err(
+                "administrator approval was declined or the elevated helper failed to start"
+                    .to_string(),
+            );
+        }
+        if info.hProcess.is_null() {
+            return Err("elevated helper did not return a process handle".to_string());
+        }
+
+        unsafe {
+            WaitForSingleObject(info.hProcess, INFINITE);
+            CloseHandle(info.hProcess);
+        }
+
+        let bytes =
+            std::fs::read(&out_path).map_err(|e| format!("read elevated output failed: {e}"))?;
+        if bytes.is_empty() {
+            return Err("the elevated helper produced no cookies".to_string());
+        }
+        serde_json::from_slice::<HostCookies>(&bytes)
+            .map_err(|e| format!("parse elevated output failed: {e}"))
+    }
 }

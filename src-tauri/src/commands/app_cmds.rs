@@ -101,7 +101,7 @@ pub async fn reset_session(handle: AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 pub fn auto_hide_window(enabled: bool) -> Result<(), String> {
-    log::info!("auto_hide_window: {}", enabled);
+    tracing::info!("auto_hide_window: {}", enabled);
     Ok(())
 }
 
@@ -171,7 +171,7 @@ pub fn clear_android_download_notification() -> Result<(), String> {
 
 #[tauri::command]
 pub async fn shutdown_system(handle: AppHandle) -> Result<(), String> {
-    log::info!("[Risuko] shutdown_system: initiating OS shutdown");
+    tracing::info!("[Risuko] shutdown_system: initiating OS shutdown");
 
     #[cfg(target_os = "android")]
     {

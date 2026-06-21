@@ -74,7 +74,7 @@ pub fn cache_tray_rect(app: &AppHandle, rect: &tauri::Rect, scale_factor: f64) {
 #[cfg(not(target_os = "android"))]
 pub fn toggle_flyout(app: &AppHandle) {
     let Some(window) = app.get_webview_window(FLYOUT_LABEL) else {
-        log::warn!("[Risuko] flyout window not found");
+        tracing::warn!("[Risuko] flyout window not found");
         return;
     };
 

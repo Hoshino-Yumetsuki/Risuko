@@ -72,7 +72,7 @@ async fn write_article_and_fan_media(
             .await
         {
             Ok(g) => extra_gids.push(g),
-            Err(e) => log::warn!("Failed to queue inline media {}: {}", url, e),
+            Err(e) => tracing::warn!("Failed to queue inline media {}: {}", url, e),
         }
     }
     Ok((path_str, extra_gids))
@@ -224,7 +224,7 @@ pub async fn download_rss_item(
             .await
         {
             Ok(g) => extra_gids.push(g),
-            Err(e) => log::warn!("Failed to queue inline media {}: {}", url, e),
+            Err(e) => tracing::warn!("Failed to queue inline media {}: {}", url, e),
         }
     }
 
@@ -393,7 +393,7 @@ pub async fn download_rss_item_tracked(
             .await
         {
             Ok(g) => extra_gids.push(g),
-            Err(e) => log::warn!("Failed to queue inline media {}: {}", url, e),
+            Err(e) => tracing::warn!("Failed to queue inline media {}: {}", url, e),
         }
     }
 

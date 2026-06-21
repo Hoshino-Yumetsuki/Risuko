@@ -250,7 +250,7 @@ pub fn reveal_folder(path: &str) -> Result<(), String> {
     if outcome == "ok" {
         Ok(())
     } else {
-        log::warn!("[Risuko] revealFolder({path}) -> {outcome}");
+        tracing::warn!("[Risuko] revealFolder({path}) -> {outcome}");
         Err(outcome)
     }
 }
@@ -283,7 +283,7 @@ pub fn open_file(path: &str, mime: &str) -> Result<(), String> {
     if outcome == "ok" {
         Ok(())
     } else {
-        log::warn!("[Risuko] openFile({path}, {mime}) -> {outcome}");
+        tracing::warn!("[Risuko] openFile({path}, {mime}) -> {outcome}");
         Err(outcome)
     }
 }

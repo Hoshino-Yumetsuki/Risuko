@@ -420,7 +420,7 @@ impl UploadSinkManager {
             match s.sinks.iter().find(|x| x.id == sink_id).cloned() {
                 Some(r) => r,
                 None => {
-                    log::warn!("upload: sink {sink_id} disappeared before enqueue");
+                    tracing::warn!("upload: sink {sink_id} disappeared before enqueue");
                     return;
                 }
             }
@@ -614,7 +614,7 @@ impl UploadSinkManager {
                 )
                 .await
                 {
-                    log::warn!("upload {job_id}: post-action failed: {e}");
+                    tracing::warn!("upload {job_id}: post-action failed: {e}");
                 }
                 self.complete_job(&job_id).await;
                 self.touch_sink_used(&sink_record.id).await;
@@ -696,7 +696,7 @@ impl UploadSinkManager {
         };
         match serde_json::to_value(job) {
             Ok(v) => sink.emit(name, v),
-            Err(e) => log::warn!("upload event serialize failed: {e}"),
+            Err(e) => tracing::warn!("upload event serialize failed: {e}"),
         }
     }
 }

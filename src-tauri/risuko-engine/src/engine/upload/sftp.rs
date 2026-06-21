@@ -62,11 +62,11 @@ impl SftpSink {
                         .await
                     {
                         Ok(a) if a.success() => authed = true,
-                        Ok(_) => log::warn!("SFTP key auth rejected"),
-                        Err(e) => log::warn!("SFTP key auth error: {e}"),
+                        Ok(_) => tracing::warn!("SFTP key auth rejected"),
+                        Err(e) => tracing::warn!("SFTP key auth error: {e}"),
                     }
                 }
-                Err(e) => log::warn!("SFTP key decode error: {e}"),
+                Err(e) => tracing::warn!("SFTP key decode error: {e}"),
             }
         }
 
@@ -124,7 +124,7 @@ impl SftpSink {
                 Ok(false) => {
                     if let Err(e) = sftp.create_dir(&accum).await {
                         // Tolerate races where another upload created it
-                        log::debug!("SFTP mkdir {accum} ignored: {e}");
+                        tracing::debug!("SFTP mkdir {accum} ignored: {e}");
                     }
                 }
                 Err(_) => {
@@ -163,12 +163,12 @@ impl UploadSink for SftpSink {
         let (_ssh, sftp) = tokio::time::timeout(CONNECT_TIMEOUT, self.connect())
             .await
             .map_err(|_| "SFTP connect timed out".to_string())?
-            .inspect_err(|e| log::error!("SFTP connect failed: {e}"))?;
+            .inspect_err(|e| tracing::error!("SFTP connect failed: {e}"))?;
         let remote = self.full_remote_path(&file.remote_relative);
-        log::debug!("SFTP upload starting: remote={remote}");
+        tracing::debug!("SFTP upload starting: remote={remote}");
         self.ensure_parent_dirs(&sftp, &remote)
             .await
-            .inspect_err(|e| log::debug!("SFTP ensure_parent_dirs({remote}) failed: {e}"))?;
+            .inspect_err(|e| tracing::debug!("SFTP ensure_parent_dirs({remote}) failed: {e}"))?;
 
         // Stage writes to a sibling `.part` file so an existing good upload
         // at the final path is never truncated or unlinked on failure.
@@ -187,8 +187,8 @@ impl UploadSink for SftpSink {
                 // the returned error or info logs. The full path is
                 // still emitted at debug level for operators with
                 // log access
-                log::debug!("SFTP open {remote_tmp}: {e}");
-                log::error!("SFTP open failed: {e}");
+                tracing::debug!("SFTP open {remote_tmp}: {e}");
+                tracing::error!("SFTP open failed: {e}");
                 format!("SFTP open failed: {e}")
             })?;
 
@@ -212,7 +212,7 @@ impl UploadSink for SftpSink {
         ) {
             let _ = remote_file.shutdown().await;
             if let Err(e) = sftp.remove_file(remote_tmp).await {
-                log::debug!("SFTP cleanup of partial {remote_tmp} ignored: {e}");
+                tracing::debug!("SFTP cleanup of partial {remote_tmp} ignored: {e}");
             }
         }
 
@@ -245,7 +245,7 @@ impl UploadSink for SftpSink {
             // half-flushed file isn't left behind. Final `remote` is
             // untouched
             if let Err(re) = sftp.remove_file(&remote_tmp).await {
-                log::debug!("SFTP cleanup after close failure ignored: {re}");
+                tracing::debug!("SFTP cleanup after close failure ignored: {re}");
             }
             return Err(format!("SFTP close: {e}"));
         }
@@ -255,7 +255,9 @@ impl UploadSink for SftpSink {
         // failure unlink the existing remote and retry once so users can
         // overwrite previous uploads
         if let Err(e) = sftp.rename(&remote_tmp, &remote).await {
-            log::debug!("SFTP rename {remote_tmp} -> {remote} failed ({e}); retrying after unlink");
+            tracing::debug!(
+                "SFTP rename {remote_tmp} -> {remote} failed ({e}); retrying after unlink"
+            );
             let _ = sftp.remove_file(&remote).await;
             if let Err(e2) = sftp.rename(&remote_tmp, &remote).await {
                 let _ = sftp.remove_file(&remote_tmp).await;

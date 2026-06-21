@@ -99,7 +99,7 @@ impl client::Handler for TofuHandler {
         let fp = match fingerprint(key) {
             Ok(fp) => fp,
             Err(e) => {
-                log::warn!(
+                tracing::warn!(
                     "SFTP host key fingerprint failed for {}: {} — refusing connection",
                     self.host_key,
                     e
@@ -111,7 +111,7 @@ impl client::Handler for TofuHandler {
             if pin == &fp {
                 return Ok(true);
             }
-            log::warn!(
+            tracing::warn!(
                 "SFTP host key mismatch for {}: expected {} got {}",
                 self.host_key,
                 pin,
@@ -123,7 +123,7 @@ impl client::Handler for TofuHandler {
         match store.map.get(&self.host_key) {
             Some(existing) if existing == &fp => Ok(true),
             Some(existing) => {
-                log::warn!(
+                tracing::warn!(
                     "SFTP host key mismatch for {}: stored {} got {}",
                     self.host_key,
                     existing,
@@ -136,14 +136,14 @@ impl client::Handler for TofuHandler {
                 let mut next = store.map.clone();
                 next.insert(self.host_key.clone(), fp.clone());
                 if let Err(e) = KnownHosts::write_to_disk(&path, &next) {
-                    log::error!(
+                    tracing::error!(
                         "SFTP TOFU: refusing to trust {} because known_hosts persist failed: {}",
                         self.host_key,
                         e
                     );
                     return Ok(false);
                 }
-                log::info!("SFTP TOFU: pinning {} -> {}", self.host_key, fp);
+                tracing::info!("SFTP TOFU: pinning {} -> {}", self.host_key, fp);
                 store.map.insert(self.host_key.clone(), fp);
                 Ok(true)
             }

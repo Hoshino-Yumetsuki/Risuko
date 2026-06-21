@@ -13,7 +13,6 @@ import {
 import logger from "@shared/utils/logger";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import * as nosleep from "tauri-plugin-nosleep-api";
 import { toast } from "vue-sonner";
 import api from "@/api";
 import { useAppStore } from "@/store/app";
@@ -55,7 +54,6 @@ export default {
 			isDestroyed: false,
 			noSleepDesired: false,
 			noSleepApplied: false,
-			noSleepSource: null as null | "plugin" | "rust",
 			noSleepSyncing: false,
 			noSleepResyncNeeded: false,
 			startupAutoResumeHandled: false,
@@ -494,53 +492,11 @@ export default {
 			});
 		},
 		async setNoSleepState(downloading: boolean) {
-			if (!downloading) {
-				if (this.noSleepSource === "plugin") {
-					try {
-						await nosleep.unblock();
-						this.noSleepSource = null;
-						invoke("set_sleep_inhibit_flag", { active: false }).catch(
-							() => undefined,
-						);
-						return true;
-					} catch {
-						return false;
-					}
-				}
-
-				if (this.noSleepSource === "rust") {
-					try {
-						await invoke("on_download_status_change", {
-							downloading: false,
-						});
-						this.noSleepSource = null;
-						return true;
-					} catch {
-						return false;
-					}
-				}
-
-				return true;
-			}
-
 			try {
-				await nosleep.block(
-					nosleep.NoSleepType.PreventUserIdleSystemSleep as never,
-				);
-				this.noSleepSource = "plugin";
-				invoke("set_sleep_inhibit_flag", { active: true }).catch(
-					() => undefined,
-				);
+				await invoke("on_download_status_change", { downloading });
 				return true;
 			} catch {
-				// Keep Rust-side fallback for environments where the plugin command is unavailable.
-				try {
-					await invoke("on_download_status_change", { downloading });
-					this.noSleepSource = "rust";
-					return true;
-				} catch {
-					return false;
-				}
+				return false;
 			}
 		},
 		async syncNoSleepState() {

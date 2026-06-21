@@ -172,7 +172,7 @@ async fn run_forever(
         tokio::select! {
             _ = tick.tick() => {
                 if let Err(e) = discover_and_map(&ports, &opts, &active).await {
-                    log::debug!("upnp discover/map pass failed: {e}");
+                    tracing::debug!("upnp discover/map pass failed: {e}");
                 }
                 attempts.fetch_add(1, Ordering::Relaxed);
             }
@@ -203,7 +203,7 @@ async fn discover_and_map(
         let root = match fetch_root_desc(&ep.location).await {
             Ok(r) => r,
             Err(e) => {
-                log::debug!("upnp fetch_root_desc {}: {e}", ep.location);
+                tracing::debug!("upnp fetch_root_desc {}: {e}", ep.location);
                 continue;
             }
         };
@@ -227,7 +227,7 @@ async fn discover_and_map(
             .await
             {
                 Ok(()) => {
-                    log::info!(
+                    tracing::info!(
                         "upnp mapped {} {} via {} (external {:?})",
                         proto.as_str(),
                         port,
@@ -245,7 +245,7 @@ async fn discover_and_map(
                     });
                 }
                 Err(e) => {
-                    log::warn!(
+                    tracing::warn!(
                         "upnp AddPortMapping {} {} failed via {}: {e}",
                         proto.as_str(),
                         port,

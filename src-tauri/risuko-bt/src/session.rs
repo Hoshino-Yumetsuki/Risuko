@@ -186,7 +186,7 @@ impl Session {
             .unwrap_or_else(|| "0.0.0.0:0".parse().unwrap());
         let listener = TcpListener::bind(listen_addr).await?;
         let local_port = listener.local_addr()?.port();
-        log::info!("session listening on port {local_port}");
+        tracing::info!("session listening on port {local_port}");
 
         let mut upnp_handle: Option<super::upnp::UpnpHandle> = None;
         if opts
@@ -217,18 +217,18 @@ impl Session {
         let utp =
             match super::utp::UtpSocket::bind(SocketAddr::from(([0, 0, 0, 0], local_port))).await {
                 Ok(s) => {
-                    log::info!("µTP listening on udp/{}", s.local_addr().port());
+                    tracing::info!("µTP listening on udp/{}", s.local_addr().port());
                     Some(s)
                 }
                 Err(e) => {
-                    log::warn!("µTP: bind udp/{local_port} failed ({e}); trying ephemeral");
+                    tracing::warn!("µTP: bind udp/{local_port} failed ({e}); trying ephemeral");
                     match super::utp::UtpSocket::bind(SocketAddr::from(([0, 0, 0, 0], 0))).await {
                         Ok(s) => {
-                            log::info!("µTP listening on udp/{}", s.local_addr().port());
+                            tracing::info!("µTP listening on udp/{}", s.local_addr().port());
                             Some(s)
                         }
                         Err(e2) => {
-                            log::warn!("µTP: disabled (bind failed: {e2})");
+                            tracing::warn!("µTP: disabled (bind failed: {e2})");
                             None
                         }
                     }
@@ -271,7 +271,7 @@ impl Session {
                     *session.lsd.lock() = Some(svc);
                     *session.lsd_router_handle.lock() = Some(router);
                 }
-                Err(e) => log::warn!("lsd: not started: {e}"),
+                Err(e) => tracing::warn!("lsd: not started: {e}"),
             }
         }
 
@@ -281,7 +281,7 @@ impl Session {
             // shared() spawns + bootstraps a single long-lived instance on first use
             match super::dht::Dht::shared().await {
                 Some(dht) => *session.dht.lock() = Some(dht),
-                None => log::warn!("dht: not started"),
+                None => tracing::warn!("dht: not started"),
             }
         }
 
@@ -315,14 +315,14 @@ impl Session {
             match bind_v6_listener(v6_addr) {
                 Ok(std_listener) => match TcpListener::from_std(std_listener) {
                     Ok(listener6) => {
-                        log::info!("session v6 listening on port {local_port}");
+                        tracing::info!("session v6 listening on port {local_port}");
                         let weak6 = Arc::downgrade(&session);
                         let accept6 = tokio::spawn(run_accept_loop(listener6, weak6));
                         *session.accept6_handle.lock() = Some(accept6);
                     }
-                    Err(e) => log::warn!("session v6 tokio convert failed: {e}"),
+                    Err(e) => tracing::warn!("session v6 tokio convert failed: {e}"),
                 },
-                Err(e) => log::warn!("session v6 bind failed: {e}"),
+                Err(e) => tracing::warn!("session v6 bind failed: {e}"),
             }
         }
 
@@ -704,9 +704,9 @@ impl Session {
                     tokio::fs::remove_file(&p).await
                 };
                 match res {
-                    Ok(()) => log::info!("deleted torrent data: {}", p.display()),
+                    Ok(()) => tracing::info!("deleted torrent data: {}", p.display()),
                     Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                    Err(e) => log::warn!("failed to delete {}: {}", p.display(), e),
+                    Err(e) => tracing::warn!("failed to delete {}: {}", p.display(), e),
                 }
             }
         }
@@ -777,13 +777,13 @@ async fn run_accept_loop(listener: TcpListener, weak: std::sync::Weak<Session>) 
                             s.route_inbound_peer(addr, handle.tx, rx).await;
                         }
                         Err(e) => {
-                            log::debug!("inbound peer handshake failed: {e}")
+                            tracing::debug!("inbound peer handshake failed: {e}")
                         }
                     }
                 });
             }
             Err(e) => {
-                log::debug!("accept failed: {e}");
+                tracing::debug!("accept failed: {e}");
                 tokio::time::sleep(std::time::Duration::from_millis(200)).await;
             }
         }
@@ -835,7 +835,7 @@ async fn run_utp_accept_loop(utp: Arc<super::utp::UtpSocket>, weak: std::sync::W
                     s.route_inbound_peer(addr, handle.tx, rx).await;
                 }
                 Err(e) => {
-                    log::debug!("inbound µTP peer handshake failed: {e}");
+                    tracing::debug!("inbound µTP peer handshake failed: {e}");
                 }
             }
         });

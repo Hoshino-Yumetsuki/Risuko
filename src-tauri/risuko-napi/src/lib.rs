@@ -117,7 +117,7 @@ pub async fn start_engine(config: Option<EngineConfig>) -> Result<()> {
         loop {
             interval.tick().await;
             if let Err(e) = mgr.save_session().await {
-                log::warn!("Auto-save session failed: {}", e);
+                tracing::warn!("Auto-save session failed: {}", e);
             }
         }
     });

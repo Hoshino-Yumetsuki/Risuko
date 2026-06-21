@@ -140,7 +140,7 @@ pub async fn start_engine(
     upload_sinks: Option<Arc<UploadSinkManager>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if !should_start_embedded_engine(config) {
-        log::info!("Embedded engine start skipped because external engine mode is enabled");
+        tracing::info!("Embedded engine start skipped because external engine mode is enabled");
         return Ok(());
     }
 
@@ -148,7 +148,7 @@ pub async fn start_engine(
     {
         let guard = ENGINE_INSTANCE.lock().await;
         if guard.is_some() {
-            log::info!("Engine already running");
+            tracing::info!("Engine already running");
             return Ok(());
         }
     }
@@ -171,7 +171,7 @@ pub async fn start_engine(
     let rpc_port = options.rpc_listen_port();
     let rpc_secret = options.rpc_secret();
 
-    log::info!("Starting Risuko engine (in-process)");
+    tracing::info!("Starting Risuko engine (in-process)");
 
     let manager = Arc::new(
         TaskManager::new(&config_dir, options, events.clone())
@@ -211,7 +211,7 @@ pub async fn start_engine(
         loop {
             interval.tick().await;
             if let Err(e) = mgr_for_save.save_session().await {
-                log::warn!("Auto-save session failed: {}", e);
+                tracing::warn!("Auto-save session failed: {}", e);
             }
         }
     });
@@ -283,7 +283,7 @@ pub async fn start_engine(
                     }
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                    log::warn!("Event bridge lagged by {} events", n);
+                    tracing::warn!("Event bridge lagged by {} events", n);
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => {
                     break;
@@ -326,14 +326,14 @@ pub async fn start_engine(
     // Monitor for RPC-initiated shutdown requests
     tokio::spawn(async move {
         if rpc_shutdown_rx.recv().await.is_some() {
-            log::info!("Shutdown requested via RPC");
+            tracing::info!("Shutdown requested via RPC");
             if let Err(e) = stop_engine().await {
-                log::error!("Failed to stop engine via RPC shutdown: {}", e);
+                tracing::error!("Failed to stop engine via RPC shutdown: {}", e);
             }
         }
     });
 
-    log::info!("Risuko engine started on port {}", rpc_port);
+    tracing::info!("Risuko engine started on port {}", rpc_port);
     Ok(())
 }
 
@@ -363,7 +363,7 @@ pub async fn stop_engine() -> Result<(), Box<dyn std::error::Error>> {
         *g = None;
     }
 
-    log::info!("Risuko engine stopped");
+    tracing::info!("Risuko engine stopped");
     Ok(())
 }
 

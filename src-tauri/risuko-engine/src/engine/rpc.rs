@@ -102,7 +102,7 @@ impl RpcServer {
         let (tx, rx) = tokio::sync::oneshot::channel::<()>();
         self.shutdown_tx = Some(tx);
 
-        log::info!("RPC server listening on {}", addr);
+        tracing::info!("RPC server listening on {}", addr);
 
         tokio::spawn(async move {
             axum::serve(listener, app)

@@ -37,7 +37,7 @@ fn ensure_default_store() {
     static INIT: Once = Once::new();
     INIT.call_once(|| match build_default_store() {
         Ok(store) => keyring_core::set_default_store(store),
-        Err(e) => log::warn!("Credential vault: failed to init keystore: {e}"),
+        Err(e) => tracing::warn!("Credential vault: failed to init keystore: {e}"),
     });
 }
 
@@ -119,9 +119,9 @@ impl VaultManager {
         };
         self.enabled.store(ok, Ordering::Relaxed);
         if ok {
-            log::info!("Credential vault: OS keychain available");
+            tracing::info!("Credential vault: OS keychain available");
         } else {
-            log::warn!("Credential vault: OS keychain unavailable, falling back to plaintext");
+            tracing::warn!("Credential vault: OS keychain unavailable, falling back to plaintext");
         }
     }
 

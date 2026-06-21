@@ -36,35 +36,6 @@
 			]
 		},
 		"store:default",
-		"fs:default",
-		{
-			"identifier": "fs:allow-exists",
-			"allow": [
-				{ "path": "$DOWNLOAD/**" },
-				{ "path": "$DOCUMENT/**" },
-				{ "path": "$DESKTOP/**" },
-				{ "path": "$APPDATA/**" },
-				{ "path": "$APPLOCALDATA/**" },
-				{ "path": "$RESOURCE/**" }
-			]
-		},
-		{
-			"identifier": "fs:allow-read-file",
-			"allow": [
-				{ "path": "$DOWNLOAD/**" },
-				{ "path": "$DOCUMENT/**" },
-				{ "path": "$DESKTOP/**" },
-				{ "path": "$APPDATA/**" },
-				{ "path": "$APPLOCALDATA/**" },
-				{ "path": "$RESOURCE/**" }
-			]
-		},
-		"process:default",
-		"process:allow-exit",
-		"process:allow-restart",
-		"os:default",
-		"notification:default",
-		"notification:allow-notify",
 		"deep-link:default",
 		"clipboard-manager:default",
 		"clipboard-manager:allow-read-text",

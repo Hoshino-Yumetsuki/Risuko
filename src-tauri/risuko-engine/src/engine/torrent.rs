@@ -75,7 +75,7 @@ impl TorrentEngine {
         .await
         .map_err(|e| format!("Failed to create torrent session: {}", e))?;
 
-        log::info!(
+        tracing::info!(
             "Torrent engine initialized, output_dir={}",
             output_dir.display()
         );
@@ -175,7 +175,7 @@ impl TorrentEngine {
             create_subfolder,
         };
 
-        log::info!("Adding torrent bytes ({} bytes) to dir={}", data.len(), dir);
+        tracing::info!("Adding torrent bytes ({} bytes) to dir={}", data.len(), dir);
 
         let response = session
             .add_torrent(
@@ -186,7 +186,7 @@ impl TorrentEngine {
             .map_err(|e| format!("Failed to add torrent: {}", e))?;
 
         let handle = extract_handle(response)?;
-        log::info!(
+        tracing::info!(
             "Torrent added: id={}, info_hash={:?}",
             handle.id,
             handle.info_hash
@@ -226,7 +226,7 @@ impl TorrentEngine {
             create_subfolder,
         };
 
-        log::info!("Adding magnet to dir={}: {}", dir, magnet_uri);
+        tracing::info!("Adding magnet to dir={}: {}", dir, magnet_uri);
 
         // When bt-save-metadata is enabled, resolve the magnet ourselves first
         // so we can write the synthesized .torrent file next to the payload.
@@ -251,7 +251,7 @@ impl TorrentEngine {
                     return self.add_torrent_bytes(&bytes, options).await;
                 }
                 Err(e) => {
-                    log::warn!("bt-save-metadata resolve failed, falling back: {}", e);
+                    tracing::warn!("bt-save-metadata resolve failed, falling back: {}", e);
                 }
             }
         }
@@ -262,7 +262,7 @@ impl TorrentEngine {
             .map_err(|e| format!("Failed to add magnet: {}", e))?;
 
         let handle = extract_handle(response)?;
-        log::info!(
+        tracing::info!(
             "Magnet added: id={}, info_hash={:?}",
             handle.id,
             handle.info_hash
@@ -311,7 +311,7 @@ impl TorrentEngine {
         if let Ok(magnet) = bt::Magnet::parse(magnet_uri) {
             if let Some(handle) = session.get(bt::TorrentIdOrHash::Hash(magnet.info_hash())) {
                 if let Ok(files) = handle.with_metadata(|meta| extract_file_details(&meta.info)) {
-                    log::info!(
+                    tracing::info!(
                         "Magnet already managed, resolved from session ({} files)",
                         files.len()
                     );
@@ -321,7 +321,7 @@ impl TorrentEngine {
         }
 
         let trackers = Self::parse_trackers(options);
-        log::info!("Resolving magnet metadata: {}", magnet_uri);
+        tracing::info!("Resolving magnet metadata: {}", magnet_uri);
         let start = std::time::Instant::now();
 
         let enc = encryption_policy_from_str(
@@ -348,7 +348,7 @@ impl TorrentEngine {
         let meta = bt::parse_torrent(&torrent_bytes)
             .map_err(|e| format!("Failed to parse resolved metadata: {}", e))?;
         let files = extract_file_details(&meta.info);
-        log::info!(
+        tracing::info!(
             "Magnet metadata resolved in {:?} ({} files)",
             start.elapsed(),
             files.len()
@@ -644,12 +644,12 @@ async fn save_torrent_metadata_if_enabled(
         let path = Path::new(dir).join(format!("{}.torrent", safe));
         if let Some(parent) = path.parent() {
             if let Err(e) = tokio::fs::create_dir_all(parent).await {
-                log::warn!("Failed to create metadata dir {}: {}", parent.display(), e);
+                tracing::warn!("Failed to create metadata dir {}: {}", parent.display(), e);
             }
         }
         match tokio::fs::write(&path, bytes).await {
-            Ok(()) => log::info!("Saved torrent metadata to {}", path.display()),
-            Err(e) => log::warn!(
+            Ok(()) => tracing::info!("Saved torrent metadata to {}", path.display()),
+            Err(e) => tracing::warn!(
                 "Failed to save torrent metadata to {}: {}",
                 path.display(),
                 e
