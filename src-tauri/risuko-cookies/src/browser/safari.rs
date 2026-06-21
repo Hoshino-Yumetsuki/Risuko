@@ -187,7 +187,6 @@ fn cookie_covers_host(request_host: &str, cookie_domain: &str) -> bool {
     }
 }
 
-
 #[cfg(not(target_os = "macos"))]
 pub fn extract_cookies(_host: Option<&str>) -> eyre::Result<Vec<crate::browser::chromium::Cookie>> {
     eyre::bail!("safari only available on macos")

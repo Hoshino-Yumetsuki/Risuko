@@ -253,12 +253,20 @@ fn read_cookies_from_db(
                         Err(e) => {
                             tracing::trace!(target: "risuko_cookies", "chromium: decrypt failed for '{}' host_key={}: {}", raw.name, raw.domain, e);
                             decrypted_fail += 1;
-                            String::from_utf8_lossy(&raw.raw_value).to_string()
+                            if !raw.plaintext_value.is_empty() {
+                                raw.plaintext_value
+                            } else {
+                                String::from_utf8_lossy(&raw.raw_value).to_string()
+                            }
                         }
                     }
                 } else {
                     no_key += 1;
-                    String::from_utf8_lossy(&raw.raw_value).to_string()
+                    if !raw.plaintext_value.is_empty() {
+                        raw.plaintext_value
+                    } else {
+                        String::from_utf8_lossy(&raw.raw_value).to_string()
+                    }
                 }
             } else {
                 // Plaintext cookie
@@ -322,7 +330,14 @@ fn parse_row(row: &rusqlite::Row) -> rusqlite::Result<RawCookie> {
         path: row.get(4)?,
         secure: row.get::<_, i32>(5)? != 0,
         http_only: row.get::<_, i32>(6)? != 0,
-        expires: time::webkit_to_unix(row.get::<_, i64>(7)? as u64),
+        expires: {
+            let v: i64 = row.get(7)?;
+            if v <= 0 {
+                None
+            } else {
+                time::webkit_to_unix(v as u64)
+            }
+        },
     })
 }
 

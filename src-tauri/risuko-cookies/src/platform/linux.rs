@@ -78,7 +78,7 @@ pub fn extract_master_key(_local_state_path: &std::path::Path) -> Result<Vec<u8>
         "org.freedesktop.Secret.Service",
     )?;
 
-    let session_path: zbus::zvariant::OwnedObjectPath =
+    let (_output, session_path): (zbus::zvariant::OwnedValue, zbus::zvariant::OwnedObjectPath) =
         service_proxy.call("OpenSession", &("plain", zbus::zvariant::Value::from("")))?;
 
     let secret: (zbus::zvariant::OwnedObjectPath, Vec<u8>, Vec<u8>, String) =
