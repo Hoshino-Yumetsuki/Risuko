@@ -253,11 +253,7 @@ fn read_cookies_from_db(
                         Err(e) => {
                             tracing::trace!(target: "risuko_cookies", "chromium: decrypt failed for '{}' host_key={}: {}", raw.name, raw.domain, e);
                             decrypted_fail += 1;
-                            if !raw.plaintext_value.is_empty() {
-                                raw.plaintext_value
-                            } else {
-                                String::from_utf8_lossy(&raw.raw_value).to_string()
-                            }
+                            continue;
                         }
                     }
                 } else {

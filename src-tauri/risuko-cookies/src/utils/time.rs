@@ -16,5 +16,8 @@ pub fn safari_to_unix(timestamp: f64) -> Option<u64> {
         return None;
     }
     let unix = timestamp + 978_307_200.0;
+    if !unix.is_finite() || unix < 0.0 {
+        return None;
+    }
     Some(unix as u64)
 }
