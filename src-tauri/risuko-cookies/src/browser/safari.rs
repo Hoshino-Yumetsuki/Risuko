@@ -6,8 +6,6 @@ use crate::browser::chromium::Cookie;
 use crate::utils::{paths, time};
 #[cfg(target_os = "macos")]
 use eyre::{bail, Result};
-#[cfg(target_os = "macos")]
-use rusqlite::Connection;
 
 #[cfg(target_os = "macos")]
 pub fn extract_cookies(host: Option<&str>) -> Result<Vec<Cookie>> {
@@ -21,40 +19,32 @@ pub fn extract_cookies(host: Option<&str>) -> Result<Vec<Cookie>> {
     };
     tracing::debug!(target: "risuko_cookies", "safari: using db path {}", cookie_db.display());
 
-    // Export the binary cookie store to a temporary plist we can read
-    let temp_db = tempfile::NamedTempFile::new()?;
-    std::process::Command::new("defaults")
-        .arg("export")
-        .arg(&cookie_db)
-        .arg(temp_db.path())
-        .output()?;
+    let data = std::fs::read(&cookie_db)?;
+    let raw_cookies = parse_binary_cookies(&data)?;
 
-    let conn = Connection::open(temp_db.path())?;
-
-    // Count total rows first for debugging
-    let total_count: i64 = conn.query_row("SELECT COUNT(*) FROM cookies", [], |row| row.get(0))?;
-    tracing::debug!(target: "risuko_cookies", "safari: total rows in cookies = {}", total_count);
-
-    // Read all cookies and filter by domain
-    let mut stmt =
-        conn.prepare("SELECT name, value, domain, path, secure, httpOnly, expires FROM cookies")?;
-    let cookie_iter = stmt.query_map([], parse_row)?;
+    tracing::debug!(target: "risuko_cookies", "safari: total cookies parsed = {}", raw_cookies.len());
 
     let mut cookies = Vec::new();
     let mut skipped_domain = 0usize;
 
-    for cookie_result in cookie_iter {
-        if let Ok(cookie) = cookie_result {
-            if let Some(request_host) = host {
-                if !cookie_covers_host(request_host, &cookie.domain) {
-                    tracing::trace!(target: "risuko_cookies", "safari: skip cookie '{}' domain={} (does not cover {})", cookie.name, cookie.domain, request_host);
-                    skipped_domain += 1;
-                    continue;
-                }
+    for raw in raw_cookies {
+        if let Some(request_host) = host {
+            if !cookie_covers_host(request_host, &raw.domain) {
+                tracing::trace!(target: "risuko_cookies", "safari: skip cookie '{}' domain={} (does not cover {})", raw.name, raw.domain, request_host);
+                skipped_domain += 1;
+                continue;
             }
-            tracing::trace!(target: "risuko_cookies", "safari: keep cookie '{}' domain={} value_len={}", cookie.name, cookie.domain, cookie.value.len());
-            cookies.push(cookie);
         }
+        tracing::trace!(target: "risuko_cookies", "safari: keep cookie '{}' domain={} value_len={}", raw.name, raw.domain, raw.value.len());
+        cookies.push(Cookie {
+            name: raw.name,
+            value: raw.value,
+            domain: raw.domain,
+            path: raw.path,
+            secure: raw.secure,
+            http_only: raw.http_only,
+            expires: raw.expires,
+        });
     }
 
     tracing::debug!(target: "risuko_cookies",
@@ -63,6 +53,123 @@ pub fn extract_cookies(host: Option<&str>) -> Result<Vec<Cookie>> {
     );
 
     Ok(cookies)
+}
+
+#[cfg(target_os = "macos")]
+struct RawSafariCookie {
+    name: String,
+    value: String,
+    domain: String,
+    path: String,
+    secure: bool,
+    http_only: bool,
+    expires: Option<u64>,
+}
+
+#[cfg(target_os = "macos")]
+fn parse_binary_cookies(data: &[u8]) -> Result<Vec<RawSafariCookie>> {
+    if data.len() < 8 {
+        bail!("binary cookies file too short");
+    }
+
+    if &data[..4] != b"cook" {
+        bail!("invalid binary cookies magic");
+    }
+
+    let num_pages = u32::from_be_bytes(data[4..8].try_into().unwrap()) as usize;
+    if num_pages == 0 {
+        return Ok(Vec::new());
+    }
+
+    let header_size = 8 + num_pages * 4;
+    if data.len() < header_size {
+        bail!("binary cookies header truncated");
+    }
+
+    let mut cookies = Vec::new();
+    for i in 0..num_pages {
+        let off = 8 + i * 4;
+        let page_offset = u32::from_be_bytes(data[off..off + 4].try_into().unwrap()) as usize;
+        if page_offset >= data.len() {
+            bail!("page offset out of bounds");
+        }
+        parse_page(&data[page_offset..], &mut cookies)?;
+    }
+
+    Ok(cookies)
+}
+
+#[cfg(target_os = "macos")]
+fn parse_page(page: &[u8], cookies: &mut Vec<RawSafariCookie>) -> Result<()> {
+    if page.len() < 8 {
+        bail!("page too short");
+    }
+
+    let num_cookies = u32::from_be_bytes(page[4..8].try_into().unwrap()) as usize;
+    if num_cookies == 0 {
+        return Ok(());
+    }
+
+    let header_size = 8 + num_cookies * 4;
+    if page.len() < header_size {
+        bail!("page header truncated");
+    }
+
+    for i in 0..num_cookies {
+        let off = 8 + i * 4;
+        let cookie_offset = u32::from_be_bytes(page[off..off + 4].try_into().unwrap()) as usize;
+        if cookie_offset >= page.len() {
+            bail!("cookie offset out of bounds");
+        }
+        parse_cookie(&page[cookie_offset..], cookies)?;
+    }
+
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn parse_cookie(cookie: &[u8], cookies: &mut Vec<RawSafariCookie>) -> Result<()> {
+    if cookie.len() < 44 {
+        bail!("cookie record too short");
+    }
+
+    let flags = u32::from_be_bytes(cookie[4..8].try_into().unwrap());
+    let url_offset = u32::from_be_bytes(cookie[12..16].try_into().unwrap()) as usize;
+    let name_offset = u32::from_be_bytes(cookie[16..20].try_into().unwrap()) as usize;
+    let path_offset = u32::from_be_bytes(cookie[20..24].try_into().unwrap()) as usize;
+    let value_offset = u32::from_be_bytes(cookie[24..28].try_into().unwrap()) as usize;
+
+    let expiry_bytes: [u8; 8] = cookie[28..36].try_into().unwrap();
+    let expiry = f64::from_be_bytes(expiry_bytes);
+
+    let domain = read_cstr(cookie, url_offset)?;
+    let name = read_cstr(cookie, name_offset)?;
+    let path = read_cstr(cookie, path_offset)?;
+    let value = read_cstr(cookie, value_offset)?;
+
+    cookies.push(RawSafariCookie {
+        name,
+        value,
+        domain,
+        path,
+        secure: (flags & 0x01) != 0,
+        http_only: (flags & 0x04) != 0,
+        expires: time::safari_to_unix(expiry),
+    });
+
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn read_cstr(data: &[u8], offset: usize) -> Result<String> {
+    if offset >= data.len() {
+        bail!("string offset out of bounds");
+    }
+    let end = data[offset..]
+        .iter()
+        .position(|&b| b == 0)
+        .unwrap_or(data.len() - offset);
+    Ok(String::from_utf8_lossy(&data[offset..offset + end]).to_string())
 }
 
 #[cfg(target_os = "macos")]
@@ -80,18 +187,6 @@ fn cookie_covers_host(request_host: &str, cookie_domain: &str) -> bool {
     }
 }
 
-#[cfg(target_os = "macos")]
-fn parse_row(row: &rusqlite::Row) -> rusqlite::Result<Cookie> {
-    Ok(Cookie {
-        name: row.get(0)?,
-        value: row.get(1)?,
-        domain: row.get(2)?,
-        path: row.get(3)?,
-        secure: row.get::<_, i32>(4)? != 0,
-        http_only: row.get::<_, i32>(5)? != 0,
-        expires: time::safari_to_unix(row.get::<_, i64>(6)? as u64),
-    })
-}
 
 #[cfg(not(target_os = "macos"))]
 pub fn extract_cookies(_host: Option<&str>) -> eyre::Result<Vec<crate::browser::chromium::Cookie>> {

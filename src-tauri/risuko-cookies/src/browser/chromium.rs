@@ -214,7 +214,7 @@ fn read_cookies_from_db(
 
     // Read all cookies
     let mut stmt = conn.prepare(
-        "SELECT name, encrypted_value, host_key, path, is_secure, is_httponly, expires_utc FROM cookies"
+        "SELECT name, encrypted_value, value, host_key, path, is_secure, is_httponly, expires_utc FROM cookies"
     )?;
     let cookie_iter = stmt.query_map([], parse_row)?;
 
@@ -227,7 +227,8 @@ fn read_cookies_from_db(
 
     for cookie_result in cookie_iter {
         if let Ok(raw) = cookie_result {
-            if raw.raw_value.is_empty() {
+            // Skip only when both encrypted and plaintext values are empty
+            if raw.raw_value.is_empty() && raw.plaintext_value.is_empty() {
                 skipped_empty += 1;
                 continue;
             }
@@ -241,22 +242,28 @@ fn read_cookies_from_db(
                 }
             }
 
-            // Decrypt the raw BLOB bytes, then convert to string
-            let value = if let Some(key) = master_key {
-                match decrypt_cookie_value(&raw.raw_value, key) {
-                    Ok(decrypted) => {
-                        decrypted_ok += 1;
-                        String::from_utf8_lossy(&decrypted).to_string()
+            // Decrypt the encrypted value if present, otherwise fall back to plaintext
+            let value = if !raw.raw_value.is_empty() {
+                if let Some(key) = master_key {
+                    match decrypt_cookie_value(&raw.raw_value, key) {
+                        Ok(decrypted) => {
+                            decrypted_ok += 1;
+                            String::from_utf8_lossy(&decrypted).to_string()
+                        }
+                        Err(e) => {
+                            tracing::trace!(target: "risuko_cookies", "chromium: decrypt failed for '{}' host_key={}: {}", raw.name, raw.domain, e);
+                            decrypted_fail += 1;
+                            String::from_utf8_lossy(&raw.raw_value).to_string()
+                        }
                     }
-                    Err(e) => {
-                        tracing::trace!(target: "risuko_cookies", "chromium: decrypt failed for '{}' host_key={}: {}", raw.name, raw.domain, e);
-                        decrypted_fail += 1;
-                        String::from_utf8_lossy(&raw.raw_value).to_string()
-                    }
+                } else {
+                    no_key += 1;
+                    String::from_utf8_lossy(&raw.raw_value).to_string()
                 }
             } else {
-                no_key += 1;
-                String::from_utf8_lossy(&raw.raw_value).to_string()
+                // Plaintext cookie
+                decrypted_ok += 1;
+                raw.plaintext_value
             };
 
             cookies.push(Cookie {
@@ -298,6 +305,7 @@ fn cookie_covers_host(request_host: &str, cookie_host_key: &str) -> bool {
 struct RawCookie {
     name: String,
     raw_value: Vec<u8>,
+    plaintext_value: String,
     domain: String,
     path: String,
     secure: bool,
@@ -309,11 +317,12 @@ fn parse_row(row: &rusqlite::Row) -> rusqlite::Result<RawCookie> {
     Ok(RawCookie {
         name: row.get(0)?,
         raw_value: row.get::<_, Vec<u8>>(1)?,
-        domain: row.get(2)?,
-        path: row.get(3)?,
-        secure: row.get::<_, i32>(4)? != 0,
-        http_only: row.get::<_, i32>(5)? != 0,
-        expires: time::webkit_to_unix(row.get::<_, i64>(6)? as u64),
+        plaintext_value: row.get(2)?,
+        domain: row.get(3)?,
+        path: row.get(4)?,
+        secure: row.get::<_, i32>(5)? != 0,
+        http_only: row.get::<_, i32>(6)? != 0,
+        expires: time::webkit_to_unix(row.get::<_, i64>(7)? as u64),
     })
 }
 

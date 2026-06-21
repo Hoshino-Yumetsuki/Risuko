@@ -11,9 +11,14 @@ pub fn webkit_to_unix(micros: u64) -> Option<u64> {
 }
 
 #[cfg(target_os = "macos")]
-pub fn safari_to_unix(timestamp: u64) -> Option<u64> {
-    if timestamp == 0 {
+pub fn safari_to_unix(timestamp: f64) -> Option<u64> {
+    if timestamp <= 0.0 {
         return None;
     }
-    Some((timestamp + 978_307_200) / 1_000_000_000)
+    let unix = timestamp + 978_307_200.0;
+    if unix < 0.0 {
+        None
+    } else {
+        Some(unix as u64)
+    }
 }
