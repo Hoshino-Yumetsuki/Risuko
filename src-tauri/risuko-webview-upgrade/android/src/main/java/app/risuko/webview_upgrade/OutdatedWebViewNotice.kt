@@ -18,6 +18,7 @@ internal object OutdatedWebViewNotice {
     @Volatile
     private var scheduled = false
 
+    @Synchronized
     fun schedule(context: Context, recommendedPackage: String?) {
         if (scheduled) return
         val app = context.applicationContext as? Application ?: run {
@@ -27,6 +28,7 @@ internal object OutdatedWebViewNotice {
         scheduled = true
         app.registerActivityLifecycleCallbacks(object : Application.ActivityLifecycleCallbacks {
             override fun onActivityResumed(activity: Activity) {
+                if (activity.isFinishing) return
                 app.unregisterActivityLifecycleCallbacks(this)
                 showDialog(activity, recommendedPackage)
             }

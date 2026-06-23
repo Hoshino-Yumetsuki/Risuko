@@ -538,16 +538,8 @@
 
 	html.platform-android .task-list,
 	html.mobile-phone .task-list {
-		height: auto;
 		padding: 8px 14px 18px;
-		overflow: visible;
 	}
-
-	/* The card uses a single rounded outer shape with overflow:hidden so
-	   the colored status indicator (first flex child) and the content
-	   area (second flex child) are clipped to that one shape. The user
-	   then sees a unified rounded rectangle whose left slice is the
-	   colored status bar — the bar is "connected" to the card. */
 	html.platform-android .task-item,
 	html.mobile-phone .task-item {
 		min-height: 116px;
@@ -827,8 +819,8 @@
 		background: var(--android-surface-container);
 	}
 
-	html.platform-android [data-slot="input"],
-	html.mobile-phone [data-slot="input"] {
+	html.platform-android .add-task-dialog [data-slot="input"],
+	html.mobile-phone .add-task-dialog [data-slot="input"] {
 		height: 48px;
 		min-height: 48px;
 		padding-top: 0;
@@ -837,15 +829,15 @@
 		display: flex;
 		align-items: center;
 	}
-	html.platform-android [data-slot="textarea"],
-	html.mobile-phone [data-slot="textarea"] {
+	html.platform-android .add-task-dialog [data-slot="textarea"],
+	html.mobile-phone .add-task-dialog [data-slot="textarea"] {
 		padding-top: 12px;
 		padding-bottom: 12px;
 	}
-	html.platform-android .mo-input-prepend,
-	html.platform-android .mo-input-append,
-	html.mobile-phone .mo-input-prepend,
-	html.mobile-phone .mo-input-append {
+	html.platform-android .add-task-dialog .mo-input-prepend,
+	html.platform-android .add-task-dialog .mo-input-append,
+	html.mobile-phone .add-task-dialog .mo-input-prepend,
+	html.mobile-phone .add-task-dialog .mo-input-append {
 		height: 48px;
 		min-height: 48px;
 	}

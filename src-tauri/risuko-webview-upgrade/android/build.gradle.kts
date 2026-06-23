@@ -49,14 +49,22 @@ fun parsePluginBlock(block: Map<String, Any?>?): Pair<Int, Int> {
     if (block == null) return defaultMinUpgradeMajor to defaultMinSupportedMajor
     val upgrade = (block["minUpgradeMajor"] as? Number)?.toInt() ?: defaultMinUpgradeMajor
     val supported = (block["minSupportedMajor"] as? Number)?.toInt() ?: defaultMinSupportedMajor
+    require(upgrade > 0) { "minUpgradeMajor must be > 0, got $upgrade" }
+    require(supported > 0) { "minSupportedMajor must be > 0, got $supported" }
+    require(supported <= upgrade) { "minSupportedMajor ($supported) must be <= minUpgradeMajor ($upgrade)" }
     return upgrade to supported
 }
 
 @Suppress("UNCHECKED_CAST")
 fun readFromEnv(jsonText: String?): Pair<Int, Int>? {
     if (jsonText.isNullOrBlank()) return null
-    val parsed = JsonSlurper().parseText(jsonText) as? Map<String, Any?> ?: return null
-    return parsePluginBlock(parsed)
+    return try {
+        val parsed = JsonSlurper().parseText(jsonText) as? Map<String, Any?> ?: return null
+        parsePluginBlock(parsed)
+    } catch (t: Throwable) {
+        logger.warn("TAURI_WEBVIEW_UPGRADE_PLUGIN_CONFIG parse error: ${t.message}; using defaults")
+        null
+    }
 }
 
 @Suppress("UNCHECKED_CAST")
@@ -94,7 +102,7 @@ val generateWebViewUpgradeConfig = tasks.register("generateWebViewUpgradeConfig"
                 readFromEnv(envJson)?.let { Triple(it.first, it.second, "TAURI_WEBVIEW_UPGRADE_PLUGIN_CONFIG env var") }
                     ?: Triple(defaultMinUpgradeMajor, defaultMinSupportedMajor, "defaults (env var unparseable)")
             tauriConfFile != null ->
-                readFromTauriConf(tauriConfFile)?.let { Triple(it.first, it.second, "tauri.conf.json at $tauriConfFile") }
+                readFromTauriConf(tauriConfFile)?.let { Triple(it.first, it.second, "tauri.conf.json") }
                     ?: Triple(defaultMinUpgradeMajor, defaultMinSupportedMajor, "defaults (tauri.conf.json had no block)")
             else -> Triple(defaultMinUpgradeMajor, defaultMinSupportedMajor, "defaults (no config found)")
         }

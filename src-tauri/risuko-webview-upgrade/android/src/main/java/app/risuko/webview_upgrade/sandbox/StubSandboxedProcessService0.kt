@@ -22,6 +22,10 @@ class StubSandboxedProcessService0 : Service() {
         super.onRebind(intent)
         delegate.onRebind(intent)
     }
+    override fun onUnbind(intent: Intent): Boolean {
+        val result = super.onUnbind(intent)
+        return delegate.onUnbind(intent) || result
+    }
     override fun onDestroy() {
         super.onDestroy()
         delegate.onDestroy()

@@ -6,6 +6,7 @@ internal abstract class BinderHook {
 
     private val lock = Any()
     private var originalBinder: IBinder? = null
+    @Volatile
     protected var proxyBinder: ProxyBinder? = null
         private set
     private var currentlyHooked = false
@@ -18,7 +19,12 @@ internal abstract class BinderHook {
         } else {
             val original = onTargetBinderObtain()
             val proxy = onProxyBinderCreate(original)
-            onProxyBinderReplace(proxy)
+            try {
+                onProxyBinderReplace(proxy)
+            } catch (t: Throwable) {
+                onTargetBinderRestore(original)
+                throw t
+            }
             originalBinder = original
             proxyBinder = proxy
             everHooked = true

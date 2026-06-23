@@ -39,4 +39,5 @@ internal val CANDIDATE_PACKAGES = listOf(
     "com.google.android.webview.dev",
     "com.google.android.webview.canary",
     "com.android.chrome",
+    "com.huawei.webview",
 )

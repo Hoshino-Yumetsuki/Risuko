@@ -117,7 +117,7 @@ internal class ActivityManagerHook(
         try {
             val sharedLibs = WebViewSwap.replaceWebViewPackageInfo
                 ?.applicationInfo?.sharedLibraryFiles
-            if (sharedLibs != null) extras.putStringArray(SandboxExtras.SHARED_LIBS, sharedLibs)
+            if (sharedLibs != null) extras.putStringArray(SandboxExtras.WEBVIEW_SHARED_LIBS, sharedLibs)
         } catch (t: Throwable) {
             Log.e(LOG_TAG, "failed to read WebView sharedLibs: ${t.message}")
         }

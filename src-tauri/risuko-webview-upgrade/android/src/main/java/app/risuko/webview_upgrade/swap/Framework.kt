@@ -27,17 +27,12 @@ internal object Framework {
 
     fun providerInstance(): Any? = Reflect.getStaticField(webViewFactory, "sProviderInstance")
 
-    fun providerLock(): Any = Reflect.getStaticField(webViewFactory, "sProviderLock")
-        ?: throw IllegalStateException("WebViewFactory.sProviderLock is null")
-
     fun webViewUpdateAsInterface(binder: IBinder): IInterface =
         Reflect.callStatic(
             Reflect.cls("android.webkit.IWebViewUpdateService\$Stub"),
             "asInterface",
             binder,
         ) as IInterface
-
-    fun responsePackageInfo(response: Any): Any? = Reflect.getField(response, "packageInfo")
 
     fun setResponsePackageInfo(response: Any, packageInfo: Any?) =
         Reflect.setField(response, "packageInfo", packageInfo)

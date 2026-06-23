@@ -23,31 +23,15 @@ internal object WebViewUpgradeBootstrap {
             val current = currentWebView(context)
             val systemMajor = current?.third ?: -1
 
-            if (systemMajor >= WebViewUpgradeConfig.MIN_UPGRADE_MAJOR) {
-                Log.i(
-                    LOG_TAG,
-                    "system WebView: ${current?.first ?: "<none>"} v${current?.second ?: "?"} " +
-                        "(major=$systemMajor); recent enough, skipping",
-                )
-                return
-            }
-
-            // WebView is too old
             HiddenApi.exempt()
 
             val minUpgrade = SystemProps.getInt(PROP_MIN_UPGRADE) ?: WebViewUpgradeConfig.MIN_UPGRADE_MAJOR
             val minSupported = SystemProps.getInt(PROP_MIN_SUPPORTED) ?: WebViewUpgradeConfig.MIN_SUPPORTED_MAJOR
 
-            Log.i(
-                LOG_TAG,
-                "system WebView: ${current?.first ?: "<none>"} v${current?.second ?: "?"} " +
-                    "(major=$systemMajor); thresholds upgrade=$minUpgrade supported=$minSupported",
-            )
-
             val forcePkg = SystemProps.get(PROP_FORCE)
             if (forcePkg.isNotEmpty()) {
                 Log.w(LOG_TAG, "debug force-swap to $forcePkg")
-                trySwap(context, forcePkg, fallbackMajor = 0, minSupported = minSupported)
+                trySwap(context, forcePkg)
                 return
             }
             if (SystemProps.get(PROP_NUDGE) == "1") {
@@ -57,14 +41,18 @@ internal object WebViewUpgradeBootstrap {
             }
 
             if (systemMajor >= minUpgrade) {
-                Log.i(LOG_TAG, "system WebView is recent enough; no action")
+                Log.i(
+                    LOG_TAG,
+                    "system WebView: ${current?.first ?: "<none>"} v${current?.second ?: "?"} " +
+                        "(major=$systemMajor); recent enough, skipping",
+                )
                 return
             }
 
             val candidate = bestCandidate(context, systemMajor)
             if (candidate != null) {
                 Log.i(LOG_TAG, "candidate kernel: ${candidate.first} major=${candidate.second}")
-                if (trySwap(context, candidate.first, candidate.second, minSupported)) return
+                if (trySwap(context, candidate.first)) return
             } else {
                 Log.i(LOG_TAG, "no newer installed WebView candidate found")
             }
@@ -78,7 +66,7 @@ internal object WebViewUpgradeBootstrap {
     }
 
     /** @return true if the swap was applied. */
-    private fun trySwap(context: Context, packageName: String, fallbackMajor: Int, minSupported: Int): Boolean {
+    private fun trySwap(context: Context, packageName: String): Boolean {
         return try {
             WebViewSwap.swapToInstalledPackage(context, packageName)
             true

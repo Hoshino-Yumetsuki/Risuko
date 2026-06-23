@@ -170,7 +170,7 @@ internal object BindServiceArgsAdapter {
         Integer.TYPE, Integer::class.javaObjectType ->
             (value as? Number)?.toInt() ?: 0
         java.lang.Boolean.TYPE, java.lang.Boolean::class.javaObjectType ->
-            (value as? Boolean) ?: false
+            value as? Boolean ?: false
         else -> value
     }
 

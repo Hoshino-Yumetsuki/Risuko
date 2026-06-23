@@ -27,6 +27,7 @@ internal class SandboxedProcessServiceDelegate {
     private var onBindMethod: java.lang.reflect.Method? = null
     private var onDestroyMethod: java.lang.reflect.Method? = null
     private var onRebindMethod: java.lang.reflect.Method? = null
+    private var onUnbindMethod: java.lang.reflect.Method? = null
 
     private var dexInjected = false
     private var ready = false
@@ -64,6 +65,12 @@ internal class SandboxedProcessServiceDelegate {
         runCatching { onRebindMethod?.invoke(real, intent) }
     }
 
+    fun onUnbind(intent: Intent): Boolean {
+        if (!ready) return false
+        val real = realService ?: return false
+        return runCatching { onUnbindMethod?.invoke(real, intent) as? Boolean ?: false }.getOrDefault(false)
+    }
+
     @Synchronized
     private fun ensureReady(intent: Intent) {
         if (ready) return
@@ -75,7 +82,7 @@ internal class SandboxedProcessServiceDelegate {
             return
         }
         var libsPath = intent.getStringExtra(SandboxExtras.WEBVIEW_LIBS_PATH)
-        val sharedLibs = intent.getStringArrayExtra(SandboxExtras.SHARED_LIBS)
+        val sharedLibs = intent.getStringArrayExtra(SandboxExtras.WEBVIEW_SHARED_LIBS)
         var realClassName = intent.getStringExtra(SandboxExtras.ORIGINAL_SERVICE_CLASS)
         if (realClassName.isNullOrEmpty()) {
             realClassName = "org.chromium.content.app.SandboxedProcessService0"
@@ -339,6 +346,9 @@ internal class SandboxedProcessServiceDelegate {
             onDestroyMethod = runCatching { realClass.getMethod("onDestroy").apply { isAccessible = true } }.getOrNull()
             onRebindMethod = runCatching {
                 realClass.getMethod("onRebind", Intent::class.java).apply { isAccessible = true }
+            }.getOrNull()
+            onUnbindMethod = runCatching {
+                realClass.getMethod("onUnbind", Intent::class.java).apply { isAccessible = true }
             }.getOrNull()
 
             realClass.getMethod("onCreate").apply { isAccessible = true }.invoke(real)

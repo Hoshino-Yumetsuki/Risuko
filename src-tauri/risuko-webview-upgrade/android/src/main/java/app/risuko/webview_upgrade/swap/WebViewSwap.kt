@@ -1,6 +1,5 @@
 package app.risuko.webview_upgrade.swap
 
-import android.annotation.SuppressLint
 import android.content.Context
 import android.content.pm.PackageInfo
 import android.content.pm.PackageManager
@@ -82,7 +81,6 @@ internal object WebViewSwap {
         }
     }
 
-    @SuppressLint("SetJavaScriptEnabled")
     private fun lockProviderBinding(context: Context) {
         val webView = WebView(context)
         webView.webViewClient = object : WebViewClient() {
