@@ -52,7 +52,12 @@ internal object WebViewUpgradeBootstrap {
             val candidate = bestCandidate(context, systemMajor)
             if (candidate != null) {
                 Log.i(LOG_TAG, "candidate kernel: ${candidate.first} major=${candidate.second}")
-                if (trySwap(context, candidate.first)) return
+                if (trySwap(context, candidate.first)) {
+                    if (candidate.second in 0 until minSupported) {
+                        OutdatedWebViewNotice.schedule(context, candidate.first)
+                    }
+                    return
+                }
             } else {
                 Log.i(LOG_TAG, "no newer installed WebView candidate found")
             }

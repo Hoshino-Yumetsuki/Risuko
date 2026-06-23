@@ -41,7 +41,7 @@ internal object BindServiceArgsAdapter {
                 best = m
             }
         }
-        return best ?: candidates[0]
+        return best
     }
 
     private fun scorePrefixMatch(targetTypes: Array<Class<*>>, srcArgs: Array<Any?>?): Int {

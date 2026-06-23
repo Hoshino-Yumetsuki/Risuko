@@ -58,13 +58,13 @@ fun parsePluginBlock(block: Map<String, Any?>?): Pair<Int, Int> {
 @Suppress("UNCHECKED_CAST")
 fun readFromEnv(jsonText: String?): Pair<Int, Int>? {
     if (jsonText.isNullOrBlank()) return null
-    return try {
-        val parsed = JsonSlurper().parseText(jsonText) as? Map<String, Any?> ?: return null
-        parsePluginBlock(parsed)
+    val parsed = try {
+        JsonSlurper().parseText(jsonText) as? Map<String, Any?>
     } catch (e: Exception) {
         logger.warn("TAURI_WEBVIEW_UPGRADE_PLUGIN_CONFIG parse error: ${e.message}; using defaults")
         null
-    }
+    } ?: return null
+    return parsePluginBlock(parsed)
 }
 
 @Suppress("UNCHECKED_CAST")

@@ -66,7 +66,7 @@ internal class ActivityManagerHook(
 
     private fun dispatchBind(args: Array<Any?>, original: () -> Any?): Any? {
         val redirected = args.filterIsInstance<Intent>().firstOrNull { redirectSandboxServiceIfNeeded(it) }
-        return if (redirected != null) callBindServiceOnRealAM(args) else original()
+        return if (redirected != null) callBindServiceOnRealAM(args, original) else original()
     }
 
     private fun redirectSandboxServiceIfNeeded(intent: Intent): Boolean {
@@ -123,19 +123,19 @@ internal class ActivityManagerHook(
         }
     }
 
-    private fun callBindServiceOnRealAM(originalArgs: Array<Any?>): Any? {
-        val am = originalAm ?: return null
+    private fun callBindServiceOnRealAM(originalArgs: Array<Any?>, fallback: () -> Any?): Any? {
+        val am = originalAm ?: return fallback()
         return try {
             val bindServiceMethod = BindServiceArgsAdapter.findBestBindServiceMethod(am, originalArgs)
             if (bindServiceMethod == null) {
                 Log.e(LOG_TAG, "no bindService overload found on AMS")
-                return null
+                return fallback()
             }
             val adapted = BindServiceArgsAdapter.adapt(originalArgs, bindServiceMethod, hostPackageName)
             bindServiceMethod.invoke(am, *adapted)
         } catch (t: Throwable) {
             Log.e(LOG_TAG, "forwarding bindService failed", t)
-            null
+            fallback()
         }
     }
 
