@@ -22,7 +22,7 @@ internal abstract class BinderHook {
             try {
                 onProxyBinderReplace(proxy)
             } catch (t: Throwable) {
-                onTargetBinderRestore(original)
+                runCatching { onTargetBinderRestore(original) }.onFailure { t.addSuppressed(it) }
                 throw t
             }
             originalBinder = original

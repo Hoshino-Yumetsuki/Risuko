@@ -404,6 +404,7 @@
 		flex: none;
 		overflow-y: visible;
 		height: auto;
+		padding: 8px 14px 18px;
 	}
 
 	html.platform-android .subnav,
@@ -536,10 +537,6 @@
 		border-radius: calc(var(--android-radius-md) - 4px) !important;
 	}
 
-	html.platform-android .task-list,
-	html.mobile-phone .task-list {
-		padding: 8px 14px 18px;
-	}
 	html.platform-android .task-item,
 	html.mobile-phone .task-item {
 		min-height: 116px;

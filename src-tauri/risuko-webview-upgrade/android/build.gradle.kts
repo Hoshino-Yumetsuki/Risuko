@@ -61,8 +61,8 @@ fun readFromEnv(jsonText: String?): Pair<Int, Int>? {
     return try {
         val parsed = JsonSlurper().parseText(jsonText) as? Map<String, Any?> ?: return null
         parsePluginBlock(parsed)
-    } catch (t: Throwable) {
-        logger.warn("TAURI_WEBVIEW_UPGRADE_PLUGIN_CONFIG parse error: ${t.message}; using defaults")
+    } catch (e: Exception) {
+        logger.warn("TAURI_WEBVIEW_UPGRADE_PLUGIN_CONFIG parse error: ${e.message}; using defaults")
         null
     }
 }
