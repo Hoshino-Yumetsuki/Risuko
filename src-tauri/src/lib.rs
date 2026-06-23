@@ -45,7 +45,7 @@ fn with_desktop_plugins<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri:
 
 #[cfg(target_os = "android")]
 fn with_desktop_plugins<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
-    builder
+    builder.plugin(risuko_webview_upgrade::init())
 }
 
 /// Resolve which directory the log appender should write to

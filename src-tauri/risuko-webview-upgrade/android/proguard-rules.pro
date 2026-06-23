@@ -1,0 +1,2 @@
+-keep class app.risuko.webview_upgrade.** { *; }
+-keepattributes RuntimeVisibleAnnotations,RuntimeVisibleParameterAnnotations,AnnotationDefault

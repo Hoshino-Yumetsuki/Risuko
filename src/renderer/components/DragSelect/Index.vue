@@ -50,12 +50,9 @@ export default {
 	},
 	computed: {
 		containerStyle() {
-			// On Android, allow normal touch scrolling and synthetic click
-			// generation. The drag-rectangle gesture is a desktop-only
-			// pattern; preventing default on touchstart there blocks both
-			// page scroll and every per-card button click.
 			const touchAction = is.android() ? "auto" : "none";
-			return `position: relative; user-select: none; overflow-x: hidden; touch-action: ${touchAction};`;
+			const overflowX = is.android() ? "visible" : "hidden";
+			return `position: relative; user-select: none; overflow-x: ${overflowX}; touch-action: ${touchAction};`;
 		},
 	},
 	watch: {

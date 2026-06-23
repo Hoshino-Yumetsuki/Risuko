@@ -134,31 +134,6 @@ Compared to the original, Risuko v0.3.0 has:
   - ~70% less memory usage (taking nearest tenth, ~425MB -> ~125MB)
   - ~90% less peak CPU usage (~145% -> ~15%)
 
-This is achieved by using rust build params:
-```
-[profile.release]
-opt-level = 3
-strip = "symbols"
-lto = true
-codegen-units = 1
-panic = "abort"
-```
-It tells `rustc` to prioritize the binary over patience:
-
-`opt-level = 3`  
-Enables every LLVM optimization pass. builds get noticeably slower; program gets faster  
-`strip = "symbols"`  
-Strips debug symbols before shipping. The file shrinks, but if it crashes in production, we're staring at assembly  
-`lto = true`  
-Link Time Optimization across all crates. LLVM inlines across boundaries and deletes dead code
-`codegen-units = 1`  
-Forces the compiler to use a single translation unit. No parallel codegen, but LLVM sees the whole program for better optimization  
-`panic = "abort"`  
-Crash immediately on panic—no unwinding, no cleanup. Smaller binaries, but destructors don't run  
-
-The small bundle size, cpu and memory performance is also acheived by removing aria2, and replace by native rust codes.
-
-
 | Original | Next | Risuko v0.3.0 |
 | ------- | ---- | ----------- |
 | ![orignal_mem](./static/readme/Original_Memory.png) | ![0.0.4_mem](./static/readme/v0.0.4_Memory.png) | ![0.3.0_mem](./static/readme/v0.3.0_Memory.png) |

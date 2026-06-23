@@ -1,5 +1,5 @@
 [workspace]
-members = ["risuko-engine", "risuko-bt", "risuko-cli", "risuko-napi", "risuko-http", "risuko-cookies"]
+members = ["risuko-engine", "risuko-bt", "risuko-cli", "risuko-napi", "risuko-http", "risuko-cookies", "risuko-webview-upgrade"]
 
 [workspace.package]
 version = "0.4.2"
@@ -12,6 +12,7 @@ risuko-engine = { path = "risuko-engine" }
 risuko-bt = { path = "risuko-bt" }
 risuko-http = { path = "risuko-http" }
 risuko-cookies = { path = "risuko-cookies" }
+risuko-webview-upgrade = { path = "risuko-webview-upgrade" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["process", "sync", "time", "rt", "net", "macros", "signal", "io-util"] }
@@ -101,5 +102,8 @@ tauri-plugin-single-instance = "2"
 # wildcard-MIME apps like Messages intercept any content URI we send.
 jni = "0.22"
 ndk-context = "0.1"
+# Wires the Android WebView kernel-upgrade library into the Gradle build (via
+# its `links` key) and provides the no-op `init()` registered in `run()`.
+risuko-webview-upgrade = { workspace = true }
 
 [dev-dependencies]
