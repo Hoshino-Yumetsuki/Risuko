@@ -1,0 +1,5 @@
+/android/.gradle
+/android/build
+/android/.tauri
+/android/local.properties
+/android/src/main/java/app/risuko/webview_upgrade/WebViewUpgradeConfig.kt

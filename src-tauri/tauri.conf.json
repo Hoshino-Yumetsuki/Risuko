@@ -75,6 +75,10 @@
 				"https://risuko.vercel.app/api/update/{{target}}/{{arch}}/{{current_version}}"
 			],
 			"pubkey": ""
+		},
+		"webview-upgrade": {
+			"minUpgradeMajor": 106,
+			"minSupportedMajor": 75
 		}
 	}
 }

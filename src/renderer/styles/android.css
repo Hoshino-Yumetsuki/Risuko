@@ -399,6 +399,13 @@
 		overscroll-behavior: contain;
 	}
 
+	html.platform-android .task-list,
+	html.mobile-phone .task-list {
+		flex: none;
+		overflow-y: visible;
+		height: auto;
+	}
+
 	html.platform-android .subnav,
 	html.mobile-phone .subnav {
 		width: 100% !important;
@@ -818,6 +825,83 @@
 		min-height: 48px;
 		border-radius: var(--android-radius-md);
 		background: var(--android-surface-container);
+	}
+
+	html.platform-android [data-slot="input"],
+	html.mobile-phone [data-slot="input"] {
+		height: 48px;
+		min-height: 48px;
+		padding-top: 0;
+		padding-bottom: 0;
+		line-height: 48px;
+		display: flex;
+		align-items: center;
+	}
+	html.platform-android [data-slot="textarea"],
+	html.mobile-phone [data-slot="textarea"] {
+		padding-top: 12px;
+		padding-bottom: 12px;
+	}
+	html.platform-android .mo-input-prepend,
+	html.platform-android .mo-input-append,
+	html.mobile-phone .mo-input-prepend,
+	html.mobile-phone .mo-input-append {
+		height: 48px;
+		min-height: 48px;
+	}
+
+	/* On Android, flatten the path selector container border but
+	   keep the history and folder buttons visible. Give the folder
+	   button a distinct background so it doesn't blend in. */
+	html.platform-android .add-task-dialog .mo-input-group--bordered,
+	html.mobile-phone .add-task-dialog .mo-input-group--bordered {
+		border: 1px solid var(--android-outline-variant) !important;
+		background: var(--android-surface-container) !important;
+		border-radius: var(--android-radius-md) !important;
+		overflow: hidden;
+	}
+	html.platform-android
+		.add-task-dialog
+		.mo-input-group--bordered
+		> .mo-input-prepend,
+	html.mobile-phone
+		.add-task-dialog
+		.mo-input-group--bordered
+		> .mo-input-prepend {
+		border: none !important;
+		background: var(--android-surface-container-high) !important;
+	}
+	html.platform-android
+		.add-task-dialog
+		.mo-input-group--bordered
+		> .mo-input-append,
+	html.mobile-phone
+		.add-task-dialog
+		.mo-input-group--bordered
+		> .mo-input-append {
+		border: none !important;
+		border-left: 1px solid var(--android-outline-variant) !important;
+		background: var(--android-surface-container-high) !important;
+	}
+	html.platform-android .add-task-dialog .path-indicator-field,
+	html.mobile-phone .add-task-dialog .path-indicator-field {
+		border: none !important;
+		border-radius: 0 !important;
+		background: transparent !important;
+	}
+
+	/* Match NumberInput height to the path selector for consistency */
+	html.platform-android .add-task-dialog .mo-number-input-wrap,
+	html.mobile-phone .add-task-dialog .mo-number-input-wrap {
+		height: 48px;
+		min-height: 48px;
+		border-radius: var(--android-radius-md);
+		background: var(--android-surface-container);
+		border-color: var(--android-outline-variant);
+	}
+	html.platform-android .add-task-dialog .mo-number-input-wrap .mo-input-number,
+	html.mobile-phone .add-task-dialog .mo-number-input-wrap .mo-input-number {
+		height: 100%;
 	}
 
 	html.platform-android .select-directory,

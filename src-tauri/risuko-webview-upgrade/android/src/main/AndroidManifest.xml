@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <queries>
+        <package android:name="com.google.android.webview" />
+        <package android:name="com.google.android.webview.beta" />
+        <package android:name="com.google.android.webview.dev" />
+        <package android:name="com.google.android.webview.canary" />
+        <package android:name="com.android.webview" />
+        <package android:name="com.android.chrome" />
+        <package android:name="com.huawei.webview" />
+    </queries>
+
+    <application>
+        <provider
+            android:name=".BootstrapProvider"
+            android:authorities="${applicationId}.risuko-webview-upgrade-init"
+            android:exported="false"
+            android:initOrder="2147483647"
+            tools:node="merge" />
+
+        <service
+            android:name=".sandbox.StubSandboxedProcessService0"
+            android:exported="false"
+            android:process=":webview_upgrade_sandbox0" />
+        <service
+            android:name=".sandbox.StubSandboxedProcessService1"
+            android:exported="false"
+            android:process=":webview_upgrade_sandbox1" />
+        <service
+            android:name=".sandbox.StubSandboxedProcessService2"
+            android:exported="false"
+            android:process=":webview_upgrade_sandbox2" />
+        <service
+            android:name=".sandbox.StubSandboxedProcessService3"
+            android:exported="false"
+            android:process=":webview_upgrade_sandbox3" />
+        <service
+            android:name=".sandbox.StubSandboxedProcessService4"
+            android:exported="false"
+            android:process=":webview_upgrade_sandbox4" />
+    </application>
+</manifest>

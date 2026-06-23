@@ -5,9 +5,6 @@ use tauri::{
     AppHandle, Emitter, Manager, PhysicalPosition, WebviewUrl, WebviewWindow, WebviewWindowBuilder,
 };
 
-#[cfg(target_os = "android")]
-use tauri::AppHandle;
-
 #[cfg(not(target_os = "android"))]
 pub const FLYOUT_LABEL: &str = "tray-panel";
 
@@ -97,9 +94,6 @@ pub fn toggle_flyout(app: &AppHandle) {
     // Wake the webview's polling loop so the panel is fresh on open.
     let _ = window.emit("flyout:show", ());
 }
-
-#[cfg(target_os = "android")]
-pub fn toggle_flyout(_app: &AppHandle) {}
 
 /// Position the flyout near the cached tray anchor
 #[cfg(not(target_os = "android"))]

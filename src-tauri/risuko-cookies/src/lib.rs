@@ -30,6 +30,7 @@ pub struct Cookie {
     pub expires: Option<u64>,
 }
 
+#[cfg(not(target_os = "android"))]
 impl From<browser::chromium::Cookie> for Cookie {
     fn from(c: browser::chromium::Cookie) -> Self {
         Self {

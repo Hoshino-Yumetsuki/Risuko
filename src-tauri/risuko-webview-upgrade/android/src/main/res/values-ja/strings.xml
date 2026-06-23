@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="webview_upgrade_outdated_message">お使いの端末の Android System WebView が古いため、このアプリが正しく表示されない場合があります。Android System WebView を更新またはインストールしてください。</string>
+    <string name="webview_upgrade_update_button">更新</string>
+    <string name="webview_upgrade_dismiss_button">後で</string>
+</resources>
