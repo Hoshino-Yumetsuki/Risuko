@@ -1402,8 +1402,8 @@ const initForm = (config) => {
 		dohBootstrap,
 		dohFallback,
 		dohProvider,
-		ed2KPort: ed2kPort,
-		ed2KServer: ed2kServer,
+		ed2kPort,
+		ed2kServer,
 		hideAppMenu,
 		lastSyncTrackerTime,
 		listenPort,
@@ -1420,8 +1420,6 @@ const initForm = (config) => {
 		completionScriptArgs,
 		completionScriptTimeoutMs,
 	} = config;
-	// Accept both lodash camelCase key (m3U8OutputFormat from backend)
-	// and form key (m3u8OutputFormat from initForm output fed back via extend)
 	const m3u8OutputFormat = config.m3U8OutputFormat ?? config.m3u8OutputFormat;
 	const pendingEngineOverridesText =
 		typeof engineOverridesText === "string"
@@ -1444,12 +1442,6 @@ const initForm = (config) => {
 		btEncryptionPolicy: btEncryptionPolicy || "prefer",
 		btListenV6: parseBooleanConfig(btListenV6, false),
 		connectTimeout: connectTimeout ?? 60,
-		// `lowestSpeedLimit` is stored as bytes/s by the engine but the UI
-		// buckets it into KiB/s for readability; the save handler multiplies
-		// back by 1024. As a side effect, backend values that are not exact
-		// multiples of 1024 get rounded to the nearest KiB whenever the user
-		// edits this field. That precision loss is intentional — it keeps the
-		// displayed number consistent with the UI unit
 		lowestSpeedLimit: Math.round((Number(lowestSpeedLimit) || 0) / 1024),
 		lowestSpeedLimitTimeout: lowestSpeedLimitTimeout ?? 30,
 		fileAllocation: fileAllocation || "falloc",
@@ -2026,16 +2018,10 @@ export default {
 				if (key in data) {
 					const raw = data[key];
 					if (raw === "" || raw === null || raw === undefined) {
-						// Blank input means "use engine default"; drop the key
-						// instead of coercing to 0 so the stored value matches
 						delete data[key];
 						continue;
 					}
 					const n = Number(raw);
-					// Per-key bounds mirror the `:min`/`:max` constraints set on the
-					// matching `<NumberInput>` in the form. Enforcing both bounds
-					// here protects against programmatic input (e.g. config import,
-					// IPC) that bypasses the spinner clamping
 					let ok: boolean;
 					if (key === "btUpnpLease") {
 						ok = Number.isFinite(n) && n >= 60 && n <= 86400;
@@ -2044,8 +2030,6 @@ export default {
 					} else if (key === "lowestSpeedLimitTimeout") {
 						ok = Number.isFinite(n) && n >= 1 && n <= 3600;
 					} else if (key === "lowestSpeedLimit") {
-						// UI value is KiB/s (max 1 GiB/s); save handler converts to
-						// bytes/s afterwards
 						ok = Number.isFinite(n) && n >= 0 && n <= 1048576;
 					} else {
 						ok = Number.isFinite(n) && n >= 0;
@@ -2058,9 +2042,6 @@ export default {
 				}
 			}
 
-			// `lowest-speed-limit` is shown to users in KiB/s but the engine
-			// expects bytes/s. Convert here so the stored config matches the
-			// UI unit while the engine sees the correct magnitude
 			if (
 				"lowestSpeedLimit" in data &&
 				typeof data.lowestSpeedLimit === "number"

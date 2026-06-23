@@ -8,6 +8,7 @@ import menu from "./menu";
 import preferences from "./preferences";
 import rss from "./rss";
 import subnav from "./subnav";
+import sync from "./sync";
 import task from "./task";
 import window from "./window";
 
@@ -22,6 +23,7 @@ export default {
 	preferences,
 	rss,
 	subnav,
+	sync,
 	task,
 	window,
 };

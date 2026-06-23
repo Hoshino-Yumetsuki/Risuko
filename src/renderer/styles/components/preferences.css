@@ -118,6 +118,7 @@
 		color: var(--foreground);
 		line-height: 1.4;
 		overflow-wrap: anywhere;
+		display: block;
 	}
 	.settings-row-description {
 		font-size: 12px;
@@ -126,6 +127,7 @@
 		margin-top: 2px;
 		white-space: pre-wrap;
 		overflow-wrap: anywhere;
+		display: block;
 	}
 	.settings-select-control {
 		flex: 0 0 auto;
@@ -485,6 +487,114 @@
 		font-size: 13px;
 		font-weight: 500;
 		color: var(--foreground);
+	}
+	.sync-server-row {
+		align-items: stretch;
+	}
+	.sync-server-row .settings-row-content {
+		max-width: 480px;
+	}
+	.sync-server-input {
+		margin-top: 8px;
+		width: 100%;
+	}
+	.sync-server-input [data-slot="input"] {
+		width: 100%;
+	}
+	.sync-section-disabled {
+		position: relative;
+		pointer-events: none;
+		opacity: 0.55;
+	}
+	.sync-section-disabled::after {
+		content: "";
+		position: absolute;
+		inset: 0;
+		z-index: 1;
+		background: transparent;
+	}
+	.sync-section-lock-hint {
+		font-size: 12px;
+		color: var(--muted-foreground);
+		margin-bottom: 12px;
+		padding: 8px 12px;
+		border-radius: calc(var(--radius) - 2px);
+		background: var(--muted);
+		border: 1px dashed var(--border);
+	}
+	.settings-row-action--right {
+		order: 0;
+		flex-shrink: 0;
+	}
+	.sync-status-line {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		font-size: 13px;
+		font-weight: 500;
+		line-height: 1.4;
+	}
+	.sync-status-icon {
+		flex-shrink: 0;
+	}
+	.sync-status--ok {
+		color: #16a34a;
+	}
+	.sync-status--err {
+		color: #dc2626;
+	}
+	.sync-status--syncing {
+		color: var(--primary);
+	}
+	.dark .sync-status--ok {
+		color: #4ade80;
+	}
+	.dark .sync-status--err {
+		color: #f87171;
+	}
+	.sync-last-time {
+		font-size: 12px;
+		color: var(--muted-foreground);
+		font-variant-numeric: tabular-nums;
+	}
+	.sync-actions {
+		display: flex;
+		gap: 8px;
+	}
+	.sync-empty-state {
+		padding: 16px 0;
+		text-align: center;
+	}
+	.sync-empty-title {
+		font-size: 13px;
+		font-weight: 500;
+		color: var(--muted-foreground);
+		margin: 0 0 4px;
+	}
+	.sync-empty-hint {
+		font-size: 12px;
+		color: var(--muted-foreground);
+		margin: 0;
+	}
+	.sync-message {
+		font-size: 12px;
+		color: #16a34a;
+		margin-top: 8px;
+		padding: 8px 12px;
+		border-radius: calc(var(--radius) - 2px);
+		background: rgba(22, 163, 74, 0.08);
+	}
+	.sync-message--err {
+		color: #dc2626;
+		background: rgba(239, 68, 68, 0.08);
+	}
+	.dark .sync-message {
+		color: #4ade80;
+		background: rgba(74, 222, 128, 0.1);
+	}
+	.dark .sync-message--err {
+		color: #f87171;
+		background: rgba(248, 113, 113, 0.1);
 	}
 
 	/* Credential Manager */

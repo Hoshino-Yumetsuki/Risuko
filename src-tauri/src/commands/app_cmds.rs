@@ -57,6 +57,17 @@ pub fn hide_window(handle: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
+pub fn log_frontend(level: String, message: String) {
+    match level.as_str() {
+        "error" => tracing::error!("[renderer] {}", message),
+        "warn" => tracing::warn!("[renderer] {}", message),
+        "info" => tracing::info!("[renderer] {}", message),
+        "debug" => tracing::debug!("[renderer] {}", message),
+        _ => tracing::info!("[renderer] {}", message),
+    }
+}
+
+#[tauri::command]
 pub fn factory_reset(
     handle: AppHandle,
     state: tauri::State<'_, crate::state::AppState>,
