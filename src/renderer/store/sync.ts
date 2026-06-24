@@ -173,21 +173,23 @@ export const useSyncStore = defineStore("sync", {
 				const settings = data.settings || {};
 				const timestamps = data.timestamps || {};
 				const merged: Record<string, unknown> = {};
+				const pulledTimestamps: Record<string, number> = {};
 
 				for (const categoryId of selectedCategories) {
 					if (settings[categoryId]) {
 						Object.assign(merged, settings[categoryId]);
 						if (timestamps[categoryId]) {
-							await this.setCategoryTimestamp(
-								categoryId,
-								timestamps[categoryId] as number,
-							);
+							pulledTimestamps[categoryId] = timestamps[categoryId] as number;
 						}
 					}
 				}
 
 				if (Object.keys(merged).length > 0) {
 					await preferenceStore.save(merged, { skipSync: true });
+				}
+
+				for (const [cat, ts] of Object.entries(pulledTimestamps)) {
+					await this.setCategoryTimestamp(cat, ts);
 				}
 
 				this.lastSyncAt = Date.now();
