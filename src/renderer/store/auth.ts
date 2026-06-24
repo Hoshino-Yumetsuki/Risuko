@@ -36,7 +36,7 @@ export const useAuthStore = defineStore("auth", {
 			);
 		},
 		isServerConfigured(): boolean {
-			return !!api.config?.cloudSyncServerUrl;
+			return !!this.serverUrl;
 		},
 	},
 	actions: {

@@ -50,7 +50,7 @@
           </div>
         </div>
 
-        <div v-if="authStore.isServerConfigured" class="settings-section">
+        <div class="settings-section">
           <div class="settings-section-header">
             <div class="section-icon"><User :size="16" /></div>
             <div class="section-title">
@@ -85,7 +85,7 @@
           </div>
         </div>
 
-        <div v-if="authStore.isServerConfigured" class="settings-section">
+        <div class="settings-section">
           <div class="settings-section-header">
             <div class="section-icon"><RefreshCw :size="16" /></div>
             <div class="section-title">
@@ -149,7 +149,7 @@
           </div>
         </div>
 
-        <div v-if="authStore.isServerConfigured" class="settings-section">
+        <div class="settings-section">
           <div class="settings-section-header">
             <div class="section-icon"><Zap :size="16" /></div>
             <div class="section-title">
