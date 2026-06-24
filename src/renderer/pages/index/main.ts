@@ -232,7 +232,9 @@ async function init(config: AppConfig) {
 				await handleDeepLinkUrls(initialUrls);
 			}
 			await onOpenUrl((urls) => {
-				handleDeepLinkUrls(urls);
+				handleDeepLinkUrls(urls).catch((err) => {
+					logger.warn("[Risuko] deep-link handler failed:", err);
+				});
 			});
 			logger.info("[Risuko] deep-link listener registered");
 		} catch (err) {
