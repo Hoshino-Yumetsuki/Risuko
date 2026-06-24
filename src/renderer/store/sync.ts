@@ -73,20 +73,19 @@ export const useSyncStore = defineStore("sync", {
 			return timestamps?.[categoryId];
 		},
 
-		setCategoryTimestamp(categoryId: string, timestamp: number): void {
+		async setCategoryTimestamp(
+			categoryId: string,
+			timestamp: number,
+		): Promise<void> {
 			const preferenceStore = usePreferenceStore();
 			const timestamps = {
 				...preferenceStore.config.cloudSyncCategoryTimestamps,
 			};
 			timestamps[categoryId] = timestamp;
-			preferenceStore
-				.save({ cloudSyncCategoryTimestamps: timestamps }, { skipSync: true })
-				.catch((err: unknown) => {
-					logger.warn(
-						"[Risuko] setCategoryTimestamp save failed:",
-						(err as Error).message,
-					);
-				});
+			await preferenceStore.save(
+				{ cloudSyncCategoryTimestamps: timestamps },
+				{ skipSync: true },
+			);
 		},
 
 		async pushCategory(categoryId: string): Promise<number | undefined> {
@@ -120,7 +119,7 @@ export const useSyncStore = defineStore("sync", {
 				for (const categoryId of categories) {
 					const updatedAt = await this.pushCategory(categoryId);
 					if (updatedAt) {
-						this.setCategoryTimestamp(categoryId, updatedAt);
+						await this.setCategoryTimestamp(categoryId, updatedAt);
 					}
 				}
 				this.lastSyncAt = Date.now();
@@ -153,7 +152,7 @@ export const useSyncStore = defineStore("sync", {
 			const preferenceStore = usePreferenceStore();
 			await preferenceStore.save(data.data, { skipSync: true });
 			if (data.updatedAt) {
-				this.setCategoryTimestamp(categoryId, data.updatedAt as number);
+				await this.setCategoryTimestamp(categoryId, data.updatedAt as number);
 			}
 		},
 
@@ -248,7 +247,7 @@ export const useSyncStore = defineStore("sync", {
 					if (hasLocal && !hasRemote) {
 						const updatedAt = await this.pushCategory(categoryId);
 						if (updatedAt) {
-							this.setCategoryTimestamp(categoryId, updatedAt);
+							await this.setCategoryTimestamp(categoryId, updatedAt);
 						}
 						continue;
 					}
@@ -263,7 +262,7 @@ export const useSyncStore = defineStore("sync", {
 						if (localTimestamp > remoteTimestamp) {
 							const updatedAt = await this.pushCategory(categoryId);
 							if (updatedAt) {
-								this.setCategoryTimestamp(categoryId, updatedAt);
+								await this.setCategoryTimestamp(categoryId, updatedAt);
 							}
 						} else if (remoteTimestamp > localTimestamp && remoteData) {
 							Object.assign(toPull, remoteData);
@@ -276,7 +275,7 @@ export const useSyncStore = defineStore("sync", {
 				if (Object.keys(toPull).length > 0) {
 					await preferenceStore.save(toPull, { skipSync: true });
 					for (const [cat, ts] of Object.entries(toPullTimestamps)) {
-						this.setCategoryTimestamp(cat, ts);
+						await this.setCategoryTimestamp(cat, ts);
 					}
 				}
 
@@ -347,7 +346,7 @@ export const useSyncStore = defineStore("sync", {
 					for (const categoryId of categories) {
 						const updatedAt = await this.pushCategory(categoryId);
 						if (updatedAt) {
-							this.setCategoryTimestamp(categoryId, updatedAt);
+							await this.setCategoryTimestamp(categoryId, updatedAt);
 						}
 					}
 					this.lastSyncAt = Date.now();

@@ -227,15 +227,7 @@ async function init(config: AppConfig) {
 			if (initialUrls && initialUrls.length > 0) {
 				logger.info(
 					"[Risuko] deep-link initial urls:",
-					initialUrls.map((u) => {
-						try {
-							const p = new URL(u);
-							p.searchParams.delete("token");
-							return p.toString();
-						} catch {
-							return u;
-						}
-					}),
+					initialUrls.map(sanitizeUrl),
 				);
 				await handleDeepLinkUrls(initialUrls);
 			}

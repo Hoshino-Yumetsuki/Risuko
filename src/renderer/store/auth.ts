@@ -157,7 +157,7 @@ export const useAuthStore = defineStore("auth", {
 			if (this.token) {
 				try {
 					await syncAxios.post(
-						`/auth/logout`,
+						`${this.serverUrl}/auth/logout`,
 						{},
 						{ headers: this.getAuthHeaders() },
 					);
