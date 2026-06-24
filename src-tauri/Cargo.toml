@@ -96,14 +96,8 @@ tauri-plugin-autostart = "2"
 tauri-plugin-single-instance = "2"
 
 [target.'cfg(target_os = "android")'.dependencies]
-# JNI bridge so we can dispatch Android `Intent`s with explicit MIME types
-# and `Intent.createChooser`. `tauri-plugin-shell::open` only calls
-# `Intent(ACTION_VIEW, uri)` with no extras, which lets generic
-# wildcard-MIME apps like Messages intercept any content URI we send.
 jni = "0.22"
 ndk-context = "0.1"
-# Wires the Android WebView kernel-upgrade library into the Gradle build (via
-# its `links` key) and provides the no-op `init()` registered in `run()`.
 risuko-webview-upgrade = { workspace = true }
 
 [dev-dependencies]

@@ -4,6 +4,7 @@ import {
 	MAX_NUM_OF_SAVED_CREDENTIALS,
 } from "@shared/constants";
 import { getLanguage } from "@shared/locales";
+import { getCategoriesForKey } from "@shared/syncCategories";
 import type { AppConfig } from "@shared/types/config";
 import {
 	CREDENTIAL_SECRET_FIELDS,
@@ -24,6 +25,7 @@ import {
 import { isEmpty } from "lodash";
 import { defineStore } from "pinia";
 import api from "@/api";
+import { useSyncStore } from "@/store/sync";
 import { useTaskStore } from "@/store/task";
 
 export const usePreferenceStore = defineStore("preference", {
@@ -53,7 +55,7 @@ export const usePreferenceStore = defineStore("preference", {
 				return {} as AppConfig;
 			}
 		},
-		save(config: Partial<AppConfig>) {
+		save(config: Partial<AppConfig>, options?: { skipSync?: boolean }) {
 			const taskStore = useTaskStore();
 			taskStore.saveSession();
 
@@ -61,10 +63,38 @@ export const usePreferenceStore = defineStore("preference", {
 				return Promise.resolve();
 			}
 
+			// Update local sync timestamps for affected categories
+			if (!options?.skipSync) {
+				const timestamps = {
+					...this.config.cloudSyncCategoryTimestamps,
+				};
+				const kebabConfig = changeKeysToKebabCase(config);
+				let touched = false;
+				for (const key of Object.keys(kebabConfig)) {
+					for (const cat of getCategoriesForKey(key)) {
+						timestamps[cat] = Math.floor(Date.now() / 1000);
+						touched = true;
+					}
+				}
+				if (touched) {
+					config = { ...config, cloudSyncCategoryTimestamps: timestamps };
+				}
+			}
+
 			// Round-trip through kebab→camelCase to normalize key names
 			// (e.g. form uses m3u8OutputFormat, but lodash camelCase produces m3U8OutputFormat)
 			const normalized = changeKeysToCamelCase(changeKeysToKebabCase(config));
 			this.updatePreference(normalized);
+
+			// Trigger cloud sync push if auto-sync is enabled
+			if (!options?.skipSync) {
+				try {
+					useSyncStore().syncOnChange(config);
+				} catch (err) {
+					logger.warn("[Risuko] syncOnChange failed:", (err as Error).message);
+				}
+			}
+
 			return Promise.resolve(api.savePreference(config));
 		},
 		recordHistoryDirectory(directory: string) {

@@ -111,5 +111,12 @@ export interface AppConfig {
 	dohBootstrap?: string;
 	dohFallback?: boolean;
 	dohProvider?: string;
+	cloudSyncEnabled?: boolean;
+	cloudSyncAuto?: boolean;
+	cloudSyncCategories?: string[];
+	cloudSyncToken?: string;
+	cloudSyncLastAt?: number;
+	cloudSyncServerUrl?: string;
+	cloudSyncCategoryTimestamps?: Record<string, number>;
 	[key: string]: unknown;
 }

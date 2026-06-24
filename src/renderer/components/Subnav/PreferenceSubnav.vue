@@ -60,13 +60,32 @@
           </i>
           <span>{{ $t('preferences.cloudSinks') }}</span>
         </mo-enter>
+        <mo-enter
+          tag="li"
+          preset="fadeInLeft"
+          :delay="0.21"
+          @click="() => nav('sync')"
+          :class="[current === 'sync' ? 'active' : '']"
+        >
+          <Motion
+            v-if="current === 'sync'"
+            layout-id="preference-subnav-pill"
+            class="subnav-active-bg"
+            :initial="false"
+            :transition="pillTransition"
+          />
+          <i class="subnav-icon">
+            <RefreshCw :size="20" />
+          </i>
+          <span>{{ $t('subnav.sync') }}</span>
+        </mo-enter>
       </ul>
     </LayoutGroup>
   </nav>
 </template>
 
 <script lang="ts">
-import { Cloud, SlidersHorizontal, Wrench } from "@lucide/vue";
+import { Cloud, RefreshCw, SlidersHorizontal, Wrench } from "@lucide/vue";
 import logger from "@shared/utils/logger";
 import { LayoutGroup, Motion } from "motion-v";
 
@@ -76,6 +95,7 @@ export default {
 		Cloud,
 		LayoutGroup,
 		Motion,
+		RefreshCw,
 		SlidersHorizontal,
 		Wrench,
 	},

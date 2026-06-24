@@ -18,7 +18,9 @@ import UiTooltip from "@/components/ui/compat/UiTooltip.vue";
 import UiRow from "@/components/ui/Row.vue";
 import router from "@/router";
 import store from "@/store";
+import { useAuthStore } from "@/store/auth";
 import { usePreferenceStore } from "@/store/preference";
+import { useSyncStore } from "@/store/sync";
 import TrayWorker from "@/workers/tray.worker?worker";
 import App from "./App.vue";
 import "./commands";
@@ -176,6 +178,72 @@ async function init(config: AppConfig) {
 					/* noop */
 				});
 		}
+
+		// Initialize auth from saved config and run startup sync
+		const authStore = useAuthStore();
+		await authStore.initFromConfig();
+
+		// Listen for deep link events
+		const sanitizeUrl = (url: string): string => {
+			try {
+				const parsed = new URL(url);
+				parsed.searchParams.delete("token");
+				return parsed.toString();
+			} catch {
+				return url.replace(/([?&])token=[^&]*/i, "$1token=[REDACTED]");
+			}
+		};
+
+		const handleDeepLinkUrls = async (urls: string[]) => {
+			logger.info("[Risuko] deep-link urls received:", urls.map(sanitizeUrl));
+			for (const url of urls) {
+				if (typeof url !== "string" || !url.startsWith("risuko://auth?")) {
+					continue;
+				}
+				try {
+					const parsed = new URL(url);
+					const token = parsed.searchParams.get("token");
+					if (token) {
+						logger.info("[Risuko] deep-link token found, logging in");
+						await authStore.handleDeepLinkToken(token);
+					} else {
+						logger.warn("[Risuko] deep-link URL missing token");
+					}
+				} catch (err) {
+					logger.warn(
+						"[Risuko] malformed deep-link URL:",
+						sanitizeUrl(url),
+						err,
+					);
+				}
+			}
+		};
+
+		try {
+			const { getCurrent, onOpenUrl } = await import(
+				"@tauri-apps/plugin-deep-link"
+			);
+			const initialUrls = await getCurrent();
+			if (initialUrls && initialUrls.length > 0) {
+				logger.info(
+					"[Risuko] deep-link initial urls:",
+					initialUrls.map(sanitizeUrl),
+				);
+				await handleDeepLinkUrls(initialUrls);
+			}
+			await onOpenUrl((urls) => {
+				handleDeepLinkUrls(urls).catch((err) => {
+					logger.warn("[Risuko] deep-link handler failed:", err);
+				});
+			});
+			logger.info("[Risuko] deep-link listener registered");
+		} catch (err) {
+			logger.warn("[Risuko] deep-link plugin not available:", err);
+		}
+
+		// Run startup sync if auto-sync is enabled
+		const syncStore = useSyncStore();
+		syncStore.syncOnStartup();
 	});
 }
 

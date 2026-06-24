@@ -388,6 +388,7 @@ pub fn run() {
         commands::app_cmds::quit_app,
         commands::app_cmds::show_window,
         commands::app_cmds::hide_window,
+        commands::app_cmds::log_frontend,
         commands::app_cmds::factory_reset,
         commands::app_cmds::reset_session,
         commands::app_cmds::auto_hide_window,

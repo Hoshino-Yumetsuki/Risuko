@@ -75,6 +75,17 @@ export default createRouter({
 								subnav: { current: "cloud-sinks" },
 							},
 						},
+						{
+							path: "sync",
+							components: {
+								subnav: () =>
+									import("@/components/Subnav/PreferenceSubnav.vue"),
+								form: () => import("@/components/Preference/Sync.vue"),
+							},
+							props: {
+								subnav: { current: "sync" },
+							},
+						},
 					],
 				},
 			],

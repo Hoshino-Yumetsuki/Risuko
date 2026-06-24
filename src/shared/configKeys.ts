@@ -54,6 +54,13 @@ const userKeys = [
 	"completion-script-timeout-ms",
 	"doh-provider",
 	"shutdown-when-complete",
+	"cloud-sync-enabled",
+	"cloud-sync-auto",
+	"cloud-sync-categories",
+	"cloud-sync-token",
+	"cloud-sync-last-at",
+	"cloud-sync-server-url",
+	"cloud-sync-category-timestamps",
 ];
 
 const systemKeys = [
