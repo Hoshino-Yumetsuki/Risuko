@@ -184,8 +184,18 @@ async function init(config: AppConfig) {
 		await authStore.initFromConfig();
 
 		// Listen for deep link events
-		const handleDeepLinkUrls = (urls: string[]) => {
-			logger.info("[Risuko] deep-link urls received:", urls);
+		const sanitizeUrl = (url: string): string => {
+			try {
+				const parsed = new URL(url);
+				parsed.searchParams.delete("token");
+				return parsed.toString();
+			} catch {
+				return url.replace(/([?&])token=[^&]*/i, "$1token=[REDACTED]");
+			}
+		};
+
+		const handleDeepLinkUrls = async (urls: string[]) => {
+			logger.info("[Risuko] deep-link urls received:", urls.map(sanitizeUrl));
 			for (const url of urls) {
 				if (typeof url !== "string" || !url.startsWith("risuko://auth?")) {
 					continue;
@@ -195,12 +205,16 @@ async function init(config: AppConfig) {
 					const token = parsed.searchParams.get("token");
 					if (token) {
 						logger.info("[Risuko] deep-link token found, logging in");
-						authStore.handleDeepLinkToken(token);
+						await authStore.handleDeepLinkToken(token);
 					} else {
 						logger.warn("[Risuko] deep-link URL missing token");
 					}
 				} catch (err) {
-					logger.warn("[Risuko] malformed deep-link URL:", url, err);
+					logger.warn(
+						"[Risuko] malformed deep-link URL:",
+						sanitizeUrl(url),
+						err,
+					);
 				}
 			}
 		};
@@ -211,8 +225,19 @@ async function init(config: AppConfig) {
 			);
 			const initialUrls = await getCurrent();
 			if (initialUrls && initialUrls.length > 0) {
-				logger.info("[Risuko] deep-link initial urls:", initialUrls);
-				handleDeepLinkUrls(initialUrls);
+				logger.info(
+					"[Risuko] deep-link initial urls:",
+					initialUrls.map((u) => {
+						try {
+							const p = new URL(u);
+							p.searchParams.delete("token");
+							return p.toString();
+						} catch {
+							return u;
+						}
+					}),
+				);
+				await handleDeepLinkUrls(initialUrls);
 			}
 			await onOpenUrl((urls) => {
 				handleDeepLinkUrls(urls);

@@ -73,4 +73,6 @@ export default {
 	"login-token-invalid": "会话已过期，请重新登录",
 	"login-no-methods": "此服务器没有可用的登录方式",
 	"login-required": "请登录以启用云同步",
+	"login-or": "或",
+	"login-github-fail": "GitHub 登录失败",
 };

@@ -5,7 +5,9 @@ import { defineStore } from "pinia";
 import api from "@/api";
 import { usePreferenceStore } from "./preference";
 
-export interface SyncUser {
+const syncAxios = axios.create({ timeout: 10_000 });
+
+interface SyncUser {
 	id: string;
 	email: string | null;
 	githubUsername: string | null;
@@ -34,7 +36,7 @@ export const useAuthStore = defineStore("auth", {
 			);
 		},
 		isServerConfigured(): boolean {
-			return !!this.serverUrl;
+			return !!api.config?.cloudSyncServerUrl;
 		},
 	},
 	actions: {
@@ -47,7 +49,7 @@ export const useAuthStore = defineStore("auth", {
 				return;
 			}
 			try {
-				const { data } = await axios.get(`${this.serverUrl}/config`);
+				const { data } = await syncAxios.get(`${this.serverUrl}/config`);
 				this.serverConfig = data.authMethods;
 			} catch (err) {
 				logger.warn(
@@ -62,7 +64,7 @@ export const useAuthStore = defineStore("auth", {
 			try {
 				const preferenceStore = usePreferenceStore();
 				const locale = getLanguage(preferenceStore.config.locale || "auto");
-				await axios.post(`${this.serverUrl}/auth/magic-link`, {
+				await syncAxios.post(`${this.serverUrl}/auth/magic-link`, {
 					email,
 					locale,
 				});
@@ -76,10 +78,13 @@ export const useAuthStore = defineStore("auth", {
 
 		async verifyOTP(email: string, code: string): Promise<void> {
 			try {
-				const { data } = await axios.post(`${this.serverUrl}/auth/verify-otp`, {
-					email,
-					code,
-				});
+				const { data } = await syncAxios.post(
+					`${this.serverUrl}/auth/verify-otp`,
+					{
+						email,
+						code,
+					},
+				);
 				this.token = data.token;
 				this.user = data.user;
 				this.isLoggedIn = true;
@@ -125,7 +130,7 @@ export const useAuthStore = defineStore("auth", {
 				return false;
 			}
 			try {
-				const { data } = await axios.get(`${this.serverUrl}/auth/me`, {
+				const { data } = await syncAxios.get(`${this.serverUrl}/auth/me`, {
 					headers: this.getAuthHeaders(),
 				});
 				this.user = data;
@@ -151,8 +156,8 @@ export const useAuthStore = defineStore("auth", {
 		async logout(): Promise<void> {
 			if (this.token) {
 				try {
-					await axios.post(
-						`${this.serverUrl}/auth/logout`,
+					await syncAxios.post(
+						`/auth/logout`,
 						{},
 						{ headers: this.getAuthHeaders() },
 					);
@@ -166,7 +171,7 @@ export const useAuthStore = defineStore("auth", {
 
 		async persistAuth(): Promise<void> {
 			await api.savePreference({
-				cloudSyncToken: this.token || undefined,
+				cloudSyncToken: this.token ?? null,
 			});
 		},
 

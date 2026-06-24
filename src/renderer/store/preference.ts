@@ -66,7 +66,7 @@ export const usePreferenceStore = defineStore("preference", {
 			// Update local sync timestamps for affected categories
 			if (!options?.skipSync) {
 				const timestamps = {
-					...(this.config.cloudSyncCategoryTimestamps || {}),
+					...this.config.cloudSyncCategoryTimestamps,
 				};
 				const kebabConfig = changeKeysToKebabCase(config);
 				let touched = false;
@@ -90,8 +90,8 @@ export const usePreferenceStore = defineStore("preference", {
 			if (!options?.skipSync) {
 				try {
 					useSyncStore().syncOnChange(config);
-				} catch {
-					// sync store may not be initialized yet
+				} catch (err) {
+					logger.warn("[Risuko] syncOnChange failed:", (err as Error).message);
 				}
 			}
 

@@ -26,6 +26,7 @@ interface SyncState {
 }
 
 let pushTimer: ReturnType<typeof setTimeout> | null = null;
+const pendingCategories = new Set<string>();
 
 export const useSyncStore = defineStore("sync", {
 	state: (): SyncState => ({
@@ -75,13 +76,17 @@ export const useSyncStore = defineStore("sync", {
 		setCategoryTimestamp(categoryId: string, timestamp: number): void {
 			const preferenceStore = usePreferenceStore();
 			const timestamps = {
-				...(preferenceStore.config.cloudSyncCategoryTimestamps || {}),
+				...preferenceStore.config.cloudSyncCategoryTimestamps,
 			};
 			timestamps[categoryId] = timestamp;
-			preferenceStore.save(
-				{ cloudSyncCategoryTimestamps: timestamps },
-				{ skipSync: true },
-			);
+			preferenceStore
+				.save({ cloudSyncCategoryTimestamps: timestamps }, { skipSync: true })
+				.catch((err: unknown) => {
+					logger.warn(
+						"[Risuko] setCategoryTimestamp save failed:",
+						(err as Error).message,
+					);
+				});
 		},
 
 		async pushCategory(categoryId: string): Promise<number | undefined> {
@@ -316,18 +321,17 @@ export const useSyncStore = defineStore("sync", {
 			}
 
 			const kebabConfig = changeKeysToKebabCase(changedConfig);
-			const affectedCategories = new Set<string>();
 
 			for (const key of Object.keys(kebabConfig)) {
 				const cats = getCategoriesForKey(key);
 				for (const cat of cats) {
 					if (this.getSelectedCategories().includes(cat)) {
-						affectedCategories.add(cat);
+						pendingCategories.add(cat);
 					}
 				}
 			}
 
-			if (affectedCategories.size === 0) {
+			if (pendingCategories.size === 0) {
 				return;
 			}
 
@@ -337,9 +341,14 @@ export const useSyncStore = defineStore("sync", {
 
 			pushTimer = setTimeout(async () => {
 				pushTimer = null;
+				const categories = [...pendingCategories];
+				pendingCategories.clear();
 				try {
-					for (const categoryId of affectedCategories) {
-						await this.pushCategory(categoryId);
+					for (const categoryId of categories) {
+						const updatedAt = await this.pushCategory(categoryId);
+						if (updatedAt) {
+							this.setCategoryTimestamp(categoryId, updatedAt);
+						}
 					}
 					this.lastSyncAt = Date.now();
 					await api.savePreference({ cloudSyncLastAt: this.lastSyncAt });

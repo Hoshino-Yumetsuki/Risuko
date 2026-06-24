@@ -1455,8 +1455,10 @@ const initForm = (config) => {
 		dohBootstrap: dohBootstrap || "",
 		dohFallback: parseBooleanConfig(dohFallback, true),
 		dohProvider: resolveDohProvider(dohProvider, dohUrl),
-		ed2kPort: ed2kPort || 4662,
-		ed2kServer: convertCommaToLine(ed2kServer || DEFAULT_ED2K_SERVERS),
+		ed2kPort: (ed2kPort ?? config.ed2KPort) || 4662,
+		ed2kServer: convertCommaToLine(
+			(ed2kServer ?? config.ed2KServer) || DEFAULT_ED2K_SERVERS,
+		),
 		ftpUser: config.ftpUser || "",
 		ftpPasswd: config.ftpPasswd || "",
 		sftpPrivateKey: config.sftpPrivateKey || "",

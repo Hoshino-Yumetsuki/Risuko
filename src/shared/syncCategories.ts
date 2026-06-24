@@ -206,19 +206,6 @@ export const syncCategories: SyncCategory[] = [
 
 export const syncCategoryIds = syncCategories.map((c) => c.id);
 
-export function getKeysForCategories(categoryIds: string[]): string[] {
-	const set = new Set<string>();
-	for (const catId of categoryIds) {
-		const cat = syncCategories.find((c) => c.id === catId);
-		if (cat) {
-			for (const k of cat.keys) {
-				set.add(k);
-			}
-		}
-	}
-	return [...set];
-}
-
 export function getCategoriesForKey(key: string): string[] {
 	return syncCategories.filter((c) => c.keys.includes(key)).map((c) => c.id);
 }

@@ -79,4 +79,6 @@ export default {
 	"login-token-invalid": "Session expired, please log in again",
 	"login-no-methods": "No login methods available on this server",
 	"login-required": "Please log in to enable cloud sync",
+	"login-or": "or",
+	"login-github-fail": "GitHub login failed",
 };

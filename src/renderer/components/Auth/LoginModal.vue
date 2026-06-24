@@ -27,7 +27,7 @@
             <span class="w-full border-t" />
           </div>
           <div class="relative flex justify-center text-xs">
-            <span class="bg-background px-2 text-muted-foreground">or</span>
+            <span class="bg-background px-2 text-muted-foreground">{{ $t('sync.login-or') }}</span>
           </div>
         </div>
 
@@ -71,6 +71,7 @@
 
 <script lang="ts">
 import { computed, defineComponent, ref, watch } from "vue";
+import { getLocaleManager } from "@/components/Locale";
 import { Button } from "@/components/ui/button";
 import {
 	Dialog,
@@ -97,6 +98,7 @@ export default defineComponent({
 	emits: ["update:open", "success"],
 	setup(_props, { emit }) {
 		const authStore = useAuthStore();
+		const t = getLocaleManager().getI18n().t;
 		const email = ref("");
 		const code = ref("");
 		const step = ref<"email" | "otp">("email");
@@ -107,7 +109,7 @@ export default defineComponent({
 		const sendCode = async () => {
 			error.value = "";
 			if (!email.value || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.value)) {
-				error.value = "Please enter a valid email address";
+				error.value = t("sync.login-invalid-email");
 				return;
 			}
 			loading.value = true;
@@ -116,7 +118,7 @@ export default defineComponent({
 				transitionName.value = "slide-left";
 				step.value = "otp";
 			} catch (err) {
-				error.value = (err as Error).message || "Failed to send code";
+				error.value = (err as Error).message || t("sync.login-otp-fail");
 			} finally {
 				loading.value = false;
 			}
@@ -130,17 +132,14 @@ export default defineComponent({
 		const verifyCode = async () => {
 			error.value = "";
 			if (code.value?.length !== 6) {
-				error.value = "Please enter a valid 6-digit code";
+				error.value = t("sync.login-invalid-code");
 				return;
 			}
 			loading.value = true;
 			try {
 				await authStore.verifyOTP(email.value, code.value);
-				emit("success");
-				emit("update:open", false);
-				reset();
 			} catch (err) {
-				error.value = (err as Error).message || "Verification failed";
+				error.value = (err as Error).message || t("sync.login-verify-fail");
 			} finally {
 				loading.value = false;
 			}
@@ -152,7 +151,7 @@ export default defineComponent({
 			try {
 				await authStore.loginWithGitHub();
 			} catch (err) {
-				error.value = (err as Error).message || "GitHub login failed";
+				error.value = (err as Error).message || t("sync.login-github-fail");
 			} finally {
 				loading.value = false;
 			}
@@ -172,6 +171,15 @@ export default defineComponent({
 				if (isLoggedIn) {
 					emit("success");
 					emit("update:open", false);
+					reset();
+				}
+			},
+		);
+
+		watch(
+			() => _props.open,
+			(isOpen) => {
+				if (!isOpen) {
 					reset();
 				}
 			},
