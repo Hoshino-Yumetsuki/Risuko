@@ -178,7 +178,7 @@ export const useSyncStore = defineStore("sync", {
 					if (settings[categoryId]) {
 						Object.assign(merged, settings[categoryId]);
 						if (timestamps[categoryId]) {
-							this.setCategoryTimestamp(
+							await this.setCategoryTimestamp(
 								categoryId,
 								timestamps[categoryId] as number,
 							);
