@@ -208,7 +208,11 @@ async function init(config: AppConfig) {
 					try {
 						shareId = decodeURIComponent(rawId || "").trim();
 					} catch (err) {
-						logger.warn("[Risuko] malformed share deep link:", sanitizeUrl(url), err);
+						logger.warn(
+							"[Risuko] malformed share deep link:",
+							sanitizeUrl(url),
+							err,
+						);
 						continue;
 					}
 					if (shareId) {

@@ -1,6 +1,6 @@
 {
 	"name": "risuko",
-	"version": "0.4.2",
+	"version": "0.5.0",
 	"description": "A full-featured download manager",
 	"homepage": "https://risuko.app",
 	"author": {
@@ -60,7 +60,7 @@
 		"@bany/curl-to-json": "^1.2.10",
 		"@tailwindcss/vite": "^4.3.1",
 		"@tauri-apps/cli": "^2.11.3",
-		"@types/node": "^22.0.0",
+		"@types/node": "^26.0.1",
 		"@types/qrcode": "^1.5.6",
 		"@vitejs/plugin-vue": "^6.0.7",
 		"@vue/compiler-sfc": "^3.5.39",
