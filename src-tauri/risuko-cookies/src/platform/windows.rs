@@ -1,6 +1,6 @@
 // Windows Chromium cookie decryption
 
-use aes_gcm::{aead::Aead, Aes256Gcm, Key, KeyInit, Nonce};
+use aes_gcm::{aead::Aead, Aes256Gcm, KeyInit, Nonce};
 use base64::Engine;
 use eyre::{bail, Result};
 use windows_sys::Win32::{
@@ -27,14 +27,14 @@ fn decrypt_v10(data: &[u8], master_key: &[u8]) -> Result<Vec<u8>> {
         bail!("v10 data too short");
     }
 
-    let nonce = Nonce::from_slice(&data[3..15]);
+    let nonce = Nonce::try_from(&data[3..15]).map_err(|_| eyre::eyre!("invalid nonce length"))?;
     let ciphertext = &data[15..];
 
-    let key = Key::<Aes256Gcm>::from_slice(master_key);
-    let cipher = Aes256Gcm::new(key);
+    let cipher = Aes256Gcm::new_from_slice(master_key)
+        .map_err(|_| eyre::eyre!("invalid aes key length"))?;
 
     cipher
-        .decrypt(nonce, ciphertext)
+        .decrypt(&nonce, ciphertext)
         .map_err(|e| eyre::eyre!("aes-gcm decrypt failed: {}", e))
 }
 
@@ -77,7 +77,7 @@ fn decrypt_dpapi(data: &[u8]) -> Result<Vec<u8>> {
         let decrypted =
             std::slice::from_raw_parts(blob_out.pbData, blob_out.cbData as usize).to_vec();
 
-        LocalFree(blob_out.pbData as isize);
+        LocalFree(blob_out.pbData.cast());
 
         Ok(decrypted)
     }

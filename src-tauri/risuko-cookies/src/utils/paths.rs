@@ -53,6 +53,7 @@ pub fn find_matching(pattern: &str) -> eyre::Result<Vec<PathBuf>> {
     Ok(results)
 }
 
+#[cfg(target_os = "macos")]
 pub fn find_first_existing(patterns: &[&str]) -> Option<PathBuf> {
     for pattern in patterns {
         if let Ok(paths) = find_matching(pattern) {

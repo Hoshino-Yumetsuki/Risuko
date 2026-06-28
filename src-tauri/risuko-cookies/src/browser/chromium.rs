@@ -117,6 +117,7 @@ impl BrowserConfig {
         }
     }
 
+    #[cfg(target_os = "macos")]
     pub fn arc() -> Self {
         Self {
             cookie_paths: if cfg!(target_os = "macos") {
