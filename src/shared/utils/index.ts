@@ -42,6 +42,24 @@ export const bytesToSize = (bytes, precision = 1) => {
 	return `${(b / 1024 ** i).toFixed(precision)} ${sizes[i]}`;
 };
 
+// Pull a human message out of an axios-style error, with a 429 special-case
+// and a caller-supplied fallback. Shared by the sync + share stores.
+export const getApiErrorMessage = (
+	err: unknown,
+	fallback = "Request failed",
+): string => {
+	const response = (
+		err as { response?: { data?: { error?: string }; status?: number } }
+	).response;
+	if (response?.data?.error) {
+		return response.data.error;
+	}
+	if (response?.status === 429) {
+		return "Too many requests. Please try again later.";
+	}
+	return (err as Error)?.message || fallback;
+};
+
 export const extractSpeedUnit = (speed = "") => {
 	if (parseInt(speed, 10) === 0) {
 		return "K";

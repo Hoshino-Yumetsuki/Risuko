@@ -23,13 +23,13 @@
       <button class="android-fab" :aria-label="$t('app.add-task')" @click="showAddTask">
         <Plus :size="28" />
       </button>
-      <button class="android-nav-item" :class="{ active: routePath.startsWith('/health') }" @click="nav('/health')">
-        <Activity :size="22" />
-        <span>{{ $t('app.nav-health') }}</span>
+      <button class="android-nav-item" :class="{ active: routePath.startsWith('/share') }" @click="nav('/share')">
+        <Share2 :size="22" />
+        <span>{{ $t('app.nav-share') }}</span>
       </button>
-      <button class="android-nav-item" :class="{ active: routePath.startsWith('/preference') }" @click="nav('/preference/basic')">
-        <Settings2 :size="22" />
-        <span>{{ $t('app.nav-settings') }}</span>
+      <button class="android-nav-item" :class="{ active: routePath.startsWith('/preference') }" @click="nav('/preference/sync')">
+        <UserRound :size="22" />
+        <span>{{ $t('app.nav-account') }}</span>
       </button>
     </nav>
     <mo-add-task :visible="addTaskVisible" :type="addTaskType" />
@@ -46,7 +46,7 @@
 </template>
 
 <script lang="ts">
-import { Activity, ListTodo, Plus, Rss, Settings2 } from "@lucide/vue";
+import { ListTodo, Plus, Rss, Share2, UserRound } from "@lucide/vue";
 import { ADD_TASK_TYPE } from "@shared/constants";
 import { invoke } from "@tauri-apps/api/core";
 import { toast } from "vue-sonner";
@@ -69,11 +69,11 @@ export default {
 		[AddTask.name]: AddTask,
 		[TaskDetail.name]: TaskDetail,
 		[Dragger.name]: Dragger,
-		Activity,
 		ListTodo,
 		Plus,
 		Rss,
-		Settings2,
+		Share2,
+		UserRound,
 	},
 	data() {
 		return {

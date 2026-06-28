@@ -1,5 +1,5 @@
 import { getCategoriesForKey, syncCategories } from "@shared/syncCategories";
-import { changeKeysToKebabCase } from "@shared/utils";
+import { changeKeysToKebabCase, getApiErrorMessage } from "@shared/utils";
 import logger from "@shared/utils/logger";
 import axios from "axios";
 import { defineStore } from "pinia";
@@ -7,18 +7,8 @@ import api from "@/api";
 import { useAuthStore } from "./auth";
 import { usePreferenceStore } from "./preference";
 
-function getAxiosErrorMessage(err: unknown): string {
-	const response = (
-		err as { response?: { data?: { error?: string }; status?: number } }
-	).response;
-	if (response?.data?.error) {
-		return response.data.error;
-	}
-	if (response?.status === 429) {
-		return "Too many requests. Please try again later.";
-	}
-	return (err as Error)?.message || "Sync failed";
-}
+const getAxiosErrorMessage = (err: unknown): string =>
+	getApiErrorMessage(err, "Sync failed");
 
 interface SyncState {
 	syncing: boolean;

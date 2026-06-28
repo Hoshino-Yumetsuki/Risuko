@@ -39,6 +39,9 @@ jobs:
           distribution: temurin
           java-version: 17
 
+      - name: Cache Gradle dependencies
+        uses: gradle/actions/setup-gradle@v4
+
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
@@ -55,6 +58,12 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
+
+      - name: Cache Rust (cargo registry + build artifacts)
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "src-tauri -> target"
+          key: android
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -170,6 +179,12 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
+
+      - name: Cache Rust (cargo registry + build artifacts)
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "src-tauri -> target"
+          key: ${{ matrix.target }}
 
       - name: Install Linux build dependencies
         if: startsWith(matrix.os, 'ubuntu')

@@ -10,6 +10,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Environment
 import android.provider.DocumentsContract
+import android.provider.OpenableColumns
 import android.provider.Settings
 import android.util.Log
 import android.webkit.WebView
@@ -204,20 +205,49 @@ class MainActivity : TauriActivity() {
       }
     }
 
-    // Opens `path` in a file manager and reports the outcome back so the
-    // caller can surface a useful error string. Returns "ok" on success or
-    // a diagnostic string otherwise. We try three intent shapes because no
-    // single one works on every device:
-    //   1. ACTION_VIEW with `vnd.android.document/directory` MIME wrapped
-    //      in a chooser. Files by Google and AOSP DocumentsUI both claim
-    //      this
-    //   2. Same intent without the chooser, so the system can launch the
-    //      default handler directly when only one app matches
-    //   3. ACTION_VIEW with the URI alone, letting the documents provider
-    //      infer the MIME. Broader compatibility at the cost of pulling in
-    //      generic handlers
-    // If one variant throws, we move on to the next. We only give up and
-    // report back to Rust once all three fail
+    @JvmStatic
+    fun stageContentUri(uriString: String): String? {
+      val activity = current ?: return null
+      if (uriString.isBlank()) {
+        return null
+      }
+      if (!uriString.startsWith("content://")) {
+        return uriString
+      }
+      return try {
+        val uri = Uri.parse(uriString)
+        val displayName = queryDisplayName(activity, uri)
+          ?: uri.lastPathSegment?.substringAfterLast('/')
+          ?: "shared-file"
+        val safeName = displayName.replace(Regex("[\\\\/:*?\"<>|]"), "_")
+        val outDir = File(activity.cacheDir, "share-staging").apply { mkdirs() }
+        val outFile = File(outDir, "${System.currentTimeMillis()}-$safeName")
+        activity.contentResolver.openInputStream(uri)?.use { input ->
+          outFile.outputStream().use { output ->
+            input.copyTo(output)
+          }
+        } ?: return null
+        outFile.absolutePath
+      } catch (e: Throwable) {
+        Log.w(STAGE_TAG, "stageContentUri failed for $uriString", e)
+        null
+      }
+    }
+
+    private fun queryDisplayName(activity: MainActivity, uri: Uri): String? {
+      activity.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+        if (cursor.moveToFirst()) {
+          val index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+          if (index >= 0) {
+            return cursor.getString(index)
+          }
+        }
+      }
+      return null
+    }
+
+    private const val STAGE_TAG = "RisukoStage"
+    
     @JvmStatic
     fun revealFolder(path: String): String {
       val activity = current ?: return "no_activity"

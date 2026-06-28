@@ -319,10 +319,9 @@ pub fn episode_key_for(parsed: &ParsedMeta) -> Option<EpisodeKey> {
             s,
             parsed.season.is_none() && parsed.absolute_episode.is_some(),
         )
-    } else if let Some(s) = parsed.absolute_episode {
-        (s, true)
     } else {
-        return None;
+        let s = parsed.absolute_episode?;
+        (s, true)
     };
     Some(EpisodeKey {
         series,

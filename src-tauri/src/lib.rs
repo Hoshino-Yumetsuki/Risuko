@@ -45,7 +45,9 @@ fn with_desktop_plugins<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri:
 
 #[cfg(target_os = "android")]
 fn with_desktop_plugins<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
-    builder.plugin(risuko_webview_upgrade::init())
+    builder
+        .plugin(risuko_webview_upgrade::init())
+        .plugin(tauri_plugin_barcode_scanner::init())
 }
 
 /// Resolve which directory the log appender should write to
@@ -218,6 +220,34 @@ pub fn run() {
         let app_state = state::AppState::new(config, storage.clone(), log_dir, log_guard)?;
         app.manage(app_state);
         sync_open_at_login_setting(app);
+
+        // P2P file sharing
+        {
+            let (share_tx, mut share_rx) =
+                tokio::sync::mpsc::unbounded_channel::<risuko_share::ShareEnvelope>();
+            let share_dir = handle
+                .path()
+                .app_cache_dir()
+                .unwrap_or_else(|_| {
+                    handle
+                        .path()
+                        .app_config_dir()
+                        .unwrap_or_else(|_| std::path::PathBuf::from("."))
+                })
+                .join("share");
+            let share_manager = risuko_share::ShareManager::new(share_dir, share_tx);
+            app.manage(commands::share_cmds::ShareState::new(share_manager));
+
+            let emit_handle = handle.clone();
+            tauri::async_runtime::spawn(async move {
+                use tauri::Emitter;
+                while let Some(envelope) = share_rx.recv().await {
+                    if let Err(e) = emit_handle.emit("share:event", &envelope) {
+                        tracing::warn!("Failed to emit share event: {}", e);
+                    }
+                }
+            });
+        }
 
         // Windows/Linux use a custom title bar, so disable native decorations
         // macOS keeps decorations and uses `titleBarStyle: Overlay`
@@ -401,6 +431,7 @@ pub fn run() {
         commands::app_cmds::shutdown_system,
         commands::file_cmds::reveal_in_folder,
         commands::file_cmds::select_android_directory,
+        commands::file_cmds::stage_android_share_paths,
         commands::file_cmds::open_path,
         commands::file_cmds::trash_item,
         commands::file_cmds::rename_path,
@@ -508,6 +539,9 @@ pub fn run() {
         commands::vault_cmds::vault_put_credential,
         commands::vault_cmds::vault_get_credential,
         commands::vault_cmds::vault_remove_credential,
+        commands::share_cmds::share_start_send,
+        commands::share_cmds::share_start_receive,
+        commands::share_cmds::share_cancel,
     ])
     .build(tauri::generate_context!())
     .expect("error while building Risuko");

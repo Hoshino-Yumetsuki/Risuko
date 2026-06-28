@@ -47,10 +47,8 @@ pub fn find_matching(pattern: &str) -> eyre::Result<Vec<PathBuf>> {
         .ok_or_else(|| eyre::eyre!("invalid path encoding"))?;
 
     let mut results = Vec::new();
-    for entry in glob::glob(path_str)? {
-        if let Ok(p) = entry {
-            results.push(p);
-        }
+    for p in glob::glob(path_str)?.flatten() {
+        results.push(p);
     }
     Ok(results)
 }

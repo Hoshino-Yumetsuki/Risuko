@@ -84,18 +84,16 @@ pub fn extract_cookies(config: &BrowserConfig, host: Option<&str>) -> Result<Vec
         )?;
         let cookie_iter = stmt.query_map([], parse_row)?;
 
-        for cookie_result in cookie_iter {
-            if let Ok(cookie) = cookie_result {
-                if let Some(request_host) = host {
-                    if !cookie_covers_host(request_host, &cookie.domain) {
-                        tracing::trace!(target: "risuko_cookies", "firefox: skip cookie '{}' host={} (does not cover {})", cookie.name, cookie.domain, request_host);
-                        skipped_domain += 1;
-                        continue;
-                    }
+        for cookie in cookie_iter.flatten() {
+            if let Some(request_host) = host {
+                if !cookie_covers_host(request_host, &cookie.domain) {
+                    tracing::trace!(target: "risuko_cookies", "firefox: skip cookie '{}' host={} (does not cover {})", cookie.name, cookie.domain, request_host);
+                    skipped_domain += 1;
+                    continue;
                 }
-                tracing::trace!(target: "risuko_cookies", "firefox: keep cookie '{}' host={} value_len={}", cookie.name, cookie.domain, cookie.value.len());
-                cookies.push(cookie);
             }
+            tracing::trace!(target: "risuko_cookies", "firefox: keep cookie '{}' host={} value_len={}", cookie.name, cookie.domain, cookie.value.len());
+            cookies.push(cookie);
         }
     }
 
@@ -112,9 +110,8 @@ fn cookie_covers_host(request_host: &str, cookie_host: &str) -> bool {
     let r = request_host.to_lowercase();
     let c = cookie_host.to_lowercase();
 
-    if c.starts_with('.') {
+    if let Some(domain) = c.strip_prefix('.') {
         // Older Firefox: domain cookie with explicit leading dot
-        let domain = &c[1..];
         r == domain || r.ends_with(&format!(".{domain}"))
     } else {
         // Modern Firefox: bare domain is a domain cookie (covers subdomains)

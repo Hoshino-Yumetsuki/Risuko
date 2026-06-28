@@ -23,6 +23,7 @@
 		"core:menu:default",
 		"dialog:default",
 		"dialog:allow-open",
+		"dialog:allow-save",
 		"dialog:allow-message",
 		"shell:default",
 		{

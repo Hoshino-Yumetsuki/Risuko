@@ -7,6 +7,7 @@ import help from "./help";
 import menu from "./menu";
 import preferences from "./preferences";
 import rss from "./rss";
+import share from "./share";
 import subnav from "./subnav";
 import sync from "./sync";
 import task from "./task";
@@ -22,6 +23,7 @@ export default {
 	menu,
 	preferences,
 	rss,
+	share,
 	subnav,
 	sync,
 	task,

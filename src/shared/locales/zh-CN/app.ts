@@ -6,6 +6,8 @@ export default {
 	"nav-rss": "RSS",
 	"nav-health": "健康",
 	"nav-settings": "设置",
+	"nav-share": "分享",
+	"nav-account": "账户",
 	"android-back-again-to-quit": "再次返回以退出 Risuko",
 	"android-storage-access-required":
 		"请授予所有文件访问权限，然后重新选择下载文件夹。",

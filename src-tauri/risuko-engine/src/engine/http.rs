@@ -2595,7 +2595,7 @@ async fn run_single_download(
                 let start_str = &cr[..dash];
                 start_str.parse::<u64>().ok()
             })
-            .map_or(false, |start| start == existing_size);
+            == Some(existing_size);
 
         if !range_valid {
             tracing::warn!(

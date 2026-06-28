@@ -125,7 +125,9 @@
 	}
 
 	html.platform-android .page-view > .main,
-	html.mobile-phone .page-view > .main {
+	html.mobile-phone .page-view > .main,
+	html.platform-android .page-view > .share-page,
+	html.mobile-phone .page-view > .share-page {
 		flex: 1 1 auto;
 		width: 100%;
 		min-width: 0;
@@ -1404,5 +1406,74 @@
 		background: transparent;
 		color: var(--android-on-surface-variant);
 		box-shadow: none;
+	}
+
+	/* P2P share page */
+	html.platform-android .share-page,
+	html.mobile-phone .share-page {
+		flex: 1 1 auto;
+		display: flex;
+		flex-direction: column;
+		min-height: 0;
+		background: transparent !important;
+	}
+	html.platform-android .share-body,
+	html.mobile-phone .share-body {
+		max-width: 100%;
+		padding: 8px 14px calc(var(--android-bottom-bar) + 24px);
+	}
+	html.platform-android .share-tabs-list,
+	html.mobile-phone .share-tabs-list {
+		width: 100%;
+		background: var(--android-surface-container);
+		border-radius: var(--android-radius-md);
+	}
+	html.platform-android .share-code-card,
+	html.mobile-phone .share-code-card {
+		background: var(--android-surface-container);
+		border: 0;
+		border-radius: var(--android-radius-lg);
+	}
+	html.platform-android .share-code,
+	html.mobile-phone .share-code {
+		color: var(--android-on-surface);
+	}
+	html.platform-android .share-code-field,
+	html.platform-android .share-url-input,
+	html.mobile-phone .share-code-field,
+	html.mobile-phone .share-url-input {
+		min-height: 48px;
+		border-radius: var(--android-radius-md);
+		background: var(--android-surface-container-high);
+	}
+	html.platform-android .share-primary-action,
+	html.mobile-phone .share-primary-action {
+		min-height: 48px;
+		border-radius: var(--android-radius-md);
+	}
+	html.platform-android .share-transfer,
+	html.mobile-phone .share-transfer {
+		border-bottom-color: var(--android-outline-variant);
+	}
+	html.platform-android .share-result-card,
+	html.mobile-phone .share-result-card {
+		padding: 16px;
+	}
+	html.platform-android .share-result-head,
+	html.mobile-phone .share-result-head {
+		gap: 8px;
+	}
+	html.platform-android .share-path-row,
+	html.mobile-phone .share-path-row {
+		padding-left: 0;
+	}
+	html.platform-android .share-transfer-meta,
+	html.mobile-phone .share-transfer-meta {
+		line-height: 1.45;
+	}
+	html.platform-android .share-badge,
+	html.mobile-phone .share-badge {
+		font-size: 10px;
+		padding: 1px 6px;
 	}
 }

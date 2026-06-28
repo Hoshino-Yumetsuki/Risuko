@@ -103,6 +103,30 @@ function findUnsignedApks(root) {
 	return results.sort();
 }
 
+function findDebugApks(root) {
+	if (!existsSync(root)) {
+		fail(`APK output directory not found: ${root}`);
+	}
+	const results = [];
+	const stack = [root];
+	while (stack.length > 0) {
+		const current = stack.pop();
+		for (const entry of readdirSync(current, { withFileTypes: true })) {
+			const fullPath = join(current, entry.name);
+			if (entry.isDirectory()) {
+				stack.push(fullPath);
+			} else if (
+				entry.isFile() &&
+				/-debug\.apk$/.test(entry.name) &&
+				!entry.name.includes("-aligned")
+			) {
+				results.push(fullPath);
+			}
+		}
+	}
+	return results.sort();
+}
+
 function resolveKeystore() {
 	const keystorePath = process.env.ANDROID_SIGNING_KEYSTORE_PATH;
 	if (keystorePath) {
@@ -132,24 +156,31 @@ if (!process.env.ANDROID_SIGNING_KEY_PASSWORD) {
 	process.env.ANDROID_SIGNING_KEY_PASSWORD = storePassword;
 }
 
+const debugMode = process.argv.includes("--debug");
 const apksigner = findBuildTool("apksigner");
 const zipalign = findBuildTool("zipalign");
-const unsignedApks = findUnsignedApks(apkRoot);
+const apksToSign = debugMode ? findDebugApks(apkRoot) : findUnsignedApks(apkRoot);
 
-if (unsignedApks.length === 0) {
-	fail(`No unsigned release APKs found under ${apkRoot}`);
+if (apksToSign.length === 0) {
+	fail(
+		debugMode
+			? `No debug APKs found under ${apkRoot}`
+			: `No unsigned release APKs found under ${apkRoot}`,
+	);
 }
 
 const keystore = resolveKeystore();
 
 try {
-	for (const unsignedApk of unsignedApks) {
-		const outputApk = unsignedApk.replace(/-unsigned\.apk$/, ".apk");
+	for (const inputApk of apksToSign) {
+		const outputApk = debugMode
+			? inputApk
+			: inputApk.replace(/-unsigned\.apk$/, ".apk");
 		const alignedApk = join(
-			dirname(unsignedApk),
-			`${basename(unsignedApk, ".apk")}-aligned.apk`,
+			dirname(inputApk),
+			`${basename(inputApk, ".apk")}-aligned.apk`,
 		);
-		run(zipalign, ["-f", "-p", "4", unsignedApk, alignedApk]);
+		run(zipalign, ["-f", "-p", "4", inputApk, alignedApk]);
 		run(apksigner, [
 			"sign",
 			"--ks",

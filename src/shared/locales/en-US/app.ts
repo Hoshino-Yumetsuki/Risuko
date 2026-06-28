@@ -6,6 +6,8 @@ export default {
 	"nav-rss": "RSS",
 	"nav-health": "Health",
 	"nav-settings": "Settings",
+	"nav-share": "Share",
+	"nav-account": "Account",
 	"android-back-again-to-quit": "Swipe back again to quit Risuko",
 	"android-storage-access-required":
 		"Grant all files access, then choose the download folder again.",
