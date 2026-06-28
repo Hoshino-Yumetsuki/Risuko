@@ -197,7 +197,33 @@ async function init(config: AppConfig) {
 		const handleDeepLinkUrls = async (urls: string[]) => {
 			logger.info("[Risuko] deep-link urls received:", urls.map(sanitizeUrl));
 			for (const url of urls) {
-				if (typeof url !== "string" || !url.startsWith("risuko://auth?")) {
+				if (typeof url !== "string") {
+					continue;
+				}
+
+				// P2P file share link: risuko://share/<id>
+				if (url.startsWith("risuko://share/")) {
+					const rawId = url.slice("risuko://share/".length).split(/[?#]/)[0];
+					let shareId = "";
+					try {
+						shareId = decodeURIComponent(rawId || "").trim();
+					} catch (err) {
+						logger.warn("[Risuko] malformed share deep link:", sanitizeUrl(url), err);
+						continue;
+					}
+					if (shareId) {
+						try {
+							const { useShareStore } = await import("@/store/share");
+							await router.push({ path: "/share" }).catch(() => undefined);
+							await useShareStore().openFromShareId(shareId);
+						} catch (err) {
+							logger.warn("[Risuko] failed to open share deep link:", err);
+						}
+					}
+					continue;
+				}
+
+				if (!url.startsWith("risuko://auth?")) {
 					continue;
 				}
 				try {

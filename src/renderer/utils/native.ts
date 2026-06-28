@@ -9,6 +9,34 @@ import logger from "@shared/utils/logger";
 import { invoke } from "@tauri-apps/api/core";
 import { toast } from "vue-sonner";
 
+// Android SAF folder picker returns a tree URI like
+// `content://com.android.externalstorage.documents/tree/primary%3ADownload`.
+// The engine writes via filesystem paths, so map common external-storage
+// authorities back to `/storage/...`. Other authorities (SD/USB/cloud) don't
+// map cleanly and are returned as-is. Shared by SelectDirectory + Share.
+export function safUriToFilesystemPath(uri: string): string {
+	if (typeof uri !== "string" || !uri.startsWith("content://")) {
+		return uri;
+	}
+	const match = uri.match(
+		/com\.android\.externalstorage\.documents\/(?:tree|document)\/([^?#/]+)/,
+	);
+	if (!match) {
+		return uri;
+	}
+	const decoded = decodeURIComponent(match[1]);
+	const sep = decoded.indexOf(":");
+	if (sep < 0) {
+		return uri;
+	}
+	const storage = decoded.slice(0, sep);
+	const rel = decoded.slice(sep + 1);
+	if (storage === "primary") {
+		return rel ? `/storage/emulated/0/${rel}` : "/storage/emulated/0";
+	}
+	return rel ? `/storage/${storage}/${rel}` : `/storage/${storage}`;
+}
+
 function joinPath(...parts: string[]): string {
 	const joined = parts.filter(Boolean).join("/");
 	return joined.replace(/[/\\]+/g, "/");

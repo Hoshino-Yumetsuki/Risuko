@@ -3163,7 +3163,7 @@ impl TaskManager {
         }
         // Cancel all active HTTP downloads
         let active = self.active_downloads.read().await;
-        for (_, ad) in active.iter() {
+        for ad in active.values() {
             ad.cancel.store(true, Ordering::Relaxed);
             ad.cancel_token.cancel();
         }
@@ -3248,7 +3248,7 @@ impl TaskManager {
         tracing::info!("Engine shutting down");
         // Cancel all active downloads
         let active = self.active_downloads.read().await;
-        for (_, ad) in active.iter() {
+        for ad in active.values() {
             ad.cancel.store(true, Ordering::Relaxed);
             ad.cancel_token.cancel();
         }

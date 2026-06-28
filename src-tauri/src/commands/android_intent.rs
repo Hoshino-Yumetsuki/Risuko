@@ -28,10 +28,14 @@ use std::time::Duration;
 
 use jni::errors::LogErrorAndDefault;
 use jni::objects::{JClass, JObject, JString, Reference};
+use jni::refs::Global;
 use jni::sys::{jint, JNI_VERSION_1_6};
 use jni::{jni_sig, jni_str, Env, EnvUnowned, JValue, JavaVM};
 
 static JAVA_VM: OnceLock<JavaVM> = OnceLock::new();
+static ANDROID_APP: OnceLock<Global<JObject<'static>>> = OnceLock::new();
+static NDK_CONTEXT_READY: OnceLock<()> = OnceLock::new();
+static NDK_INIT: Mutex<()> = Mutex::new(());
 static DIRECTORY_PICKERS: OnceLock<
     Mutex<HashMap<String, tokio::sync::oneshot::Sender<Option<String>>>>,
 > = OnceLock::new();
@@ -47,9 +51,83 @@ pub extern "system" fn JNI_OnLoad(vm: *mut jni::sys::JavaVM, _: *mut c_void) -> 
     // SAFETY: Android gives us a process-lifetime `JavaVM*`. In jni 0.22,
     // `JavaVM::from_raw` initializes the crate-wide singleton and returns an
     // owned handle directly (it no longer returns a `Result`).
+    let vm_raw = vm.cast::<c_void>();
     let vm = unsafe { JavaVM::from_raw(vm) };
     let _ = JAVA_VM.set(vm);
+    if let Err(err) = init_ndk_context(vm_raw) {
+        tracing::warn!("[Risuko] ndk_context init in JNI_OnLoad failed: {err}");
+    }
     JNI_VERSION_1_6
+}
+
+pub fn ensure_ndk_context() -> Result<(), String> {
+    if NDK_CONTEXT_READY.get().is_some() {
+        return Ok(());
+    }
+    let vm = JAVA_VM
+        .get()
+        .ok_or_else(|| "JavaVM not captured (JNI_OnLoad didn't run?)".to_string())?;
+    init_ndk_context(vm.get_raw().cast())
+}
+
+fn init_ndk_context(java_vm: *mut c_void) -> Result<(), String> {
+    let _guard = NDK_INIT
+        .lock()
+        .map_err(|e| format!("NDK init lock poisoned: {e}"))?;
+    if NDK_CONTEXT_READY.get().is_some() {
+        return Ok(());
+    }
+    let vm = JAVA_VM
+        .get()
+        .ok_or_else(|| "JavaVM not captured (JNI_OnLoad didn't run?)".to_string())?;
+    let (app_global, ctx_ptr) = vm
+        .attach_current_thread(|env| -> jni::errors::Result<_> {
+            let app = current_application(env)?;
+            let app_global = env.new_global_ref(app)?;
+            let ctx_ptr = app_global.as_raw().cast::<c_void>();
+            Ok((app_global, ctx_ptr))
+        })
+        .map_err(|e: jni::errors::Error| format!("init_ndk_context: {e}"))?;
+    if ANDROID_APP.set(app_global).is_err() {
+        return Err("ANDROID_APP already set".to_string());
+    }
+    // SAFETY: pointers are valid for the process lifetime; called exactly once.
+    unsafe {
+        ndk_context::initialize_android_context(java_vm, ctx_ptr);
+    }
+    if NDK_CONTEXT_READY.set(()).is_err() {
+        return Err("NDK_CONTEXT_READY already set".to_string());
+    }
+    Ok(())
+}
+
+pub fn stage_share_path(path: &str) -> Result<String, String> {
+    if !path.starts_with("content://") {
+        return Ok(path.to_string());
+    }
+    let vm = JAVA_VM
+        .get()
+        .ok_or_else(|| "JavaVM not captured (JNI_OnLoad didn't run?)".to_string())?;
+    let staged = vm
+        .attach_current_thread(|env| -> jni::errors::Result<Option<String>> {
+            let activity = main_activity_class(env)?;
+            let uri = env.new_string(path)?;
+            let value = env
+                .call_static_method(
+                    &activity,
+                    jni_str!("stageContentUri"),
+                    jni_sig!("(Ljava/lang/String;)Ljava/lang/String;"),
+                    &[JValue::Object(&uri)],
+                )?
+                .l()?;
+            if value.is_null() {
+                return Ok(None);
+            }
+            let value_str = JString::cast_local(env, value)?;
+            Ok(Some(value_str.try_to_string(env)?))
+        })
+        .map_err(|e: jni::errors::Error| format!("MainActivity.stageContentUri: {e}"))?;
+    staged.ok_or_else(|| format!("failed to stage content URI: {path}"))
 }
 
 #[no_mangle]

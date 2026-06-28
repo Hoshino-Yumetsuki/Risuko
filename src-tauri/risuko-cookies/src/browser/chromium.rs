@@ -225,61 +225,59 @@ fn read_cookies_from_db(
     let mut decrypted_fail = 0usize;
     let mut no_key = 0usize;
 
-    for cookie_result in cookie_iter {
-        if let Ok(raw) = cookie_result {
-            // Skip only when both encrypted and plaintext values are empty
-            if raw.raw_value.is_empty() && raw.plaintext_value.is_empty() {
-                skipped_empty += 1;
+    for raw in cookie_iter.flatten() {
+        // Skip only when both encrypted and plaintext values are empty
+        if raw.raw_value.is_empty() && raw.plaintext_value.is_empty() {
+            skipped_empty += 1;
+            continue;
+        }
+
+        // Skip cookies that don't cover the requested host
+        if let Some(request_host) = host {
+            if !cookie_covers_host(request_host, &raw.domain) {
+                tracing::trace!(target: "risuko_cookies", "chromium: skip cookie '{}' host_key={} (does not cover {})", raw.name, raw.domain, request_host);
+                skipped_domain += 1;
                 continue;
             }
+        }
 
-            // Skip cookies that don't cover the requested host
-            if let Some(request_host) = host {
-                if !cookie_covers_host(request_host, &raw.domain) {
-                    tracing::trace!(target: "risuko_cookies", "chromium: skip cookie '{}' host_key={} (does not cover {})", raw.name, raw.domain, request_host);
-                    skipped_domain += 1;
-                    continue;
-                }
-            }
-
-            // Decrypt the encrypted value if present, otherwise fall back to plaintext
-            let value = if !raw.raw_value.is_empty() {
-                if let Some(key) = master_key {
-                    match decrypt_cookie_value(&raw.raw_value, key) {
-                        Ok(decrypted) => {
-                            decrypted_ok += 1;
-                            String::from_utf8_lossy(&decrypted).to_string()
-                        }
-                        Err(e) => {
-                            tracing::trace!(target: "risuko_cookies", "chromium: decrypt failed for '{}' host_key={}: {}", raw.name, raw.domain, e);
-                            decrypted_fail += 1;
-                            continue;
-                        }
+        // Decrypt the encrypted value if present, otherwise fall back to plaintext
+        let value = if !raw.raw_value.is_empty() {
+            if let Some(key) = master_key {
+                match decrypt_cookie_value(&raw.raw_value, key) {
+                    Ok(decrypted) => {
+                        decrypted_ok += 1;
+                        String::from_utf8_lossy(&decrypted).to_string()
                     }
-                } else {
-                    no_key += 1;
-                    if !raw.plaintext_value.is_empty() {
-                        raw.plaintext_value
-                    } else {
-                        String::from_utf8_lossy(&raw.raw_value).to_string()
+                    Err(e) => {
+                        tracing::trace!(target: "risuko_cookies", "chromium: decrypt failed for '{}' host_key={}: {}", raw.name, raw.domain, e);
+                        decrypted_fail += 1;
+                        continue;
                     }
                 }
             } else {
-                // Plaintext cookie
-                decrypted_ok += 1;
-                raw.plaintext_value
-            };
+                no_key += 1;
+                if !raw.plaintext_value.is_empty() {
+                    raw.plaintext_value
+                } else {
+                    String::from_utf8_lossy(&raw.raw_value).to_string()
+                }
+            }
+        } else {
+            // Plaintext cookie
+            decrypted_ok += 1;
+            raw.plaintext_value
+        };
 
-            cookies.push(Cookie {
-                name: raw.name,
-                value,
-                domain: raw.domain,
-                path: raw.path,
-                secure: raw.secure,
-                http_only: raw.http_only,
-                expires: raw.expires,
-            });
-        }
+        cookies.push(Cookie {
+            name: raw.name,
+            value,
+            domain: raw.domain,
+            path: raw.path,
+            secure: raw.secure,
+            http_only: raw.http_only,
+            expires: raw.expires,
+        });
     }
 
     tracing::debug!(target: "risuko_cookies",
@@ -298,8 +296,7 @@ fn cookie_covers_host(request_host: &str, cookie_host_key: &str) -> bool {
     let r = request_host.to_lowercase();
     let c = cookie_host_key.to_lowercase();
 
-    if c.starts_with('.') {
-        let domain = &c[1..];
+    if let Some(domain) = c.strip_prefix('.') {
         r == domain || r.ends_with(&format!(".{domain}"))
     } else {
         r == c

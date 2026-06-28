@@ -85,6 +85,27 @@
           </div>
         </div>
 
+        <!-- Mobile-only -->
+        <div class="settings-section hidden-sm-and-up">
+          <div class="settings-section-header">
+            <div class="section-icon"><Activity :size="16" /></div>
+            <div class="section-title">
+              <h3>{{ $t('share.tools') }}</h3>
+            </div>
+          </div>
+          <div class="settings-section-content">
+            <button type="button" class="settings-row sync-link-row" @click="goHealth">
+              <div class="settings-row-content">
+                <div class="settings-row-title">{{ $t('app.nav-health') }}</div>
+                <div class="settings-row-description">{{ $t('share.health-description') }}</div>
+              </div>
+              <div class="settings-row-action settings-row-action--right">
+                <ChevronRight :size="18" />
+              </div>
+            </button>
+          </div>
+        </div>
+
         <div class="settings-section">
           <div class="settings-section-header">
             <div class="section-icon"><RefreshCw :size="16" /></div>
@@ -225,7 +246,9 @@
 
 <script lang="ts">
 import {
+	Activity,
 	CheckCircle2,
+	ChevronRight,
 	Cloud,
 	DownloadCloud,
 	Loader2,
@@ -261,6 +284,8 @@ export default defineComponent({
 		UploadCloud,
 		DownloadCloud,
 		Loader2,
+		Activity,
+		ChevronRight,
 	},
 	data() {
 		const preferenceStore = usePreferenceStore();
@@ -382,6 +407,9 @@ export default defineComponent({
 		},
 		async handleLogout() {
 			await this.authStore.logout();
+		},
+		goHealth() {
+			this.$router.push({ path: "/health" }).catch(() => undefined);
 		},
 		onLoginSuccess() {
 			this.syncMessage = this.$t("sync.login-verify-success");

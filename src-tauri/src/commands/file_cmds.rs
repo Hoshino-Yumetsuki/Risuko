@@ -200,6 +200,22 @@ pub async fn select_android_directory() -> Result<Option<String>, String> {
 }
 
 #[tauri::command]
+pub fn stage_android_share_paths(paths: Vec<String>) -> Result<Vec<String>, String> {
+    #[cfg(target_os = "android")]
+    {
+        paths
+            .into_iter()
+            .map(|path| crate::commands::android_intent::stage_share_path(&path))
+            .collect()
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = paths;
+        Err("Android share staging is only available on Android".to_string())
+    }
+}
+
+#[tauri::command]
 pub fn open_path(handle: AppHandle, path: String) -> Result<(), String> {
     #[cfg(target_os = "android")]
     {

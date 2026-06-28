@@ -177,9 +177,8 @@ fn cookie_covers_host(request_host: &str, cookie_domain: &str) -> bool {
     let r = request_host.to_lowercase();
     let c = cookie_domain.to_lowercase();
 
-    if c.starts_with('.') {
+    if let Some(domain) = c.strip_prefix('.') {
         // Older Safari: domain cookie with explicit leading dot
-        let domain = &c[1..];
         r == domain || r.ends_with(&format!(".{domain}"))
     } else {
         // Modern Safari: bare domain is a domain cookie (covers subdomains)

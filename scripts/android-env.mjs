@@ -1,7 +1,34 @@
 #!/usr/bin/env node
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { delimiter, join } from "node:path";
+import { patchAndroidGradle } from "./patch-android-gradle.mjs";
+
+function findSccache() {
+	if (process.env.RUSTC_WRAPPER) {
+		return process.env.RUSTC_WRAPPER;
+	}
+	if (process.platform === "win32") {
+		const result = spawnSync("where.exe", ["sccache"], { encoding: "utf8" });
+		const path = result.stdout?.trim().split(/\r?\n/)[0];
+		if (result.status === 0 && path) {
+			return path;
+		}
+		for (const dir of (process.env.PATH || "").split(delimiter)) {
+			if (!dir) {
+				continue;
+			}
+			const candidate = join(dir, "sccache.exe");
+			if (existsSync(candidate)) {
+				return candidate;
+			}
+		}
+		return "";
+	}
+	const result = spawnSync("which", ["sccache"], { encoding: "utf8" });
+	const path = result.stdout?.trim();
+	return result.status === 0 && path ? path : "";
+}
 
 const sdkRoot =
 	process.env.ANDROID_HOME ||
@@ -45,8 +72,20 @@ if (!existsSync(llvmBin)) {
 	process.exit(1);
 }
 
+patchAndroidGradle();
+
+const sccache = findSccache();
+if (sccache) {
+	process.env.RUSTC_WRAPPER = sccache;
+} else if (!process.env.RUSTC_WRAPPER) {
+	console.warn(
+		"[Risuko] sccache not found; install sccache and add it to PATH to speed up Rust rebuilds",
+	);
+}
+
 const env = {
 	...process.env,
+	...(sccache ? { RUSTC_WRAPPER: sccache } : {}),
 	ANDROID_HOME: sdkRoot,
 	ANDROID_SDK_ROOT: sdkRoot,
 	ANDROID_NDK_HOME: ndkHome,
@@ -93,6 +132,9 @@ if (args.length === 0) {
 	console.log(`ANDROID_NDK_HOME=${env.ANDROID_NDK_HOME}`);
 	if (env.JAVA_HOME) {
 		console.log("JAVA_HOME is set");
+	}
+	if (env.RUSTC_WRAPPER) {
+		console.log(`RUSTC_WRAPPER=${env.RUSTC_WRAPPER}`);
 	}
 	console.log(`PATH prefix=${llvmBin}`);
 	process.exit(0);

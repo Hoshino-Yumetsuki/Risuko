@@ -17,6 +17,9 @@
         <mo-enter tag="li" preset="fadeInLeft" :delay="0.25" @click="nav('/rss')" class="non-draggable">
           <Rss :size="20" />
         </mo-enter>
+        <mo-enter tag="li" preset="fadeInLeft" :delay="0.3" @click="nav('/share')" class="non-draggable">
+          <Share2 :size="20" />
+        </mo-enter>
       </ul>
       <ul class="menu bottom-menu">
         <mo-enter tag="li" preset="fadeInLeft" :delay="0.32" @click="nav('/health')" class="non-draggable">
@@ -34,7 +37,15 @@
 </template>
 
 <script lang="ts">
-import { Activity, Info, ListTodo, Plus, Rss, Settings2 } from "@lucide/vue";
+import {
+	Activity,
+	Info,
+	ListTodo,
+	Plus,
+	Rss,
+	Settings2,
+	Share2,
+} from "@lucide/vue";
 import { ADD_TASK_TYPE } from "@shared/constants";
 import logger from "@shared/utils/logger";
 import LogoMini from "@/components/Logo/LogoMini.vue";
@@ -52,6 +63,7 @@ export default {
 		Plus,
 		Rss,
 		Settings2,
+		Share2,
 	},
 	data() {
 		return {

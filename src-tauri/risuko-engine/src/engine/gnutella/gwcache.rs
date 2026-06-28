@@ -93,10 +93,9 @@ pub async fn fetch_peers(cache_url: &str) -> Vec<String> {
 }
 
 fn parse_http_url(url: &str) -> Option<(String, u16, String)> {
-    let (scheme_stripped, default_port) = if let Some(r) = url.strip_prefix("http://") {
+    let (scheme_stripped, default_port) = {
+        let r = url.strip_prefix("http://")?;
         (r, 80u16)
-    } else {
-        return None;
     };
     let (host_port, path) = match scheme_stripped.find('/') {
         Some(idx) => (&scheme_stripped[..idx], &scheme_stripped[idx..]),
