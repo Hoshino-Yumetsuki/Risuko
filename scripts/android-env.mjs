@@ -8,6 +8,23 @@ function findSccache() {
 	if (process.env.RUSTC_WRAPPER) {
 		return process.env.RUSTC_WRAPPER;
 	}
+	if (process.platform === "win32") {
+		const result = spawnSync("where.exe", ["sccache"], { encoding: "utf8" });
+		const path = result.stdout?.trim().split(/\r?\n/)[0];
+		if (result.status === 0 && path) {
+			return path;
+		}
+		for (const dir of (process.env.PATH || "").split(delimiter)) {
+			if (!dir) {
+				continue;
+			}
+			const candidate = join(dir, "sccache.exe");
+			if (existsSync(candidate)) {
+				return candidate;
+			}
+		}
+		return "";
+	}
 	const result = spawnSync("which", ["sccache"], { encoding: "utf8" });
 	const path = result.stdout?.trim();
 	return result.status === 0 && path ? path : "";
@@ -62,7 +79,7 @@ if (sccache) {
 	process.env.RUSTC_WRAPPER = sccache;
 } else if (!process.env.RUSTC_WRAPPER) {
 	console.warn(
-		"[Risuko] sccache not found; install with `brew install sccache` to speed up Rust rebuilds",
+		"[Risuko] sccache not found; install sccache and add it to PATH to speed up Rust rebuilds",
 	);
 }
 

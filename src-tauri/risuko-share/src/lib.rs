@@ -23,7 +23,7 @@ use iroh_blobs::{
     provider::events::{
         ConnectMode, EventMask, EventSender, ProviderMessage, RequestMode, RequestUpdate,
     },
-    store::{fs::FsStore, mem::MemStore},
+    store::fs::FsStore,
     ticket::BlobTicket,
     BlobFormat, BlobsProtocol, Hash, HashAndFormat,
 };
@@ -377,7 +377,7 @@ impl ShareManager {
                             // User cancelled
                         } else {
                             let transferred = progress_tracker.lock().unwrap().transferred();
-                            if total_bytes > 0 && transferred >= total_bytes {
+                            if total_bytes == 0 || transferred >= total_bytes {
                                 let _ = events.send(ShareEnvelope {
                                     id: id_for_events.clone(),
                                     event: ShareEvent::Progress {
@@ -435,7 +435,7 @@ impl ShareManager {
         let blobs_dir = self.data_dir.join(format!("recv-{id}"));
         let stop = Arc::new(AtomicBool::new(false));
         let events = self.events.clone();
-        let active = self.active.clone();
+        let receives = self.receives.clone();
 
         let stop_for_task = stop.clone();
         let id_for_task = id.clone();
@@ -463,6 +463,8 @@ impl ShareManager {
                 Err(err) => {
                     let message = err.to_string();
                     if message == "cancelled" {
+                        receives.lock().unwrap().remove(&id_for_task);
+                        let _ = tokio::fs::remove_dir_all(&dir_for_task).await;
                         return;
                     }
                     let _ = events.send(ShareEnvelope {
@@ -472,10 +474,8 @@ impl ShareManager {
                 }
             }
 
-            let transfer = active.lock().unwrap().remove(&id_for_task);
-            if let Some(transfer) = transfer {
-                transfer.shutdown().await;
-            }
+            receives.lock().unwrap().remove(&id_for_task);
+            let _ = tokio::fs::remove_dir_all(&dir_for_task).await;
         });
         self.receives
             .lock()
@@ -500,7 +500,7 @@ impl ShareManager {
 
 #[allow(clippy::too_many_arguments)]
 async fn run_receive(
-    _blobs_dir: &Path,
+    blobs_dir: &Path,
     ticket_str: &str,
     dest_dir: &Path,
     files: &[FileMeta],
@@ -509,6 +509,7 @@ async fn run_receive(
     stop: Arc<AtomicBool>,
 ) -> Result<()> {
     tokio::fs::create_dir_all(dest_dir).await.ok();
+    tokio::fs::create_dir_all(blobs_dir).await.ok();
 
     let ticket: BlobTicket = ticket_str.parse().context("invalid share ticket")?;
     let provider = ticket.addr().id;
@@ -516,7 +517,10 @@ async fn run_receive(
     let format = ticket.format();
     let total: u64 = files.iter().map(|f| f.size).sum();
 
-    let store: Store = MemStore::new().into();
+    let store: Store = FsStore::load(blobs_dir)
+        .await
+        .context("failed to open blob store")?
+        .into();
 
     // Seed the sender's addresses
     let lookup = MemoryLookup::new();

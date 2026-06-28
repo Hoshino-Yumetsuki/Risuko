@@ -39,9 +39,9 @@
                 tag="div"
                 class="share-tab-panel"
                 :initial="panelInitial('send')"
-                :animate="panelAnimate"
+                :animate="panelAnimate()"
                 :exit="panelExit('send')"
-                :transition="panelTransition"
+                :transition="panelTransition()"
               >
             <section v-if="!activeSend" class="settings-section">
               <div class="settings-section-header">
@@ -185,9 +185,9 @@
                 tag="div"
                 class="share-tab-panel"
                 :initial="panelInitial('receive')"
-                :animate="panelAnimate"
+                :animate="panelAnimate()"
                 :exit="panelExit('receive')"
-                :transition="panelTransition"
+                :transition="panelTransition()"
               >
             <section class="settings-section">
               <div class="settings-section-header">

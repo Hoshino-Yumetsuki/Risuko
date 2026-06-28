@@ -16,6 +16,35 @@ const staleTuningKeys = [
 	"org.gradle.caching=true",
 ];
 
+function stripManagedBlock(content, tuning) {
+	const markerIndex = content.indexOf(marker);
+	if (markerIndex < 0) {
+		return content;
+	}
+	const prefix = content.slice(0, markerIndex);
+	const managedLines = new Set([
+		...tuning.split("\n").map((line) => line.trim()),
+		...staleTuningKeys,
+	]);
+	const rest = content.slice(markerIndex + marker.length).replace(/^\n+/, "");
+	const lines = rest.split("\n");
+	let start = 0;
+	while (start < lines.length) {
+		const trimmed = lines[start].trim();
+		if (
+			trimmed === "" ||
+			managedLines.has(trimmed) ||
+			staleTuningKeys.some((key) => trimmed.startsWith(key))
+		) {
+			start += 1;
+			continue;
+		}
+		break;
+	}
+	const suffix = lines.slice(start).join("\n").trim();
+	return suffix ? `${prefix.trimEnd()}\n\n${suffix}` : prefix.trimEnd();
+}
+
 export function patchAndroidGradle() {
 	if (!existsSync(gradleDir)) {
 		return false;
@@ -24,10 +53,7 @@ export function patchAndroidGradle() {
 	let content = existsSync(gradlePropsPath)
 		? readFileSync(gradlePropsPath, "utf8")
 		: "";
-	const markerIndex = content.indexOf(marker);
-	if (markerIndex >= 0) {
-		content = content.slice(0, markerIndex);
-	}
+	content = stripManagedBlock(content, tuning);
 	content = content
 		.split("\n")
 		.filter((line) => !staleTuningKeys.some((key) => line.trim().startsWith(key)))

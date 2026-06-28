@@ -35,6 +35,7 @@ use jni::{jni_sig, jni_str, Env, EnvUnowned, JValue, JavaVM};
 static JAVA_VM: OnceLock<JavaVM> = OnceLock::new();
 static ANDROID_APP: OnceLock<Global<JObject<'static>>> = OnceLock::new();
 static NDK_CONTEXT_READY: OnceLock<()> = OnceLock::new();
+static NDK_INIT: Mutex<()> = Mutex::new(());
 static DIRECTORY_PICKERS: OnceLock<
     Mutex<HashMap<String, tokio::sync::oneshot::Sender<Option<String>>>>,
 > = OnceLock::new();
@@ -70,6 +71,9 @@ pub fn ensure_ndk_context() -> Result<(), String> {
 }
 
 fn init_ndk_context(java_vm: *mut c_void) -> Result<(), String> {
+    let _guard = NDK_INIT
+        .lock()
+        .map_err(|e| format!("NDK init lock poisoned: {e}"))?;
     if NDK_CONTEXT_READY.get().is_some() {
         return Ok(());
     }

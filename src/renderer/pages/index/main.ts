@@ -204,7 +204,13 @@ async function init(config: AppConfig) {
 				// P2P file share link: risuko://share/<id>
 				if (url.startsWith("risuko://share/")) {
 					const rawId = url.slice("risuko://share/".length).split(/[?#]/)[0];
-					const shareId = decodeURIComponent(rawId || "").trim();
+					let shareId = "";
+					try {
+						shareId = decodeURIComponent(rawId || "").trim();
+					} catch (err) {
+						logger.warn("[Risuko] malformed share deep link:", sanitizeUrl(url), err);
+						continue;
+					}
 					if (shareId) {
 						try {
 							const { useShareStore } = await import("@/store/share");
