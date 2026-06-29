@@ -2783,11 +2783,11 @@ async fn run_speed_tracker(
         let armed =
             watchdog_active && (t > 0 || now.duration_since(started_at) >= unknown_len_grace);
         if armed {
-            if (ema.get() as u64) < stall.lowest_speed {
+            if ema.get() < stall.lowest_speed {
                 let started = below_since.get_or_insert(now);
                 if now.duration_since(*started) >= stall.timeout {
                     tracing::warn!(
-                        "Download stalled: EMA {:.0} B/s below {} B/s for {}s",
+                        "Download stalled: EMA {} B/s below {} B/s for {}s",
                         ema.get(),
                         stall.lowest_speed,
                         stall.timeout.as_secs(),

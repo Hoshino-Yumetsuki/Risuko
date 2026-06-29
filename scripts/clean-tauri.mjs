@@ -11,7 +11,7 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { existsSync, rmSync, statSync } from "node:fs";
+import { existsSync, readdirSync, rmSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 const ROOT = resolve(import.meta.dirname, "..");
@@ -26,15 +26,35 @@ const withAndroidRust = args.has("--android") || args.has("--all");
 const withIncremental = args.has("--incremental") || args.has("--all");
 const skipGradle = args.has("--keep-gradle");
 
-/** @type {{ label: string; path: string }[]} */
+/** @type {{ label: string; path: string; size: number }[]} */
 const removals = [];
+
+function dirSizeBytesRecursive(path) {
+	let total = 0;
+	for (const entry of readdirSync(path, { withFileTypes: true })) {
+		const child = join(path, entry.name);
+		if (entry.isDirectory()) {
+			total += dirSizeBytesRecursive(child);
+		} else if (entry.isFile()) {
+			total += statSync(child).size;
+		}
+	}
+	return total;
+}
 
 function dirSizeBytes(path) {
 	if (!existsSync(path)) return 0;
 	try {
-		const out = spawnSync("du", ["-sk", path], { encoding: "utf8" });
-		const kb = Number.parseInt(out.stdout.trim().split(/\s+/)[0] ?? "0", 10);
-		return Number.isFinite(kb) ? kb * 1024 : 0;
+		const stat = statSync(path);
+		if (!stat.isDirectory()) return stat.size;
+		if (process.platform !== "win32") {
+			const out = spawnSync("du", ["-sk", path], { encoding: "utf8" });
+			if (out.status === 0 && out.stdout) {
+				const kb = Number.parseInt(out.stdout.trim().split(/\s+/)[0] ?? "0", 10);
+				if (Number.isFinite(kb)) return kb * 1024;
+			}
+		}
+		return dirSizeBytesRecursive(path);
 	} catch {
 		return 0;
 	}
@@ -48,7 +68,9 @@ function formatBytes(bytes) {
 }
 
 function queue(path, label = path) {
-	if (existsSync(path)) removals.push({ path, label });
+	if (existsSync(path)) {
+		removals.push({ path, label, size: dirSizeBytes(path) });
+	}
 }
 
 function queueGradleArtifacts() {
@@ -89,8 +111,7 @@ function runCargoClean() {
 
 function removeQueued() {
 	let total = 0;
-	for (const { path, label } of removals) {
-		const size = dirSizeBytes(path);
+	for (const { path, label, size } of removals) {
 		total += size;
 		console.log(`${dryRun ? "[dry-run] " : ""}remove ${label} (${formatBytes(size)})`);
 		if (!dryRun) rmSync(path, { recursive: true, force: true });

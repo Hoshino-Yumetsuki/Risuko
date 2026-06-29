@@ -10,6 +10,7 @@ use super::super::core::lengths::{ChunkInfo, Lengths, ValidPieceIndex};
 /// request timeout. Returned by [`ChunkTracker::reclaim_stale`] so the
 /// torrent loop can also clear the piece's in-flight flag (so it becomes
 /// requestable again) and optionally free the peer's outstanding slot
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ReclaimedChunk {
     pub piece: u32,
     pub chunk_index: u32,
@@ -18,7 +19,7 @@ pub struct ReclaimedChunk {
     pub peer: u32,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChunkState {
     Missing,
     Requested { peer: u32, since: Instant },
@@ -33,6 +34,7 @@ pub struct ChunkRequest {
     pub prior_state: ChunkState,
 }
 
+#[derive(Debug)]
 pub struct ChunkTracker {
     lengths: Lengths,
     // chunk_index -> state. We allocate lazily per piece to avoid upfront

@@ -155,9 +155,18 @@ fn parse_speed_limit_str(s: &str) -> u64 {
         .saturating_mul(multiplier)
 }
 
-#[derive(Default)]
 pub struct SpeedEma {
     ema: f64,
+    initialized: bool,
+}
+
+impl Default for SpeedEma {
+    fn default() -> Self {
+        Self {
+            ema: 0.0,
+            initialized: false,
+        }
+    }
 }
 
 impl SpeedEma {
@@ -169,20 +178,22 @@ impl SpeedEma {
     }
 
     /// Feed `bytes` transferred over `elapsed_secs` and return the smoothed
-    /// speed in bytes/sec. Callers should only invoke this with `elapsed_secs > 0`.
+    /// speed in bytes/sec (truncated). Callers should only invoke this with
+    /// `elapsed_secs > 0`.
     pub fn update(&mut self, bytes: u64, elapsed_secs: f64) -> u64 {
         let instant = bytes as f64 / elapsed_secs;
-        self.ema = if self.ema < 1.0 {
-            instant
-        } else {
+        self.ema = if self.initialized {
             Self::ALPHA * instant + (1.0 - Self::ALPHA) * self.ema
+        } else {
+            self.initialized = true;
+            instant
         };
         self.ema as u64
     }
 
-    /// Current smoothed speed in bytes/sec.
-    pub fn get(&self) -> f64 {
-        self.ema
+    /// Current smoothed speed in bytes/sec (truncated, same as [`Self::update`]).
+    pub fn get(&self) -> u64 {
+        self.ema as u64
     }
 }
 
@@ -197,6 +208,15 @@ mod tests {
         assert_eq!(ema.update(1000, 1.0), 1000);
         let next = ema.update(2000, 1.0);
         assert!((1000..2000).contains(&next), "got {next}");
+    }
+
+    #[test]
+    fn speed_ema_does_not_reseed_after_decay_below_one() {
+        let mut ema = SpeedEma::new();
+        assert_eq!(ema.update(1, 10.0), 0); // 0.1 B/s
+        assert_eq!(ema.get(), 0);
+        let next = ema.update(1000, 1.0);
+        assert!(next > 0 && next < 1000, "expected EMA blend, got {next}");
     }
 
     #[test]

@@ -7,7 +7,7 @@ use std::time::Duration;
 
 /// BitTorrent session tuning passed from the user/system config. All
 /// fields are optional; missing entries fall back to `risuko-bt` defaults
-#[derive(Default)]
+#[derive(Clone, Debug, Default)]
 pub struct BtTuning {
     pub max_outstanding_per_peer: Option<usize>,
     pub max_peers_per_torrent: Option<usize>,
