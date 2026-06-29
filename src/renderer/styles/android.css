@@ -59,6 +59,7 @@
 	html.mobile-phone body {
 		background: var(--android-surface);
 		overscroll-behavior-y: contain;
+		touch-action: manipulation;
 	}
 
 	html.platform-android #app,
