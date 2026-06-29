@@ -15,15 +15,13 @@ use tokio::io::AsyncWriteExt;
 use tokio_util::sync::CancellationToken;
 
 use super::FtpUri;
-use crate::engine::speed_limiter::SpeedLimiter;
+use crate::engine::speed_limiter::{SpeedEma, SpeedLimiter};
 use crate::engine::ssh_known_hosts::TofuHandler;
 
 const PART_SUFFIX: &str = ".part";
 const BUF_SIZE: usize = 64 * 1024;
 const SFTP_READ_AHEAD: usize = 6;
-const SPEED_EMA_ALPHA: f64 = 0.3;
 
-#[derive(Debug)]
 struct SftpReadChunk {
     offset: u64,
     requested_len: usize,
@@ -269,7 +267,7 @@ pub async fn run_sftp_download(
     let mut bytes_downloaded = resume_offset;
     let mut last_speed_time = Instant::now();
     let mut interval_bytes: u64 = 0;
-    let mut ema_speed: f64 = 0.0;
+    let mut ema = SpeedEma::new();
     let mut next_read_offset = resume_offset;
     let mut saw_eof = false;
     let mut reads = FuturesUnordered::new();
@@ -336,11 +334,10 @@ pub async fn run_sftp_download(
                 // Update speed EMA every 500 ms
                 let elapsed = last_speed_time.elapsed();
                 if elapsed.as_millis() >= 500 {
-                    let secs = elapsed.as_secs_f64();
-                    let instant_speed = interval_bytes as f64 / secs;
-                    ema_speed =
-                        SPEED_EMA_ALPHA * instant_speed + (1.0 - SPEED_EMA_ALPHA) * ema_speed;
-                    speed.store(ema_speed as u64, Ordering::Relaxed);
+                    speed.store(
+                        ema.update(interval_bytes, elapsed.as_secs_f64()),
+                        Ordering::Relaxed,
+                    );
                     interval_bytes = 0;
                     last_speed_time = Instant::now();
                 }

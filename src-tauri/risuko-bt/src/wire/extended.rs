@@ -220,7 +220,6 @@ pub fn ut_metadata_reject(piece: i64) -> Bytes {
 
 /// Parse a `ut_metadata` message, returning the parsed header and any trailing
 /// data block (for DATA messages)
-#[derive(Debug)]
 pub struct UtMetadataMsg {
     pub msg_type: i64,
     pub piece: i64,

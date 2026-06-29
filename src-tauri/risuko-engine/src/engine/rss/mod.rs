@@ -3,7 +3,6 @@ pub mod rule_engine;
 pub mod types;
 
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::Value;
 use tokio::sync::Mutex;
@@ -21,12 +20,7 @@ const MAX_ITEMS_PER_FEED: usize = 500;
 const MAX_CONSECUTIVE_ERRORS: u32 = 5;
 const MAX_EPISODE_HISTORY: usize = 10_000;
 
-fn now_secs() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs()
-}
+use crate::engine::util::now_secs;
 
 fn item_id(guid_or_link: &str) -> String {
     use sha2::{Digest, Sha256};
@@ -1434,7 +1428,7 @@ fn decode_html_entities(s: &str) -> String {
 }
 
 /// What kind of payload an RSS item primarily represents
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum ItemKind {
     /// Real binary payload (torrent / video / audio / archive). Download the
     /// enclosure as-is

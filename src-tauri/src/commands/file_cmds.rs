@@ -16,7 +16,6 @@ const MAX_TORRENT_PREVIEW_PAGE_SIZE: usize = 2_000;
 const TEMP_DOWNLOAD_SUFFIX: &str = ".part";
 use crate::engine::CHUNK_META_SUFFIX;
 
-#[derive(Debug)]
 enum BencodeValue {
     Integer(i64),
     Bytes(Vec<u8>),
@@ -24,7 +23,7 @@ enum BencodeValue {
     Dictionary(BTreeMap<Vec<u8>, BencodeValue>),
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ResolvedTorrentFile {
     path: String,
@@ -32,7 +31,7 @@ pub struct ResolvedTorrentFile {
     name: String,
 }
 
-#[derive(Debug, Serialize, Clone)]
+#[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ResolvedTorrentItem {
     path: String,
@@ -47,7 +46,7 @@ pub struct ResolvedTorrentItem {
     select_ranges: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ResolvedTorrentPayload {
     files: Vec<ResolvedTorrentFile>,

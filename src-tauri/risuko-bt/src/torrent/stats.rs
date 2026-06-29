@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 /// Snapshot of a single connected peer for UI consumption
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct PeerSnapshot {
     pub addr: SocketAddr,
     /// Raw bitfield bytes; consumers can hex-encode for display
@@ -19,7 +19,7 @@ pub struct PeerSnapshot {
 }
 
 /// Exponential-moving-average speed tracker
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct SpeedSample {
     pub mbps: f32,
     // internal
@@ -53,18 +53,18 @@ impl SpeedSample {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub struct AggregatedLiveStats {
     /// Number of peers currently connected
     pub live: u32,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub struct Snapshot {
     pub peer_stats: AggregatedLiveStats,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub struct LiveStats {
     pub snapshot: Snapshot,
     pub download_speed: SpeedSample,
@@ -78,7 +78,7 @@ impl LiveStats {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct TorrentStats {
     pub total_bytes: u64,
     pub progress_bytes: u64,

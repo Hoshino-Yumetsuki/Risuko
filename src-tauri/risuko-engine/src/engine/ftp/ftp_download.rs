@@ -5,59 +5,16 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use serde_json::{Map, Value};
-use suppaftp::tokio::{AsyncFtpStream, AsyncRustlsConnector, AsyncRustlsFtpStream};
+use suppaftp::tokio::{AsyncFtpStream, AsyncRustlsFtpStream};
 use tokio::io::AsyncReadExt as _;
 use tokio::io::AsyncWriteExt;
 use tokio_util::sync::CancellationToken;
 
 use super::{FtpProtocol, FtpUri};
-use crate::engine::speed_limiter::SpeedLimiter;
+use crate::engine::speed_limiter::{SpeedEma, SpeedLimiter};
 
 const PART_SUFFIX: &str = ".part";
 const BUF_SIZE: usize = 64 * 1024;
-const SPEED_EMA_ALPHA: f64 = 0.3;
-
-/// TLS certificate verifier that accepts any certificate
-/// Used for FTPS servers with self-signed certificates
-#[derive(Debug)]
-struct AcceptAnyCert;
-
-impl rustls::client::danger::ServerCertVerifier for AcceptAnyCert {
-    fn verify_server_cert(
-        &self,
-        _end_entity: &rustls::pki_types::CertificateDer<'_>,
-        _intermediates: &[rustls::pki_types::CertificateDer<'_>],
-        _server_name: &rustls::pki_types::ServerName<'_>,
-        _ocsp_response: &[u8],
-        _now: rustls::pki_types::UnixTime,
-    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
-        Ok(rustls::client::danger::ServerCertVerified::assertion())
-    }
-
-    fn verify_tls12_signature(
-        &self,
-        _message: &[u8],
-        _cert: &rustls::pki_types::CertificateDer<'_>,
-        _dss: &rustls::DigitallySignedStruct,
-    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
-        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
-    }
-
-    fn verify_tls13_signature(
-        &self,
-        _message: &[u8],
-        _cert: &rustls::pki_types::CertificateDer<'_>,
-        _dss: &rustls::DigitallySignedStruct,
-    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
-        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
-    }
-
-    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
-        rustls::crypto::ring::default_provider()
-            .signature_verification_algorithms
-            .supported_schemes()
-    }
-}
 
 /// Macro to perform the FTP/FTPS download loop on a connected + logged-in stream
 /// Avoids duplicating the loop logic for `AsyncFtpStream` vs `AsyncRustlsFtpStream`
@@ -145,7 +102,7 @@ macro_rules! ftp_transfer {
             let mut buf = vec![0u8; BUF_SIZE];
             let mut last_speed_time = Instant::now();
             let mut interval_bytes: u64 = 0;
-            let mut ema_speed: f64 = 0.0;
+            let mut ema = SpeedEma::new();
 
             loop {
                 if $cancelled.load(Ordering::Relaxed) || $cancel_token.is_cancelled() {
@@ -178,11 +135,10 @@ macro_rules! ftp_transfer {
 
                 let elapsed = last_speed_time.elapsed();
                 if elapsed.as_millis() >= 500 {
-                    let secs = elapsed.as_secs_f64();
-                    let instant_speed = interval_bytes as f64 / secs;
-                    ema_speed =
-                        SPEED_EMA_ALPHA * instant_speed + (1.0 - SPEED_EMA_ALPHA) * ema_speed;
-                    $speed.store(ema_speed as u64, Ordering::Relaxed);
+                    $speed.store(
+                        ema.update(interval_bytes, elapsed.as_secs_f64()),
+                        Ordering::Relaxed,
+                    );
                     interval_bytes = 0;
                     last_speed_time = Instant::now();
                 }
@@ -264,26 +220,13 @@ pub async fn run_ftp_ftps_download(
         // Match aria2's `--check-certificate=true` default
         // Only accept self-signed or invalid certs when `check-certificate=false`
         let verify_cert = option_bool(options, "check-certificate", true);
-        let rustls_config = if verify_cert {
-            let root_store = rustls::RootCertStore {
-                roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
-            };
-            rustls::ClientConfig::builder()
-                .with_root_certificates(root_store)
-                .with_no_client_auth()
-        } else {
+        if !verify_cert {
             tracing::warn!(
                 "FTPS certificate verification disabled (check-certificate=false) for {}",
                 parsed.host
             );
-            rustls::ClientConfig::builder()
-                .dangerous()
-                .with_custom_certificate_verifier(Arc::new(AcceptAnyCert))
-                .with_no_client_auth()
-        };
-        let connector = AsyncRustlsConnector::from(suppaftp::tokio_rustls::TlsConnector::from(
-            Arc::new(rustls_config),
-        ));
+        }
+        let connector = super::tls::ftps_tls_connector(!verify_cert);
 
         let mut ftp = if parsed.port == 990 {
             AsyncRustlsFtpStream::connect_secure_implicit(&addr, connector, &parsed.host)

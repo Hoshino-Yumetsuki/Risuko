@@ -15,7 +15,6 @@ pub enum GnutellaError {
 
 /// Parsed `gnutella://` / `gnet://` content URI carrying SHA-1 / bitprint
 /// URN, optional display name, file size hint and the `uri-res/N2R` path
-#[derive(Debug, Clone, Default)]
 pub struct GnutellaLink {
     pub host: String,
     pub port: u16,

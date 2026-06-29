@@ -28,7 +28,6 @@ pub enum G2Error {
 
 /// Parsed `g2://` content URI carrying a SHA-1 URN, optional display name and
 /// file size hint
-#[derive(Debug, Clone, Default)]
 pub struct G2Link {
     pub host: String,
     pub port: u16,
@@ -158,11 +157,14 @@ pub async fn run_g2_download(
             }
         }
     });
-    let safe = sanitize(if link.file_name.is_empty() {
-        urn.trim_start_matches("urn:sha1:")
-    } else {
-        &link.file_name
-    });
+    let safe = crate::engine::util::safe_filename(
+        if link.file_name.is_empty() {
+            urn.trim_start_matches("urn:sha1:")
+        } else {
+            &link.file_name
+        },
+        "g2-download",
+    );
     let out_path = PathBuf::from(dir).join(safe);
     let download_result = fetch_by_urn(
         &link.host,
@@ -186,26 +188,6 @@ pub async fn run_g2_download(
     speed.store(0, Ordering::Relaxed);
     download_result?;
     Ok(out_path)
-}
-
-fn sanitize(name: &str) -> String {
-    let cleaned: String = name
-        .chars()
-        .map(|c| {
-            if c.is_control() || matches!(c, '/' | '\\' | ':' | '<' | '>' | '|' | '?' | '*' | '\0')
-            {
-                '_'
-            } else {
-                c
-            }
-        })
-        .collect();
-    let trimmed = cleaned.trim_matches('.');
-    if trimmed.is_empty() {
-        "g2-download".to_string()
-    } else {
-        trimmed.to_string()
-    }
 }
 
 #[cfg(test)]

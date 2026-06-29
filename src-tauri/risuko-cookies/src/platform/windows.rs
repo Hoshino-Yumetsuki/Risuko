@@ -30,8 +30,8 @@ fn decrypt_v10(data: &[u8], master_key: &[u8]) -> Result<Vec<u8>> {
     let nonce = Nonce::try_from(&data[3..15]).map_err(|_| eyre::eyre!("invalid nonce length"))?;
     let ciphertext = &data[15..];
 
-    let cipher = Aes256Gcm::new_from_slice(master_key)
-        .map_err(|_| eyre::eyre!("invalid aes key length"))?;
+    let cipher =
+        Aes256Gcm::new_from_slice(master_key).map_err(|_| eyre::eyre!("invalid aes key length"))?;
 
     cipher
         .decrypt(&nonce, ciphertext)

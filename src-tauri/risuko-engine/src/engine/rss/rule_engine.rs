@@ -332,7 +332,7 @@ pub fn episode_key_for(parsed: &ParsedMeta) -> Option<EpisodeKey> {
 }
 
 /// Decision for whether to download an item given an episode-history record
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum DedupeDecision {
     Download,
     Upgrade,

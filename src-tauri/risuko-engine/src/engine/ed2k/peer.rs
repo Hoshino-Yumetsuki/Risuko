@@ -7,7 +7,6 @@ use super::protocol::*;
 use super::types::*;
 
 /// Events from a peer connection
-#[derive(Debug)]
 pub enum PeerEvent {
     HelloAnswer,
     FileStatus {

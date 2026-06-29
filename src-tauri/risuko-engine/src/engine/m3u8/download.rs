@@ -9,7 +9,7 @@ use tokio_util::sync::CancellationToken;
 
 use super::parser::{self, ParsedPlaylist, Variant};
 use super::segment;
-use crate::engine::speed_limiter::SpeedLimiter;
+use crate::engine::speed_limiter::{SpeedEma, SpeedLimiter};
 
 static TEMP_DIR_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -192,8 +192,6 @@ fn check_cancelled(cancelled: &AtomicBool, cancel_token: &CancellationToken) -> 
     Ok(())
 }
 
-const SPEED_EMA_ALPHA: f64 = 0.3;
-
 async fn run_speed_tracker(
     completed: Arc<AtomicU64>,
     speed: Arc<AtomicU64>,
@@ -201,7 +199,7 @@ async fn run_speed_tracker(
 ) {
     let mut last_bytes = completed.load(Ordering::Relaxed);
     let mut last_time = tokio::time::Instant::now();
-    let mut ema_speed: f64 = 0.0;
+    let mut ema = SpeedEma::new();
     let mut interval = tokio::time::interval(std::time::Duration::from_millis(500));
 
     loop {
@@ -216,14 +214,7 @@ async fn run_speed_tracker(
 
         if elapsed > 0.0 {
             let delta = current.saturating_sub(last_bytes);
-            let instant_speed = delta as f64 / elapsed;
-
-            if ema_speed < 1.0 {
-                ema_speed = instant_speed;
-            } else {
-                ema_speed = SPEED_EMA_ALPHA * instant_speed + (1.0 - SPEED_EMA_ALPHA) * ema_speed;
-            }
-            speed.store(ema_speed as u64, Ordering::Relaxed);
+            speed.store(ema.update(delta, elapsed), Ordering::Relaxed);
             last_bytes = current;
             last_time = now;
         }

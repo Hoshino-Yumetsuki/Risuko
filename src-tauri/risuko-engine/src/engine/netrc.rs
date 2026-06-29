@@ -11,13 +11,13 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
-#[derive(Debug, Clone, Default)]
+#[derive(Default)]
 pub struct NetrcEntry {
     pub login: Option<String>,
     pub password: Option<String>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct Netrc {
     pub machines: HashMap<String, NetrcEntry>,
     pub default: Option<NetrcEntry>,

@@ -5,7 +5,6 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex as StdMutex};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -32,12 +31,7 @@ const UPLOAD_STORE_KEY: &str = "upload-sinks";
 /// Queued and active jobs are never evicted by this cap
 const MAX_TERMINAL_JOBS: usize = 200;
 
-fn now_secs() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs()
-}
+use crate::engine::util::now_secs;
 
 #[derive(Default, Serialize, Deserialize)]
 struct UploadStore {

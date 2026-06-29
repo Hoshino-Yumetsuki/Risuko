@@ -155,10 +155,49 @@ fn parse_speed_limit_str(s: &str) -> u64 {
         .saturating_mul(multiplier)
 }
 
+#[derive(Default)]
+pub struct SpeedEma {
+    ema: f64,
+}
+
+impl SpeedEma {
+    /// Smoothing factor: higher reacts faster to bursts, lower is smoother.
+    const ALPHA: f64 = 0.3;
+
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Feed `bytes` transferred over `elapsed_secs` and return the smoothed
+    /// speed in bytes/sec. Callers should only invoke this with `elapsed_secs > 0`.
+    pub fn update(&mut self, bytes: u64, elapsed_secs: f64) -> u64 {
+        let instant = bytes as f64 / elapsed_secs;
+        self.ema = if self.ema < 1.0 {
+            instant
+        } else {
+            Self::ALPHA * instant + (1.0 - Self::ALPHA) * self.ema
+        };
+        self.ema as u64
+    }
+
+    /// Current smoothed speed in bytes/sec.
+    pub fn get(&self) -> f64 {
+        self.ema
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn speed_ema_seeds_on_first_sample() {
+        let mut ema = SpeedEma::new();
+        assert_eq!(ema.update(1000, 1.0), 1000);
+        let next = ema.update(2000, 1.0);
+        assert!((1000..2000).contains(&next), "got {next}");
+    }
 
     #[test]
     fn parse_limits() {
@@ -176,7 +215,6 @@ mod tests {
     #[tokio::test]
     async fn unlimited_returns_immediately() {
         let lim = SpeedLimiter::new(0);
-        // Should not block even for very large requests.
         let start = std::time::Instant::now();
         lim.acquire(10 * 1024 * 1024).await;
         assert!(start.elapsed() < std::time::Duration::from_millis(100));

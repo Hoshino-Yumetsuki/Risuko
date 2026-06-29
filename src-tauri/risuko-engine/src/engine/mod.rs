@@ -22,6 +22,7 @@ pub mod task;
 pub mod torrent;
 pub mod upload;
 pub mod uri_selector;
+pub(crate) mod util;
 
 // Legacy P2P / IPC protocol stacks
 pub mod adc;
