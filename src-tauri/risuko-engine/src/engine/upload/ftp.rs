@@ -1,6 +1,5 @@
 //! FTP / FTPS upload sink. Reuses suppaftp + rustls
 
-use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -10,43 +9,6 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use super::sink::{FtpConfig, UploadControl, UploadFile, UploadSink};
 
 const COPY_BUF: usize = 64 * 1024;
-
-#[derive(Debug)]
-struct AcceptAnyCert;
-
-impl rustls::client::danger::ServerCertVerifier for AcceptAnyCert {
-    fn verify_server_cert(
-        &self,
-        _: &rustls::pki_types::CertificateDer<'_>,
-        _: &[rustls::pki_types::CertificateDer<'_>],
-        _: &rustls::pki_types::ServerName<'_>,
-        _: &[u8],
-        _: rustls::pki_types::UnixTime,
-    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
-        Ok(rustls::client::danger::ServerCertVerified::assertion())
-    }
-    fn verify_tls12_signature(
-        &self,
-        _: &[u8],
-        _: &rustls::pki_types::CertificateDer<'_>,
-        _: &rustls::DigitallySignedStruct,
-    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
-        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
-    }
-    fn verify_tls13_signature(
-        &self,
-        _: &[u8],
-        _: &rustls::pki_types::CertificateDer<'_>,
-        _: &rustls::DigitallySignedStruct,
-    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
-        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
-    }
-    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
-        rustls::crypto::ring::default_provider()
-            .signature_verification_algorithms
-            .supported_schemes()
-    }
-}
 
 pub struct FtpSink {
     cfg: FtpConfig,
@@ -98,22 +60,7 @@ impl FtpSink {
     }
 
     fn tls_connector(&self) -> AsyncRustlsConnector {
-        let builder = rustls::ClientConfig::builder();
-        let rustls_cfg = if self.cfg.insecure {
-            // Explicit user opt-in to skip verification (self-signed homelab)
-            builder
-                .dangerous()
-                .with_custom_certificate_verifier(Arc::new(AcceptAnyCert))
-                .with_no_client_auth()
-        } else {
-            // Default: verify against the bundled Mozilla root store
-            let mut roots = rustls::RootCertStore::empty();
-            roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-            builder.with_root_certificates(roots).with_no_client_auth()
-        };
-        AsyncRustlsConnector::from(suppaftp::tokio_rustls::TlsConnector::from(Arc::new(
-            rustls_cfg,
-        )))
+        crate::engine::ftp::tls::ftps_tls_connector(self.cfg.insecure)
     }
 }
 

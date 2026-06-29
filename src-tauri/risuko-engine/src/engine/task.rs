@@ -55,7 +55,7 @@ pub enum TaskKind {
     Gift,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DownloadFile {
     pub index: String,
@@ -67,14 +67,14 @@ pub struct DownloadFile {
     pub uris: Vec<FileUri>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FileUri {
     pub uri: String,
     pub status: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PeerInfo {
     pub peer_id: String,
@@ -88,13 +88,13 @@ pub struct PeerInfo {
     pub seeder: String,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub struct ChunkProgress {
     pub completed: u64,
     pub total: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct DownloadTask {
     pub gid: String,
     pub status: TaskStatus,
@@ -836,12 +836,7 @@ pub fn generate_gid() -> String {
     s
 }
 
-fn now_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0)
-}
+use crate::engine::util::now_ms;
 
 #[cfg(test)]
 mod tests {

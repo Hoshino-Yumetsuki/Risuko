@@ -1,5 +1,6 @@
 mod ftp_download;
 mod sftp_download;
+pub(crate) mod tls;
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64};

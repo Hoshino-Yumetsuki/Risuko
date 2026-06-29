@@ -9,7 +9,7 @@ use super::task::{DownloadTask, TaskStatus};
 pub const SESSION_FILENAME: &str = "engine-session.json";
 
 /// JSON-based session persistence
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Serialize, Deserialize)]
 pub struct SessionData {
     pub version: u32,
     pub tasks: Vec<DownloadTask>,

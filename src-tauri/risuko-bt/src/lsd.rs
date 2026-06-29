@@ -306,7 +306,7 @@ async fn recv_loop(sock: Arc<UdpSocket>, inner: Arc<LsdInner>) {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Default)]
 struct AnnounceMsg {
     port: u16,
     info_hashes: Vec<Id20>,

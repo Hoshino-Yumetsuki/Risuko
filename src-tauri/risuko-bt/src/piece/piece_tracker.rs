@@ -15,7 +15,6 @@
 
 use super::super::core::lengths::{Lengths, ValidPieceIndex};
 
-#[derive(Debug)]
 pub struct PieceTracker {
     lengths: Lengths,
     have_local: Vec<bool>,

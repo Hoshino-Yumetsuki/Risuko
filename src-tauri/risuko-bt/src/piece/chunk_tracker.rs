@@ -26,7 +26,6 @@ pub enum ChunkState {
     Received,
 }
 
-#[derive(Debug, Clone, Copy)]
 pub struct ChunkRequest {
     pub info: ChunkInfo,
     /// State that was overwritten when this request was issued. Used by

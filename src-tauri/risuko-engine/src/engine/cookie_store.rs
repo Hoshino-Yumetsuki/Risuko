@@ -18,7 +18,8 @@ use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+
+use crate::engine::util::now_secs;
 
 const STORE_FILE: &str = "browser_cookies.json";
 const MAX_ENTRIES: usize = 200;
@@ -208,13 +209,6 @@ fn host_matches(request_host: &str, entry_host: &str) -> bool {
     r.ends_with(&format!(".{e}"))
 }
 
-fn now_secs() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
-}
-
 fn load_from_disk(path: &Path) -> Result<StoreFile, String> {
     if !path.exists() {
         return Ok(StoreFile::default());
@@ -258,10 +252,7 @@ fn write_to_disk(path: &Path, state: &StoreFile) -> Result<(), String> {
 /// browser_cookies.json file is the canonical one we don't want to
 /// overwrite when load fails, so we move it aside before starting fresh
 fn corrupt_backup_path(path: &Path) -> std::path::PathBuf {
-    let stamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+    let stamp = now_secs();
     let mut candidate = path.with_extension(format!("json.corrupt-{stamp}"));
     // Extremely unlikely to collide, but be defensive in case the user
     // already has a stale backup with the same timestamp

@@ -19,7 +19,6 @@ use crate::engine::options::EngineOptions;
 
 /// Parsed `gift://` URI; the part after the scheme is forwarded verbatim
 /// to the local giFT daemon as the inner network/file identifier
-#[derive(Debug, Clone, Default)]
 pub struct GiftLink {
     pub inner: String,
 }
@@ -102,7 +101,8 @@ pub async fn run_gift_download(
         .map_err(|e| e.to_string())?;
 
     // TRANSFER ADD url="..." path="..."
-    let safe_name = sanitize(&extract_gift_name(&link.inner));
+    let safe_name =
+        crate::engine::util::safe_filename(&extract_gift_name(&link.inner), "gift-download");
     let out_path = out_dir.join(&safe_name);
     let out_path_str = out_path.display().to_string();
     if out_path_str
@@ -203,26 +203,6 @@ pub fn extract_gift_name(inner: &str) -> String {
         }
     }
     "gift-download".to_string()
-}
-
-fn sanitize(name: &str) -> String {
-    let cleaned: String = name
-        .chars()
-        .map(|c| {
-            if c.is_control() || matches!(c, '/' | '\\' | ':' | '<' | '>' | '|' | '?' | '*' | '\0')
-            {
-                '_'
-            } else {
-                c
-            }
-        })
-        .collect();
-    let trimmed = cleaned.trim_matches('.');
-    if trimmed.is_empty() {
-        "gift-download".to_string()
-    } else {
-        trimmed.to_string()
-    }
 }
 
 #[cfg(test)]

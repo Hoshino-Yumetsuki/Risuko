@@ -1,7 +1,7 @@
 use url::Url;
 
 /// Parsed representation of an M3U8 playlist
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum ParsedPlaylist {
     Master {
         variants: Vec<Variant>,
@@ -15,7 +15,7 @@ pub enum ParsedPlaylist {
 }
 
 /// A variant stream in a master playlist
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Variant {
     pub bandwidth: u64,
     pub resolution: Option<String>,
@@ -24,7 +24,7 @@ pub struct Variant {
 }
 
 /// A media segment in a media playlist
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Segment {
     pub url: String,
     pub byte_range: Option<ByteRange>,
@@ -32,14 +32,14 @@ pub struct Segment {
 }
 
 /// Byte range for partial segment requests
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ByteRange {
     pub length: u64,
     pub offset: u64,
 }
 
 /// Encryption info for AES-128-CBC decryption
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct EncryptionInfo {
     pub method: String,
     pub key_uri: String,

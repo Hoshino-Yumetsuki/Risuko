@@ -14,7 +14,7 @@ use risuko_http::Client;
 use serde_json::{Map, Value};
 use tokio_util::sync::CancellationToken;
 
-use super::speed_limiter::{parse_speed_limit, SpeedLimiter};
+use super::speed_limiter::{parse_speed_limit, SpeedEma, SpeedLimiter};
 
 const PART_SUFFIX: &str = ".part";
 /// Default minimum segment size when `min-split-size` is not set: 1 MiB
@@ -36,13 +36,11 @@ const META_VERSION: u32 = 2;
 const META_SAVE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2);
 /// Error substring returned when a stale .part was removed
 const STALE_PART_REMOVED: &str = "stale partial file removed";
-/// Exponential moving average smoothing factor for speed reporting
-const SPEED_EMA_ALPHA: f64 = 0.3;
 /// Suffix for per-chunk resume metadata file
 use super::CHUNK_META_SUFFIX;
 
 /// Inclusive byte range [start, end]
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy)]
 struct ChunkRange {
     start: u64,
     end: u64,
@@ -1308,7 +1306,6 @@ async fn run_single_uri_download(
 }
 
 /// Result from probing range support: content length + optional ETag
-#[derive(Clone, Default)]
 struct ProbeResult {
     content_length: u64,
     etag: Option<String>,
@@ -2752,7 +2749,7 @@ async fn run_speed_tracker(
     let started_at = tokio::time::Instant::now();
     let mut last_bytes = completed.load(Ordering::Relaxed);
     let mut last_time = started_at;
-    let mut ema_speed: f64 = 0.0;
+    let mut ema = SpeedEma::new();
     let mut interval = tokio::time::interval(std::time::Duration::from_millis(250));
 
     // Watchdog state. `below_since` records when the EMA first dropped below
@@ -2777,14 +2774,7 @@ async fn run_speed_tracker(
 
         if elapsed > 0.0 {
             let delta = current.saturating_sub(last_bytes);
-            let instant_speed = delta as f64 / elapsed;
-
-            if ema_speed < 1.0 {
-                ema_speed = instant_speed;
-            } else {
-                ema_speed = SPEED_EMA_ALPHA * instant_speed + (1.0 - SPEED_EMA_ALPHA) * ema_speed;
-            }
-            speed.store(ema_speed as u64, Ordering::Relaxed);
+            speed.store(ema.update(delta, elapsed), Ordering::Relaxed);
             last_bytes = current;
             last_time = now;
         }
@@ -2793,12 +2783,12 @@ async fn run_speed_tracker(
         let armed =
             watchdog_active && (t > 0 || now.duration_since(started_at) >= unknown_len_grace);
         if armed {
-            if (ema_speed as u64) < stall.lowest_speed {
+            if ema.get() < stall.lowest_speed {
                 let started = below_since.get_or_insert(now);
                 if now.duration_since(*started) >= stall.timeout {
                     tracing::warn!(
-                        "Download stalled: EMA {:.0} B/s below {} B/s for {}s",
-                        ema_speed,
+                        "Download stalled: EMA {} B/s below {} B/s for {}s",
+                        ema.get(),
                         stall.lowest_speed,
                         stall.timeout.as_secs(),
                     );

@@ -7,7 +7,6 @@ use super::protocol::*;
 use super::types::*;
 
 /// Events emitted by the server connection
-#[derive(Debug)]
 pub enum ServerEvent {
     Connected {
         client_id: u32,

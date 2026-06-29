@@ -61,6 +61,11 @@ class MainActivity : TauriActivity() {
 
   override fun onWebViewCreate(webView: WebView) {
     appWebView = webView as? RustWebView
+    webView.settings.apply {
+      setSupportZoom(false)
+      builtInZoomControls = false
+      displayZoomControls = false
+    }
   }
 
   override fun onDestroy() {

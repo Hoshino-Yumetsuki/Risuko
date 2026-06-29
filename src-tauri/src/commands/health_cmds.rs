@@ -55,7 +55,7 @@ impl HealthStatus {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HealthFix {
     pub kind: &'static str,
@@ -83,7 +83,7 @@ impl HealthFix {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HealthCheck {
     pub id: String,
@@ -129,7 +129,7 @@ impl HealthCheck {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HealthCategory {
     pub id: &'static str,
@@ -147,7 +147,7 @@ impl HealthCategory {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HealthReport {
     pub generated_at_ms: u64,

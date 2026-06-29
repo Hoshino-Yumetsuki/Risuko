@@ -12,7 +12,7 @@ const DEFAULT_TIMEOUT_MS: u64 = 30_000;
 const MAX_TIMEOUT_MS: u64 = 5 * 60_000;
 const MAX_OUTPUT_BYTES: usize = 8 * 1024;
 
-#[derive(Debug, Default, Clone)]
+#[derive(Default)]
 struct ScriptConfig {
     enabled: bool,
     command: String,
@@ -87,7 +87,7 @@ fn build_args(template: &str, path: &str, hash: &str, status: &str) -> Vec<Strin
         .collect()
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Serialize)]
 pub struct ScriptRunResult {
     success: bool,
     exit_code: Option<i32>,
@@ -165,7 +165,7 @@ async fn execute(
 /// Per-task overrides for the completion script. Any field set takes
 /// precedence over the saved global preference. `enabled = Some(false)`
 /// fully disables the script for that task even when globally enabled
-#[derive(Debug, Default, Clone, serde::Deserialize)]
+#[derive(Default, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CompletionScriptOverrides {
     pub enabled: Option<bool>,

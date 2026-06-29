@@ -32,14 +32,14 @@ impl Strategy {
     }
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Default)]
 pub struct ServerStat {
     pub fail_count: u32,
     pub last_fail: Option<Instant>,
     pub ema_bps: f64,
 }
 
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct ServerStats {
     by_host: HashMap<String, ServerStat>,
 }
