@@ -435,14 +435,7 @@ export default defineComponent({
 			);
 		},
 		activeSendUrl(): string {
-			const send = this.activeSend;
-			if (!send) {
-				return "";
-			}
-			if (send.deviceCode) {
-				return `${this.store.serverUrl.replace(/\/$/, "")}/share/${send.deviceCode}`;
-			}
-			return send.url || "";
+			return this.activeSend?.url || "";
 		},
 		otherTransfers(): ShareTransfer[] {
 			const activeId = this.activeSend?.id;

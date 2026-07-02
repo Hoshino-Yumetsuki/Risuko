@@ -61,7 +61,6 @@ interface ShareEventPayload {
 interface ResolvedSession {
 	shareId: string;
 	deviceCode: string;
-	direction: ShareDirection;
 	ticket: string | null;
 	files: ShareFile[];
 	expiresAt: number;
@@ -148,12 +147,6 @@ export const useShareStore = defineStore("share", {
 	getters: {
 		serverUrl(): string {
 			return useAuthStore().serverUrl;
-		},
-		activeTransfers(): ShareTransfer[] {
-			return this.transfers.filter(
-				(t) =>
-					!["completed", "terminated", "error", "cancelled"].includes(t.status),
-			);
 		},
 	},
 	actions: {
@@ -276,6 +269,7 @@ export const useShareStore = defineStore("share", {
 					total: info.files.reduce((sum, f) => sum + (f.size || 0), 0),
 				});
 
+				// direction kept for backend deployments that still validate it
 				const { data } = await shareAxios.post(
 					`${this.serverUrl}/share`,
 					{ direction: "send", ticket: info.ticket, files: info.files },
@@ -284,9 +278,7 @@ export const useShareStore = defineStore("share", {
 				this.patchTransfer(id, {
 					shareId: data.shareId,
 					deviceCode: data.deviceCode,
-					url: data.deviceCode
-						? `${this.serverUrl.replace(/\/$/, "")}/share/${data.deviceCode}`
-						: data.url,
+					url: data.url,
 					status: "waiting",
 				});
 			} catch (err) {
@@ -370,14 +362,7 @@ export const useShareStore = defineStore("share", {
 			}
 			await this.ensureListener();
 
-			let ticket = session.ticket;
-			let files = session.files;
-
-			if (!ticket) {
-				const resolved = await this.waitForTicket(session.shareId);
-				ticket = resolved.ticket;
-				files = resolved.files;
-			}
+			const { ticket, files } = session;
 			if (!ticket) {
 				throw new Error("Sender has not shared any files yet");
 			}
@@ -412,20 +397,6 @@ export const useShareStore = defineStore("share", {
 				throw new Error(message);
 			}
 			return id;
-		},
-
-		async waitForTicket(
-			shareId: string,
-			attempts = 60,
-		): Promise<ResolvedSession> {
-			for (let i = 0; i < attempts; i += 1) {
-				const session = await this.resolveById(shareId);
-				if (session.ticket) {
-					return session;
-				}
-				await new Promise((resolve) => setTimeout(resolve, 2000));
-			}
-			throw new Error("Timed out waiting for the sender");
 		},
 
 		async cancel(id: string): Promise<void> {
