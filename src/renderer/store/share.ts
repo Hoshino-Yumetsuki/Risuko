@@ -136,11 +136,11 @@ function newId(): string {
 }
 
 function isTerminalShareResolveError(err: unknown): boolean {
-	if (!axios.isAxiosError(err)) {
+	if (!axios.isAxiosError(err) || !err.response?.status) {
 		return false;
 	}
-	const status = err.response?.status;
-	return status === 401 || status === 403 || status === 404;
+	const status = err.response.status;
+	return status >= 400 && status < 500 && status !== 429;
 }
 
 export const useShareStore = defineStore("share", {
