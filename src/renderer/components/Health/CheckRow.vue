@@ -5,7 +5,6 @@
     </span>
     <div class="health-row-body">
       <div class="health-row-message">{{ check.message }}</div>
-      <div v-if="check.hint" class="health-row-hint">{{ check.hint }}</div>
     </div>
     <button
       v-if="check.fix"
@@ -32,7 +31,7 @@ import type {
 } from "@shared/types/health";
 import type { PropType } from "vue";
 
-const ICON: Record<HealthStatus, unknown> = {
+export const STATUS_ICON: Record<HealthStatus, unknown> = {
 	ok: CheckCircle2,
 	warn: AlertTriangle,
 	fail: XCircle,
@@ -40,7 +39,7 @@ const ICON: Record<HealthStatus, unknown> = {
 };
 
 export default {
-	name: "mo-health-check-row",
+	name: "health-check-row",
 	props: {
 		check: {
 			type: Object as PropType<HealthCheck>,
@@ -50,7 +49,7 @@ export default {
 	emits: ["fix"] as unknown as { fix: (fix: HealthFix) => void },
 	computed: {
 		icon() {
-			return ICON[this.check.status as HealthStatus];
+			return STATUS_ICON[this.check.status as HealthStatus];
 		},
 	},
 };
@@ -61,19 +60,16 @@ export default {
 	display: flex;
 	align-items: flex-start;
 	gap: 10px;
-	padding: 10px 14px 10px 58px;
+	padding: 9px 14px 9px 41px;
 	border-top: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
-}
-.health-row:first-child {
-	border-top: none;
 }
 .health-row-icon {
 	margin-top: 2px;
 	display: inline-flex;
 }
-.health-row-ok .health-row-icon { color: #16a34a; }
-.health-row-warn .health-row-icon { color: #d97706; }
-.health-row-fail .health-row-icon { color: #dc2626; }
+.health-row-ok .health-row-icon { color: var(--success); }
+.health-row-warn .health-row-icon { color: var(--warning); }
+.health-row-fail .health-row-icon { color: var(--danger); }
 .health-row-skipped .health-row-icon { color: var(--muted-foreground); }
 .health-row-body {
 	flex: 1;
@@ -84,11 +80,6 @@ export default {
 	color: var(--foreground);
 	overflow-wrap: anywhere;
 	line-height: 1.45;
-}
-.health-row-hint {
-	margin-top: 2px;
-	font-size: 12px;
-	color: var(--muted-foreground);
 }
 .health-row-fix {
 	flex-shrink: 0;

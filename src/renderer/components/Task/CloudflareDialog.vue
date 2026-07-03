@@ -29,10 +29,6 @@
             <span class="text-[11px] text-muted-foreground">
               {{ $t('task.task-cloudflare-pick-browser') }}
             </span>
-            <!-- Always render the same 2-column grid so the dialog height
-                 doesn't jump from "Loading…" (one line) to a 6-row list
-                 once the rookie call resolves. Empty slots act as height
-                 placeholders during the initial load -->
             <div class="grid grid-cols-2 gap-1">
               <template v-if="loadingBrowsers">
                 <div
@@ -71,10 +67,6 @@
             </div>
           </div>
 
-          <!-- Imported preview. Always present so the dialog height is
-               stable across phases; inner blocks toggle on `imported`.
-               The card itself avoids motion-v on purpose; opacity is
-               the only transition we ride here -->
           <div
             class="rounded-md flex flex-col gap-2 border border-border/60 bg-muted/30 p-2 transition-opacity"
             :class="imported ? 'opacity-100' : 'opacity-60'"
@@ -97,8 +89,6 @@
               >
                 {{ $t('task.task-cloudflare-no-clearance-badge') }}
               </span>
-              <!-- Invisible badge placeholder so the row height matches
-                   the imported state and nothing shifts around -->
               <span
                 v-else
                 aria-hidden="true"
@@ -155,8 +145,6 @@
                 </table>
               </div>
             </details>
-            <!-- Reserve the same vertical slot when no preview is loaded
-                 yet so the surrounding layout doesn't jump on Preview -->
             <div
               v-else
               aria-hidden="true"
@@ -195,9 +183,6 @@
           <ExternalLink :size="12" class="mr-1" />
           {{ $t('task.task-cloudflare-open-browser') }}
         </UiButton>
-        <!-- One primary action: preview if we haven't, then retry. The
-             label shifts so the user always knows what the next click
-             will do without juggling two buttons -->
         <UiButton
           type="button"
           size="sm"
@@ -244,14 +229,8 @@ import { useAppStore } from "@/store/app";
 import { usePreferenceStore } from "@/store/preference";
 import { openItem } from "@/utils/native";
 
-// Module-level cache: rookie probes the same set of profiles on every
-// `listBrowsers` call. Once we've seen them we keep the list around so
-// reopening the dialog avoids a second loading flicker
 let cachedBrowsers: BrowserInfo[] | null = null;
 
-// Default skeleton row count per host platform. Matches the browser
-// list `risuko-cookies` exposes for that OS so the placeholder grid
-// has the same height the real list will land at
 const platformSlotCount = (): number => {
 	if (typeof navigator === "undefined") {
 		return 10;
@@ -270,7 +249,7 @@ const platformSlotCount = (): number => {
 };
 
 export default {
-	name: "mo-cloudflare-dialog",
+	name: "cloudflare-dialog",
 	components: {
 		Dialog,
 		DialogContent,
@@ -342,10 +321,6 @@ export default {
 				this.refreshBrowsers();
 				this.skipForDomain = false;
 				this.imported = null;
-				// Pre-fill the UA field with the user's saved global default
-				// so the dialog doesn't open with an empty box. Capture or
-				// import will overwrite this; user edits stay sticky once
-				// the field has been touched
 				this.userAgentDraft =
 					(usePreferenceStore().config.userAgent as string | undefined) || "";
 			} else {
@@ -355,9 +330,6 @@ export default {
 	},
 	methods: {
 		async refreshBrowsers() {
-			// Show the cached list immediately on reopens; the rookie
-			// probe still re-runs in the background to pick up
-			// newly-installed browsers without flickering the UI
 			if (cachedBrowsers && cachedBrowsers.length > 0) {
 				this.browsers = cachedBrowsers;
 				this.loadingBrowsers = false;
@@ -383,8 +355,6 @@ export default {
 		selectBrowser(b: BrowserInfo) {
 			if (this.selectedBrowser !== b.id) {
 				this.selectedBrowser = b.id;
-				// Drop the previous browser's preview so the user can't
-				// accidentally retry with cookies from a different browser
 				this.imported = null;
 				this.userAgentDraft =
 					(usePreferenceStore().config.userAgent as string | undefined) || "";
@@ -422,9 +392,6 @@ export default {
 				if (userAgent) {
 					this.userAgentDraft = userAgent;
 					logger.log(`[Risuko] CF dialog: captured ua=${userAgent}`);
-					// Promote the captured value to the global default so
-					// the next task (and the add-task dialog) picks it up
-					// without the user pasting again
 					try {
 						await usePreferenceStore().save({ userAgent });
 						toast.success(this.$t("task.task-cloudflare-ua-captured-saved"), {
@@ -472,9 +439,6 @@ export default {
 					},
 				);
 				this.imported = imported;
-				// Don't clobber what's already in the field (user paste,
-				// captured value, or saved default). Only fall back to the
-				// crate's canned UA when the textarea is genuinely empty
 				if (!(this.userAgentDraft || "").trim()) {
 					this.userAgentDraft = imported.userAgent || "";
 				}
@@ -498,8 +462,6 @@ export default {
 			}
 			this.retrying = true;
 			try {
-				// Persist the entry now (preview skipped persist) with
-				// the user-edited UA so future tasks reuse the matching pair
 				await api.importBrowserCookies({
 					browser: this.selectedBrowser,
 					url: this.url || `https://${this.host}`,

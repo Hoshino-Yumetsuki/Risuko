@@ -3,13 +3,13 @@
     <div v-if="isLoading" class="webview-loading">
       <div class="webview-spinner" />
     </div>
-    <iframe class="mo-webview" ref="iframe" :src="src" @load="onLoad"></iframe>
+    <iframe class="webview-frame" ref="iframe" :src="src" @load="onLoad"></iframe>
   </div>
 </template>
 
 <script lang="ts">
 export default {
-	name: "mo-browser",
+	name: "embedded-browser",
 	props: {
 		src: {
 			type: String,

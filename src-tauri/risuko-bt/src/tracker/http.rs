@@ -65,65 +65,44 @@ fn build_query(req: &AnnounceRequest) -> String {
 
 fn parse_response(bytes: &[u8]) -> Result<AnnounceResponse, TrackerError> {
     let value = decode_all(bytes)?;
-    let dict = value
+    value
         .as_dict()
         .ok_or_else(|| TrackerError::Rejected("response not a dict".into()))?;
 
-    if let Some(reason) = dict
-        .iter()
-        .find(|(k, _)| k == b"failure reason")
-        .and_then(|(_, v)| v.as_str())
-    {
+    if let Some(reason) = value.get(b"failure reason").and_then(|v| v.as_str()) {
         return Err(TrackerError::Rejected(reason.to_string()));
     }
 
-    let interval = dict
-        .iter()
-        .find(|(k, _)| k == b"interval")
-        .and_then(|(_, v)| v.as_int())
+    let interval = value
+        .get(b"interval")
+        .and_then(|v| v.as_int())
         .unwrap_or(1800)
         .max(1) as u64;
 
-    let seeders = dict
-        .iter()
-        .find(|(k, _)| k == b"complete")
-        .and_then(|(_, v)| v.as_int())
+    let seeders = value
+        .get(b"complete")
+        .and_then(|v| v.as_int())
         .and_then(|n| u32::try_from(n).ok());
-    let leechers = dict
-        .iter()
-        .find(|(k, _)| k == b"incomplete")
-        .and_then(|(_, v)| v.as_int())
+    let leechers = value
+        .get(b"incomplete")
+        .and_then(|v| v.as_int())
         .and_then(|n| u32::try_from(n).ok());
 
     let mut peers = Vec::new();
     // Compact IPv4 (BEP-23): 6 bytes per peer
-    if let Some(raw) = dict
-        .iter()
-        .find(|(k, _)| k == b"peers")
-        .and_then(|(_, v)| v.as_bytes())
-    {
+    if let Some(raw) = value.get(b"peers").and_then(|v| v.as_bytes()) {
         for chunk in raw.chunks_exact(6) {
             let ip = Ipv4Addr::new(chunk[0], chunk[1], chunk[2], chunk[3]);
             let port = u16::from_be_bytes([chunk[4], chunk[5]]);
             peers.push(SocketAddr::new(IpAddr::V4(ip), port));
         }
-    } else if let Some(list) = dict
-        .iter()
-        .find(|(k, _)| k == b"peers")
-        .and_then(|(_, v)| v.as_list())
-    {
+    } else if let Some(list) = value.get(b"peers").and_then(|v| v.as_list()) {
         // Dictionary model (BEP-3 original). Each entry is a dict with
         // `ip` and `port` keys
         for entry in list {
-            if let Some(d) = entry.as_dict() {
-                let ip = d
-                    .iter()
-                    .find(|(k, _)| k == b"ip")
-                    .and_then(|(_, v)| v.as_str());
-                let port = d
-                    .iter()
-                    .find(|(k, _)| k == b"port")
-                    .and_then(|(_, v)| v.as_int());
+            if entry.as_dict().is_some() {
+                let ip = entry.get(b"ip").and_then(|v| v.as_str());
+                let port = entry.get(b"port").and_then(|v| v.as_int());
                 if let (Some(ip), Some(port)) = (ip, port) {
                     if let Ok(ip) = ip.parse::<IpAddr>() {
                         if let Ok(port) = u16::try_from(port) {
@@ -136,11 +115,7 @@ fn parse_response(bytes: &[u8]) -> Result<AnnounceResponse, TrackerError> {
     }
 
     // Compact IPv6 (BEP-7): 18 bytes per peer
-    if let Some(raw) = dict
-        .iter()
-        .find(|(k, _)| k == b"peers6")
-        .and_then(|(_, v)| v.as_bytes())
-    {
+    if let Some(raw) = value.get(b"peers6").and_then(|v| v.as_bytes()) {
         for chunk in raw.chunks_exact(18) {
             let mut octets = [0u8; 16];
             octets.copy_from_slice(&chunk[..16]);

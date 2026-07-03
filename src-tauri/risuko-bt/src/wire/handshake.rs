@@ -1,4 +1,4 @@
-//! BitTorrent handshake (BEP-3): 68 bytes total.
+//! BitTorrent handshake (BEP-3): 68 bytes total
 //!
 //! ```text
 //!   1   byte   length of protocol string (always 19)
@@ -18,14 +18,12 @@ pub const HANDSHAKE_LEN: usize = 1 + 19 + 8 + 20 + 20;
 pub mod reserved {
     /// Bit 20 (byte 5, bit 0x10) — BEP-10 Extension Protocol
     pub const EXT_PROTOCOL: (usize, u8) = (5, 0x10);
-    /// Last bit — BEP-5 DHT
-    pub const DHT: (usize, u8) = (7, 0x01);
-    /// Bit 2 of byte 7 — BEP-6 Fast extension
-    pub const FAST: (usize, u8) = (7, 0x04);
     /// Bit 3 of byte 7 (0x08) — BEP 52 BitTorrent v2 capable
     /// Matches libtorrent's choice for maximum interop. The bit position
     /// is not yet ratified; flip this single constant if it shifts
     pub const V2: (usize, u8) = (7, 0x08);
+    pub const DHT: (usize, u8) = (7, 0x01);
+    pub const FAST: (usize, u8) = (7, 0x04);
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -34,8 +32,6 @@ pub enum HandshakeError {
     BadPstrLen(u8),
     #[error("bad protocol string")]
     BadProtocol,
-    #[error("io: {0}")]
-    Io(#[from] std::io::Error),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -47,15 +43,12 @@ pub struct Handshake {
 
 impl Handshake {
     pub fn new_with_v2(info_hash: Id20, peer_id: Id20, advertise_v2: bool) -> Self {
-        // We always advertise the BEP-10 extension-protocol bit. The BEP-52 v2 bit
-        // is *only* set when the caller is explicitly connecting on a v2 info-hash
-        // (pure-v2 swarm)—empirically, blanket-setting it on v1 / hybrid connections
-        // causes some peers (notably Thunder / Xunlei-style clients common in CN swarms)
-        // to close the socket right after the BT handshake exchange. We never set the
-        // BEP-5 DHT bit because we do not act on inbound `Port` messages from the
-        // BT layer
         let mut reserved = [0u8; 8];
         let (b, m) = reserved::EXT_PROTOCOL;
+        reserved[b] |= m;
+        let (b, m) = reserved::DHT;
+        reserved[b] |= m;
+        let (b, m) = reserved::FAST;
         reserved[b] |= m;
         if advertise_v2 {
             let (b, m) = reserved::V2;
@@ -121,6 +114,20 @@ mod tests {
         assert!(parsed.has_ext_protocol());
         // `advertise_v2 = true` carries the v2 capability bit
         assert!(parsed.has_v2());
+    }
+
+    #[test]
+    fn dht_reserved_bit_is_set() {
+        let hs = Handshake::new_with_v2(Id20([0u8; 20]), Id20([1u8; 20]), false);
+        let (b, m) = reserved::DHT;
+        assert_ne!(hs.reserved[b] & m, 0, "BEP-5 DHT bit must be advertised");
+    }
+
+    #[test]
+    fn fast_reserved_bit_is_set() {
+        let hs = Handshake::new_with_v2(Id20([0u8; 20]), Id20([1u8; 20]), false);
+        let (b, m) = reserved::FAST;
+        assert_ne!(hs.reserved[b] & m, 0, "BEP 6 fast bit must be advertised");
     }
 
     #[test]

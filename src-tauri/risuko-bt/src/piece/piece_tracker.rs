@@ -24,6 +24,8 @@ pub struct PieceTracker {
     in_flight: Vec<bool>,
     /// How many peers advertise each piece
     availability: Vec<u32>,
+    sorted: Vec<ValidPieceIndex>,
+    sorted_dirty: bool,
     /// Scratch buffer reused by `choose_piece` to avoid allocations
     scratch: Vec<ValidPieceIndex>,
 }
@@ -36,6 +38,8 @@ impl PieceTracker {
             have_local: vec![false; n],
             in_flight: vec![false; n],
             availability: vec![0; n],
+            sorted: Vec::new(),
+            sorted_dirty: true,
             scratch: Vec::with_capacity(n.min(1024)),
         }
     }
@@ -46,6 +50,7 @@ impl PieceTracker {
 
     pub fn set_local(&mut self, idx: ValidPieceIndex, have: bool) {
         self.have_local[idx.get_usize()] = have;
+        self.sorted_dirty = true;
         if have {
             // No longer in-flight once verified
             self.in_flight[idx.get_usize()] = false;
@@ -82,6 +87,7 @@ impl PieceTracker {
 
     /// Increment the availability counter for every bit set in `bitfield`
     pub fn add_peer_bitfield(&mut self, bitfield: &[u8]) {
+        self.sorted_dirty = true;
         let n = self.lengths.total_pieces() as usize;
         for (byte_idx, &b) in bitfield.iter().enumerate() {
             if b == 0 {
@@ -102,6 +108,7 @@ impl PieceTracker {
 
     /// Inverse of `add_peer_bitfield`, called when a peer disconnects
     pub fn remove_peer_bitfield(&mut self, bitfield: &[u8]) {
+        self.sorted_dirty = true;
         let n = self.lengths.total_pieces() as usize;
         for (byte_idx, &b) in bitfield.iter().enumerate() {
             if b == 0 {
@@ -123,14 +130,11 @@ impl PieceTracker {
     pub fn note_peer_has(&mut self, idx: ValidPieceIndex) {
         let slot = &mut self.availability[idx.get_usize()];
         *slot = slot.saturating_add(1);
+        self.sorted_dirty = true;
     }
 
     pub fn is_complete(&self) -> bool {
         self.have_local.iter().all(|b| *b)
-    }
-
-    pub fn completed_pieces(&self) -> u32 {
-        self.have_local.iter().filter(|b| **b).count() as u32
     }
 
     /// Pick the rarest piece the peer has that we don't, breaking ties with
@@ -154,17 +158,6 @@ impl PieceTracker {
         exclude: &std::collections::HashSet<u32>,
     ) -> Option<ValidPieceIndex> {
         self.choose_impl(peer_bitfield, false, hint, Some(exclude))
-    }
-
-    /// Pick the rarest requestable piece the peer has. Skips both locally
-    /// owned and fully in-flight pieces. `hint` is used to break ties among
-    /// equally-rare pieces so that different peers get different work
-    pub fn choose_requestable_piece(
-        &mut self,
-        peer_bitfield: &[u8],
-        hint: u32,
-    ) -> Option<ValidPieceIndex> {
-        self.choose_impl(peer_bitfield, true, hint, None)
     }
 
     /// Return requestable pieces in rarest-first order from one bitfield scan
@@ -240,37 +233,46 @@ impl PieceTracker {
         Some(self.scratch[idx])
     }
 
+    fn rebuild_sorted(&mut self) {
+        self.sorted.clear();
+        let n = self.lengths.total_pieces() as usize;
+        for i in 0..n {
+            if self.have_local[i] || self.availability[i] == 0 {
+                continue;
+            }
+            if let Ok(vpi) = self.lengths.validate_piece(i as u32) {
+                self.sorted.push(vpi);
+            }
+        }
+        let availability = &self.availability;
+        self.sorted
+            .sort_by_key(|idx| (availability[idx.get_usize()], idx.get()));
+        self.sorted_dirty = false;
+    }
+
     fn choose_many_impl(
         &mut self,
         peer_bitfield: &[u8],
         skip_in_flight: bool,
         hint: u32,
     ) -> Vec<ValidPieceIndex> {
+        if self.sorted_dirty {
+            self.rebuild_sorted();
+        }
         self.scratch.clear();
-        let n = self.lengths.total_pieces() as usize;
-        for i in 0..n {
+        for &vpi in &self.sorted {
+            let i = vpi.get_usize();
             let byte = i / 8;
             let bit = 7 - (i % 8);
             if peer_bitfield.get(byte).is_none_or(|b| b & (1 << bit) == 0) {
                 continue;
             }
-            if self.have_local[i] {
-                continue;
-            }
             if skip_in_flight && self.in_flight[i] {
                 continue;
             }
-            if self.availability[i] == 0 {
-                continue;
-            }
-            if let Ok(vpi) = self.lengths.validate_piece(i as u32) {
-                self.scratch.push(vpi);
-            }
+            self.scratch.push(vpi);
         }
-
         let availability = &self.availability;
-        self.scratch
-            .sort_by_key(|idx| (availability[idx.get_usize()], idx.get()));
         let mut start = 0;
         while start < self.scratch.len() {
             let avail = availability[self.scratch[start].get_usize()];
@@ -363,7 +365,7 @@ mod tests {
     fn peer_with_nothing_useful() {
         let mut t = PieceTracker::new(lengths(4));
         t.add_peer_bitfield(&[0b1111_0000]);
-        // Peer advertises piece 0 only, which we've already got.
+        // Peer advertises piece 0 only, which we've already got
         t.set_local(t.lengths.validate_piece(0).unwrap(), true);
         assert!(t.choose_piece(&[0b1000_0000]).is_none());
     }
@@ -376,6 +378,32 @@ mod tests {
             t.set_local(t.lengths.validate_piece(i).unwrap(), true);
         }
         assert!(t.is_complete());
-        assert_eq!(t.completed_pieces(), 3);
+    }
+
+    #[test]
+    fn lazy_sorted_candidates_track_mutations() {
+        let mut t = PieceTracker::new(lengths(4));
+        t.add_peer_bitfield(&[0b1111_0000]);
+        t.add_peer_bitfield(&[0b1100_0000]);
+        let order: Vec<u32> = t
+            .choose_requestable_pieces(&[0b1111_0000], 0)
+            .into_iter()
+            .map(|p| p.get())
+            .collect();
+        assert_eq!(order, vec![2, 3, 0, 1]);
+        t.note_peer_has(t.lengths.validate_piece(2).unwrap());
+        let order: Vec<u32> = t
+            .choose_requestable_pieces(&[0b1111_0000], 0)
+            .into_iter()
+            .map(|p| p.get())
+            .collect();
+        assert_eq!(order, vec![3, 0, 1, 2]);
+        t.set_local(t.lengths.validate_piece(3).unwrap(), true);
+        let order: Vec<u32> = t
+            .choose_requestable_pieces(&[0b1111_0000], 0)
+            .into_iter()
+            .map(|p| p.get())
+            .collect();
+        assert_eq!(order, vec![0, 1, 2]);
     }
 }

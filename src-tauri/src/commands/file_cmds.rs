@@ -3,10 +3,9 @@ use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use risuko_bt::bencode;
 use serde::Serialize;
 use serde_json::Value;
-use sha1::{Digest, Sha1};
-use sha2::Sha256;
 use tauri::AppHandle;
 
 const MAX_TORRENT_PREVIEW_FILES: usize = 2_000;
@@ -15,13 +14,6 @@ const DEFAULT_TORRENT_PREVIEW_PAGE_SIZE: usize = 300;
 const MAX_TORRENT_PREVIEW_PAGE_SIZE: usize = 2_000;
 const TEMP_DOWNLOAD_SUFFIX: &str = ".part";
 use crate::engine::CHUNK_META_SUFFIX;
-
-enum BencodeValue {
-    Integer(i64),
-    Bytes(Vec<u8>),
-    List(Vec<BencodeValue>),
-    Dictionary(BTreeMap<Vec<u8>, BencodeValue>),
-}
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -108,13 +100,12 @@ fn ensure_torrent_extension(path: &Path) -> Result<(), String> {
 pub fn reveal_in_folder(handle: AppHandle, path: String) -> Result<(), String> {
     #[cfg(target_os = "android")]
     {
-        // Hand the raw filesystem path to Kotlin. `MainActivity.revealFolder`
-        // builds the SAF document URI on the UI thread, tries several intent
-        // shapes (chooser/no-chooser crossed with dirmime/no-mime), and
-        // reports the first one that actually resolves. Doing this in
-        // Kotlin lets us call `queryIntentActivities` to skip hopeless
-        // attempts and catch `ActivityNotFoundException` directly. Both are
-        // awkward through raw JNI from a Tauri worker thread
+        // Hand the raw path to Kotlin. `MainActivity.revealFolder` builds the
+        // SAF document URI on the UI thread, tries several intent shapes
+        // (chooser/no-chooser × dirmime/no-mime), and returns the first that
+        // resolves — it can call `queryIntentActivities` to skip hopeless
+        // attempts and catch `ActivityNotFoundException`, both awkward through
+        // raw JNI from a Tauri worker thread
         let _ = handle;
         return crate::commands::android_intent::reveal_folder(&path);
     }
@@ -149,19 +140,19 @@ pub fn reveal_in_folder(handle: AppHandle, path: String) -> Result<(), String> {
             use std::os::windows::process::CommandExt;
             let _ = handle;
 
-            // Normalize separators so explorer.exe parses the path reliably.
+            // Normalize separators so explorer.exe parses the path reliably
             let normalized_path = path.replace('/', "\\");
 
             if is_dir {
                 // Use ShellExecute via `open` to avoid explorer.exe quirks
                 // (e.g. non-zero exit codes, race conditions when an Explorer
-                // window is already focused on the same directory).
+                // window is already focused on the same directory)
                 open::that(&normalized_path).map_err(|e| e.to_string())?;
             } else {
                 // explorer.exe parses its command line manually and expects the
                 // form: /select,"<path>". Rust's standard argument escaping
                 // mangles the embedded quotes, so use raw_arg to pass the
-                // command line through verbatim.
+                // command line through verbatim
                 let raw = format!("/select,\"{}\"", normalized_path);
                 std::process::Command::new("explorer")
                     .raw_arg(raw)
@@ -283,22 +274,17 @@ fn guess_android_mime(path: &str) -> String {
 #[tauri::command]
 pub fn trash_item(path: String) -> Result<bool, String> {
     let p = std::path::Path::new(&path);
-    if !p.exists() {
+    let existed = p.exists();
+    if existed {
+        delete_path(p)?;
+    } else {
         tracing::debug!("trash_item: path does not exist, skipped: {}", path);
-        // Still try to clean up .chunks sidecar even if .part is gone
-        if path.ends_with(TEMP_DOWNLOAD_SUFFIX) {
-            let chunks_path = format!("{}{}", path, CHUNK_META_SUFFIX);
-            let _ = std::fs::remove_file(&chunks_path);
-        }
-        return Ok(false);
     }
-    delete_path(p)?;
     // Clean up multi-chunk resume sidecar alongside .part file
     if path.ends_with(TEMP_DOWNLOAD_SUFFIX) {
-        let chunks_path = format!("{}{}", path, CHUNK_META_SUFFIX);
-        let _ = std::fs::remove_file(&chunks_path);
+        let _ = std::fs::remove_file(format!("{}{}", path, CHUNK_META_SUFFIX));
     }
-    Ok(true)
+    Ok(existed)
 }
 
 #[tauri::command]
@@ -348,146 +334,29 @@ pub fn rename_path(from_path: String, to_path: String) -> Result<(), String> {
     std::fs::rename(from, to).map_err(|e| e.to_string())
 }
 
-#[tauri::command]
-pub fn read_binary_file(path: String) -> Result<Vec<u8>, String> {
-    read_torrent_bytes_from_path(&path)
-}
-
 fn resolve_torrent_fs_path(path: &str) -> Result<PathBuf, String> {
     let path = PathBuf::from(path);
     ensure_torrent_extension(&path)?;
     canonicalize_path(&path).map_err(|_| "Path does not exist".to_string())
 }
 
-fn read_torrent_bytes_from_path(path: &str) -> Result<Vec<u8>, String> {
-    let path = resolve_torrent_fs_path(path)?;
-    std::fs::read(path).map_err(|e| e.to_string())
-}
-
-fn parse_bencode_integer(input: &[u8], cursor: &mut usize) -> Result<BencodeValue, String> {
-    *cursor += 1; // skip `i`
-    let start = *cursor;
-    while *cursor < input.len() && input[*cursor] != b'e' {
-        *cursor += 1;
-    }
-    if *cursor >= input.len() {
-        return Err("Invalid torrent metadata".to_string());
-    }
-
-    let text =
-        std::str::from_utf8(&input[start..*cursor]).map_err(|_| "Invalid torrent metadata")?;
-    *cursor += 1; // skip `e`
-    let value = text
-        .parse::<i64>()
-        .map_err(|_| "Invalid torrent metadata".to_string())?;
-    Ok(BencodeValue::Integer(value))
-}
-
-fn parse_bencode_bytes(input: &[u8], cursor: &mut usize) -> Result<BencodeValue, String> {
-    let start = *cursor;
-    while *cursor < input.len() && input[*cursor].is_ascii_digit() {
-        *cursor += 1;
-    }
-    if start == *cursor || *cursor >= input.len() || input[*cursor] != b':' {
-        return Err("Invalid torrent metadata".to_string());
-    }
-
-    let len_text =
-        std::str::from_utf8(&input[start..*cursor]).map_err(|_| "Invalid torrent metadata")?;
-    let len = len_text
-        .parse::<usize>()
-        .map_err(|_| "Invalid torrent metadata".to_string())?;
-    *cursor += 1; // skip `:`
-    let end = cursor
-        .checked_add(len)
-        .ok_or_else(|| "Invalid torrent metadata".to_string())?;
-    if end > input.len() {
-        return Err("Invalid torrent metadata".to_string());
-    }
-
-    let value = input[*cursor..end].to_vec();
-    *cursor = end;
-    Ok(BencodeValue::Bytes(value))
-}
-
-fn parse_bencode_list(input: &[u8], cursor: &mut usize) -> Result<BencodeValue, String> {
-    *cursor += 1; // skip `l`
-    let mut list = Vec::new();
-    while *cursor < input.len() && input[*cursor] != b'e' {
-        list.push(parse_bencode_value(input, cursor)?);
-    }
-    if *cursor >= input.len() {
-        return Err("Invalid torrent metadata".to_string());
-    }
-    *cursor += 1; // skip `e`
-    Ok(BencodeValue::List(list))
-}
-
-fn parse_bencode_dictionary(input: &[u8], cursor: &mut usize) -> Result<BencodeValue, String> {
-    *cursor += 1; // skip `d`
-    let mut dict = BTreeMap::new();
-    while *cursor < input.len() && input[*cursor] != b'e' {
-        let key = parse_bencode_bytes(input, cursor)?;
-        let BencodeValue::Bytes(key) = key else {
-            return Err("Invalid torrent metadata".to_string());
-        };
-        let value = parse_bencode_value(input, cursor)?;
-        dict.insert(key, value);
-    }
-    if *cursor >= input.len() {
-        return Err("Invalid torrent metadata".to_string());
-    }
-    *cursor += 1; // skip `e`
-    Ok(BencodeValue::Dictionary(dict))
-}
-
-fn parse_bencode_value(input: &[u8], cursor: &mut usize) -> Result<BencodeValue, String> {
-    if *cursor >= input.len() {
-        return Err("Invalid torrent metadata".to_string());
-    }
-    match input[*cursor] {
-        b'i' => parse_bencode_integer(input, cursor),
-        b'l' => parse_bencode_list(input, cursor),
-        b'd' => parse_bencode_dictionary(input, cursor),
-        b'0'..=b'9' => parse_bencode_bytes(input, cursor),
-        _ => Err("Invalid torrent metadata".to_string()),
-    }
-}
-
-fn as_dict(value: &BencodeValue) -> Option<&BTreeMap<Vec<u8>, BencodeValue>> {
-    let BencodeValue::Dictionary(dict) = value else {
-        return None;
-    };
-    Some(dict)
-}
-
-fn as_list(value: &BencodeValue) -> Option<&[BencodeValue]> {
-    let BencodeValue::List(list) = value else {
-        return None;
-    };
-    Some(list)
-}
-
-fn as_string(value: &BencodeValue) -> String {
+fn as_string(value: &bencode::Value) -> String {
     match value {
-        BencodeValue::Bytes(bytes) => String::from_utf8_lossy(bytes).to_string(),
-        BencodeValue::Integer(value) => value.to_string(),
+        bencode::Value::Bytes(bytes) => String::from_utf8_lossy(bytes).to_string(),
+        bencode::Value::Int(value) => value.to_string(),
         _ => String::new(),
     }
 }
 
-fn as_length(value: Option<&BencodeValue>) -> i64 {
-    match value {
-        Some(BencodeValue::Integer(value)) if *value > 0 => *value,
+fn as_length(value: Option<&bencode::Value>) -> i64 {
+    match value.and_then(bencode::Value::as_int) {
+        Some(value) if value > 0 => value,
         _ => 0,
     }
 }
 
-fn dict_get_first<'a>(
-    dict: &'a BTreeMap<Vec<u8>, BencodeValue>,
-    keys: &[&[u8]],
-) -> Option<&'a BencodeValue> {
-    keys.iter().find_map(|key| dict.get(*key))
+fn dict_get_first<'a>(dict: &'a bencode::Value, keys: &[&[u8]]) -> Option<&'a bencode::Value> {
+    keys.iter().find_map(|key| dict.get(key))
 }
 
 fn normalize_torrent_path(path: &str) -> String {
@@ -502,15 +371,16 @@ pub(crate) fn inspect_torrent_metadata(
         return Err("Torrent payload is empty".to_string());
     }
 
-    let mut cursor = 0usize;
-    let root = parse_bencode_value(bytes, &mut cursor)?;
-    let root_dict = as_dict(&root).ok_or_else(|| "Invalid torrent metadata".to_string())?;
-    let info_value = dict_get_first(root_dict, &[b"info"])
+    let root = bencode::decode(bytes)
+        .map_err(|_| "Invalid torrent metadata".to_string())?
+        .value;
+    let info = root
+        .get(b"info")
+        .filter(|value| value.as_dict().is_some())
         .ok_or_else(|| "Invalid torrent metadata".to_string())?;
-    let info = as_dict(info_value).ok_or_else(|| "Invalid torrent metadata".to_string())?;
 
     let is_multi_file = matches!(
-        dict_get_first(info, &[b"files"]).and_then(as_list),
+        info.get(b"files").and_then(bencode::Value::as_list),
         Some(files) if !files.is_empty()
     );
 
@@ -591,7 +461,7 @@ fn encode_index_ranges(ranges: &[(usize, usize)]) -> Option<String> {
 }
 
 fn collect_direct_children(
-    raw_files: &[BencodeValue],
+    raw_files: &[bencode::Value],
     normalized_root_name: &str,
     parent_segments: &[String],
 ) -> Vec<ResolvedTorrentItem> {
@@ -600,12 +470,8 @@ fn collect_direct_children(
     let mut folder_index_ranges: BTreeMap<String, Vec<(usize, usize)>> = BTreeMap::new();
 
     for (file_index, item) in raw_files.iter().enumerate() {
-        let Some(item_dict) = as_dict(item) else {
-            continue;
-        };
-
-        let segments = dict_get_first(item_dict, &[b"path.utf-8", b"path"])
-            .and_then(as_list)
+        let segments = dict_get_first(item, &[b"path.utf-8", b"path"])
+            .and_then(bencode::Value::as_list)
             .map(|parts| {
                 parts
                     .iter()
@@ -647,7 +513,7 @@ fn collect_direct_children(
         }
 
         if remaining.len() == 1 {
-            let length = as_length(dict_get_first(item_dict, &[b"length"]));
+            let length = as_length(item.get(b"length"));
             file_items
                 .entry(full_path.clone())
                 .or_insert_with(|| ResolvedTorrentItem {
@@ -729,12 +595,13 @@ fn resolve_torrent_from_bytes(
         });
     }
 
-    let mut cursor = 0usize;
-    let root = parse_bencode_value(bytes, &mut cursor)?;
-    let root_dict = as_dict(&root).ok_or_else(|| "Invalid torrent metadata".to_string())?;
-    let info_value = dict_get_first(root_dict, &[b"info"])
+    let root = bencode::decode(bytes)
+        .map_err(|_| "Invalid torrent metadata".to_string())?
+        .value;
+    let info = root
+        .get(b"info")
+        .filter(|value| value.as_dict().is_some())
         .ok_or_else(|| "Invalid torrent metadata".to_string())?;
-    let info = as_dict(info_value).ok_or_else(|| "Invalid torrent metadata".to_string())?;
 
     let root_name = dict_get_first(info, &[b"name.utf-8", b"name"])
         .map(as_string)
@@ -742,8 +609,8 @@ fn resolve_torrent_from_bytes(
         .unwrap_or_else(|| file_name.to_string());
     let normalized_root_name = normalize_torrent_path(&root_name);
 
-    if let Some(files_value) = dict_get_first(info, &[b"files"]) {
-        if let Some(raw_files) = as_list(files_value) {
+    if let Some(files_value) = info.get(b"files") {
+        if let Some(raw_files) = files_value.as_list() {
             let file_count = raw_files.len();
             if !force_preview && file_count > MAX_TORRENT_PREVIEW_FILES {
                 return Ok(ResolvedTorrentPayload {
@@ -782,13 +649,13 @@ fn resolve_torrent_from_bytes(
 
             let mut files = Vec::with_capacity(file_count);
             for item in raw_files {
-                let Some(item_dict) = as_dict(item) else {
+                if item.as_dict().is_none() {
                     continue;
-                };
+                }
 
-                let length = as_length(dict_get_first(item_dict, &[b"length"]));
-                let segments = dict_get_first(item_dict, &[b"path.utf-8", b"path"])
-                    .and_then(as_list)
+                let length = as_length(item.get(b"length"));
+                let segments = dict_get_first(item, &[b"path.utf-8", b"path"])
+                    .and_then(bencode::Value::as_list)
                     .map(|parts| {
                         parts
                             .iter()
@@ -837,7 +704,7 @@ fn resolve_torrent_from_bytes(
         root_name
     };
     let single_path = normalize_torrent_path(&single_name);
-    let length = as_length(dict_get_first(info, &[b"length"]));
+    let length = as_length(info.get(b"length"));
 
     if force_preview {
         let parent_segments = normalize_parent_segments(parent_path, &normalized_root_name);
@@ -957,12 +824,7 @@ fn normalize_info_hash(raw: &str) -> String {
             return None;
         }
 
-        let mut hex = String::with_capacity(bytes.len() * 2);
-        for byte in &bytes {
-            let _ = write!(&mut hex, "{:02x}", byte);
-        }
-
-        Some(hex)
+        Some(bytes_to_lower_hex(&bytes))
     }
 
     let value = raw.trim();
@@ -1056,30 +918,7 @@ fn extract_btih_token(input: &str) -> Option<String> {
 }
 
 pub(crate) fn percent_decode_lossy(input: &str) -> String {
-    let bytes = input.as_bytes();
-    let mut decoded = Vec::with_capacity(bytes.len());
-    let mut i = 0usize;
-
-    while i < bytes.len() {
-        if bytes[i] == b'%' && i + 2 < bytes.len() {
-            let h1 = bytes[i + 1] as char;
-            let h2 = bytes[i + 2] as char;
-            if let Some(byte) = h1
-                .to_digit(16)
-                .zip(h2.to_digit(16))
-                .map(|(a, b)| ((a << 4) | b) as u8)
-            {
-                decoded.push(byte);
-                i += 3;
-                continue;
-            }
-        }
-
-        decoded.push(bytes[i]);
-        i += 1;
-    }
-
-    String::from_utf8_lossy(&decoded).to_string()
+    String::from_utf8_lossy(&urlencoding::decode_binary(input.as_bytes())).to_string()
 }
 
 fn valid_normalized_info_hash(raw: &str) -> Option<String> {
@@ -1211,24 +1050,7 @@ fn trash_generated_torrent_sidecars_in_dir(dir: &Path, normalized_info_hash: Opt
         if !file_name.to_ascii_lowercase().ends_with(".torrent") {
             continue;
         }
-
-        // The saved sidecar is named after the torrent's DISPLAY name (see
-        // `save_torrent_metadata_if_enabled`), not its info-hash, so a hex-stem
-        // filename check alone misses it. Match either by a generated hex-stem
-        // name (`<infohash>.torrent`) OR by content — hashing the file's `info`
-        // dict and comparing to this task's info-hash identifies the sidecar
-        // precisely, and never touches an unrelated torrent (different hash).
-        let hex_stem = generated_torrent_hex_stem(file_name);
-        let matched_by_name = hex_stem
-            .as_deref()
-            .map(|stem| stem == hash)
-            .unwrap_or(false);
-        // Only probe content when the filename has no hex-infohash stem.
-        // A hex-named .torrent whose stem differs from our hash is definitively
-        // a different torrent; content-matching it would be a false positive that
-        // could delete a user-provided source file.
-        let matched = matched_by_name
-            || (hex_stem.is_none() && matches_generated_torrent_sidecar_by_content(&path, hash));
+        let matched = generated_torrent_hex_stem(file_name).as_deref() == Some(hash);
 
         if matched && delete_file_best_effort(&path) {
             deleted += 1;
@@ -1236,73 +1058,6 @@ fn trash_generated_torrent_sidecars_in_dir(dir: &Path, normalized_info_hash: Opt
     }
 
     deleted
-}
-
-fn extract_info_dict_slice(input: &[u8]) -> Result<&[u8], String> {
-    if input.is_empty() || input[0] != b'd' {
-        return Err("Invalid torrent metadata".to_string());
-    }
-
-    let mut cursor = 1usize; // skip root `d`
-    while cursor < input.len() && input[cursor] != b'e' {
-        let key = parse_bencode_bytes(input, &mut cursor)?;
-        let BencodeValue::Bytes(key_bytes) = key else {
-            return Err("Invalid torrent metadata".to_string());
-        };
-
-        let value_start = cursor;
-        parse_bencode_value(input, &mut cursor)?;
-        if key_bytes.as_slice() == b"info" {
-            return Ok(&input[value_start..cursor]);
-        }
-    }
-
-    Err("Invalid torrent metadata".to_string())
-}
-
-fn matches_generated_torrent_sidecar_by_content(path: &Path, normalized_info_hash: &str) -> bool {
-    let bytes = match std::fs::read(path) {
-        Ok(bytes) => bytes,
-        Err(_) => return false,
-    };
-    let info_slice = match extract_info_dict_slice(&bytes) {
-        Ok(slice) => slice,
-        Err(_) => return false,
-    };
-
-    match normalized_info_hash.len() {
-        40 => {
-            let digest = Sha1::digest(info_slice);
-            bytes_to_lower_hex(digest.as_ref()) == normalized_info_hash
-        }
-        64 => {
-            let digest = Sha256::digest(info_slice);
-            bytes_to_lower_hex(digest.as_ref()) == normalized_info_hash
-        }
-        _ => false,
-    }
-}
-
-#[tauri::command]
-pub fn trash_generated_torrent_sidecars(
-    _handle: AppHandle,
-    dir: String,
-    info_hash: String,
-) -> Result<u32, String> {
-    let Some(normalized) = valid_normalized_info_hash(&info_hash) else {
-        return Ok(0);
-    };
-
-    let dir = PathBuf::from(dir);
-    let dir = canonicalize_path(&dir).map_err(|_| "Path does not exist".to_string())?;
-    if !dir.is_dir() {
-        return Err("Path is not a directory".to_string());
-    }
-
-    Ok(trash_generated_torrent_sidecars_in_dir(
-        &dir,
-        Some(&normalized),
-    ))
 }
 
 #[tauri::command]
@@ -1344,6 +1099,8 @@ pub fn cleanup_generated_torrent_sidecars_for_task(task: Value) -> Result<u32, S
 
 #[cfg(test)]
 mod tests {
+    use sha1::{Digest, Sha1};
+
     use super::*;
 
     // -- strip_temp_download_suffix --
@@ -1534,42 +1291,34 @@ mod tests {
         assert_eq!(name, "my_fallback");
     }
 
-    // The engine saves a generated sidecar named after the torrent's DISPLAY
-    // name (not its hex info-hash), so cleanup must match by content info-hash
-    // rather than only by a hex-stem filename. Regression for the sidecar that
-    // survived "delete with files"
     #[test]
-    fn cleanup_deletes_descriptively_named_generated_sidecar() {
+    fn cleanup_removes_only_hex_stem_sidecar() {
         let dir = tempfile::tempdir().unwrap();
 
-        // Build a v1 torrent whose `info` dict hashes (SHA1) to a known
-        // info-hash, computed the same way production does
         let info_dict = b"d6:lengthi123e4:name9:test.filee";
         let hash = bytes_to_lower_hex(Sha1::digest(info_dict).as_ref());
         let mut torrent = Vec::from(*b"d4:info");
         torrent.extend_from_slice(info_dict);
         torrent.push(b'e');
+        let user_file = dir.path().join("Some Movie (2026).torrent");
+        std::fs::write(&user_file, &torrent).unwrap();
 
-        // Saved under the torrent's display name, NOT "<infohash>.torrent"
-        let sidecar = dir.path().join("Some Movie (2026).torrent");
+        let sidecar = dir.path().join(format!("{hash}.torrent"));
         std::fs::write(&sidecar, &torrent).unwrap();
 
-        // An unrelated .torrent (different info-hash) in the same dir must survive
-        let mut unrelated = Vec::from(*b"d4:info");
-        unrelated.extend_from_slice(b"d6:lengthi999e4:name5:othere");
-        unrelated.push(b'e');
-        let unrelated_path = dir.path().join("Unrelated.torrent");
-        std::fs::write(&unrelated_path, &unrelated).unwrap();
+        let other = dir.path().join(format!("{}.torrent", "a".repeat(40)));
+        std::fs::write(&other, &torrent).unwrap();
 
         let deleted = trash_generated_torrent_sidecars_in_dir(dir.path(), Some(&hash));
         assert_eq!(deleted, 1);
+        assert!(!sidecar.exists(), "hex-stem sidecar should be removed");
         assert!(
-            !sidecar.exists(),
-            "descriptively-named sidecar should be removed"
+            user_file.exists(),
+            "user's display-named .torrent must survive even with a matching info-hash"
         );
         assert!(
-            unrelated_path.exists(),
-            "unrelated torrent with a different info-hash must be left alone"
+            other.exists(),
+            "hex-stem file of a different torrent must be left alone"
         );
     }
 

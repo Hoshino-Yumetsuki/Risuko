@@ -5,7 +5,6 @@
 <script lang="ts">
 import type { DownloadTask } from "@shared/types/task";
 import {
-	checkTaskIsBT,
 	getTaskName,
 	parseBooleanConfig,
 	taskBenefitsFromLowSpeedRecovery,
@@ -44,13 +43,12 @@ const normalizePositiveNumber = (
 };
 
 export default {
-	name: "mo-engine-client",
+	name: "engine-client",
 	data() {
 		return {
 			timer: null,
 			initTimer: null,
 			isPolling: false,
-			pollingInFlight: false,
 			isDestroyed: false,
 			noSleepDesired: false,
 			noSleepApplied: false,
@@ -93,9 +91,6 @@ export default {
 		},
 		taskDetailVisible() {
 			return useTaskStore().taskDetailVisible;
-		},
-		enabledFetchPeers() {
-			return useTaskStore().enabledFetchPeers;
 		},
 		currentTaskGid() {
 			return useTaskStore().currentTaskGid;
@@ -146,16 +141,11 @@ export default {
 		},
 		preventSleepWhileDownloading() {
 			const raw = usePreferenceStore().config.preventSleepWhileDownloading;
-			// Default to true when the preference has never been set so existing
-			// installs keep their current sleep-inhibit behaviour.
 			return raw === undefined ? true : parseBooleanConfig(raw);
 		},
 		shutdownWhenComplete() {
 			const raw = usePreferenceStore().config.shutdownWhenComplete;
 			return parseBooleanConfig(raw);
-		},
-		currentTaskIsBT() {
-			return checkTaskIsBT(this.currentTaskItem);
 		},
 	},
 	watch: {
@@ -187,17 +177,13 @@ export default {
 			invoke("on_progress_change", {
 				progress: val,
 				showProgressBar: this.showProgressBar,
-			}).catch(() => {
-				/* noop */
-			});
+			}).catch(() => {});
 		},
 		showProgressBar(val) {
 			invoke("on_progress_change", {
 				progress: this.progress,
 				showProgressBar: parseBooleanConfig(val),
-			}).catch(() => {
-				/* noop */
-			});
+			}).catch(() => {});
 		},
 		interval() {
 			if (this.timer) {
@@ -312,7 +298,6 @@ export default {
 						Number.MAX_SAFE_INTEGER,
 					),
 				);
-				// Only update the planned gid to avoid clobbering concurrent retry updates for other tasks.
 				this.autoRetryAttemptMap = {
 					...this.autoRetryAttemptMap,
 					[taskGid]: safeAttempt,
@@ -411,11 +396,6 @@ export default {
 				return;
 			}
 
-			// Pause/resume only revives a stalled single TCP socket. Peer-swarm
-			// tasks (BT/ED2K/ADC/Gnutella/G2/giFT) take minutes to warm up and a
-			// force-pause aborts that warm-up; the cooldown then refires before
-			// the swarm can rebuild, leaving speed permanently at zero. Filter
-			// skip tasks whose totalLength is still zero
 			const eligibleTasks = tasks.filter((task) => {
 				if (!taskBenefitsFromLowSpeedRecovery(task)) {
 					return false;
@@ -487,9 +467,7 @@ export default {
 				appName,
 				downloadLabel,
 				uploadLabel,
-			}).catch(() => {
-				/* noop */
-			});
+			}).catch(() => {});
 		},
 		async setNoSleepState(downloading: boolean) {
 			try {
@@ -517,14 +495,12 @@ export default {
 				if (ok) {
 					this.noSleepApplied = target;
 				} else {
-					// Stop retry loop on hard failure; next state transition will retry.
 					break;
 				}
 			} while (this.noSleepResyncNeeded);
 			this.noSleepSyncing = false;
 
 			if (this.noSleepResyncNeeded) {
-				// Catch race where another update arrived right after loop exit.
 				this.syncNoSleepState();
 			}
 		},
@@ -598,6 +574,14 @@ export default {
 				logger.error(
 					`[Risuko] download error gid: ${gid}, #${errorCode}, ${errorMessage}`,
 				);
+				this.readCompletionScriptOverrides(gid).then((overrides) => {
+					invoke("run_completion_script", {
+						path: getTaskFullPath(task) || "",
+						hash: task?.infoHash || null,
+						status: "error",
+						overrides,
+					}).catch(() => {});
+				});
 
 				if (normalizedErrorCode === "315") {
 					const errorString = String(errorMessage || "");
@@ -618,21 +602,6 @@ export default {
 					} else {
 						appStore.showCloudflareDialog({ gid, host, url, taskName });
 					}
-					this.readCompletionScriptOverrides(gid).then((overrides) => {
-						invoke("run_completion_script", {
-							path: getTaskFullPath(task) || "",
-							hash: task?.infoHash || null,
-							status: "error",
-							overrides,
-						}).catch(() => {
-							/* noop */
-						});
-					});
-					// Cloudflare resolution requires user action (importing
-					// cookies + retrying). Any auto-retry that was scheduled
-					// for an earlier failure on this gid would race the
-					// dialog and either retry without cookies or stomp on
-					// the user's pending submit, so cancel it now
 					this.clearAutoRetryState(gid);
 					return;
 				}
@@ -666,16 +635,6 @@ export default {
 				this.$msg.error({
 					duration: isMissingYtDlp ? 9000 : 5000,
 					message: `${message} (${errorCode}) ${link}`,
-				});
-				this.readCompletionScriptOverrides(gid).then((overrides) => {
-					invoke("run_completion_script", {
-						path: getTaskFullPath(task) || "",
-						hash: task?.infoHash || null,
-						status: "error",
-						overrides,
-					}).catch(() => {
-						/* noop */
-					});
 				});
 			});
 		},
@@ -761,18 +720,14 @@ export default {
 
 			const path = await finalizeCompletedDownloadPath(task);
 			this.showTaskCompleteNotify(task, isBT, path);
-			invoke("on_task_download_complete", { path }).catch(() => {
-				/* noop */
-			});
+			invoke("on_task_download_complete", { path }).catch(() => {});
 			const overrides = await this.readCompletionScriptOverrides(task.gid);
 			invoke("run_completion_script", {
 				path,
 				hash: task?.infoHash || null,
 				status: "complete",
 				overrides,
-			}).catch(() => {
-				/* noop */
-			});
+			}).catch(() => {});
 		},
 		showTaskCompleteNotify(task, isBT, path) {
 			const taskName = getTaskName(task);
@@ -800,19 +755,6 @@ export default {
 				});
 			};
 		},
-		showTaskErrorNotify(task) {
-			const taskName = getTaskName(task);
-			const message = this.$t("task.download-fail-message", { taskName });
-			this.$msg.success(message);
-
-			if (!this.taskNotification) {
-				return;
-			}
-
-			new Notification(this.$t("task.download-fail-notify"), {
-				body: taskName,
-			});
-		},
 		async bindEngineEvents() {
 			const handlers: [string, (payload: { gid: string }) => void][] = [
 				["engine:download-start", this.onDownloadStart],
@@ -826,7 +768,6 @@ export default {
 				const unlisten = await listen(event, (e: { payload: unknown }) =>
 					handler(e.payload as { gid: string }),
 				);
-				// If unmounted while listen() is pending, release the resolved listener instead of storing it
 				if (this.isDestroyed) {
 					unlisten();
 					break;
@@ -844,7 +785,11 @@ export default {
 			this.stopPolling();
 
 			const loop = async () => {
-				await this.polling();
+				try {
+					await this.polling();
+				} catch (err) {
+					logger.warn("[Risuko] polling tick failed:", err?.message || err);
+				}
 				if (this.isDestroyed || this.timer === null) {
 					return;
 				}
@@ -853,15 +798,12 @@ export default {
 
 			this.timer = setTimeout(loop, this.interval);
 		},
-		// Restart polling if it isn't already running or if a poll is in-flight
-		// Called from engine event handlers so that newly-started or newly-resumed
-		// work wakes the poll loop back up after it self-suspended on idle
 		ensurePolling() {
 			this.cancelShutdown();
 			if (this.isDestroyed) {
 				return;
 			}
-			if (this.timer !== null || this.pollingInFlight) {
+			if (this.timer !== null || this.isPolling) {
 				return;
 			}
 			this.startPolling();
@@ -917,7 +859,6 @@ export default {
 				toast.dismiss(this.shutdownToastId);
 				this.shutdownToastId = null;
 			}
-			// Clear preference before shutdown since save after won't complete before OS termination
 			try {
 				await usePreferenceStore().save({ shutdownWhenComplete: false });
 			} catch (err) {
@@ -938,7 +879,6 @@ export default {
 				return;
 			}
 			this.isPolling = true;
-			this.pollingInFlight = true;
 
 			try {
 				const jobs: Array<Promise<unknown>> = [
@@ -992,11 +932,7 @@ export default {
 				}
 
 				if (this.taskDetailVisible && this.currentTaskGid) {
-					if (this.currentTaskIsBT && this.enabledFetchPeers) {
-						jobs.push(useTaskStore().fetchItemWithPeers(this.currentTaskGid));
-					} else {
-						jobs.push(useTaskStore().fetchItem(this.currentTaskGid));
-					}
+					jobs.push(useTaskStore().fetchItem(this.currentTaskGid));
 				}
 
 				await Promise.allSettled(jobs);
@@ -1005,13 +941,8 @@ export default {
 				}
 			} finally {
 				this.isPolling = false;
-				this.pollingInFlight = false;
 			}
 
-			// Suspend the poll timer when the engine has nothing in flight
-			// `ensurePolling()` will be called from event handlers when work
-			// reappears, so we won't miss state changes. Paused tasks are included
-			// in numWaiting, so exclude them to treat paused-only sessions as idle
 			const stat = useAppStore().stat;
 			const derivedPaused = useTaskStore().taskList.filter(
 				(task) => task.status === "paused",
@@ -1057,7 +988,7 @@ export default {
 		this.initTimer = setTimeout(() => {
 			const appStore = useAppStore();
 			appStore.fetchEngineInfo();
-			appStore.fetchEngineOptions();
+			usePreferenceStore().applyEngineMode();
 			this.autoResumeUnfinishedTasksOnLaunch();
 			this.syncTraySpeedTooltip();
 
@@ -1075,7 +1006,6 @@ export default {
 		this.clearAllAutoRetryTimers();
 		this.cancelShutdown();
 
-		// Best effort release in case component is torn down while downloads were active.
 		this.noSleepDesired = false;
 		this.syncNoSleepState();
 	},

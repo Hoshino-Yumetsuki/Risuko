@@ -1,16 +1,18 @@
 <template>
-  <div id="container" class="layout-root">
-    <mo-aside />
-    <router-view v-slot="{ Component, route }">
-      <Transition name="page" mode="out-in">
-        <component
-          :is="Component"
-          :key="route.path.startsWith('/preference') ? 'preference' : route.path.startsWith('/rss') ? 'rss' : 'task'"
-          class="page-view"
-        />
-      </Transition>
-    </router-view>
-    <mo-speedometer />
+  <div id="container" class="app-shell">
+    <app-sidebar v-if="!isAndroid" />
+    <div class="app-content">
+      <title-bar v-if="showTitleBar" :showActions="showWindowActions" />
+      <router-view v-slot="{ Component, route }">
+        <Transition name="page" mode="out-in">
+          <component
+            :is="Component"
+            :key="route.path.startsWith('/preference') ? 'preference' : route.path.startsWith('/rss') ? 'rss' : 'task'"
+            class="page-view"
+          />
+        </Transition>
+      </router-view>
+    </div>
     <nav v-if="isAndroid" class="android-bottom-nav" :aria-label="$t('app.primary-navigation')">
       <button class="android-nav-item" :class="{ active: routePath.startsWith('/task') || routePath === '/' }" @click="nav('/task')">
         <ListTodo :size="22" />
@@ -21,59 +23,50 @@
         <span>{{ $t('app.nav-rss') }}</span>
       </button>
       <button class="android-fab" :aria-label="$t('app.add-task')" @click="showAddTask">
-        <Plus :size="28" />
+        <Plus :size="24" />
       </button>
       <button class="android-nav-item" :class="{ active: routePath.startsWith('/share') }" @click="nav('/share')">
         <Share2 :size="22" />
         <span>{{ $t('app.nav-share') }}</span>
       </button>
-      <button class="android-nav-item" :class="{ active: routePath.startsWith('/preference') }" @click="nav('/preference/sync')">
-        <UserRound :size="22" />
-        <span>{{ $t('app.nav-account') }}</span>
+      <button class="android-nav-item" :class="{ active: routePath.startsWith('/preference') }" @click="nav('/preference')">
+        <Settings2 :size="22" />
+        <span>{{ $t('app.nav-settings') }}</span>
       </button>
     </nav>
-    <mo-add-task :visible="addTaskVisible" :type="addTaskType" />
-    <mo-about-panel :visible="aboutPanelVisible" />
-    <mo-task-detail
-      :visible="taskDetailVisible"
-      :gid="currentTaskGid"
-      :task="currentTaskItem"
-      :files="currentTaskFiles"
-      :peers="currentTaskPeers"
-    />
-    <mo-dragger />
+    <add-task-dialog :visible="addTaskVisible" :type="addTaskType" />
+    <about-panel :visible="aboutPanelVisible" />
+    <drop-zone />
   </div>
 </template>
 
 <script lang="ts">
-import { ListTodo, Plus, Rss, Share2, UserRound } from "@lucide/vue";
+import { ListTodo, Plus, Rss, Settings2, Share2 } from "@lucide/vue";
 import { ADD_TASK_TYPE } from "@shared/constants";
 import { invoke } from "@tauri-apps/api/core";
 import { toast } from "vue-sonner";
 import AboutPanel from "@/components/About/AboutPanel.vue";
-import Aside from "@/components/Aside/Index.vue";
 import Dragger from "@/components/Dragger/Index.vue";
-import Speedometer from "@/components/Speedometer/Speedometer.vue";
+import TitleBar from "@/components/Native/TitleBar.vue";
+import Sidebar from "@/components/Sidebar/Index.vue";
 import AddTask from "@/components/Task/AddTask.vue";
-import TaskDetail from "@/components/TaskDetail/Index.vue";
 import is from "@/shims/platform";
 import { useAppStore } from "@/store/app";
 import { useTaskStore } from "@/store/task";
 
 export default {
-	name: "mo-main",
+	name: "main-layout",
 	components: {
 		[AboutPanel.name]: AboutPanel,
-		[Aside.name]: Aside,
-		[Speedometer.name]: Speedometer,
+		[Sidebar.name]: Sidebar,
+		[TitleBar.name]: TitleBar,
 		[AddTask.name]: AddTask,
-		[TaskDetail.name]: TaskDetail,
 		[Dragger.name]: Dragger,
 		ListTodo,
 		Plus,
 		Rss,
+		Settings2,
 		Share2,
-		UserRound,
 	},
 	data() {
 		return {
@@ -84,6 +77,12 @@ export default {
 	computed: {
 		isAndroid() {
 			return is.android();
+		},
+		showTitleBar() {
+			return is.renderer() && !this.isAndroid;
+		},
+		showWindowActions() {
+			return is.windows() || is.linux();
 		},
 		routePath() {
 			return this.$route.path;
@@ -96,21 +95,6 @@ export default {
 		},
 		addTaskType() {
 			return useAppStore().addTaskType;
-		},
-		taskDetailVisible() {
-			return useTaskStore().taskDetailVisible;
-		},
-		currentTaskGid() {
-			return useTaskStore().currentTaskGid;
-		},
-		currentTaskItem() {
-			return useTaskStore().currentTaskItem;
-		},
-		currentTaskFiles() {
-			return useTaskStore().currentTaskFiles;
-		},
-		currentTaskPeers() {
-			return useTaskStore().currentTaskPeers;
 		},
 	},
 	mounted() {

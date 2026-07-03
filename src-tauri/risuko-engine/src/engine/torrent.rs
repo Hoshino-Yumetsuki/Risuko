@@ -11,6 +11,7 @@ use std::time::Duration;
 pub struct BtTuning {
     pub max_outstanding_per_peer: Option<usize>,
     pub max_peers_per_torrent: Option<usize>,
+    pub upload_rate_limit: Option<u64>,
     pub enable_upnp: Option<bool>,
     pub upnp_lease: Option<Duration>,
     /// Accepts "plaintext", "prefer", or "require". Anything else is ignored
@@ -39,10 +40,6 @@ pub struct TorrentEngine {
 }
 
 impl TorrentEngine {
-    pub async fn new(output_dir: &Path) -> Result<Self, String> {
-        Self::new_with_tuning(output_dir, BtTuning::default()).await
-    }
-
     pub async fn new_with_tuning(output_dir: &Path, tuning: BtTuning) -> Result<Self, String> {
         std::fs::create_dir_all(output_dir)
             .map_err(|e| format!("Failed to create torrent output dir: {}", e))?;
@@ -58,14 +55,9 @@ impl TorrentEngine {
                     upnp_lease: tuning.upnp_lease,
                     listen_ipv6: tuning.listen_ipv6.unwrap_or(false),
                 }),
-                fastresume: true,
-                // Persist session state so managed torrents survive restarts;
-                // without this, `fastresume` has nothing to resume from.
-                persistence: Some(bt::SessionPersistenceConfig::Json {
-                    folder: Some(output_dir.to_path_buf()),
-                }),
                 max_outstanding_requests_per_peer: tuning.max_outstanding_per_peer,
                 max_peers_per_torrent: tuning.max_peers_per_torrent,
+                upload_rate_limit: tuning.upload_rate_limit,
                 disable_local_service_discovery: !tuning.enable_lsd.unwrap_or(true),
                 encryption,
                 ..Default::default()
@@ -96,7 +88,7 @@ impl TorrentEngine {
             return Vec::new();
         };
         session.with_torrents(|iter| {
-            iter.map(|(id, handle)| (id, handle.info_hash().as_string()))
+            iter.map(|(id, handle)| (id, handle.info_hash().to_hex()))
                 .collect()
         })
     }
@@ -163,7 +155,6 @@ impl TorrentEngine {
 
         let add_opts = bt::AddTorrentOptions {
             output_folder: Some(dir.to_string()),
-            overwrite: true,
             trackers: if trackers.is_empty() {
                 None
             } else {
@@ -187,82 +178,6 @@ impl TorrentEngine {
         let handle = extract_handle(response)?;
         tracing::info!(
             "Torrent added: id={}, info_hash={:?}",
-            handle.id,
-            handle.info_hash
-        );
-        Ok(handle)
-    }
-
-    pub async fn add_magnet(
-        &self,
-        magnet_uri: &str,
-        options: &Map<String, Value>,
-    ) -> Result<TorrentHandle, String> {
-        let session = self.get_session()?;
-
-        let dir = options
-            .get("dir")
-            .and_then(|v| v.as_str())
-            .unwrap_or(self.output_dir.to_str().unwrap_or("."));
-
-        let trackers = Self::parse_trackers(options);
-        let only_files = Self::parse_select_files(options);
-        let create_subfolder = options
-            .get("bt-create-subfolder")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(true);
-
-        let add_opts = bt::AddTorrentOptions {
-            output_folder: Some(dir.to_string()),
-            overwrite: true,
-            trackers: if trackers.is_empty() {
-                None
-            } else {
-                Some(trackers.clone())
-            },
-            only_files,
-            list_only: false,
-            create_subfolder,
-        };
-
-        tracing::info!("Adding magnet to dir={}: {}", dir, magnet_uri);
-
-        // When bt-save-metadata is enabled, resolve the magnet ourselves first
-        // so we can write the synthesized .torrent file next to the payload.
-        // The resulting bytes are reused to add the torrent, so we do not pay
-        // the resolve cost twice
-        let save_metadata = options
-            .get("bt-save-metadata")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
-        if save_metadata {
-            let enc = encryption_policy_from_str(
-                options.get("bt-encryption-policy").and_then(|v| v.as_str()),
-            );
-            match bt::magnet::resolve(magnet_uri, &trackers, Duration::from_secs(120), enc).await {
-                Ok(resolved) => {
-                    let bytes = bt::magnet::synth_torrent_bytes(
-                        &resolved.info_bytes,
-                        &resolved.trackers,
-                        &resolved.piece_layers,
-                    );
-                    save_torrent_metadata_if_enabled(&bytes, options, &self.output_dir).await;
-                    return self.add_torrent_bytes(&bytes, options).await;
-                }
-                Err(e) => {
-                    tracing::warn!("bt-save-metadata resolve failed, falling back: {}", e);
-                }
-            }
-        }
-
-        let response = session
-            .add_torrent(bt::AddTorrent::Url(magnet_uri.into()), Some(add_opts))
-            .await
-            .map_err(|e| format!("Failed to add magnet: {}", e))?;
-
-        let handle = extract_handle(response)?;
-        tracing::info!(
-            "Magnet added: id={}, info_hash={:?}",
             handle.id,
             handle.info_hash
         );
@@ -485,8 +400,8 @@ fn extract_handle(response: bt::AddTorrentResponse) -> Result<TorrentHandle, Str
         bt::AddTorrentResponse::Added(id, handle)
         | bt::AddTorrentResponse::AlreadyManaged(id, handle) => Ok(TorrentHandle {
             id,
-            info_hash: Some(handle.info_hash().as_string()),
-            info_hash_v2: handle.info_hash_v2().map(|h| h.as_string()),
+            info_hash: Some(handle.info_hash().to_hex()),
+            info_hash_v2: handle.info_hash_v2().map(|h| h.to_hex()),
             meta_version: handle.meta_version().map(|s| s.to_string()),
         }),
         bt::AddTorrentResponse::ListOnly(_) => {
@@ -587,36 +502,11 @@ pub fn is_magnet_uri(uri: &str) -> bool {
 pub fn inspect_magnet(uri: &str) -> Result<MagnetInfo, String> {
     let magnet = bt::Magnet::parse(uri).map_err(|e| e.to_string())?;
     Ok(MagnetInfo {
-        info_hash: magnet.info_hash().as_string(),
-        info_hash_v2: magnet.info_hash_v2().map(|h| h.as_string()),
+        info_hash: magnet.info_hash().to_hex(),
+        info_hash_v2: magnet.info_hash_v2().map(|h| h.to_hex()),
         display_name: magnet.display_name.clone(),
     })
 }
-
-/// Strip filesystem-unsafe characters from a torrent name so it can be used
-/// as a filename stem on all platforms. Returns a non-empty placeholder for
-/// names that reduce to whitespace
-fn sanitize_file_stem(name: &str) -> String {
-    let cleaned: String = name
-        .chars()
-        .map(|c| match c {
-            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' | '\0' => '_',
-            c if c.is_control() => '_',
-            c => c,
-        })
-        .collect();
-    let trimmed = cleaned.trim().trim_matches('.').to_string();
-    if trimmed.is_empty() {
-        "torrent".to_string()
-    } else {
-        trimmed
-    }
-}
-
-/// Write a synthesized `.torrent` file when `bt-save-metadata` is enabled.
-/// Parses `bytes` to extract the torrent name, builds a safe stem, creates
-/// the parent directory, and writes the file via `tokio::fs::write`.
-/// All failures are logged as warnings so callers are never blocked.
 async fn save_torrent_metadata_if_enabled(
     bytes: &[u8],
     options: &Map<String, Value>,
@@ -634,13 +524,7 @@ async fn save_torrent_metadata_if_enabled(
         .and_then(|v| v.as_str())
         .unwrap_or_else(|| output_dir.to_str().unwrap_or("."));
     if let Ok(meta) = bt::parse_torrent(bytes) {
-        let name = if meta.info.name.is_empty() {
-            format!("{:?}", meta.info_hash)
-        } else {
-            meta.info.name.clone()
-        };
-        let safe = sanitize_file_stem(&name);
-        let path = Path::new(dir).join(format!("{}.torrent", safe));
+        let path = Path::new(dir).join(format!("{}.torrent", meta.info_hash.to_hex()));
         if let Some(parent) = path.parent() {
             if let Err(e) = tokio::fs::create_dir_all(parent).await {
                 tracing::warn!("Failed to create metadata dir {}: {}", parent.display(), e);
@@ -703,14 +587,5 @@ mod tests {
             encryption_policy_from_str(Some("REQUIRE")),
             bt::EncryptionPolicy::Prefer
         ));
-    }
-
-    #[test]
-    fn sanitize_file_stem_replaces_separators() {
-        assert_eq!(sanitize_file_stem("a/b\\c"), "a_b_c");
-        assert_eq!(sanitize_file_stem("  ..hidden..  "), "hidden");
-        assert_eq!(sanitize_file_stem(""), "torrent");
-        // Control chars become '_'; result is non-empty so we keep it.
-        assert_eq!(sanitize_file_stem("\0\n\t"), "___");
     }
 }

@@ -1,50 +1,42 @@
 <template>
-  <div class="mo-task-peers">
-    <div v-if="peers.length === 0" class="peers-empty">
+  <div class="task-peers">
+    <div v-if="peerRows.length === 0" class="peers-empty">
       {{ $t('task.no-peers') }}
     </div>
-    <div v-else class="peers-list">
-      <div class="peer-card" v-for="row in peers" :key="`${row.peerId}@${row.ip}:${row.port}`">
-        <div class="peer-card-header">
-          <span class="peer-card-host">{{ row.ip }}:{{ row.port }}</span>
-          <span class="peer-card-progress">{{ formatBitfieldPercent(row.bitfield) }}%</span>
+    <recycle-scroller
+      v-else
+      class="peers-scroller"
+      :items="peerRows"
+      :item-size="52"
+      key-field="key"
+    >
+      <template #default="{ item }">
+        <div class="peer-card">
+          <div class="peer-card-header">
+            <span class="peer-card-host">{{ item.ip }}:{{ item.port }}</span>
+            <span class="peer-card-progress">{{ item.percent }}%</span>
+          </div>
         </div>
-        <div class="peer-card-client">{{ formatPeerId(row.peerId) }}</div>
-        <div class="peer-card-speeds">
-          <span class="peer-speed">
-            <span class="peer-speed-arrow">↓</span>
-            {{ formatBytes(row.downloadSpeed) }}/s
-          </span>
-          <span class="peer-speed">
-            <span class="peer-speed-arrow">↑</span>
-            {{ formatBytes(row.uploadSpeed) }}/s
-          </span>
-        </div>
-      </div>
-    </div>
+      </template>
+    </recycle-scroller>
   </div>
 </template>
 
 <script lang="ts">
-import { bitfieldToPercent, bytesToSize, peerIdParser } from "@shared/utils";
-
 export default {
-	name: "mo-task-peers",
+	name: "task-peers",
 	props: {
 		peers: {
 			type: Array,
 			default: () => [],
 		},
 	},
-	methods: {
-		formatBitfieldPercent(bitfield: string) {
-			return bitfieldToPercent(bitfield);
-		},
-		formatBytes(value: string | number) {
-			return bytesToSize(value);
-		},
-		formatPeerId(peerId: string) {
-			return peerIdParser(peerId);
+	computed: {
+		peerRows() {
+			return this.peers.map((row) => ({
+				...row,
+				key: `${row.ip}:${row.port}`,
+			}));
 		},
 	},
 };

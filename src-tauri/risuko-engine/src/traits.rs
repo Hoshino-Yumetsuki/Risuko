@@ -9,17 +9,6 @@ pub trait ConfigDirProvider: Send + Sync {
     fn config_dir(&self) -> PathBuf;
 }
 
-/// Default config dir provider using the `dirs` crate
-pub struct DefaultConfigDir;
-
-impl ConfigDirProvider for DefaultConfigDir {
-    fn config_dir(&self) -> PathBuf {
-        dirs::config_dir()
-            .map(|d| d.join("dev.risuko.app"))
-            .unwrap_or_else(|| PathBuf::from("."))
-    }
-}
-
 /// Receives engine events and forwards them to the host environment
 ///
 /// - Tauri impl: calls `AppHandle::emit()` to send events to the webview
@@ -34,15 +23,6 @@ pub struct NoopEventSink;
 
 impl EventSink for NoopEventSink {
     fn emit(&self, _event: &str, _payload: Value) {}
-}
-
-/// Logging event sink that prints events to the log
-pub struct LogEventSink;
-
-impl EventSink for LogEventSink {
-    fn emit(&self, event: &str, payload: Value) {
-        tracing::info!("Engine event: {} {}", event, payload);
-    }
 }
 
 /// Persistent key-value storage backend for RSS data and other stores

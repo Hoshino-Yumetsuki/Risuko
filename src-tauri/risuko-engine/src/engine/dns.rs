@@ -29,7 +29,8 @@ pub struct DohSettings {
 impl DohSettings {
     /// Pull DoH settings out of a merged engine-options map
     pub fn from_options(opts: &Map<String, Value>) -> Self {
-        let enabled = bool_opt(opts.get("doh-enable"), false);
+        let enabled =
+            crate::config::parse_keep_seeding_option(opts.get("doh-enable")).unwrap_or(false);
         let url = opts
             .get("doh-url")
             .and_then(|v| v.as_str())
@@ -41,7 +42,8 @@ impl DohSettings {
             .and_then(|v| v.as_str())
             .map(parse_bootstrap)
             .unwrap_or_default();
-        let fallback = bool_opt(opts.get("doh-fallback"), true);
+        let fallback =
+            crate::config::parse_keep_seeding_option(opts.get("doh-fallback")).unwrap_or(true);
         Self {
             enabled,
             url,
@@ -64,21 +66,6 @@ fn parse_bootstrap(s: &str) -> Vec<IpAddr> {
         .filter(|p| !p.is_empty())
         .filter_map(|p| p.parse::<IpAddr>().ok())
         .collect()
-}
-
-/// Parse a boolean option loosely: a real JSON bool, `"true"`/`"false"` and
-/// friends as strings, or numeric 0/1. Anything else falls back to `default`
-fn bool_opt(v: Option<&Value>, default: bool) -> bool {
-    match v {
-        Some(Value::Bool(b)) => *b,
-        Some(Value::String(s)) => match s.trim().to_ascii_lowercase().as_str() {
-            "true" | "1" | "yes" | "on" => true,
-            "false" | "0" | "no" | "off" | "" => false,
-            _ => default,
-        },
-        Some(Value::Number(n)) => n.as_i64().map(|x| x != 0).unwrap_or(default),
-        _ => default,
-    }
 }
 
 /// Tracks the last settings we applied, so repeated config saves that don't
@@ -193,13 +180,5 @@ mod tests {
         let s = DohSettings::from_options(opts.as_object().unwrap());
         assert!(s.enabled);
         assert!(!s.is_active());
-    }
-
-    #[test]
-    fn bool_opt_string_forms() {
-        assert!(bool_opt(Some(&json!("true")), false));
-        assert!(!bool_opt(Some(&json!("off")), true));
-        assert!(bool_opt(Some(&json!(1)), false));
-        assert!(!bool_opt(None, false));
     }
 }

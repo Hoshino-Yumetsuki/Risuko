@@ -1,8 +1,8 @@
 <template>
-  <div class="mo-number-input-wrap">
+  <div class="number-input-wrap">
     <input
       type="number"
-      class="mo-input-number"
+      class="input-number"
       :value="modelValue"
       :min="min"
       :max="max"
@@ -10,12 +10,12 @@
       @input="onInput"
       @blur="onBlur"
     />
-    <div class="mo-number-btns">
+    <div class="number-btns">
       <button
         type="button"
-        class="mo-number-btn"
+        class="number-btn"
         tabindex="-1"
-        @click="increment($event)"
+        @click="increment"
         @mousedown.prevent
       >
         <svg
@@ -30,9 +30,9 @@
       </button>
       <button
         type="button"
-        class="mo-number-btn"
+        class="number-btn"
         tabindex="-1"
-        @click="decrement($event)"
+        @click="decrement"
         @mousedown.prevent
       >
         <svg
@@ -67,8 +67,6 @@ const props = withDefaults(
 
 const emit = defineEmits<(e: "update:modelValue", value: number) => void>();
 
-const clickResetTimers = new WeakMap<HTMLElement, number>();
-
 function clamp(val: number): number {
 	return Math.min(props.max, Math.max(props.min, val));
 }
@@ -94,33 +92,11 @@ function onBlur(e: Event) {
 	}
 }
 
-function animateBtn(target: EventTarget | null) {
-	const el = target as HTMLElement | null;
-	if (!el) {
-		return;
-	}
-	const previousTimer = clickResetTimers.get(el);
-	if (previousTimer !== undefined) {
-		window.clearTimeout(previousTimer);
-	}
-	el.classList.remove("is-clicked");
-	// Force reflow so repeated fast clicks can replay the animation.
-	el.getBoundingClientRect();
-	el.classList.add("is-clicked");
-	const timer = window.setTimeout(() => {
-		clickResetTimers.delete(el);
-		el.classList.remove("is-clicked");
-	}, 180);
-	clickResetTimers.set(el, timer);
-}
-
-function increment(event?: MouseEvent) {
-	animateBtn(event?.currentTarget ?? null);
+function increment() {
 	emit("update:modelValue", clamp((props.modelValue ?? 0) + props.step));
 }
 
-function decrement(event?: MouseEvent) {
-	animateBtn(event?.currentTarget ?? null);
+function decrement() {
 	emit("update:modelValue", clamp((props.modelValue ?? 0) - props.step));
 }
 </script>

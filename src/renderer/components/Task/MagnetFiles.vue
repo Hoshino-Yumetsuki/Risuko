@@ -1,13 +1,13 @@
 <template>
   <div class="magnet-files">
-    <mo-loading-overlay :show="resolving" :text="$t('task.loading-resolve-magnet')" />
+    <loading-overlay :show="resolving" :text="$t('task.loading-resolve-magnet')" />
     <div v-if="error" class="magnet-files-error">
       <span class="magnet-files-error-text">{{ errorMessage }}</span>
       <ui-button size="sm" variant="outline" @click="resolve">
         {{ $t('task.resolve-magnet-retry') }}
       </ui-button>
     </div>
-    <mo-task-files
+    <task-files
       v-if="resolved && files.length > 0"
       mode="ADD"
       :files="files"
@@ -41,7 +41,7 @@ interface TaskFileRow {
 }
 
 export default {
-	name: "mo-magnet-files",
+	name: "magnet-files",
 	components: {
 		[TaskFiles.name]: TaskFiles,
 		[LoadingOverlay.name]: LoadingOverlay,
@@ -70,9 +70,6 @@ export default {
 			if (this.error.includes("Timed out")) {
 				return this.$t("task.resolve-magnet-timeout");
 			}
-			// BEP 52 v2 magnet whose info dict resolved but no peer would
-			// serve the piece-layer hashes — typed error from
-			// `risuko-bt::magnet::ERR_PIECE_LAYERS_UNAVAILABLE`
 			if (this.error.includes("piece layers unavailable")) {
 				return this.$t("task.resolve-magnet-no-piece-layers");
 			}
@@ -115,7 +112,6 @@ export default {
 					files: MagnetFileRaw[];
 					fileCount: number;
 				}>("resolve_magnet", { uri });
-				// Guard against stale response if URI changed during resolve
 				if (this.magnetUri !== uri) {
 					return;
 				}

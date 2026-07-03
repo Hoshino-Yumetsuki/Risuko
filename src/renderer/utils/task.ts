@@ -4,12 +4,7 @@ import {
 	SELECTED_ALL_FILES,
 } from "@shared/constants";
 import type { AppConfig } from "@shared/types/config";
-import type { SavedCredential } from "@shared/types/credential";
-import {
-	isFtpFamily,
-	isSftpLink,
-	splitTaskLinksWithRenames,
-} from "@shared/utils";
+import { splitTaskLinksWithRenames } from "@shared/utils";
 import {
 	buildDefaultOptionsFromCurl,
 	buildHeadersFromCurl,
@@ -181,11 +176,10 @@ export const buildOption = (type: string, form: TaskForm) => {
 		result["sftp-private-key-passphrase"] = sftpKeyPassphrase;
 	}
 
-	// Per-task completion-script overrides. Stored under risuko-prefixed
-	// option keys; the engine preserves unknown options as-is and the
-	// renderer reads them back at completion time to pass to the script
-	// runner. `override = true` is required to opt in; without it, the
-	// global preference is used
+	// Per-task completion-script overrides, stored under risuko-prefixed option
+	// keys. The engine preserves unknown options; the renderer reads them back at
+	// completion to pass to the script runner. `override = true` opts in;
+	// otherwise the global preference is used
 	if (form.completionScriptOverride) {
 		const command = `${form.completionScriptCommand || ""}`.trim();
 		if (!isEmpty(command)) {
@@ -244,62 +238,3 @@ export const buildTorrentPayload = (form: TaskForm) => {
 	};
 	return result;
 };
-
-const AUTH_FIELDS: (keyof SavedCredential)[] = [
-	"authorization",
-	"cookie",
-	"ftpUser",
-	"ftpPasswd",
-	"sftpPrivateKey",
-	"sftpPrivateKeyContent",
-	"sftpKeyPassphrase",
-	"allProxy",
-];
-
-export function extractHostFromUri(uri: string): string | null {
-	const raw = (uri || "").trim();
-	if (!raw) {
-		return null;
-	}
-	const firstLine = raw.split("\n")[0].trim();
-	try {
-		const url = new URL(firstLine);
-		return url.hostname || null;
-	} catch {
-		return null;
-	}
-}
-
-export function extractProtocolFromUri(uri: string): string | undefined {
-	const raw = (uri || "").trim();
-	if (!raw) {
-		return undefined;
-	}
-	const firstLine = raw.split("\n")[0].trim().toLowerCase();
-	if (isSftpLink(firstLine)) {
-		return "sftp";
-	}
-	if (isFtpFamily(firstLine)) {
-		return "ftp";
-	}
-	return "http";
-}
-
-export async function applyCredentialToForm(
-	form: TaskForm,
-	credential: SavedCredential,
-): Promise<void> {
-	let source: SavedCredential = credential;
-	if (credential.vaulted) {
-		// Lazily hydrate secrets from the OS keychain. Imported inline to
-		// avoid a top-level cycle between utils and the preference store.
-		const { usePreferenceStore } = await import("@/store/preference");
-		source = await usePreferenceStore().loadCredentialSecrets(credential);
-	}
-	for (const key of AUTH_FIELDS) {
-		const val = source[key];
-		if (typeof val === "string" && val.trim()) {
-			form[key] = val;
-		}
-	}
-}

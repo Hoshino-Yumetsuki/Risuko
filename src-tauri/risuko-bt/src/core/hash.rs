@@ -31,10 +31,6 @@ impl Id20 {
         hex::encode(self.0)
     }
 
-    pub fn as_string(&self) -> String {
-        self.to_hex()
-    }
-
     /// XOR distance used by Kademlia routing
     pub fn distance(&self, other: &Self) -> Self {
         let mut d = [0u8; 20];
@@ -42,15 +38,6 @@ impl Id20 {
             *slot = self.0[i] ^ other.0[i];
         }
         Self(d)
-    }
-
-    /// MSB-first bit access (bit 0 is the high bit of byte 0)
-    pub fn get_bit(&self, bit: u8) -> bool {
-        if bit >= 160 {
-            return false;
-        }
-        let byte = self.0[(bit / 8) as usize];
-        byte & (1 << (7 - bit % 8)) != 0
     }
 }
 
@@ -130,19 +117,12 @@ pub fn sha1(data: &[u8]) -> Id20 {
     Id20(out.into())
 }
 
-/// Id32 — 32-byte ids used for BEP 52 (BitTorrent v2) info-hashes,
-/// per-file Merkle roots and SHA-256 piece-layer hashes.
-/// A 32-byte id used for BEP 52 info-hashes and Merkle hashes
+/// Id32 — 32-byte id used for BEP 52 (BitTorrent v2) info-hashes,
+/// per-file Merkle roots and SHA-256 piece-layer hashes
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Id32(pub [u8; 32]);
 
 impl Id32 {
-    pub const LEN: usize = 32;
-
-    pub fn new(bytes: [u8; 32]) -> Self {
-        Self(bytes)
-    }
-
     pub fn from_slice(b: &[u8]) -> Result<Self, HashParseError> {
         if b.len() != 32 {
             return Err(HashParseError::BadLength(b.len()));
@@ -158,10 +138,6 @@ impl Id32 {
 
     pub fn to_hex(&self) -> String {
         hex::encode(self.0)
-    }
-
-    pub fn as_string(&self) -> String {
-        self.to_hex()
     }
 
     /// Truncate to the leading 20 bytes for use in legacy 20-byte fields
@@ -237,15 +213,6 @@ mod tests {
         let b = Id20([0x0fu8; 20]);
         let d = a.distance(&b);
         assert_eq!(d.0, [0xf0u8; 20]);
-    }
-
-    #[test]
-    fn bit_access() {
-        let mut raw = [0u8; 20];
-        raw[0] = 0b1000_0000;
-        let id = Id20(raw);
-        assert!(id.get_bit(0));
-        assert!(!id.get_bit(1));
     }
 
     #[test]

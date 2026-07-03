@@ -1,7 +1,7 @@
 <template>
   <div
     class="flyout-task-item"
-    :class="{ 'is-active': isActive, selected: false }"
+    :class="{ 'is-active': isActive }"
   >
     <div class="flyout-task-icon" :class="`status-${displayStatus}`">
       <component :is="kindIcon" :size="18" />
@@ -11,7 +11,7 @@
         <span class="flyout-task-name" :title="taskName">{{ taskName }}</span>
         <span class="flyout-task-pct">{{ progressPercent }}%</span>
       </div>
-      <mo-task-progress
+      <task-progress
         :completed="Number(task.completedLength)"
         :total="Number(task.totalLength)"
         :status="displayStatus"
@@ -92,7 +92,7 @@ const actionsByStatus: Record<string, FlyoutAction[]> = {
 };
 
 export default {
-	name: "mo-flyout-task-item",
+	name: "flyout-task-item",
 	components: {
 		[TaskProgress.name as string]: TaskProgress,
 		ArrowDown,

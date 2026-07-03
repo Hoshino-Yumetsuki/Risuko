@@ -45,7 +45,7 @@ import { Input } from "@/components/ui/input";
 import { useRssStore } from "@/store/rss";
 
 export default {
-	name: "mo-rss-add-feed-dialog",
+	name: "rss-add-feed-dialog",
 	components: {
 		Button,
 		Dialog,

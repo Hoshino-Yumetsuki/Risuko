@@ -2,7 +2,7 @@
 //!
 //! Discovers peers via user-supplied trackers and the process-wide warm DHT
 //! (`Dht::shared`), then downloads the `info` dict from them using BEP-9
-//! (ut_metadata).
+//! (ut_metadata)
 
 use std::collections::{BTreeMap, HashSet};
 use std::net::SocketAddr;
@@ -57,7 +57,7 @@ pub struct Resolved {
     pub piece_layers: BTreeMap<Id32, Vec<u8>>,
 }
 
-/// Resolve a magnet URI to its raw info dict.
+/// Resolve a magnet URI to its raw info dict
 pub async fn resolve(
     magnet_uri: &str,
     extra_trackers: &[String],
@@ -134,7 +134,7 @@ pub async fn resolve_with_peers(
         Some(dht) => {
             let tx = peer_tx.clone();
             let dht_budget = budget.min(Duration::from_secs(60));
-            let mut dht_rx = dht.get_peers_stream(info_hash, dht_budget);
+            let mut dht_rx = dht.get_peers_stream(info_hash, dht_budget, None);
             Some(tokio::spawn(async move {
                 while let Some(p) = dht_rx.recv().await {
                     if tx.send(p).is_err() {
@@ -165,7 +165,6 @@ pub async fn resolve_with_peers(
     // furnish all required piece layers. If we exhaust the deadline with
     // info-yes / layers-no, this lets us surface a typed error rather than
     // a generic "no metadata" failure
-    let info_seen = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let layers_failed = Arc::new(std::sync::atomic::AtomicBool::new(false));
 
     // Bound fan-out so we don't open thousands of sockets
@@ -175,12 +174,10 @@ pub async fn resolve_with_peers(
     let driver = {
         let result_tx = result_tx.clone();
         let sem = sem.clone();
-        let info_seen = info_seen.clone();
         let layers_failed = layers_failed.clone();
         async move {
             let mut seen: HashSet<SocketAddr> = HashSet::new();
             let mut joinset: JoinSet<()> = JoinSet::new();
-            let mut attempted = 0usize;
 
             loop {
                 // If a winner already published, stop spawning
@@ -197,14 +194,12 @@ pub async fn resolve_with_peers(
                             break;
                         };
                         if !seen.insert(addr) { continue; }
-                        attempted += 1;
 
                         let permit = match Arc::clone(&sem).acquire_owned().await {
                             Ok(p) => p,
                             Err(_) => break,
                         };
                         let result_tx = result_tx.clone();
-                        let info_seen = info_seen.clone();
                         let layers_failed = layers_failed.clone();
                         joinset.spawn(async move {
                             let _permit = permit;
@@ -242,7 +237,6 @@ pub async fn resolve_with_peers(
                                 );
                                 return;
                             }
-                            info_seen.store(true, std::sync::atomic::Ordering::Relaxed);
                             if !layers_complete {
                                 if can_use_v1_metadata_without_piece_layers(want_v1, &bytes) {
                                     if let Some(tx) = result_tx.lock().take() {
@@ -267,7 +261,6 @@ pub async fn resolve_with_peers(
                     }
                 }
             }
-            attempted
         }
     };
 
@@ -276,7 +269,7 @@ pub async fn resolve_with_peers(
     let winner = tokio::select! {
         biased;
         got = result_rx => got.ok(),
-        _attempted = driver => None,
+        _ = driver => None,
         _ = tokio::time::sleep(overall) => None,
     };
 
@@ -302,9 +295,7 @@ pub async fn resolve_with_peers(
             // dict refused to serve piece layers" (pure-v2 specific —
             // surface a typed error code so the UI can suggest importing
             // a .torrent instead)
-            if info_seen.load(std::sync::atomic::Ordering::Relaxed)
-                && layers_failed.load(std::sync::atomic::Ordering::Relaxed)
-            {
+            if layers_failed.load(std::sync::atomic::Ordering::Relaxed) {
                 Err(format!(
                     "{ERR_PIECE_LAYERS_UNAVAILABLE}: no peer served the BEP 52 piece-layer hashes for this magnet"
                 ))
@@ -376,7 +367,7 @@ async fn try_fetch_from_peer(
 
     // Run the protocol inside a helper so every exit path disconnects the
     // peer actor below. Otherwise timed-out or rejected probes leak the
-    // socket and reader task.
+    // socket and reader task
     let result = try_fetch_from_peer_inner(&handle, rx).await;
     let _ = handle.tx.send(PeerCommand::Disconnect).await;
     result
@@ -394,7 +385,7 @@ async fn try_fetch_from_peer_inner(
     // Collect Handshook and the peer's extended handshake from a single
     // receive loop. The peer's extended handshake message can arrive before
     // the BT handshake event under some orderings; draining two sequential
-    // loops would drop whichever arrives first in the other arm.
+    // loops would drop whichever arrives first in the other arm
     let mut peer_supports_ext: Option<bool> = None;
     let mut peer_supports_v2 = false;
     let peer_ext = loop {
@@ -413,7 +404,7 @@ async fn try_fetch_from_peer_inner(
                 if peer_supports_ext.is_none() {
                     // Extended handshake must be preceded by Handshook with
                     // the extension bit set. Keep looping until Handshook
-                    // confirms support, but stash the decoded dict.
+                    // confirms support, but stash the decoded dict
                     match wait_for_handshook(&mut rx).await {
                         Some((true, v2)) => {
                             peer_supports_v2 = v2;

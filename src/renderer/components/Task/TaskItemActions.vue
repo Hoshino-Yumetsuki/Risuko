@@ -1,5 +1,45 @@
 <template>
-  <div :key="task.gid" class="task-item-actions" @click.stop v-on:dblclick.stop="() => null">
+  <div
+    v-if="isMobileList"
+    :key="task.gid"
+    class="task-item-actions task-item-actions--mobile"
+    @click.stop
+    v-on:dblclick.stop="() => null"
+  >
+    <button
+      v-if="primaryAction"
+      type="button"
+      class="task-item-action"
+      @click.stop="onActionClick(primaryAction, $event)"
+    >
+      <component :is="actionIcons[primaryAction]" :size="14" />
+    </button>
+    <button
+      v-if="isCardView"
+      type="button"
+      class="task-item-action"
+      @click.stop="onActionClick('FOLDER', $event)"
+    >
+      <Folder :size="14" />
+    </button>
+    <DropdownMenu>
+      <DropdownMenuTrigger class="task-item-action" type="button">
+        <EllipsisVertical :size="14" />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        <DropdownMenuItem
+          v-for="action in overflowActions"
+          :key="action"
+          :variant="action === 'DELETE' || action === 'TRASH' ? 'destructive' : 'default'"
+          @click="onActionClick(action, $event)"
+        >
+          <component :is="actionIcons[action]" :size="14" />
+          <span>{{ $t(actionLabels[action]) }}</span>
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  </div>
+  <div v-else :key="task.gid" class="task-item-actions" @click.stop v-on:dblclick.stop="() => null">
     <button
       type="button"
       v-for="(action, index) in taskActions"
@@ -23,6 +63,7 @@
 
 <script lang="ts">
 import {
+	EllipsisVertical,
 	Folder,
 	Info,
 	Link,
@@ -36,7 +77,14 @@ import {
 import { TASK_STATUS } from "@shared/constants";
 import { checkTaskIsSeeder, getTaskName } from "@shared/utils";
 import { commands } from "@/components/CommandManager/instance";
+import {
+	DropdownMenu,
+	DropdownMenuContent,
+	DropdownMenuItem,
+	DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import is from "@/shims/platform";
+import { usePreferenceStore } from "@/store/preference";
 import { useTaskStore } from "@/store/task";
 import {
 	getTaskFullPath,
@@ -54,8 +102,32 @@ const taskActionsMap = {
 	[TASK_STATUS.SEEDING]: ["STOP", "DELETE"],
 };
 
+const actionIconsMap = {
+	PAUSE: Pause,
+	RESUME: Play,
+	STOP: Square,
+	RESTART: RotateCcw,
+	DELETE: Trash2,
+	TRASH: Trash,
+	FOLDER: Folder,
+	LINK: Link,
+	INFO: Info,
+};
+
+const actionLabelsMap: Record<string, string> = {
+	PAUSE: "task.pause-task",
+	RESUME: "task.resume-task",
+	STOP: "task.stop-seeding",
+	RESTART: "task.restart-task",
+	DELETE: "task.delete-task",
+	TRASH: "task.remove-record",
+	FOLDER: "task.show-in-folder",
+	LINK: "task.copy-link",
+	INFO: "task.task-detail-title",
+};
+
 export default {
-	name: "mo-task-item-actions",
+	name: "task-item-actions",
 	components: {
 		Play,
 		Pause,
@@ -66,6 +138,11 @@ export default {
 		Folder,
 		Link,
 		Info,
+		EllipsisVertical,
+		DropdownMenu,
+		DropdownMenuContent,
+		DropdownMenuItem,
+		DropdownMenuTrigger,
 	},
 	props: {
 		mode: {
@@ -94,6 +171,12 @@ export default {
 		isSeeder() {
 			return checkTaskIsSeeder(this.task);
 		},
+		isMobileList() {
+			return is.android() && this.mode === "LIST";
+		},
+		isCardView() {
+			return usePreferenceStore().taskListStyle === "card";
+		},
 		taskStatus() {
 			const { task, isSeeder } = this;
 			if (isSeeder) {
@@ -101,6 +184,22 @@ export default {
 			} else {
 				return task.status;
 			}
+		},
+		primaryAction() {
+			return (taskActionsMap[this.taskStatus] || [])[0];
+		},
+		overflowActions() {
+			const rest = (taskActionsMap[this.taskStatus] || []).slice(1);
+			const common = this.isCardView
+				? ["LINK", "INFO"]
+				: ["FOLDER", "LINK", "INFO"];
+			return [...rest, ...common];
+		},
+		actionLabels() {
+			return actionLabelsMap;
+		},
+		actionIcons() {
+			return actionIconsMap;
 		},
 		taskCommonActions() {
 			const { mode } = this;
@@ -207,13 +306,6 @@ export default {
 			});
 		},
 		onFolderClick() {
-			// On Android, the user expects to land in the folder that
-			// holds the downloaded files: for a multi-file BT torrent
-			// that's the torrent root, for a single-file or magnet task
-			// that's the task's `dir`. Resolving to the directory ahead
-			// of time means the Rust reveal command builds a `tree/`
-			// SAF URI for the folder (rather than `/select`-ing the file
-			// inside the folder, which a file manager can't represent).
 			if (is.android()) {
 				const dir = getTaskRevealDir(this.task);
 				commands.emit("reveal-in-folder", {
@@ -231,7 +323,6 @@ export default {
 		},
 		onInfoClick() {
 			const { task } = this;
-			// Prefer the command handler; open detail directly only when no listener handled it
 			const handled = commands.emit("show-task-info", { task });
 			if (!handled) {
 				useTaskStore().showTaskDetail(task);

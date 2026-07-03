@@ -4,12 +4,12 @@
 </template>
 
 <script lang="ts">
-import colors from "@shared/colors";
+import colors from "@shared/colors.json";
 import { TASK_STATUS } from "@shared/constants";
 import { calcProgress } from "@shared/utils";
 
 export default {
-	name: "mo-task-progress",
+	name: "task-progress",
 	props: {
 		total: {
 			type: Number,

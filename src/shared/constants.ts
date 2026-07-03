@@ -1,4 +1,3 @@
-export const EMPTY_STRING = "";
 export const TEMP_DOWNLOAD_SUFFIX = ".part";
 
 export const APP_THEME = {
@@ -45,15 +44,11 @@ export const ENGINE_RPC_HOST = "127.0.0.1";
 export const ENGINE_RPC_PORT = 16800;
 export const ENGINE_MAX_CONCURRENT_DOWNLOADS = 10;
 
-export const UNKNOWN_PEERID =
-	"%00%00%00%00%00%00%00%00%00%00%00%00%00%00%00%00%00%00%00%00";
-export const UNKNOWN_PEERID_NAME = "unknown";
-
 export const ONE_SECOND = 1000;
 const ONE_MINUTE = ONE_SECOND * 60;
 const ONE_HOUR = ONE_MINUTE * 60;
 
-// 12 Hours
+// 12 hours
 export const AUTO_SYNC_TRACKER_INTERVAL = ONE_HOUR * 12;
 
 export const MAX_BT_TRACKER_LENGTH = 6144;
@@ -61,85 +56,55 @@ export const MAX_BT_TRACKER_LENGTH = 6144;
 export const DEFAULT_ED2K_SERVERS =
 	"176.123.5.89:4725,45.82.80.155:5687,85.239.33.123:4232,91.208.162.87:4232,145.239.2.134:4661";
 
-/**
- * @see https://github.com/ngosang/trackerslist
- */
-const NGOSANG_TRACKERS_BEST_URL =
-	"https://raw.githubusercontent.com/ngosang/trackerslist/master/trackers_best.txt";
-const NGOSANG_TRACKERS_BEST_IP_URL =
-	"https://raw.githubusercontent.com/ngosang/trackerslist/master/trackers_best_ip.txt";
-const NGOSANG_TRACKERS_ALL_URL =
-	"https://raw.githubusercontent.com/ngosang/trackerslist/master/trackers_all.txt";
-const NGOSANG_TRACKERS_ALL_IP_URL =
-	"https://raw.githubusercontent.com/ngosang/trackerslist/master/trackers_all_ip.txt";
-
-const NGOSANG_TRACKERS_BEST_URL_CDN =
-	"https://cdn.jsdelivr.net/gh/ngosang/trackerslist/trackers_best.txt";
-const NGOSANG_TRACKERS_BEST_IP_URL_CDN =
-	"https://cdn.jsdelivr.net/gh/ngosang/trackerslist/trackers_best_ip.txt";
-const NGOSANG_TRACKERS_ALL_URL_CDN =
-	"https://cdn.jsdelivr.net/gh/ngosang/trackerslist/trackers_all.txt";
-const NGOSANG_TRACKERS_ALL_IP_URL_CDN =
-	"https://cdn.jsdelivr.net/gh/ngosang/trackerslist/trackers_all_ip.txt";
-
-/**
- * @see https://github.com/XIU2/TrackersListCollection
- */
-const XIU2_TRACKERS_BEST_URL =
-	"https://raw.githubusercontent.com/XIU2/TrackersListCollection/master/best.txt";
-const XIU2_TRACKERS_ALL_URL =
-	"https://raw.githubusercontent.com/XIU2/TrackersListCollection/master/all.txt";
-const XIU2_TRACKERS_HTTP_URL =
-	"https://raw.githubusercontent.com/XIU2/TrackersListCollection/master/http.txt";
-
-const XIU2_TRACKERS_BEST_URL_CDN =
-	"https://cdn.jsdelivr.net/gh/XIU2/TrackersListCollection/best.txt";
-const XIU2_TRACKERS_ALL_URL_CDN =
-	"https://cdn.jsdelivr.net/gh/XIU2/TrackersListCollection/all.txt";
-const XIU2_TRACKERS_HTTP_URL_CDN =
-	"https://cdn.jsdelivr.net/gh/XIU2/TrackersListCollection/http.txt";
-
 export const TRACKER_SOURCE_OPTIONS = [
 	{
 		label: "ngosang/trackerslist",
 		options: [
 			{
-				value: NGOSANG_TRACKERS_BEST_URL,
+				value:
+					"https://raw.githubusercontent.com/ngosang/trackerslist/master/trackers_best.txt",
 				label: "trackers_best.txt",
 				cdn: false,
 			},
 			{
-				value: NGOSANG_TRACKERS_BEST_IP_URL,
+				value:
+					"https://raw.githubusercontent.com/ngosang/trackerslist/master/trackers_best_ip.txt",
 				label: "trackers_best_ip.txt",
 				cdn: false,
 			},
 			{
-				value: NGOSANG_TRACKERS_ALL_URL,
+				value:
+					"https://raw.githubusercontent.com/ngosang/trackerslist/master/trackers_all.txt",
 				label: "trackers_all.txt",
 				cdn: false,
 			},
 			{
-				value: NGOSANG_TRACKERS_ALL_IP_URL,
+				value:
+					"https://raw.githubusercontent.com/ngosang/trackerslist/master/trackers_all_ip.txt",
 				label: "trackers_all_ip.txt",
 				cdn: false,
 			},
 			{
-				value: NGOSANG_TRACKERS_BEST_URL_CDN,
+				value:
+					"https://cdn.jsdelivr.net/gh/ngosang/trackerslist/trackers_best.txt",
 				label: "trackers_best.txt",
 				cdn: true,
 			},
 			{
-				value: NGOSANG_TRACKERS_BEST_IP_URL_CDN,
+				value:
+					"https://cdn.jsdelivr.net/gh/ngosang/trackerslist/trackers_best_ip.txt",
 				label: "trackers_best_ip.txt",
 				cdn: true,
 			},
 			{
-				value: NGOSANG_TRACKERS_ALL_URL_CDN,
+				value:
+					"https://cdn.jsdelivr.net/gh/ngosang/trackerslist/trackers_all.txt",
 				label: "trackers_all.txt",
 				cdn: true,
 			},
 			{
-				value: NGOSANG_TRACKERS_ALL_IP_URL_CDN,
+				value:
+					"https://cdn.jsdelivr.net/gh/ngosang/trackerslist/trackers_all_ip.txt",
 				label: "trackers_all_ip.txt",
 				cdn: true,
 			},
@@ -149,32 +114,38 @@ export const TRACKER_SOURCE_OPTIONS = [
 		label: "XIU2/TrackersListCollection",
 		options: [
 			{
-				value: XIU2_TRACKERS_BEST_URL,
+				value:
+					"https://raw.githubusercontent.com/XIU2/TrackersListCollection/master/best.txt",
 				label: "best.txt",
 				cdn: false,
 			},
 			{
-				value: XIU2_TRACKERS_ALL_URL,
+				value:
+					"https://raw.githubusercontent.com/XIU2/TrackersListCollection/master/all.txt",
 				label: "all.txt",
 				cdn: false,
 			},
 			{
-				value: XIU2_TRACKERS_HTTP_URL,
+				value:
+					"https://raw.githubusercontent.com/XIU2/TrackersListCollection/master/http.txt",
 				label: "http.txt",
 				cdn: false,
 			},
 			{
-				value: XIU2_TRACKERS_BEST_URL_CDN,
+				value:
+					"https://cdn.jsdelivr.net/gh/XIU2/TrackersListCollection/best.txt",
 				label: "best.txt",
 				cdn: true,
 			},
 			{
-				value: XIU2_TRACKERS_ALL_URL_CDN,
+				value:
+					"https://cdn.jsdelivr.net/gh/XIU2/TrackersListCollection/all.txt",
 				label: "all.txt",
 				cdn: true,
 			},
 			{
-				value: XIU2_TRACKERS_HTTP_URL_CDN,
+				value:
+					"https://cdn.jsdelivr.net/gh/XIU2/TrackersListCollection/http.txt",
 				label: "http.txt",
 				cdn: true,
 			},
@@ -195,9 +166,9 @@ export const PROXY_SCOPE_OPTIONS = [
 ];
 
 // DNS over HTTPS providers. `url` is the RFC 8484 endpoint; `bootstrap` is a
-// comma-separated set of IPs for reaching that endpoint without leaking the
-// lookup to system DNS. `custom` ships empty, the user fills in the URL (and
-// bootstrap IPs if they want them)
+// comma-separated set of IPs for reaching it without leaking the lookup to
+// system DNS. `custom` ships empty for the user to fill in the URL (and
+// bootstrap IPs)
 export const DOH_PROVIDERS = {
 	cloudflare: {
 		url: "https://cloudflare-dns.com/dns-query",

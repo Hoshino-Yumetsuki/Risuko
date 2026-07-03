@@ -29,7 +29,6 @@ pub struct ServerConnection {
     addr: SocketAddrV4,
     client_hash: [u8; 16],
     client_port: u16,
-    _client_id: u32,
     tx: Option<mpsc::Sender<Ed2kPacket>>,
 }
 
@@ -51,7 +50,6 @@ impl ServerConnection {
             addr,
             client_hash,
             client_port,
-            _client_id: 0,
             tx: None,
         }
     }

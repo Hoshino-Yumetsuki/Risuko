@@ -97,55 +97,6 @@ export const useSyncStore = defineStore("sync", {
 			return resp.updatedAt as number;
 		},
 
-		async pushAll(): Promise<void> {
-			const authStore = useAuthStore();
-			if (!authStore.isLoggedIn || !authStore.token) {
-				throw new Error("Not logged in");
-			}
-
-			this.syncing = true;
-			try {
-				const categories = this.getSelectedCategories();
-				for (const categoryId of categories) {
-					const updatedAt = await this.pushCategory(categoryId);
-					if (updatedAt) {
-						await this.setCategoryTimestamp(categoryId, updatedAt);
-					}
-				}
-				this.lastSyncAt = Date.now();
-				await api.savePreference({ cloudSyncLastAt: this.lastSyncAt });
-				logger.info("[Risuko] sync pushAll done");
-			} catch (err) {
-				const message = getAxiosErrorMessage(err);
-				logger.warn("[Risuko] sync pushAll failed:", message);
-				throw new Error(message);
-			} finally {
-				this.syncing = false;
-			}
-		},
-
-		async pullCategory(categoryId: string): Promise<void> {
-			const authStore = useAuthStore();
-			if (!authStore.isLoggedIn || !authStore.token) {
-				return;
-			}
-
-			const { data } = await axios.get(
-				`${authStore.serverUrl}/settings/${categoryId}`,
-				{ headers: authStore.getAuthHeaders() },
-			);
-
-			if (!data.data) {
-				return;
-			}
-
-			const preferenceStore = usePreferenceStore();
-			await preferenceStore.save(data.data, { skipSync: true });
-			if (data.updatedAt) {
-				await this.setCategoryTimestamp(categoryId, data.updatedAt as number);
-			}
-		},
-
 		async pullAll(): Promise<void> {
 			const authStore = useAuthStore();
 			if (!authStore.isLoggedIn || !authStore.token) {
@@ -283,18 +234,6 @@ export const useSyncStore = defineStore("sync", {
 			}
 		},
 
-		async syncNow(): Promise<void> {
-			await this.syncBidirectional();
-		},
-
-		async restoreFromCloud(): Promise<void> {
-			await this.pullAll();
-		},
-
-		async fullSync(): Promise<void> {
-			await this.syncBidirectional();
-		},
-
 		async syncOnStartup(): Promise<void> {
 			if (!this.isAutoSyncEnabled()) {
 				return;
@@ -347,17 +286,6 @@ export const useSyncStore = defineStore("sync", {
 					logger.warn("[Risuko] syncOnChange failed:", (err as Error).message);
 				}
 			}, 500);
-		},
-
-		async deleteCategoryData(categoryId: string): Promise<void> {
-			const authStore = useAuthStore();
-			if (!authStore.isLoggedIn || !authStore.token) {
-				return;
-			}
-
-			await axios.delete(`${authStore.serverUrl}/settings/${categoryId}`, {
-				headers: authStore.getAuthHeaders(),
-			});
 		},
 	},
 });

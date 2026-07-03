@@ -32,16 +32,14 @@
       </div>
       <AccordionContent class="px-3 pb-3 pt-0">
         <div v-if="item.kind === 'torrent' && item.path">
-          <mo-select-torrent
+          <select-torrent
             :torrent-path="item.path"
             :torrent-name="item.displayName || ''"
-            hide-empty-drop
-            hide-trash
             @change="onTorrentChange"
           />
         </div>
         <div v-else-if="item.kind === 'magnet' && item.uri">
-          <mo-magnet-files
+          <magnet-files
             :magnet-uri="item.uri"
             @change="onMagnetSelectionChange"
           />
@@ -207,7 +205,7 @@ import { Switch } from "@/components/ui/switch";
 import type { BatchQueueItem } from "@/store/batchQueue";
 
 export default {
-	name: "mo-batch-item-card",
+	name: "batch-item-card",
 	components: {
 		[SelectTorrent.name]: SelectTorrent,
 		[MagnetFiles.name]: MagnetFiles,
@@ -363,23 +361,17 @@ export default {
 					: {
 							mediaFormatId: "",
 							mediaFormats: [],
-							mediaFormatLabel: "",
 							mediaInfoState: "idle",
 							mediaInfoError: "",
 							mediaTitle: "",
-							mediaThumbnail: "",
 						}),
 			});
 		},
 		onSelectFormat(value: string) {
 			// Map sentinel back to empty string for Auto selection
 			const formatId = value === "__auto__" ? "" : value;
-			const fmt = (this.item.mediaFormats ?? []).find(
-				(f) => f.format_id === formatId,
-			);
 			this.$emit("update:media", this.item.id, {
 				mediaFormatId: formatId,
-				mediaFormatLabel: fmt ? this.describeFormat(fmt) : "",
 			});
 		},
 		describeFormat(f: MediaFormat): string {
@@ -424,7 +416,6 @@ export default {
 					mediaInfoState: "ready",
 					mediaFormats: info.formats || [],
 					mediaTitle: info.title || "",
-					mediaThumbnail: info.thumbnail || "",
 				});
 			} catch (err: unknown) {
 				const message =

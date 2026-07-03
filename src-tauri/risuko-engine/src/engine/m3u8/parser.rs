@@ -68,11 +68,6 @@ pub fn is_m3u8_uri(uri: &str) -> bool {
 
 /// Resolve a possibly-relative segment URI against the playlist base URL
 pub fn resolve_segment_url(base_url: &str, segment_uri: &str) -> Result<String, String> {
-    // Already absolute
-    if segment_uri.starts_with("http://") || segment_uri.starts_with("https://") {
-        return Ok(segment_uri.to_string());
-    }
-
     let base = Url::parse(base_url).map_err(|e| format!("Invalid base URL: {e}"))?;
     let resolved = base
         .join(segment_uri)
@@ -204,12 +199,7 @@ fn parse_hex_iv(iv_str: &str) -> Option<Vec<u8>> {
     if hex.len() != 32 {
         return None;
     }
-    let mut bytes = Vec::with_capacity(16);
-    for i in (0..32).step_by(2) {
-        let byte = u8::from_str_radix(&hex[i..i + 2], 16).ok()?;
-        bytes.push(byte);
-    }
-    Some(bytes)
+    hex::decode(hex).ok()
 }
 
 #[cfg(test)]

@@ -1,25 +1,24 @@
-/* Input group and number input */
 @layer components {
-	.mo-input-group {
+	.input-group {
 		display: flex;
 		align-items: center;
 		width: 100%;
 	}
-	.mo-input-group > input {
+	.input-group > input {
 		border-top-right-radius: 0px !important;
 		border-bottom-right-radius: 0px !important;
 	}
-	.mo-input-group--bordered > .mo-input-prepend,
-	.mo-input-group--bordered > .mo-input-append {
+	.input-group--bordered > .input-prepend,
+	.input-group--bordered > .input-append {
 		border: none;
 	}
-	.mo-input-group > :first-child,
-	.mo-input-group > :first-child input {
+	.input-group > :first-child,
+	.input-group > :first-child input {
 		border-top-left-radius: calc(var(--radius) - 2px) !important;
 		border-bottom-left-radius: calc(var(--radius) - 2px) !important;
 	}
-	.mo-input-prepend,
-	.mo-input-append {
+	.input-prepend,
+	.input-append {
 		display: inline-flex;
 		align-items: center;
 		justify-content: center;
@@ -32,28 +31,28 @@
 		white-space: nowrap;
 		flex-shrink: 0;
 	}
-	.mo-input-prepend {
+	.input-prepend {
 		border-right: none;
 		border-top-left-radius: calc(var(--radius) - 2px);
 		border-bottom-left-radius: calc(var(--radius) - 2px);
 	}
-	.mo-input-append {
+	.input-append {
 		border-left: none;
 		border-top-right-radius: calc(var(--radius) - 2px);
 		border-bottom-right-radius: calc(var(--radius) - 2px);
 		cursor: pointer;
 	}
-	.mo-input-append .select-directory.ui-button {
+	.input-append .select-directory.ui-button {
 		transition:
 			background-color 0.2s ease,
 			border-color 0.2s ease,
 			color 0.2s ease,
 			transform 0.2s ease;
 	}
-	.mo-input-append .select-directory.ui-button:hover {
+	.input-append .select-directory.ui-button:hover {
 		transform: translateY(-1px);
 	}
-	.mo-input-append .select-directory.ui-button:active {
+	.input-append .select-directory.ui-button:active {
 		transform: translateY(0);
 	}
 	.show-in-folder {
@@ -70,7 +69,7 @@
 	.show-in-folder:hover {
 		color: var(--foreground);
 	}
-	.mo-input-number {
+	.input-number {
 		display: block;
 		width: 100%;
 		height: 36px;
@@ -87,17 +86,17 @@
 		-moz-appearance: textfield;
 		appearance: textfield;
 	}
-	.mo-input-number::-webkit-inner-spin-button,
-	.mo-input-number::-webkit-outer-spin-button {
+	.input-number::-webkit-inner-spin-button,
+	.input-number::-webkit-outer-spin-button {
 		-webkit-appearance: none;
 		appearance: none;
 		margin: 0;
 	}
-	.mo-input-number:focus {
+	.input-number:focus {
 		border-color: var(--ring);
 		box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 50%, transparent);
 	}
-	.mo-number-input-wrap {
+	.number-input-wrap {
 		position: relative;
 		display: flex;
 		align-items: stretch;
@@ -111,11 +110,11 @@
 			border-color 0.15s,
 			box-shadow 0.15s;
 	}
-	.mo-number-input-wrap:focus-within {
+	.number-input-wrap:focus-within {
 		border-color: var(--ring);
 		box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 50%, transparent);
 	}
-	.mo-number-input-wrap .mo-input-number {
+	.number-input-wrap .input-number {
 		flex: 1 1 0;
 		min-width: 0;
 		height: 100%;
@@ -123,11 +122,11 @@
 		border-radius: 0;
 		padding-right: 10px;
 	}
-	.mo-number-input-wrap .mo-input-number:focus {
+	.number-input-wrap .input-number:focus {
 		border: none;
 		box-shadow: none;
 	}
-	.mo-number-input-wrap .mo-number-btns {
+	.number-input-wrap .number-btns {
 		position: static;
 		display: flex;
 		flex-direction: column;
@@ -135,13 +134,13 @@
 		border-left: 1px solid var(--border);
 		border-radius: 0;
 	}
-	.mo-number-btn {
+	.number-btn {
 		flex: 1;
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		background: var(--mo-input-number-btn-bg);
-		color: var(--mo-input-number-btn-color);
+		background: var(--surface-2);
+		color: inherit;
 		border: none;
 		cursor: pointer;
 		padding: 0;
@@ -152,25 +151,23 @@
 		-webkit-appearance: none;
 		appearance: none;
 	}
-	.mo-number-btn:hover {
-		background: var(--mo-input-number-btn-hover-bg);
-		color: var(--mo-input-number-btn-hover-color);
+	.number-btn:hover {
+		background: color-mix(in srgb, var(--text-1) 6%, var(--surface-2));
+		color: var(--text-1);
 	}
-	.mo-number-btn:active {
-		background: var(--mo-input-number-btn-hover-bg);
+	.number-btn:active {
+		background: color-mix(in srgb, var(--text-1) 6%, var(--surface-2));
+		animation: number-btn-click 180ms;
 	}
-	.mo-number-btn.is-clicked {
-		animation: mo-number-btn-click 180ms;
-	}
-	.mo-number-btn:first-child {
+	.number-btn:first-child {
 		border-bottom: 1px solid var(--border);
 	}
-	.mo-number-btn svg {
+	.number-btn svg {
 		width: 10px;
 		height: 10px;
 		stroke-width: 2.5;
 	}
-	@keyframes mo-number-btn-click {
+	@keyframes number-btn-click {
 		0% {
 			filter: brightness(1);
 		}
@@ -180,12 +177,5 @@
 		100% {
 			filter: brightness(1);
 		}
-	}
-	.dark .mo-input-group--bordered {
-		border-color: rgba(255, 255, 255, 0.12);
-	}
-	.dark .mo-input-group--bordered > .mo-input-prepend,
-	.dark .mo-input-group--bordered > .mo-input-append {
-		border-color: rgba(255, 255, 255, 0.12);
 	}
 }

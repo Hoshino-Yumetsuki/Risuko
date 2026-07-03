@@ -152,6 +152,7 @@ export default {
 	"pause-task-success": 'Successfully paused task "{{taskName}}"',
 	"pause-task-fail": 'Failed to pause task "{{taskName}}"',
 	"resume-task": "Resume Task",
+	"restart-task": "Restart Task",
 	"stop-seeding": "Stop Seeding",
 	"open-task": "Open File",
 	"resume-task-success": 'Successfully resumed task "{{taskName}}"',
@@ -302,4 +303,9 @@ export default {
 	"mirror-placeholder": "Mirror URL (same file, another server)",
 	"mirror-hint":
 		"Add mirror URLs that point to the same file to download from multiple sources in parallel.",
+	"detail-tab-general": "General",
+	"detail-tab-activity": "Activity",
+	"detail-tab-trackers": "Trackers",
+	"detail-tab-peers": "Peers",
+	"detail-tab-files": "Files",
 };

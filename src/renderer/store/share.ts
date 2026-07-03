@@ -9,7 +9,7 @@ const shareAxios = axios.create({ timeout: 15_000 });
 
 export type ShareDirection = "send" | "receive";
 
-export type ShareStatus =
+type ShareStatus =
 	| "preparing"
 	| "waiting"
 	| "connecting"
@@ -61,7 +61,6 @@ interface ShareEventPayload {
 interface ResolvedSession {
 	shareId: string;
 	deviceCode: string;
-	direction: ShareDirection;
 	ticket: string | null;
 	files: ShareFile[];
 	expiresAt: number;
@@ -136,6 +135,14 @@ function newId(): string {
 	}
 }
 
+function isTerminalShareResolveError(err: unknown): boolean {
+	if (!axios.isAxiosError(err) || !err.response?.status) {
+		return false;
+	}
+	const status = err.response.status;
+	return status >= 400 && status < 500 && status !== 429;
+}
+
 export const useShareStore = defineStore("share", {
 	state: (): ShareState => ({
 		role: "send",
@@ -148,12 +155,6 @@ export const useShareStore = defineStore("share", {
 	getters: {
 		serverUrl(): string {
 			return useAuthStore().serverUrl;
-		},
-		activeTransfers(): ShareTransfer[] {
-			return this.transfers.filter(
-				(t) =>
-					!["completed", "terminated", "error", "cancelled"].includes(t.status),
-			);
 		},
 	},
 	actions: {
@@ -276,6 +277,7 @@ export const useShareStore = defineStore("share", {
 					total: info.files.reduce((sum, f) => sum + (f.size || 0), 0),
 				});
 
+				// direction kept for backend deployments that still validate it
 				const { data } = await shareAxios.post(
 					`${this.serverUrl}/share`,
 					{ direction: "send", ticket: info.ticket, files: info.files },
@@ -284,15 +286,13 @@ export const useShareStore = defineStore("share", {
 				this.patchTransfer(id, {
 					shareId: data.shareId,
 					deviceCode: data.deviceCode,
-					url: data.deviceCode
-						? `${this.serverUrl.replace(/\/$/, "")}/share/${data.deviceCode}`
-						: data.url,
+					url: data.url,
 					status: "waiting",
 				});
 			} catch (err) {
 				const message = getApiErrorMessage(err, "Share request failed");
 				this.patchTransfer(id, { status: "error", error: message });
-				// Tear down the native side if the rendezvous failed.
+				// tear down the native side if the rendezvous failed
 				await invoke("share_cancel", { id }).catch(() => undefined);
 				throw new Error(message);
 			}
@@ -378,6 +378,12 @@ export const useShareStore = defineStore("share", {
 				ticket = resolved.ticket;
 				files = resolved.files;
 			}
+			if (
+				!this.pendingIncoming ||
+				this.pendingIncoming.shareId !== session.shareId
+			) {
+				throw new Error("Receive cancelled");
+			}
 			if (!ticket) {
 				throw new Error("Sender has not shared any files yet");
 			}
@@ -419,9 +425,19 @@ export const useShareStore = defineStore("share", {
 			attempts = 60,
 		): Promise<ResolvedSession> {
 			for (let i = 0; i < attempts; i += 1) {
-				const session = await this.resolveById(shareId);
-				if (session.ticket) {
-					return session;
+				if (this.pendingIncoming?.shareId !== shareId) {
+					throw new Error("Receive cancelled");
+				}
+				try {
+					const session = await this.resolveById(shareId);
+					if (session.ticket) {
+						return session;
+					}
+				} catch (err) {
+					if (isTerminalShareResolveError(err)) {
+						throw err;
+					}
+					logger.warn("[Risuko] share ticket poll failed, retrying:", err);
 				}
 				await new Promise((resolve) => setTimeout(resolve, 2000));
 			}

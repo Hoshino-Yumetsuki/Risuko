@@ -3,7 +3,7 @@ mod sftp_download;
 pub(crate) mod tls;
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64};
+use std::sync::atomic::{AtomicU32, AtomicU64};
 use std::sync::Arc;
 
 use serde_json::{Map, Value};
@@ -46,7 +46,7 @@ pub fn detect_ftp_protocol(uri: &str) -> Option<FtpProtocol> {
     }
 }
 
-/// Parse an FTP/FTPS/SFTP URI into components.
+/// Parse an FTP/FTPS/SFTP URI into components
 ///
 /// Supports formats:
 /// - `ftp://host/path`
@@ -62,104 +62,40 @@ pub fn parse_ftp_uri(uri: &str) -> Result<FtpUri, String> {
         FtpProtocol::Sftp => 22,
     };
 
-    // Strip scheme
-    let scheme_end = uri.find("://").ok_or("Invalid URI: missing scheme")? + 3;
-    let rest = &uri[scheme_end..];
+    let parsed = url::Url::parse(uri.trim()).map_err(|e| format!("Invalid URI: {e}"))?;
 
-    // Split authority from path
-    let (authority, path) = match rest.find('/') {
-        Some(idx) => (&rest[..idx], &rest[idx..]),
-        None => (rest, "/"),
+    let decode = |s: &str| -> Result<String, String> {
+        percent_encoding::percent_decode_str(s)
+            .decode_utf8()
+            .map(|c| c.into_owned())
+            .map_err(|e| e.to_string())
     };
 
-    // Parse user:pass@host:port
-    let (userinfo, hostport) = match authority.rfind('@') {
-        Some(idx) => (Some(&authority[..idx]), &authority[idx + 1..]),
-        None => (None, authority),
+    let host = match parsed.host_str() {
+        Some(h) if !h.is_empty() => h.trim_start_matches('[').trim_end_matches(']').to_string(),
+        _ => return Err("Empty host in URI".to_string()),
     };
 
-    let (user, password) = match userinfo {
-        Some(info) => match info.find(':') {
-            Some(idx) => (
-                Some(
-                    urlencoding::decode(&info[..idx])
-                        .map_err(|e| e.to_string())?
-                        .into_owned(),
-                ),
-                Some(
-                    urlencoding::decode(&info[idx + 1..])
-                        .map_err(|e| e.to_string())?
-                        .into_owned(),
-                ),
-            ),
-            None => (
-                Some(
-                    urlencoding::decode(info)
-                        .map_err(|e| e.to_string())?
-                        .into_owned(),
-                ),
-                None,
-            ),
-        },
-        None => (None, None),
+    let user = match parsed.username() {
+        "" => None,
+        u => Some(decode(u)?),
     };
+    let password = parsed.password().map(decode).transpose()?;
 
-    // Parse host:port (handle IPv6 [::1]:port)
-    let (host, port) = if hostport.starts_with('[') {
-        // IPv6
-        let bracket_end = hostport.find(']').ok_or("Invalid IPv6 address")?;
-        let host = &hostport[1..bracket_end];
-        let port =
-            if bracket_end + 1 < hostport.len() && hostport.as_bytes()[bracket_end + 1] == b':' {
-                hostport[bracket_end + 2..]
-                    .parse::<u16>()
-                    .map_err(|e| format!("Invalid port: {e}"))?
-            } else {
-                default_port
-            };
-        (host.to_string(), port)
-    } else {
-        match hostport.rfind(':') {
-            Some(idx) => {
-                let port = hostport[idx + 1..]
-                    .parse::<u16>()
-                    .map_err(|e| format!("Invalid port: {e}"))?;
-                (hostport[..idx].to_string(), port)
-            }
-            None => (hostport.to_string(), default_port),
-        }
-    };
-
-    if host.is_empty() {
-        return Err("Empty host in URI".to_string());
-    }
-
-    let decoded_path = urlencoding::decode(path)
-        .map_err(|e| e.to_string())?
-        .into_owned();
+    let path = decode(parsed.path())?;
 
     Ok(FtpUri {
         protocol,
         user,
         password,
         host,
-        port,
-        path: decoded_path,
+        port: parsed.port().unwrap_or(default_port),
+        path: if path.is_empty() {
+            "/".to_string()
+        } else {
+            path
+        },
     })
-}
-
-/// Infer filename from an FTP URI path
-pub fn infer_filename_from_ftp_uri(uri: &str) -> String {
-    if let Ok(parsed) = parse_ftp_uri(uri) {
-        let path = parsed.path.trim_end_matches('/');
-        if let Some(idx) = path.rfind('/') {
-            let name = &path[idx + 1..];
-            if !name.is_empty() {
-                return name.to_string();
-            }
-        }
-    }
-    "download".to_string()
 }
 
 /// Main dispatcher: calls FTP/FTPS or SFTP worker based on protocol
@@ -172,7 +108,6 @@ pub async fn run_ftp_download(
     total: Arc<AtomicU64>,
     completed: Arc<AtomicU64>,
     speed: Arc<AtomicU64>,
-    cancelled: Arc<AtomicBool>,
     connections: Arc<AtomicU32>,
     cancel_token: CancellationToken,
     global_limiter: Arc<SpeedLimiter>,
@@ -190,7 +125,6 @@ pub async fn run_ftp_download(
                 total,
                 completed,
                 speed,
-                cancelled,
                 connections,
                 cancel_token,
                 global_limiter,
@@ -207,7 +141,6 @@ pub async fn run_ftp_download(
                 total,
                 completed,
                 speed,
-                cancelled,
                 connections,
                 cancel_token,
                 global_limiter,
@@ -283,13 +216,13 @@ mod tests {
     }
 
     #[test]
-    fn test_infer_filename() {
+    fn test_basename_from_ftp_path() {
         assert_eq!(
-            infer_filename_from_ftp_uri("ftp://host/dir/file.zip"),
+            ftp_download::basename_from_ftp_path("/dir/file.zip"),
             "file.zip"
         );
-        assert_eq!(infer_filename_from_ftp_uri("sftp://host/"), "download");
-        assert_eq!(infer_filename_from_ftp_uri("ftp://host"), "download");
+        assert_eq!(ftp_download::basename_from_ftp_path("/"), "download");
+        assert_eq!(ftp_download::basename_from_ftp_path(""), "download");
     }
 
     #[test]

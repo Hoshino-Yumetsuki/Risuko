@@ -16,7 +16,6 @@ interface ParsedMeta {
 	year?: number | null;
 	season?: number | null;
 	episode?: number | null;
-	episode_end?: number | null;
 	absolute_episode?: number | null;
 	quality_tags: string[];
 	group?: string | null;
@@ -34,6 +33,7 @@ export interface RssItem {
 	link: string;
 	pub_date: number | null;
 	description: string;
+	content: string;
 	enclosure_url: string | null;
 	enclosure_type: string | null;
 	enclosure_length: number | null;
@@ -43,19 +43,19 @@ export interface RssItem {
 	parsed_meta?: ParsedMeta | null;
 	matched_rule_id?: string | null;
 	/** Inline media URLs scraped from the entry body (img/video/audio/source)
-	 * plus extra enclosure links beyond the primary `enclosure_url`. */
+	 * plus extra enclosure links beyond the primary `enclosure_url` */
 	media_urls?: string[];
 }
 
-export type PatternKind = "contains" | "glob" | "regex";
+type PatternKind = "contains" | "glob" | "regex";
 
-export interface Pattern {
+interface Pattern {
 	value: string;
 	kind: PatternKind;
 	case_sensitive: boolean;
 }
 
-export type EpisodeSelector =
+type EpisodeSelector =
 	| { type: "all" }
 	| { type: "from"; start: number }
 	| { type: "range"; start: number; end: number }
@@ -112,33 +112,4 @@ export interface DryRunMatch {
 	matched: boolean;
 	score: number;
 	reason: string;
-}
-
-export function emptyRule(name = ""): RssRule {
-	return {
-		id: "",
-		name,
-		is_active: true,
-		auto_download: false,
-		feed_ids: [],
-		priority: 0,
-		mode: "any-match",
-		title_must: [],
-		title_must_not: [],
-		min_size_bytes: null,
-		max_size_bytes: null,
-		min_seeders: null,
-		series_filter: null,
-		seasons: null,
-		episodes: null,
-		quality_preferences: [],
-		required_qualities: [],
-		forbidden_qualities: [],
-		upgrade_existing: false,
-		download_dir: null,
-		filename_template: null,
-		schedule: null,
-		cooldown_secs: 0,
-		stats: { last_matched_at: null, match_count: 0, download_count: 0 },
-	};
 }

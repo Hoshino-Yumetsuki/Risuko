@@ -102,7 +102,6 @@ pub async fn download_segments(
     total: Arc<AtomicU64>,
     completed: Arc<AtomicU64>,
     connections: Arc<AtomicU32>,
-    cancelled: Arc<AtomicBool>,
     cancel_token: CancellationToken,
     global_limiter: Arc<SpeedLimiter>,
     task_limiter: Arc<SpeedLimiter>,
@@ -134,10 +133,6 @@ pub async fn download_segments(
     let total_estimated = Arc::new(AtomicBool::new(false));
 
     let total_segments = segments.len() as u64;
-    let completed_for_spawn = completed.clone();
-    let total_for_spawn = total.clone();
-    let total_estimated_for_spawn = total_estimated.clone();
-    let total_segments_for_spawn = total_segments;
 
     let mut handles = Vec::with_capacity(segments.len());
 
@@ -154,16 +149,14 @@ pub async fn download_segments(
         let seg_path = segment_paths[index].clone();
         let segment = segment.clone();
         let seq = media_sequence + index as u64;
-        let cancelled = cancelled.clone();
         let cancel_token = cancel_token.clone();
         let connections = connections.clone();
         let global_limiter = global_limiter.clone();
         let task_limiter = task_limiter.clone();
         let key_cache = key_cache.clone();
-        let completed_inner = completed_for_spawn.clone();
-        let total_inner = total_for_spawn.clone();
-        let total_estimated_inner = total_estimated_for_spawn.clone();
-        let total_segments_inner = total_segments_for_spawn;
+        let completed_inner = completed.clone();
+        let total_inner = total.clone();
+        let total_estimated_inner = total_estimated.clone();
 
         let handle = tokio::spawn(async move {
             let _permit = permit
@@ -177,7 +170,6 @@ pub async fn download_segments(
                 &segment,
                 seq,
                 &seg_path,
-                &cancelled,
                 &cancel_token,
                 &global_limiter,
                 &task_limiter,
@@ -193,7 +185,7 @@ pub async fn download_segments(
 
                     // Estimate total from first completed segment
                     if !total_estimated_inner.swap(true, Ordering::Relaxed) {
-                        let estimated = bytes_written.saturating_mul(total_segments_inner);
+                        let estimated = bytes_written.saturating_mul(total_segments);
                         total_inner.store(estimated, Ordering::Relaxed);
                     }
 
@@ -210,7 +202,7 @@ pub async fn download_segments(
     // On error, cancel remaining tasks via cancel_token
 
     for idx in 0..handles.len() {
-        if cancelled.load(Ordering::Relaxed) || cancel_token.is_cancelled() {
+        if cancel_token.is_cancelled() {
             abort_remaining(&mut handles).await;
             return Err("cancelled".to_string());
         }
@@ -259,7 +251,6 @@ async fn download_single_segment(
     segment: &Segment,
     sequence_number: u64,
     output_path: &Path,
-    cancelled: &AtomicBool,
     cancel_token: &CancellationToken,
     global_limiter: &SpeedLimiter,
     task_limiter: &SpeedLimiter,
@@ -268,7 +259,7 @@ async fn download_single_segment(
     let mut retries = 0;
 
     loop {
-        if cancelled.load(Ordering::Relaxed) || cancel_token.is_cancelled() {
+        if cancel_token.is_cancelled() {
             return Err("cancelled".to_string());
         }
 

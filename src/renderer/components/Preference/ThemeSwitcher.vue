@@ -7,38 +7,41 @@
       @click.prevent="() => handleChange(item.value)"
     >
       <div :class="['theme-preview', item.className]">
-        <!-- Light preview -->
-        <template v-if="item.value === 'light'">
-          <div class="preview-sidebar preview-sidebar--light"></div>
-          <div class="preview-content preview-content--light">
-            <div class="preview-header preview-header--light"></div>
-            <div class="preview-body">
-              <div class="preview-line preview-line--light"></div>
-              <div class="preview-line preview-line--light short"></div>
+        <template v-if="item.value === 'light' || item.value === 'dark'">
+          <div :class="['preview-shell', `preview-shell--${item.value}`]">
+            <div class="preview-side">
+              <i></i>
+              <i></i>
+              <i></i>
+            </div>
+            <div class="preview-main">
+              <div class="preview-row preview-row--accent"></div>
+              <div class="preview-row"></div>
+              <div class="preview-row"></div>
             </div>
           </div>
         </template>
-        <!-- Dark preview -->
-        <template v-else-if="item.value === 'dark'">
-          <div class="preview-sidebar preview-sidebar--dark"></div>
-          <div class="preview-content preview-content--dark">
-            <div class="preview-header preview-header--dark"></div>
-            <div class="preview-body">
-              <div class="preview-line preview-line--dark"></div>
-              <div class="preview-line preview-line--dark short"></div>
-            </div>
-          </div>
-        </template>
-        <!-- Auto preview (split) -->
         <template v-else>
           <div class="preview-split">
-            <div class="preview-half preview-half--light">
-              <div class="mini-sidebar"></div>
-              <div class="mini-content"></div>
+            <div class="preview-shell preview-shell--light">
+              <div class="preview-side">
+                <i></i>
+                <i></i>
+              </div>
+              <div class="preview-main">
+                <div class="preview-row preview-row--accent"></div>
+                <div class="preview-row"></div>
+              </div>
             </div>
-            <div class="preview-half preview-half--dark">
-              <div class="mini-sidebar"></div>
-              <div class="mini-content"></div>
+            <div class="preview-shell preview-shell--dark">
+              <div class="preview-side">
+                <i></i>
+                <i></i>
+              </div>
+              <div class="preview-main">
+                <div class="preview-row preview-row--accent"></div>
+                <div class="preview-row"></div>
+              </div>
             </div>
           </div>
         </template>
@@ -52,14 +55,9 @@
 import { APP_THEME } from "@shared/constants";
 
 export default {
-	name: "mo-theme-switcher",
+	name: "theme-switcher",
 	props: {
 		modelValue: {
-			type: String,
-			default: null,
-		},
-		// legacy v-model support
-		value: {
 			type: String,
 			default: null,
 		},
@@ -67,7 +65,7 @@ export default {
 	emits: ["update:modelValue", "change"],
 	data() {
 		return {
-			currentValue: this.modelValue ?? this.value ?? APP_THEME.AUTO,
+			currentValue: this.modelValue ?? APP_THEME.AUTO,
 		};
 	},
 	computed: {
@@ -93,11 +91,6 @@ export default {
 	},
 	watch: {
 		modelValue(val) {
-			if (val !== null && val !== this.currentValue) {
-				this.currentValue = val;
-			}
-		},
-		value(val) {
 			if (val !== null && val !== this.currentValue) {
 				this.currentValue = val;
 			}

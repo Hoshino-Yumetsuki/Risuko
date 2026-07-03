@@ -3,12 +3,9 @@ use serde_json::{Map, Value};
 
 use super::speed_limiter::parse_speed_limit;
 
-const RESERVED_ENGINE_KEYS: &[&str] = &["rpc-host"];
-
 fn is_reserved_engine_key(key: &str) -> bool {
     let normalized = key.to_ascii_lowercase();
-    RESERVED_ENGINE_KEYS.contains(&normalized.as_str())
-        || normalized.starts_with("rpc-")
+    normalized.starts_with("rpc-")
         || normalized.ends_with("-port")
         || normalized.ends_with("-secret")
 }
@@ -40,18 +37,15 @@ pub struct EngineOptions {
 
 impl EngineOptions {
     pub fn from_config(system: &Map<String, Value>, user: &Map<String, Value>) -> Self {
-        let mut global = Map::new();
-
-        // Copy relevant system config as global engine options
-        for (k, v) in system {
-            global.insert(k.clone(), v.clone());
-        }
+        // Relevant system config becomes the global engine options
+        let mut global = system.clone();
 
         // Apply user overrides that affect engine behavior
         for key in [
             "rpc-host",
             "m3u8-output-format",
             "keep-seeding",
+            "bt-create-subfolder",
             "bt-enable-upnp",
             "bt-upnp-lease",
             "bt-encryption-policy",
@@ -69,7 +63,7 @@ impl EngineOptions {
 
         // Advanced escape hatch: allow users to provide arbitrary engine keys
         // from the UI via `engine-overrides` so newly added backend options can
-        // be configured without waiting for dedicated form fields.
+        // be configured without waiting for dedicated form fields
         apply_engine_overrides(&mut global, user);
 
         Self { global }
@@ -147,34 +141,26 @@ impl EngineOptions {
     }
 
     /// Keep seeding until the user stops manually. Overrides seed-time /
-    /// seed-ratio enforcement (those only take effect if this is false).
+    /// seed-ratio enforcement (those only take effect if this is false)
     pub fn keep_seeding(&self) -> bool {
-        match self.global.get("keep-seeding") {
-            Some(Value::Bool(b)) => *b,
-            Some(Value::String(s)) => matches!(s.as_str(), "true" | "1" | "yes"),
-            Some(Value::Number(n)) => n.as_u64().map(|v| v != 0).unwrap_or(false),
-            _ => false,
-        }
+        self.get_bool("keep-seeding").unwrap_or(false)
     }
 
-    /// Max outstanding chunk requests per peer. 0 or missing = use crate default.
+    /// Max outstanding chunk requests per peer. 0 or missing = use crate default
     pub fn bt_max_outstanding_per_peer(&self) -> Option<usize> {
-        let v = self.get_u64("bt-max-outstanding-per-peer").unwrap_or(0) as usize;
-        if v == 0 {
-            None
-        } else {
-            Some(v)
-        }
+        self.get_u64("bt-max-outstanding-per-peer")
+            .filter(|&v| v != 0)
+            .map(|v| v as usize)
     }
 
     /// Max concurrent peer connections per torrent. 0 or missing = use crate default
     pub fn bt_max_peers_per_torrent(&self) -> Option<usize> {
-        let v = self.get_u64("bt-max-peers-per-torrent").unwrap_or(0) as usize;
-        if v == 0 {
-            None
-        } else {
-            Some(v)
-        }
+        self.get_u64("bt-max-peers-per-torrent")
+            .filter(|&v| v != 0)
+            .map(|v| v as usize)
+    }
+    pub fn bt_upload_rate_limit(&self) -> Option<u64> {
+        self.get_u64("bt-upload-rate-limit").filter(|&v| v != 0)
     }
 
     /// UPnP IGD port forwarding for the BitTorrent listener. Defaults to on
@@ -184,16 +170,13 @@ impl EngineOptions {
 
     /// UPnP mapping lease duration in seconds. 0 or missing = use crate default (300)
     pub fn bt_upnp_lease(&self) -> Option<std::time::Duration> {
-        let v = self.get_u64("bt-upnp-lease").unwrap_or(0);
-        if v == 0 {
-            None
-        } else {
-            Some(std::time::Duration::from_secs(v))
-        }
+        self.get_u64("bt-upnp-lease")
+            .filter(|&v| v != 0)
+            .map(std::time::Duration::from_secs)
     }
 
     /// BEP-8 Message Stream Encryption policy: "plaintext", "prefer", "require"
-    /// Defaults to `prefer` (MSE first, plaintext fallback).
+    /// Defaults to `prefer` (MSE first, plaintext fallback)
     pub fn bt_encryption_policy(&self) -> &'static str {
         match self.get_str("bt-encryption-policy").unwrap_or("prefer") {
             "plaintext" => "plaintext",

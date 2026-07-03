@@ -1,11 +1,10 @@
 <template>
   <div id="app">
-    <mo-title-bar v-if="showTitleBar" :showActions="showWindowActions" />
     <router-view />
-    <mo-engine-client :secret="rpcSecret" />
-    <mo-ipc v-if="isRenderer" />
-    <mo-dynamic-tray v-if="enableDynamicTray" :show-speed="traySpeedometer" />
-    <mo-cloudflare-dialog />
+    <engine-client :secret="rpcSecret" />
+    <ipc-bridge v-if="isRenderer" />
+    <dynamic-tray v-if="enableDynamicTray" :show-speed="traySpeedometer" />
+    <cloudflare-dialog />
     <Teleport to="body">
       <Toaster
         position="top-center"
@@ -32,7 +31,6 @@ import { getLocaleManager } from "@/components/Locale";
 import DynamicTray from "@/components/Native/DynamicTray.vue";
 import EngineClient from "@/components/Native/EngineClient.vue";
 import Ipc from "@/components/Native/Ipc.vue";
-import TitleBar from "@/components/Native/TitleBar.vue";
 import CloudflareDialog from "@/components/Task/CloudflareDialog.vue";
 import { Toaster } from "@/components/ui/sonner";
 import is from "@/shims/platform";
@@ -45,7 +43,6 @@ export default {
 		[DynamicTray.name]: DynamicTray,
 		[EngineClient.name]: EngineClient,
 		[Ipc.name]: Ipc,
-		[TitleBar.name]: TitleBar,
 		[CloudflareDialog.name as string]: CloudflareDialog,
 		Toaster,
 	},
@@ -55,12 +52,6 @@ export default {
 		isRenderer: () => is.renderer(),
 		systemTheme() {
 			return useAppStore().systemTheme;
-		},
-		showWindowActions() {
-			return is.windows() || is.linux();
-		},
-		showTitleBar() {
-			return this.isRenderer && !this.isAndroid;
 		},
 		traySpeedometer() {
 			return parseBooleanConfig(usePreferenceStore().config.traySpeedometer);
@@ -125,19 +116,13 @@ export default {
 				? "platform-android mobile-phone"
 				: "platform-desktop";
 		},
+		rootClassName() {
+			return `${this.themeClass} ${this.i18nClass} ${this.directionClass} ${this.platformClass} ${this.fontFamilyClass} ${this.fontSizeClass}`;
+		},
 	},
 	methods: {
 		updateRootClassName() {
-			const {
-				themeClass = "",
-				i18nClass = "",
-				directionClass = "",
-				platformClass = "",
-				fontFamilyClass = "",
-				fontSizeClass = "",
-			} = this;
-			const className = `${themeClass} ${i18nClass} ${directionClass} ${platformClass} ${fontFamilyClass} ${fontSizeClass}`;
-			document.documentElement.className = className;
+			document.documentElement.className = this.rootClassName;
 			this.syncAndroidSystemBars();
 		},
 		syncAndroidSystemBars() {
@@ -159,27 +144,11 @@ export default {
 			if (!oldVal || oldVal === val) {
 				return;
 			}
-			// Force a full renderer refresh so all views pick up the new locale.
 			window.setTimeout(() => {
 				window.location.reload();
 			}, 0);
 		},
-		themeClass() {
-			this.updateRootClassName();
-		},
-		i18nClass() {
-			this.updateRootClassName();
-		},
-		directionClass() {
-			this.updateRootClassName();
-		},
-		platformClass() {
-			this.updateRootClassName();
-		},
-		fontFamilyClass() {
-			this.updateRootClassName();
-		},
-		fontSizeClass() {
+		rootClassName() {
 			this.updateRootClassName();
 		},
 	},

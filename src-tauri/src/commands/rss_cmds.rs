@@ -7,15 +7,6 @@ use crate::engine::rss::types::RssRule;
 use crate::engine::rss::RssManager;
 use crate::state::AppState;
 
-fn get_rss(state: &State<'_, AppState>) -> Result<Arc<RssManager>, String> {
-    state
-        .rss
-        .lock()
-        .map_err(|e| e.to_string())?
-        .clone()
-        .ok_or_else(|| "RSS manager not initialized".to_string())
-}
-
 /// Strip the explicit `out` filename hint when fanning extra inline media URLs
 /// out as separate http tasks — otherwise every queued image would land at the
 /// same path and clobber each other. The `dir` and other routing options stay
@@ -80,14 +71,14 @@ async fn write_article_and_fan_media(
 
 #[tauri::command]
 pub async fn add_rss_feed(state: State<'_, AppState>, url: String) -> Result<Value, String> {
-    let mgr = get_rss(&state)?;
+    let mgr = state.rss.clone();
     let feed = mgr.add_feed(&url).await?;
     serde_json::to_value(feed).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub async fn remove_rss_feed(state: State<'_, AppState>, feed_id: String) -> Result<(), String> {
-    let mgr = get_rss(&state)?;
+    let mgr = state.rss.clone();
     mgr.remove_feed(&feed_id).await
 }
 
@@ -96,28 +87,28 @@ pub async fn refresh_rss_feed(
     state: State<'_, AppState>,
     feed_id: String,
 ) -> Result<Value, String> {
-    let mgr = get_rss(&state)?;
+    let mgr = state.rss.clone();
     let items = mgr.update_feed(&feed_id).await?;
     serde_json::to_value(items).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub async fn refresh_all_rss_feeds(state: State<'_, AppState>) -> Result<(), String> {
-    let mgr = get_rss(&state)?;
+    let mgr = state.rss.clone();
     mgr.update_all_feeds().await;
     Ok(())
 }
 
 #[tauri::command]
 pub async fn get_rss_feeds(state: State<'_, AppState>) -> Result<Value, String> {
-    let mgr = get_rss(&state)?;
+    let mgr = state.rss.clone();
     let feeds = mgr.get_feeds().await;
     serde_json::to_value(feeds).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub async fn get_rss_items(state: State<'_, AppState>, feed_id: String) -> Result<Value, String> {
-    let mgr = get_rss(&state)?;
+    let mgr = state.rss.clone();
     let items = mgr.get_items(&feed_id).await;
     serde_json::to_value(items).map_err(|e| e.to_string())
 }
@@ -129,111 +120,29 @@ pub async fn update_rss_feed_settings(
     interval: Option<u64>,
     is_active: Option<bool>,
 ) -> Result<(), String> {
-    let mgr = get_rss(&state)?;
+    let mgr = state.rss.clone();
     mgr.update_feed_settings(&feed_id, interval, is_active)
         .await
 }
 
 #[tauri::command]
 pub async fn add_rss_rule(state: State<'_, AppState>, rule: RssRule) -> Result<Value, String> {
-    let mgr = get_rss(&state)?;
+    let mgr = state.rss.clone();
     let created = mgr.add_rule(rule).await?;
     serde_json::to_value(created).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub async fn remove_rss_rule(state: State<'_, AppState>, rule_id: String) -> Result<(), String> {
-    let mgr = get_rss(&state)?;
+    let mgr = state.rss.clone();
     mgr.remove_rule(&rule_id).await
 }
 
 #[tauri::command]
 pub async fn get_rss_rules(state: State<'_, AppState>) -> Result<Value, String> {
-    let mgr = get_rss(&state)?;
+    let mgr = state.rss.clone();
     let rules = mgr.get_rules().await;
     serde_json::to_value(rules).map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub async fn download_rss_item(
-    state: State<'_, AppState>,
-    feed_id: String,
-    item_id: String,
-    options: Option<Value>,
-) -> Result<Value, String> {
-    let mgr = get_rss(&state)?;
-    let item = mgr.get_item(&feed_id, &item_id).await?;
-
-    let opts = match options {
-        Some(Value::Object(map)) => map,
-        _ => Map::new(),
-    };
-
-    let manager = crate::engine::get_manager()
-        .await
-        .ok_or("Engine not running")?;
-
-    // Resolve the destination directory once; both modes need it
-    let dir = resolve_dir(&opts, &manager).await;
-
-    let kind = crate::engine::rss::classify_item_kind(&item);
-
-    if kind == crate::engine::rss::ItemKind::Article {
-        // Save the article HTML directly to disk and queue every inline media
-        // URL (images, etc.) as separate http tasks alongside it. This is the
-        // right behaviour for blog/news feeds (e.g. Hacker News) where the
-        // "enclosure" is a thumbnail and the real value is the body + images
-        let (path_str, extra_gids) =
-            write_article_and_fan_media(&mgr, &manager, &item, &feed_id, &item_id, &dir, &opts)
-                .await?;
-
-        return Ok(serde_json::json!({
-            "gid": Value::Null,
-            "extraGids": extra_gids,
-            "downloadPath": path_str,
-            "kind": "article",
-        }));
-    }
-
-    // Media mode: queue the primary enclosure and any extras
-    let urls = mgr.get_item_download_urls(&feed_id, &item_id).await?;
-
-    // Compute the download path for tracking the *primary* enclosure only.
-    // Extra inline media URLs queue separately and inherit the same `dir` but
-    // not the explicit `out` filename hint
-    let download_path = opts.get("out").and_then(|v| v.as_str()).map(|out| {
-        std::path::Path::new(&dir)
-            .join(out)
-            .to_string_lossy()
-            .to_string()
-    });
-
-    let mut iter = urls.into_iter();
-    let primary_url = iter
-        .next()
-        .ok_or_else(|| "No downloadable URL found for this item".to_string())?;
-    let gid = manager
-        .add_http_task(vec![primary_url], opts.clone())
-        .await?;
-
-    let mut extra_gids: Vec<String> = Vec::new();
-    let extra_opts = strip_explicit_filename(&opts);
-    for url in iter {
-        match manager
-            .add_http_task(vec![url.clone()], extra_opts.clone())
-            .await
-        {
-            Ok(g) => extra_gids.push(g),
-            Err(e) => tracing::warn!("Failed to queue inline media {}: {}", url, e),
-        }
-    }
-
-    Ok(serde_json::json!({
-        "gid": gid,
-        "extraGids": extra_gids,
-        "downloadPath": download_path,
-        "kind": "media",
-    }))
 }
 
 /// Resolve the destination directory from per-task options, falling back to
@@ -258,7 +167,7 @@ pub async fn delete_rss_items(
     state: State<'_, AppState>,
     items_by_feed: Vec<(String, Vec<String>)>,
 ) -> Result<(), String> {
-    let mgr = get_rss(&state)?;
+    let mgr = state.rss.clone();
     mgr.delete_items(items_by_feed).await
 }
 
@@ -269,7 +178,7 @@ pub async fn mark_rss_downloaded(
     item_id: String,
     download_path: Option<String>,
 ) -> Result<(), String> {
-    let mgr = get_rss(&state)?;
+    let mgr = state.rss.clone();
     mgr.mark_item_downloaded(&feed_id, &item_id, download_path)
         .await
 }
@@ -280,7 +189,7 @@ pub async fn clear_rss_download(
     feed_id: String,
     item_id: String,
 ) -> Result<(), String> {
-    let mgr = get_rss(&state)?;
+    let mgr = state.rss.clone();
     mgr.clear_item_download(&feed_id, &item_id).await
 }
 
@@ -290,7 +199,7 @@ pub async fn read_rss_download(
     feed_id: String,
     item_id: String,
 ) -> Result<String, String> {
-    let mgr = get_rss(&state)?;
+    let mgr = state.rss.clone();
     let path = mgr.get_item_download_path(&feed_id, &item_id).await?;
     let p = std::path::Path::new(&path);
 
@@ -325,7 +234,7 @@ pub async fn download_rss_item_tracked(
     item_id: String,
     options: Option<Value>,
 ) -> Result<Value, String> {
-    let mgr = get_rss(&state)?;
+    let mgr = state.rss.clone();
     let item = mgr.get_item(&feed_id, &item_id).await?;
 
     let opts = match options {
@@ -435,7 +344,7 @@ pub async fn download_rss_item_tracked(
             match status {
                 "complete" => {
                     // Prefer the pre-computed path from opts; when absent, derive
-                    // it from the completed task's file list reported by the engine.
+                    // it from the completed task's file list reported by the engine
                     let resolved_path = monitor_download_path.clone().or_else(|| {
                         status_val
                             .get("files")
@@ -502,7 +411,7 @@ pub async fn download_rss_item_tracked(
 
 #[tauri::command]
 pub async fn update_rss_rule(state: State<'_, AppState>, rule: RssRule) -> Result<Value, String> {
-    let mgr = get_rss(&state)?;
+    let mgr = state.rss.clone();
     let updated = mgr.update_rule(rule).await?;
     serde_json::to_value(updated).map_err(|e| e.to_string())
 }
@@ -512,7 +421,7 @@ pub async fn reorder_rss_rules(
     state: State<'_, AppState>,
     ordered_ids: Vec<String>,
 ) -> Result<(), String> {
-    let mgr = get_rss(&state)?;
+    let mgr = state.rss.clone();
     mgr.reorder_rules(ordered_ids).await
 }
 
@@ -522,7 +431,7 @@ pub async fn dry_run_rss_rule(
     rule: RssRule,
     sample_size: Option<usize>,
 ) -> Result<Value, String> {
-    let mgr = get_rss(&state)?;
+    let mgr = state.rss.clone();
     let results = mgr.dry_run_rule(rule, sample_size.unwrap_or(50)).await;
     serde_json::to_value(results).map_err(|e| e.to_string())
 }
@@ -539,7 +448,7 @@ pub async fn mark_rss_item_read(
     feed_id: String,
     item_id: String,
 ) -> Result<(), String> {
-    let mgr = get_rss(&state)?;
+    let mgr = state.rss.clone();
     mgr.mark_item_read(&feed_id, &item_id).await
 }
 
@@ -548,6 +457,6 @@ pub async fn mark_rss_items_read(
     state: State<'_, AppState>,
     entries: Vec<(String, String)>,
 ) -> Result<(), String> {
-    let mgr = get_rss(&state)?;
+    let mgr = state.rss.clone();
     mgr.mark_items_read(entries).await
 }

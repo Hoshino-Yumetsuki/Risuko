@@ -1,29 +1,9 @@
 <template>
-  <div v-if="isTorrentsEmpty" class="upload-torrent">
-    <div
-      class="upload-torrent-drop"
-      :class="{ 'is-dragover': isDragOver, 'is-busy': isBusy }"
-      @dragover.prevent
-      @dragenter.prevent="isDragOver = true"
-      @dragleave.prevent="isDragOver = false"
-      @drop.prevent="onDrop"
-      @click="handleSelectTorrentClick"
-    >
-      <i class="upload-inbox-icon"><Inbox :size="24" /></i>
-      <div class="upload-text">
-        {{ $t('task.select-torrent') }}
-        <div class="torrent-name" v-if="name">{{ name }}</div>
-      </div>
-    </div>
-  </div>
-  <div class="selective-torrent relative" v-else>
+  <div class="selective-torrent relative">
     <div class="torrent-info">
       <ui-tooltip class="item torrent-name" effect="dark" :content="name" placement="top">
         <span>{{ name }}</span>
       </ui-tooltip>
-      <span class="torrent-actions" :class="{ 'is-disabled': isBusy }" @click="handleTrashClick" v-if="!hideTrash">
-        <Trash :size="14" />
-      </span>
     </div>
     <div v-if="previewDisabled" class="torrent-preview-notice">
       <div class="torrent-preview-notice-text">{{ previewNotice }}</div>
@@ -103,7 +83,7 @@
                 type="button"
                 class="torrent-preview-load-more-btn"
                 :disabled="row.loading || isBusy"
-                @click="loadMorePreviewFolder(row.path)"
+                @click="loadPreviewFolderPage(row.path, true)"
               >
                 {{
                   row.loading
@@ -125,34 +105,27 @@
         </div>
       </div>
     </div>
-    <mo-task-files
+    <task-files
       v-else
       ref="torrentFileList"
       mode="ADD"
       :files="files"
-      :height="200"
       @selection-change="handleSelectionChange"
     />
-    <mo-loading-overlay :show="isBusy" :text="busyText" />
+    <loading-overlay :show="isBusy" :text="busyText" />
   </div>
 </template>
 
 <script lang="ts">
-import { ChevronRight, File, Folder, Inbox, Trash } from "@lucide/vue";
-import {
-	EMPTY_STRING,
-	NONE_SELECTED_FILES,
-	SELECTED_ALL_FILES,
-} from "@shared/constants";
+import { ChevronRight, File, Folder } from "@lucide/vue";
+import { NONE_SELECTED_FILES, SELECTED_ALL_FILES } from "@shared/constants";
 import { bytesToSize, listTorrentFiles } from "@shared/utils";
 import logger from "@shared/utils/logger";
 import { invoke } from "@tauri-apps/api/core";
-import { open } from "@tauri-apps/plugin-dialog";
 import TaskFiles from "@/components/TaskDetail/TaskFiles.vue";
 import { Checkbox } from "@/components/ui/checkbox";
 import UiButton from "@/components/ui/compat/UiButton.vue";
 import LoadingOverlay from "@/components/ui/LoadingOverlay.vue";
-import { useAppStore } from "@/store/app";
 
 type ResolvedTorrentFile = {
 	path: string;
@@ -208,7 +181,7 @@ type PreviewIndexRange = {
 const PREVIEW_PAGE_SIZE = 300;
 
 export default {
-	name: "mo-select-torrent",
+	name: "select-torrent",
 	components: {
 		[UiButton.name]: UiButton,
 		[LoadingOverlay.name]: LoadingOverlay,
@@ -217,26 +190,18 @@ export default {
 		ChevronRight,
 		File,
 		Folder,
-		Inbox,
-		Trash,
 	},
 	props: {
-		// Optional: when provided, this component is driven by props
-		// (used in batch queue). Otherwise it falls back to the
-		// addTaskTorrents store entry (legacy single-item dialog).
-		torrentPath: { type: String, default: "" },
+		torrentPath: { type: String, required: true },
 		torrentName: { type: String, default: "" },
-		hideEmptyDrop: { type: Boolean, default: false },
-		hideTrash: { type: Boolean, default: false },
 	},
 	data() {
 		return {
-			name: EMPTY_STRING,
-			currentTorrentPath: EMPTY_STRING,
+			name: "",
+			currentTorrentPath: "",
 			files: [],
-			isDragOver: false,
 			previewDisabled: false,
-			previewNotice: EMPTY_STRING,
+			previewNotice: "",
 			previewLoading: false,
 			previewPaged: false,
 			previewRootItems: [] as ResolvedTorrentItem[],
@@ -253,21 +218,12 @@ export default {
 	},
 	computed: {
 		torrents() {
-			if (this.torrentPath) {
-				return [
-					{
-						name: this.torrentName || this.torrentPath,
-						path: this.torrentPath,
-					},
-				];
-			}
-			return useAppStore().addTaskTorrents;
-		},
-		isTorrentsEmpty() {
-			if (this.hideEmptyDrop && this.torrentPath) {
-				return false;
-			}
-			return this.torrents.length === 0;
+			return [
+				{
+					name: this.torrentName || this.torrentPath,
+					path: this.torrentPath,
+				},
+			];
 		},
 		previewTreeRows(): PreviewTreeRow[] {
 			if (!this.previewPaged) {
@@ -426,7 +382,7 @@ export default {
 		extractNativePath(file: { path?: string; raw?: { path?: string } } = {}) {
 			const path = `${file?.path || file?.raw?.path || ""}`.trim();
 			if (!path || !/\.torrent$/i.test(path)) {
-				return EMPTY_STRING;
+				return "";
 			}
 			return path;
 		},
@@ -435,7 +391,7 @@ export default {
 		},
 		buildPreviewNotice(payload: ResolvedTorrentPayload) {
 			if (!payload.previewDisabled) {
-				return EMPTY_STRING;
+				return "";
 			}
 
 			const reason = `${payload.previewReason || ""}`.toLowerCase();
@@ -455,9 +411,6 @@ export default {
 			this.previewLoadingFolders = [];
 		},
 		isPreviewFolderLoaded(path = "") {
-			if (!path) {
-				return Object.hasOwn(this.previewPageStateByFolder, "");
-			}
 			return Object.hasOwn(this.previewPageStateByFolder, path);
 		},
 		isPreviewFolderExpanded(path = "") {
@@ -591,13 +544,6 @@ export default {
 				merged.push({ start: range.start, end: range.end });
 			});
 			return merged;
-		},
-		unionPreviewRanges(
-			leftRanges: PreviewIndexRange[] = [],
-			rightRanges: PreviewIndexRange[] = [],
-		): PreviewIndexRange[] {
-			const mergedInput = [...leftRanges, ...rightRanges];
-			return this.normalizePreviewExcludedRanges(mergedInput);
 		},
 		subtractPreviewRanges(
 			sourceRanges: PreviewIndexRange[] = [],
@@ -821,7 +767,10 @@ export default {
 			this.previewExcludedRanges =
 				checked === true
 					? this.subtractPreviewRanges(currentExcluded, normalizedRanges)
-					: this.unionPreviewRanges(currentExcluded, normalizedRanges);
+					: this.normalizePreviewExcludedRanges([
+							...currentExcluded,
+							...normalizedRanges,
+						]);
 			this.emitPreviewSelectionChange();
 		},
 		togglePreviewFolderSelection(
@@ -994,12 +943,6 @@ export default {
 				);
 			}
 		},
-		async ensurePreviewFolderLoaded(parentPath = "") {
-			await this.loadPreviewFolderPage(parentPath, false);
-		},
-		async loadMorePreviewFolder(parentPath = "") {
-			await this.loadPreviewFolderPage(parentPath, true);
-		},
 		dropPreviewFolderCache(path = "") {
 			const folderPath = `${path || ""}`.trim();
 			if (!folderPath) {
@@ -1041,14 +984,13 @@ export default {
 				return;
 			}
 
-			// Re-opening a folder should only reveal its direct children.
 			const keptExpanded = this.previewExpandedFolders.filter(
 				(value) => value === folderPath || !value.startsWith(descendantPrefix),
 			);
 			this.previewExpandedFolders = keptExpanded.includes(folderPath)
 				? keptExpanded
 				: [...keptExpanded, folderPath];
-			await this.ensurePreviewFolderLoaded(folderPath);
+			await this.loadPreviewFolderPage(folderPath, false);
 		},
 		async handlePreviewAnyway() {
 			if (
@@ -1101,12 +1043,12 @@ export default {
 			}
 		},
 		reset(emitChange = true) {
-			this.name = EMPTY_STRING;
-			this.currentTorrentPath = EMPTY_STRING;
+			this.name = "";
+			this.currentTorrentPath = "";
 			this.files = [];
 			this.resolvingTorrent = false;
 			this.previewDisabled = false;
-			this.previewNotice = EMPTY_STRING;
+			this.previewNotice = "";
 			this.previewLoading = false;
 			this.previewPaged = false;
 			this.resetPreviewState();
@@ -1118,86 +1060,8 @@ export default {
 				this.$refs.torrentFileList.clearSelection();
 			}
 			if (emitChange) {
-				this.$emit("change", EMPTY_STRING, NONE_SELECTED_FILES);
+				this.$emit("change", "", NONE_SELECTED_FILES);
 			}
-		},
-		async triggerFileInput() {
-			if (this.isBusy) {
-				return;
-			}
-			try {
-				const selected = await open({
-					multiple: false,
-					filters: [
-						{
-							name: "Torrent",
-							extensions: ["torrent"],
-						},
-					],
-				});
-				if (!selected || Array.isArray(selected)) {
-					return;
-				}
-				const path = `${selected}`.trim();
-				if (!path || !/\.torrent$/i.test(path)) {
-					this.$msg.error(this.$t("task.new-task-torrent-required"));
-					return;
-				}
-				const segs = path.split(/[/\\]/);
-				const name = segs[segs.length - 1] || "task.torrent";
-				this.handleChange([{ name, path }]);
-			} catch (err: unknown) {
-				logger.warn(
-					"[Risuko] pick torrent path failed:",
-					err instanceof Error ? err.message : err,
-				);
-			}
-		},
-		onDrop(event) {
-			if (this.isBusy) {
-				return;
-			}
-			this.isDragOver = false;
-			const files = event.dataTransfer?.files;
-			if (!files || files.length === 0) {
-				return;
-			}
-			const file = files[0];
-			if (!/\.torrent$/i.test(file.name)) {
-				return;
-			}
-			const path =
-				`${((file as unknown as Record<string, unknown>).path as string) || ""}`.trim();
-			if (!path) {
-				this.$msg.error(this.$t("task.new-task-torrent-required"));
-				return;
-			}
-			const fileList = [{ name: file.name, path }];
-			this.handleChange(fileList);
-		},
-		handleChange(fileList) {
-			if (this.torrentPath) {
-				this.$emit("change-files", fileList);
-				return;
-			}
-			useAppStore().addTaskAddTorrents({ fileList });
-		},
-		handleSelectTorrentClick() {
-			this.triggerFileInput();
-		},
-		handleTrashClick() {
-			if (this.isBusy) {
-				return;
-			}
-			if (this.hideTrash) {
-				return;
-			}
-			if (this.torrentPath) {
-				this.$emit("remove");
-				this.$emit("update:torrentPath", "");
-				return;
-			}
-			useAppStore().addTaskAddTorrents({ fileList: [] });
 		},
 		handleSelectionChange(val) {
 			const { currentTorrentPath } = this;

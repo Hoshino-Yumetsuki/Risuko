@@ -14,32 +14,10 @@ pub struct ConfigManager {
 
 impl ConfigManager {
     pub fn new(provider: &dyn ConfigDirProvider) -> Result<Self, Box<dyn std::error::Error>> {
-        let config_dir = provider.config_dir();
-        fs::create_dir_all(&config_dir)?;
-
-        let system_config =
-            load_or_default(&config_dir.join("system.json"), defaults::system_defaults());
-        let user_config = load_or_default(&config_dir.join("user.json"), defaults::user_defaults());
-
-        let mut manager = Self {
-            system_config,
-            user_config,
-            config_dir,
-        };
-
-        if manager.migrate_legacy_keep_seeding_defaults() {
-            if let Err(err) = manager.save_system() {
-                tracing::warn!(
-                    "Failed to persist legacy keep-seeding migration; continuing startup: {}",
-                    err
-                );
-            }
-        }
-
-        Ok(manager)
+        Self::with_dir(provider.config_dir())
     }
 
-    /// Create a ConfigManager with an explicit config directory path.
+    /// Create a ConfigManager with an explicit config directory path
     pub fn with_dir(config_dir: PathBuf) -> Result<Self, Box<dyn std::error::Error>> {
         fs::create_dir_all(&config_dir)?;
 
@@ -78,13 +56,8 @@ impl ConfigManager {
     }
 
     pub fn get_merged_config(&self) -> Value {
-        let mut merged = Map::new();
-        for (k, v) in &self.system_config {
-            merged.insert(k.clone(), v.clone());
-        }
-        for (k, v) in &self.user_config {
-            merged.insert(k.clone(), v.clone());
-        }
+        let mut merged = self.system_config.clone();
+        merged.extend(self.user_config.clone());
 
         // Add runtime context
         merged.insert("platform".into(), json!(std::env::consts::OS));

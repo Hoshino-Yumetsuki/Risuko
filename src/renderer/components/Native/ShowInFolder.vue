@@ -9,7 +9,7 @@ import { FolderOpen } from "@lucide/vue";
 import { showItemInFolder } from "@/utils/native";
 
 export default {
-	name: "mo-show-in-folder",
+	name: "show-in-folder",
 	components: {
 		FolderOpen,
 	},

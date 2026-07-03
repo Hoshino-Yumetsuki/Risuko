@@ -292,6 +292,43 @@ pub fn parse_ut_pex(
     Some((v4, v6))
 }
 
+pub fn build_ut_pex(added: &[SocketAddr], dropped: &[SocketAddr]) -> Bytes {
+    fn split(addrs: &[SocketAddr]) -> (Vec<u8>, Vec<u8>) {
+        let mut v4 = Vec::new();
+        let mut v6 = Vec::new();
+        for a in addrs {
+            match a.ip() {
+                IpAddr::V4(ip) => {
+                    v4.extend_from_slice(&ip.octets());
+                    v4.extend_from_slice(&a.port().to_be_bytes());
+                }
+                IpAddr::V6(ip) => {
+                    v6.extend_from_slice(&ip.octets());
+                    v6.extend_from_slice(&a.port().to_be_bytes());
+                }
+            }
+        }
+        (v4, v6)
+    }
+    let (added4, added6) = split(added);
+    let (dropped4, dropped6) = split(dropped);
+    let dict = vec![
+        (b"added".to_vec(), Value::Bytes(added4.clone())),
+        (
+            b"added.f".to_vec(),
+            Value::Bytes(vec![0u8; added4.len() / 6]),
+        ),
+        (b"added6".to_vec(), Value::Bytes(added6.clone())),
+        (
+            b"added6.f".to_vec(),
+            Value::Bytes(vec![0u8; added6.len() / 18]),
+        ),
+        (b"dropped".to_vec(), Value::Bytes(dropped4)),
+        (b"dropped6".to_vec(), Value::Bytes(dropped6)),
+    ];
+    Bytes::from(encode_to_vec(&Value::Dict(dict)))
+}
+
 /// A decoded BEP-55 ut_holepunch message
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HolepunchMsg {
@@ -369,6 +406,17 @@ pub fn parse_holepunch(payload: &[u8]) -> Option<HolepunchMsg> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ut_pex_encode_parse_round_trip() {
+        let v4a: SocketAddr = "10.1.2.3:6881".parse().unwrap();
+        let v6a: SocketAddr = "[2001:db8::7]:51413".parse().unwrap();
+        let gone: SocketAddr = "10.9.9.9:1000".parse().unwrap();
+        let payload = build_ut_pex(&[v4a, v6a], &[gone]);
+        let (v4, v6) = parse_ut_pex(&payload).unwrap();
+        assert_eq!(v4, vec![v4a]);
+        assert_eq!(v6, vec![v6a]);
+    }
 
     #[test]
     fn handshake_round_trip() {

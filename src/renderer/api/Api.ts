@@ -1,5 +1,5 @@
 import { startupOnlyKeys } from "@shared/configKeys";
-import type { AppConfig, TaskRoutingRule } from "@shared/types/config";
+import type { AppConfig } from "@shared/types/config";
 import type { HealthReport, RunHealthChecksParams } from "@shared/types/health";
 import type { RssRule } from "@shared/types/rss";
 import type {
@@ -33,68 +33,22 @@ const ENGINE_RESTART_USER_KEYS: string[] = [
 	"external-engine-secret",
 	"engine-overrides",
 ];
-const DEFAULT_TASK_LIST_FETCH_SIZE = 5000;
-const MAX_TASK_LIST_FETCH_SIZE = 10000;
-
-const parseConfiguredTaskListFetchSize = () => {
-	const meta = import.meta as unknown as Record<
-		string,
-		Record<string, unknown> | undefined
-	>;
-	const raw = meta?.env?.VITE_TASK_LIST_FETCH_SIZE;
-	const parsed = Number(raw);
-	if (!Number.isFinite(parsed) || parsed <= 0) {
-		return DEFAULT_TASK_LIST_FETCH_SIZE;
-	}
-	return Math.min(Math.trunc(parsed), MAX_TASK_LIST_FETCH_SIZE);
-};
-
-const TASK_LIST_FETCH_SIZE = parseConfiguredTaskListFetchSize();
-
-const clampTaskListFetchSize = (value: unknown) => {
-	const parsed = Number(value);
-	if (!Number.isFinite(parsed) || parsed <= 0) {
-		return TASK_LIST_FETCH_SIZE;
-	}
-
-	const normalized = Math.trunc(parsed);
-	if (normalized > MAX_TASK_LIST_FETCH_SIZE) {
-		logger.warn(
-			`[Risuko] task list fetch size ${normalized} exceeds cap ${MAX_TASK_LIST_FETCH_SIZE}, clamping`,
-		);
-		return MAX_TASK_LIST_FETCH_SIZE;
-	}
-	return normalized;
-};
+const TASK_LIST_FETCH_SIZE = 5000;
 
 export default class Api {
 	config: AppConfig | null;
-	options: Record<string, unknown>;
-	ready: Promise<void>;
 
-	constructor(options: Record<string, unknown> = {}) {
-		this.options = options;
+	constructor() {
 		this.config = null;
-		this.ready = this.init();
+		this.init();
 	}
 
 	async init() {
 		this.config = await this.loadConfig();
 	}
 
-	async ensureReady() {
-		await this.ready;
-	}
-
-	async loadConfigFromNativeStore() {
-		const result = await invoke("get_app_config");
-		return result;
-	}
-
 	async loadConfig(): Promise<AppConfig> {
-		let result = await this.loadConfigFromNativeStore();
-		result = changeKeysToCamelCase(result);
-		return result as AppConfig;
+		return changeKeysToCamelCase(await invoke("get_app_config")) as AppConfig;
 	}
 
 	async fetchPreference() {
@@ -138,7 +92,7 @@ export default class Api {
 			logger.info("[Risuko] save system config: ", system);
 			config.system = system;
 
-			// Startup-only keys cannot be applied to active tasks via changeOption.
+			// Startup-only keys cannot be applied to active tasks via changeOption
 			const runtimeSystemEntries = Object.entries(system).filter(
 				([key]) => !startupOnlyKeys.includes(key),
 			);
@@ -218,11 +172,6 @@ export default class Api {
 			categories: categories ?? null,
 			slowProbes: slowProbes ?? false,
 		});
-	}
-
-	calculateActiveTaskProgress(params: { tasks?: DownloadTask[] } = {}) {
-		const { tasks = [] } = params;
-		return invoke<DownloadTask[]>("calculate_active_task_progress", { tasks });
 	}
 
 	updateAndroidDownloadNotification(params: {
@@ -366,23 +315,13 @@ export default class Api {
 		);
 	}
 
-	async fetchDownloadingTaskList(
-		params: { offset?: number; num?: number; keys?: string[] } = {},
-	) {
-		const { keys } = params;
-		const active = await invoke<DownloadTask[]>("tell_active", { keys });
-		const activeArr = Array.isArray(active) ? active : [];
-		return activeArr;
-	}
-
 	fetchWaitingTaskList(
 		params: { offset?: number; num?: number; keys?: string[] } = {},
 	) {
 		const { offset = 0, num = TASK_LIST_FETCH_SIZE, keys } = params;
-		const safeNum = clampTaskListFetchSize(num);
 		return invoke<DownloadTask[]>("tell_waiting", {
 			offset,
-			num: safeNum,
+			num,
 			keys,
 		});
 	}
@@ -391,17 +330,19 @@ export default class Api {
 		params: { offset?: number; num?: number; keys?: string[] } = {},
 	) {
 		const { offset = 0, num = TASK_LIST_FETCH_SIZE, keys } = params;
-		const safeNum = clampTaskListFetchSize(num);
 		return invoke<DownloadTask[]>("tell_stopped", {
 			offset,
-			num: safeNum,
+			num,
 			keys,
 		});
 	}
 
-	fetchActiveTaskList(params: { keys?: string[] } = {}) {
+	async fetchActiveTaskList(
+		params: { offset?: number; num?: number; keys?: string[] } = {},
+	) {
 		const { keys } = params;
-		return invoke<DownloadTask[]>("tell_active", { keys });
+		const active = await invoke<DownloadTask[]>("tell_active", { keys });
+		return Array.isArray(active) ? active : [];
 	}
 
 	fetchTaskList(
@@ -416,14 +357,12 @@ export default class Api {
 		switch (type) {
 			case "all":
 				return this.fetchAllTaskList(params);
-			case "active":
-				return this.fetchDownloadingTaskList(params);
 			case "waiting":
 				return this.fetchWaitingTaskList(params);
 			case "stopped":
 				return this.fetchStoppedTaskList(params);
 			default:
-				return this.fetchDownloadingTaskList(params);
+				return this.fetchActiveTaskList(params);
 		}
 	}
 
@@ -431,11 +370,10 @@ export default class Api {
 		params: { offset?: number; num?: number; keys?: string[] } = {},
 	) {
 		const { offset = 0, num = TASK_LIST_FETCH_SIZE, keys } = params;
-		const safeNum = clampTaskListFetchSize(num);
 		const [active, waiting, stopped] = await Promise.all([
 			invoke<DownloadTask[]>("tell_active", { keys }),
-			invoke<DownloadTask[]>("tell_waiting", { offset, num: safeNum, keys }),
-			invoke<DownloadTask[]>("tell_stopped", { offset, num: safeNum, keys }),
+			invoke<DownloadTask[]>("tell_waiting", { offset, num, keys }),
+			invoke<DownloadTask[]>("tell_stopped", { offset, num, keys }),
 		]);
 		const activeArr = Array.isArray(active) ? active : [];
 		const waitingArr = Array.isArray(waiting) ? waiting : [];
@@ -578,16 +516,8 @@ export default class Api {
 		return invoke("update_rss_rule", { rule });
 	}
 
-	reorderRssRules(orderedIds: string[]) {
-		return invoke("reorder_rss_rules", { orderedIds });
-	}
-
 	dryRunRssRule(rule: RssRule, sampleSize?: number) {
 		return invoke("dry_run_rss_rule", { rule, sampleSize });
-	}
-
-	parseRssItemTitle(title: string) {
-		return invoke("parse_rss_item_title", { title });
 	}
 
 	removeRssRule(ruleId: string) {
@@ -598,24 +528,12 @@ export default class Api {
 		return invoke("get_rss_rules");
 	}
 
-	downloadRssItem(
-		feedId: string,
-		itemId: string,
-		options?: Record<string, unknown>,
-	) {
-		return invoke("download_rss_item", { feedId, itemId, options });
-	}
-
 	deleteRssItems(itemsByFeed: [string, string[]][]) {
 		return invoke("delete_rss_items", { itemsByFeed });
 	}
 
 	clearRssDownload(feedId: string, itemId: string) {
 		return invoke("clear_rss_download", { feedId, itemId });
-	}
-
-	markRssDownloaded(feedId: string, itemId: string, downloadPath?: string) {
-		return invoke("mark_rss_downloaded", { feedId, itemId, downloadPath });
 	}
 
 	readRssDownload(feedId: string, itemId: string) {
@@ -636,43 +554,6 @@ export default class Api {
 
 	markRssItemsRead(entries: [string, string][]) {
 		return invoke("mark_rss_items_read", { entries });
-	}
-
-	inferOutFromUri(uri: string) {
-		return invoke<string>("infer_out_from_uri", { uri });
-	}
-
-	resolveFileCategory(filename: string) {
-		return invoke<string>("resolve_file_category", { filename });
-	}
-
-	// -- Task routing rules --
-
-	listRoutingRules() {
-		return invoke<TaskRoutingRule[]>("list_routing_rules");
-	}
-
-	addRoutingRule(rule: Omit<TaskRoutingRule, "id"> & { id?: string }) {
-		// Always include id in payload; backend will generate one if empty
-		const rulePayload = {
-			...rule,
-			id: rule.id || "",
-		};
-		return invoke<TaskRoutingRule>("add_routing_rule", { rule: rulePayload });
-	}
-
-	updateRoutingRule(rule: TaskRoutingRule) {
-		return invoke("update_routing_rule", { rule });
-	}
-
-	removeRoutingRule(id: string) {
-		return invoke("remove_routing_rule", { id });
-	}
-
-	resolveRouting(filename: string) {
-		return invoke<{ tag?: string; dir: string }>("resolve_routing", {
-			filename,
-		});
 	}
 
 	// -- Cloud upload sinks --
@@ -714,10 +595,6 @@ export default class Api {
 
 	setDefaultUploadSink(id: string | null) {
 		return invoke("set_default_upload_sink", { id });
-	}
-
-	setUploadMaxConcurrency(n: number) {
-		return invoke("set_upload_max_concurrency", { n });
 	}
 
 	listUploadRules() {

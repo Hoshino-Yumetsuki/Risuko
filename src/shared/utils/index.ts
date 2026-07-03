@@ -1,27 +1,18 @@
 import { systemKeys, userKeys } from "@shared/configKeys";
 import {
 	APP_THEME,
-	AUDIO_SUFFIXES,
-	DOCUMENT_SUFFIXES,
 	ENGINE_RPC_HOST,
-	IMAGE_SUFFIXES,
-	SUB_SUFFIXES,
 	SUPPORT_RTL_LOCALES,
 	TASK_STATUS,
 	TEMP_DOWNLOAD_SUFFIX,
-	UNKNOWN_PEERID,
-	UNKNOWN_PEERID_NAME,
-	VIDEO_SUFFIXES,
 } from "@shared/constants";
 import type { DownloadTask } from "@shared/types/task";
 import {
 	camelCase,
 	compact,
-	difference,
 	isArray,
-	isEmpty,
-	isFunction,
 	isPlainObject,
+	mapKeys,
 	omitBy,
 	pick,
 } from "lodash";
@@ -42,8 +33,8 @@ export const bytesToSize = (bytes, precision = 1) => {
 	return `${(b / 1024 ** i).toFixed(precision)} ${sizes[i]}`;
 };
 
-// Pull a human message out of an axios-style error, with a 429 special-case
-// and a caller-supplied fallback. Shared by the sync + share stores.
+// human message from an axios-style error, with a 429 special-case
+// and a caller-supplied fallback; shared by the sync + share stores
 export const getApiErrorMessage = (
 	err: unknown,
 	fallback = "Request failed",
@@ -95,37 +86,6 @@ export const parseBooleanConfig = (value: unknown, fallback = false) => {
 	}
 
 	return fallback;
-};
-
-export const bitfieldToPercent = (text) => {
-	const len = text.length;
-	if (len === 0) {
-		return "0";
-	}
-	let p: number;
-	let one = 0;
-	for (let i = 0; i < len; i++) {
-		p = parseInt(text[i], 16);
-		for (let j = 0; j < 4; j++) {
-			one += p & 1;
-			p >>= 1;
-		}
-	}
-	return Math.floor((one / (4 * len)) * 100).toString();
-};
-
-export const peerIdParser = (str) => {
-	if (!str || str === UNKNOWN_PEERID) {
-		return UNKNOWN_PEERID_NAME;
-	}
-
-	// With the native engine, peer client info is provided directly.
-	// Return the string as-is if it looks like a client name, otherwise return unknown.
-	if (typeof str === "string" && str.length > 0) {
-		return str;
-	}
-
-	return UNKNOWN_PEERID_NAME;
 };
 
 export const calcProgress = (totalLength, completedLength, decimal = 2) => {
@@ -230,7 +190,7 @@ const ellipsis = (str = "", maxLen = 64) => {
 	return maxLen > 0 ? `${str.substring(0, maxLen)}...` : str;
 };
 
-const stripTempDownloadSuffix = (name = "") => {
+export const stripTempDownloadSuffix = (name = "") => {
 	const value = `${name || ""}`;
 	if (!value.toLowerCase().endsWith(TEMP_DOWNLOAD_SUFFIX)) {
 		return value;
@@ -241,7 +201,7 @@ const stripTempDownloadSuffix = (name = "") => {
 export const getTaskName = (task, options = {}) => {
 	const o = {
 		defaultName: "",
-		maxLen: 64, // -1: No limit length
+		maxLen: 64, // -1: no length limit
 		...options,
 	};
 	const { defaultName, maxLen } = o;
@@ -314,9 +274,9 @@ const YOUTUBE_HOSTS = new Set([
 	"youtube-nocookie.com",
 ]);
 
-// Registrable-domain suffixes that route to the yt-dlp media engine. Keep this
-// in sync with MEDIA_HOST_SUFFIXES in
-// src-tauri/risuko-engine/src/engine/media.rs.
+// registrable-domain suffixes routed to the yt-dlp media engine; keep in
+// sync with MEDIA_HOST_SUFFIXES in
+// src-tauri/risuko-engine/src/engine/media.rs
 const MEDIA_HOST_SUFFIXES = [
 	"youtube.com",
 	"youtu.be",
@@ -378,14 +338,14 @@ const isYoutubeUri = (uri: string): boolean => {
 	);
 };
 
-// True when the URL's host is in the media allowlist. Mirrors the engine's
-// is_media_uri; URLs outside the list can still be forced via the add-task
-// "Download with yt-dlp" toggle.
+// true when the URL's host is in the media allowlist; mirrors the engine's
+// is_media_uri. URLs outside the list can still be forced via the add-task
+// "Download with yt-dlp" toggle
 export const isMediaUri = (uri: string): boolean => {
 	if (!uri || typeof uri !== "string") {
 		return false;
 	}
-	// Enforce HTTP(S) protocol to match engine behavior
+	// enforce HTTP(S) protocol to match engine behavior
 	if (!uri.startsWith("http://") && !uri.startsWith("https://")) {
 		return false;
 	}
@@ -407,9 +367,9 @@ const isM3u8Uri = (uri: string): boolean => {
 };
 
 /**
- * Friendly protocol label inferred from a URI. Returns `null` when the
- * scheme is unrecognised. Order matters: more specific schemes (magnet,
- * yt-dlp hosts, m3u8 path suffix) take precedence over generic HTTP
+ * Friendly protocol label inferred from a URI, or `null` when the scheme is
+ * unrecognised. Order matters: specific schemes (magnet, yt-dlp hosts, m3u8
+ * path suffix) take precedence over generic HTTP
  */
 export const detectUriProtocol = (uri: string): string | null => {
 	if (!uri || typeof uri !== "string") {
@@ -489,7 +449,7 @@ export const getTaskUri = (task, withTracker = false) => {
 	return result;
 };
 
-const buildMagnetLink = (task, withTracker = false, btTracker = []) => {
+const buildMagnetLink = (task, withTracker = false) => {
 	const { bittorrent, infoHash } = task;
 	const { info } = bittorrent;
 
@@ -499,8 +459,7 @@ const buildMagnetLink = (task, withTracker = false, btTracker = []) => {
 	}
 
 	if (withTracker) {
-		const trackers = difference(bittorrent.announceList, btTracker);
-		trackers.forEach((tracker) => {
+		(bittorrent.announceList || []).forEach((tracker) => {
 			params.push(`tr=${encodeURI(tracker)}`);
 		});
 	}
@@ -508,22 +467,21 @@ const buildMagnetLink = (task, withTracker = false, btTracker = []) => {
 	return params.join("&");
 };
 
-export const checkTaskIsBT = (task: Partial<DownloadTask> = {}) => {
-	const { bittorrent } = task;
-	return !!bittorrent;
-};
+// guard, not default param: a failed tell_status nulls the current task
+// and default params only cover undefined
+export const checkTaskIsBT = (task?: Partial<DownloadTask> | null) =>
+	!!task?.bittorrent;
 
 // Task kinds (engine-side `TaskKind`, lowercase) where force-pause + resume
-// is a useful recovery for a stalled connection: a single TCP socket gets
-// stuck and reopening it kicks the download free. HTTP/HTTPS, FTP/SFTP
-// (both folded into `ftp`), HTTP-segment streams (`media`, `m3u8`) all
-// fit that mould
+// recovers a stalled connection: a single TCP socket gets stuck and
+// reopening it kicks the download free. HTTP/HTTPS, FTP/SFTP (both folded
+// into `ftp`), HTTP-segment streams (`media`, `m3u8`) all fit
 //
 // Peer-swarm protocols (`torrent`, `ed2k`, `adc`, `gnutella`, `g2`, `gift`)
-// do NOT fit. Pause tears down peer connections, aborts in-flight tracker
-// announces and choke-unchoke negotiations; the swarm just spent minutes
-// warming up and is wiped in 500 ms. The recovery cooldown then refires
-// before the swarm can rebuild, leaving speed permanently at zero
+// do NOT. Pause tears down peer connections and aborts in-flight tracker
+// announces and choke-unchoke negotiations; a swarm that spent minutes
+// warming up is wiped in 500 ms, and the recovery cooldown refires before
+// it can rebuild, leaving speed permanently at zero
 const LOW_SPEED_RECOVERABLE_KINDS = new Set(["http", "ftp", "media", "m3u8"]);
 
 export const taskBenefitsFromLowSpeedRecovery = (
@@ -532,33 +490,19 @@ export const taskBenefitsFromLowSpeedRecovery = (
 	if (checkTaskIsBT(task)) {
 		return false;
 	}
-	// Defensive: legacy/unknown task shapes that lack `kind` but expose a
-	// peer-swarm sentinel field should still be excluded.
+	// legacy/unknown task shapes that lack `kind` but expose a peer-swarm
+	// sentinel field must still be excluded
 	if (task.ed2kLink) {
 		return false;
 	}
 	const kind = `${task.kind || ""}`.toLowerCase();
 	if (!kind) {
-		// No kind reported. Without a positive signal we can't tell whether
+		// no kind reported. Without a positive signal we can't tell whether
 		// pause/resume is safe, so opt out — losing recovery on an HTTP task
-		// is harmless, while applying it to a swarm task is destructive.
+		// is harmless, applying it to a swarm task is destructive
 		return false;
 	}
 	return LOW_SPEED_RECOVERABLE_KINDS.has(kind);
-};
-
-const changeKeysCase = (obj, caseConverter) => {
-	const result = {};
-	if (isEmpty(obj) || !isFunction(caseConverter)) {
-		return result;
-	}
-
-	for (const [k, value] of Object.entries(obj)) {
-		const key = caseConverter(k);
-		result[key] = value;
-	}
-
-	return result;
 };
 
 const toKebabCasePreserveNumbers = (key = "") => {
@@ -570,11 +514,11 @@ const toKebabCasePreserveNumbers = (key = "") => {
 };
 
 export const changeKeysToCamelCase = (obj = {}) => {
-	return changeKeysCase(obj, camelCase);
+	return mapKeys(obj, (_v, k) => camelCase(k));
 };
 
 export const changeKeysToKebabCase = (obj = {}) => {
-	return changeKeysCase(obj, toKebabCasePreserveNumbers);
+	return mapKeys(obj, (_v, k) => toKebabCasePreserveNumbers(k));
 };
 
 export const separateConfig = (options) => {
@@ -617,29 +561,8 @@ export const convertLineToComma = (text = "") => {
 	return text.trim().replace(/(?:\r\n|\r|\n)/g, ",");
 };
 
-export const filterVideoFiles = (files = []) => {
-	const suffix = [...VIDEO_SUFFIXES, ...SUB_SUFFIXES];
-	return files.filter((item) => {
-		return suffix.includes(item.extension);
-	});
-};
-
-export const filterAudioFiles = (files = []) => {
-	return files.filter((item) => {
-		return AUDIO_SUFFIXES.includes(item.extension);
-	});
-};
-
-export const filterImageFiles = (files = []) => {
-	return files.filter((item) => {
-		return IMAGE_SUFFIXES.includes(item.extension);
-	});
-};
-
-export const filterDocumentFiles = (files = []) => {
-	return files.filter((item) => {
-		return DOCUMENT_SUFFIXES.includes(item.extension);
-	});
+export const filterFilesBySuffix = (files = [], suffixes = []) => {
+	return files.filter((item) => suffixes.includes(item.extension));
 };
 
 const decodeThunderLink = (url = "") => {
@@ -654,10 +577,10 @@ const decodeThunderLink = (url = "") => {
 	return result;
 };
 
-// Trailing ` Rename: <filename>` directive on a single link line lets users
-// override the output filename per URL without filling out the form `out`
-// field. The capture is greedy to end-of-line so filenames with spaces are
-// preserved; we trim and reject path separators to keep it strictly a name
+// trailing ` Rename: <filename>` on a link line overrides the output
+// filename per URL without the form `out` field. Capture is greedy to
+// end-of-line so filenames with spaces survive; we trim and reject path
+// separators to keep it strictly a name
 const RENAME_SUFFIX_REGEX = /\s+Rename:\s*(\S.*?)\s*$/i;
 
 export interface ParsedTaskLink {
@@ -672,7 +595,7 @@ const parseRenameDirective = (line = ""): ParsedTaskLink => {
 	}
 	const rename = m[1].trim();
 	const uri = line.slice(0, m.index).trim();
-	// Reject path separators — `out` is a filename, never a path
+	// reject path separators — `out` is a filename, never a path
 	if (!rename || rename.includes("/") || rename.includes("\\")) {
 		return { uri };
 	}
@@ -680,9 +603,7 @@ const parseRenameDirective = (line = ""): ParsedTaskLink => {
 };
 
 export const splitTaskLinks = (links = "") => {
-	return compact(splitTextRows(links))
-		.map(parseRenameDirective)
-		.map(({ uri }) => decodeThunderLink(uri));
+	return splitTaskLinksWithRenames(links).map((t) => t.uri);
 };
 
 export const splitTaskLinksWithRenames = (links = ""): ParsedTaskLink[] => {
@@ -716,7 +637,7 @@ export const listTorrentFiles = (files) => {
 		const extension = getFileExtension(file.path);
 		const item = {
 			// aria2 select-file start index at 1
-			// possible Values: 1-1048576
+			// possible values: 1-1048576
 			idx: index + 1,
 			extension: `.${extension}`,
 			...file,
@@ -748,10 +669,6 @@ export const diffConfig = (current = {}, next = {}) => {
 	});
 
 	return result;
-};
-
-export const calcFormLabelWidth = (locale = "en-US") => {
-	return typeof locale === "string" && locale.startsWith("de") ? "28%" : "25%";
 };
 
 export const parseHeader = (header = "") => {
@@ -805,15 +722,6 @@ export const buildRpcUrl = (
 
 export const generateRandomInt = (min = 0, max = 10000) => {
 	return min + Math.floor(Math.random() * (max - min));
-};
-
-export const cloneArray = (arr = [], reversed = false) => {
-	if (!Array.isArray(arr)) {
-		return arr;
-	}
-
-	const result = [...arr];
-	return reversed ? result.reverse() : result;
 };
 
 export const pushItemToFixedLengthArray = (arr = [], maxLength, item) => {

@@ -110,12 +110,10 @@ impl UploadRule {
 
 /// Returns the id of the first rule matching `input`, or `None`
 pub fn select_rule_sink<'a>(rules: &'a [UploadRule], input: &RuleInput<'_>) -> Option<&'a str> {
-    for r in rules {
-        if r.matches(input) {
-            return Some(r.sink_id.as_str());
-        }
-    }
-    None
+    rules
+        .iter()
+        .find(|r| r.matches(input))
+        .map(|r| r.sink_id.as_str())
 }
 
 #[cfg(test)]

@@ -1,33 +1,33 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
-/// Token-bucket rate limiter (GCRA) for download speed control.
+/// Token-bucket (GCRA) rate limiter for download speed
 ///
-/// Lock-free and correct under contention: the entire state is a single
-/// atomic `next_avail_us` (the virtual "next available time"). Each acquire
-/// CAS-advances it forward by `bytes / limit` seconds; bursting is bounded
-/// by clamping the start to `now - BURST_WINDOW`. Because every successful
-/// acquire atomically moves `next_avail_us`, the rate is enforced exactly
-/// regardless of how many concurrent callers race.
+/// Lock-free and correct under contention: state is a single atomic
+/// `next_avail_us` (the virtual "next available time"). Each acquire
+/// CAS-advances it by `bytes / limit` seconds; bursting is bounded by
+/// clamping the start to `now - BURST_WINDOW`. Every successful acquire
+/// atomically moves `next_avail_us`, so the rate holds regardless of
+/// concurrent callers
 ///
-/// A limit of 0 means unlimited (no throttling).
+/// A limit of 0 means unlimited (no throttling)
 pub struct SpeedLimiter {
     limit_bps: AtomicU64,
     /// Earliest virtual time (microseconds since `start`) at which the next
-    /// byte can be served. Bumps forward on every successful acquire.
+    /// byte can be served. Bumps forward on every successful acquire
     next_avail_us: AtomicU64,
     start: tokio::time::Instant,
 }
 
 /// Allow up to this much burst above the steady-state rate. Matches the old
-/// "2x limit" cap (2 seconds of unspent budget).
+/// "2x limit" cap (2 seconds of unspent budget)
 const BURST_WINDOW_US: u64 = 2_000_000;
 
 impl SpeedLimiter {
     pub fn new(limit_bps: u64) -> Self {
         let now = tokio::time::Instant::now();
         // Pre-charge 1 second of virtual budget so the first acquire of up
-        // to `limit_bps` bytes proceeds without sleeping. This matches the
-        // original "tokens initialized to limit_bps" semantics.
+        // to `limit_bps` bytes proceeds without sleeping. Matches the
+        // original "tokens initialized to limit_bps" semantics
         let start = now
             .checked_sub(std::time::Duration::from_secs(1))
             .unwrap_or(now);
@@ -55,28 +55,27 @@ impl SpeedLimiter {
 
     /// Try to consume `bytes` worth of tokens. Returns `Ok(())` if the
     /// virtual budget allows it now, or `Err(wait_secs)` with how long to
-    /// sleep before retrying.
+    /// sleep before retrying
     fn try_consume(&self, bytes: u64, limit: u64) -> Result<(), f64> {
         // Microseconds of virtual time this request consumes. Use ceil so
-        // small writes still cost at least 1us and we never under-charge.
+        // small writes still cost at least 1us and we never under-charge
         let cost_us = (bytes as u128 * 1_000_000).div_ceil(limit as u128) as u64;
 
         loop {
             let now_us = self.now_us();
             let cur = self.next_avail_us.load(Ordering::Relaxed);
-            // Clamp the virtual clock so unused budget caps at BURST_WINDOW.
+            // Clamp the virtual clock so unused budget caps at BURST_WINDOW
             let earliest = now_us.saturating_sub(BURST_WINDOW_US);
             let base = cur.max(earliest);
             let new_va = base.saturating_add(cost_us);
 
-            // Only commit the advance when the request can be served now.
-            // Committing in the wait branch double-charges: acquire would
-            // sleep for `wait_secs` and then loop, recompute against the
-            // already-advanced `next_avail_us`, and reserve another full
-            // `cost_us` of budget on top of the bytes we already paid for.
-            // For the wait branch, just report how long to sleep and let
-            // the caller retry; on retry `now_us` will have advanced and a
-            // single commit will succeed
+            // Commit the advance only when the request can be served now.
+            // Committing in the wait branch double-charges: acquire sleeps
+            // `wait_secs`, loops, recomputes against the already-advanced
+            // `next_avail_us`, and reserves another `cost_us` on top of the
+            // bytes already paid for. So the wait branch just reports the
+            // sleep and lets the caller retry; on retry `now_us` has
+            // advanced and one commit succeeds
             if new_va <= now_us {
                 if self
                     .next_avail_us
@@ -85,16 +84,15 @@ impl SpeedLimiter {
                 {
                     return Ok(());
                 }
-                // Lost the race \u2014 retry.
+                // Lost the race \u2014 retry
                 continue;
             }
             return Err((new_va - now_us) as f64 / 1_000_000.0);
         }
     }
 
-    /// Acquire `bytes` worth of throughput tokens.
-    /// Sleeps asynchronously if the rate limit would be exceeded.
-    /// Returns immediately if limit is 0 (unlimited).
+    /// Acquire `bytes` worth of throughput tokens, sleeping if the rate
+    /// limit would be exceeded. Returns immediately when limit is 0 (unlimited)
     pub async fn acquire(&self, bytes: usize) {
         if bytes == 0 {
             return;
@@ -108,7 +106,7 @@ impl SpeedLimiter {
             let take = remaining.min(limit);
             match self.try_consume(take, limit) {
                 Ok(()) => remaining -= take,
-                // Cap sleep to 1s to stay responsive to runtime limit changes.
+                // Cap sleep to 1s to stay responsive to runtime limit changes
                 Err(wait_secs) => {
                     tokio::time::sleep(std::time::Duration::from_secs_f64(wait_secs.min(1.0)))
                         .await;
@@ -155,22 +153,14 @@ fn parse_speed_limit_str(s: &str) -> u64 {
         .saturating_mul(multiplier)
 }
 
+#[derive(Default)]
 pub struct SpeedEma {
     ema: f64,
     initialized: bool,
 }
 
-impl Default for SpeedEma {
-    fn default() -> Self {
-        Self {
-            ema: 0.0,
-            initialized: false,
-        }
-    }
-}
-
 impl SpeedEma {
-    /// Smoothing factor: higher reacts faster to bursts, lower is smoother.
+    /// Smoothing factor: higher reacts faster to bursts, lower is smoother
     const ALPHA: f64 = 0.3;
 
     pub fn new() -> Self {
@@ -179,7 +169,7 @@ impl SpeedEma {
 
     /// Feed `bytes` transferred over `elapsed_secs` and return the smoothed
     /// speed in bytes/sec (truncated). Callers should only invoke this with
-    /// `elapsed_secs > 0`.
+    /// `elapsed_secs > 0`
     pub fn update(&mut self, bytes: u64, elapsed_secs: f64) -> u64 {
         let instant = bytes as f64 / elapsed_secs;
         self.ema = if self.initialized {
@@ -191,7 +181,7 @@ impl SpeedEma {
         self.ema as u64
     }
 
-    /// Current smoothed speed in bytes/sec (truncated, same as [`Self::update`]).
+    /// Current smoothed speed in bytes/sec (truncated, same as [`Self::update`])
     pub fn get(&self) -> u64 {
         self.ema as u64
     }
@@ -251,7 +241,7 @@ mod tests {
     #[tokio::test]
     async fn limited_throttles_then_refills() {
         // 4 MiB/s limit. First call drains the initial bucket, second call
-        // must wait approximately the deficit / rate (~250ms for 1 MiB).
+        // must wait approximately the deficit / rate (~250ms for 1 MiB)
         let lim = SpeedLimiter::new(4 * 1024 * 1024);
         lim.acquire(4 * 1024 * 1024).await; // drain initial tokens
         let start = std::time::Instant::now();

@@ -1,7 +1,7 @@
-use serde_json::{json, Map, Value};
+use serde_json::{json, Value};
 
 use super::headless;
-use super::progress::{self, format_size, format_size_speed};
+use super::progress::{self, extract_filename, format_size, format_size_speed, parse_num};
 use super::rpc_client::RpcClient;
 use super::{
     DownloadArgs, ExtractCookiesArgs, PauseArgs, RemoveArgs, ResumeArgs, ServeArgs, StatusArgs,
@@ -24,7 +24,7 @@ fn resolve_rpc_host() -> String {
     read_options_from_config().rpc_host()
 }
 
-/// Read rpc-secret from the config files, returning None if empty or absent.
+/// Read rpc-secret from the config files, returning None if empty or absent
 /// user.json takes precedence over system.json
 fn read_secret_from_config() -> Option<String> {
     let secret = read_options_from_config().rpc_secret();
@@ -36,26 +36,11 @@ fn read_secret_from_config() -> Option<String> {
 }
 
 fn read_options_from_config() -> EngineOptions {
-    let config_dir = dirs::config_dir()
-        .map(|d| d.join("dev.risuko.app"))
-        .unwrap_or_else(|| std::path::PathBuf::from("."));
-    let system = load_config_file(&config_dir.join("system.json"), defaults::system_defaults());
-    let user = load_config_file(&config_dir.join("user.json"), defaults::user_defaults());
+    let config_dir = headless::get_config_dir();
+    let system =
+        headless::load_config(&config_dir.join("system.json"), defaults::system_defaults());
+    let user = headless::load_config(&config_dir.join("user.json"), defaults::user_defaults());
     EngineOptions::from_config(&system, &user)
-}
-
-fn load_config_file(path: &std::path::Path, defaults: Map<String, Value>) -> Map<String, Value> {
-    if let Ok(data) = std::fs::read_to_string(path) {
-        if let Ok(Value::Object(mut map)) = serde_json::from_str(&data) {
-            for (k, v) in &defaults {
-                if !map.contains_key(k) {
-                    map.insert(k.clone(), v.clone());
-                }
-            }
-            return map;
-        }
-    }
-    defaults
 }
 
 pub async fn download(args: DownloadArgs) -> Result<(), Box<dyn std::error::Error>> {
@@ -103,12 +88,11 @@ async fn do_download(
     if let Some(ref proxy) = args.proxy {
         options.insert("all-proxy".into(), json!(proxy));
     }
-    // DoH is a process-wide thing via the engine's global resolver, not a
-    // per-task option, so push it through changeGlobalOption before we add the
-    // task instead of stuffing it into the per-task options map.
-    // We save the previous DoH settings so we can restore them after the
-    // download completes (success or failure), preventing a CLI invocation from
-    // permanently altering a shared running engine's DNS behavior
+    // DoH is process-wide (engine global resolver), not per-task, so push it
+    // through changeGlobalOption before adding the task rather than into the
+    // per-task options map. Save the previous DoH settings and restore them
+    // after the download (success or failure) so a CLI run doesn't permanently
+    // alter a shared running engine's DNS
     let mut previous_doh: Option<serde_json::Map<String, Value>> = None;
     let mut doh_global = serde_json::Map::new();
     if let Some(ref doh_url) = args.doh_url {
@@ -366,27 +350,6 @@ async fn require_engine(client: &RpcClient) -> Result<(), Box<dyn std::error::Er
     Ok(())
 }
 
-fn parse_num(val: &Value, key: &str) -> u64 {
-    val.get(key)
-        .and_then(|v| v.as_str().and_then(|s| s.parse().ok()).or(v.as_u64()))
-        .unwrap_or(0)
-}
-
-fn extract_name(task: &Value) -> String {
-    task.get("files")
-        .and_then(|f| f.as_array())
-        .and_then(|arr| arr.first())
-        .and_then(|f| f.get("path"))
-        .and_then(|p| p.as_str())
-        .and_then(|p| {
-            std::path::Path::new(p)
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-        })
-        .map(|n| n.strip_suffix(".part").unwrap_or(&n).to_string())
-        .unwrap_or_else(|| "-".into())
-}
-
 fn print_task_table(tasks: &[Value]) {
     println!(
         "{:<12} {:<10} {:<30} {:>9} {:>12} {:>10}",
@@ -400,7 +363,7 @@ fn print_task_table(tasks: &[Value]) {
         let total = parse_num(task, "totalLength");
         let completed = parse_num(task, "completedLength");
         let speed = parse_num(task, "downloadSpeed");
-        let name = extract_name(task);
+        let name = extract_filename(task, "-");
 
         let pct = if total > 0 {
             format!("{:.1}%", completed as f64 / total as f64 * 100.0)
@@ -440,7 +403,7 @@ fn print_task_detail(task: &Value) {
     let completed = parse_num(task, "completedLength");
     let dl_speed = parse_num(task, "downloadSpeed");
     let ul_speed = parse_num(task, "uploadSpeed");
-    let name = extract_name(task);
+    let name = extract_filename(task, "-");
 
     let pct = if total > 0 {
         format!("{:.1}%", completed as f64 / total as f64 * 100.0)
@@ -484,11 +447,11 @@ pub async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
 /// Extract browser cookies for `--url` from `--browser` and emit them as JSON
 /// (to `--out` if given, else stdout).
 ///
-/// This is the worker side of the Windows UAC-elevation flow: when a Chrome
-/// profile uses app-bound (v20) encryption, the GUI relaunches itself elevated
-/// as `risuko extract-cookies --browser .. --url .. --out <tmp>` so the keys
-/// can be decrypted as administrator, then reads the JSON back. Runs entirely
-/// in `main`'s CLI branch and exits before Tauri/single-instance initializes.
+/// Worker side of the Windows UAC-elevation flow: when a Chrome profile uses
+/// app-bound (v20) encryption, the GUI relaunches itself elevated as
+/// `risuko extract-cookies --browser .. --url .. --out <tmp>` so the keys can
+/// be decrypted as administrator, then reads the JSON back. Runs entirely in
+/// `main`'s CLI branch and exits before Tauri/single-instance initializes
 pub async fn extract_cookies(args: ExtractCookiesArgs) -> Result<(), Box<dyn std::error::Error>> {
     let host_cookies = risuko_cookies::cookies_for_url(&args.browser, &args.url).await?;
     let json = serde_json::to_string(&host_cookies)?;

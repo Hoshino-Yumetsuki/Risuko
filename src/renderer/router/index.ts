@@ -49,47 +49,23 @@ export default createRouter({
 						{
 							path: "basic",
 							alias: "",
-							components: {
-								subnav: () =>
-									import("@/components/Subnav/PreferenceSubnav.vue"),
-								form: () => import("@/components/Preference/Basic.vue"),
-							},
-							props: {
-								subnav: { current: "basic" },
-							},
+							component: () => import("@/components/Preference/Basic.vue"),
+						},
+						{
+							path: "appearance",
+							component: () => import("@/components/Preference/Appearance.vue"),
 						},
 						{
 							path: "advanced",
-							components: {
-								subnav: () =>
-									import("@/components/Subnav/PreferenceSubnav.vue"),
-								form: () => import("@/components/Preference/Advanced.vue"),
-							},
-							props: {
-								subnav: { current: "advanced" },
-							},
+							component: () => import("@/components/Preference/Advanced.vue"),
 						},
 						{
 							path: "cloud-sinks",
-							components: {
-								subnav: () =>
-									import("@/components/Subnav/PreferenceSubnav.vue"),
-								form: () => import("@/components/Preference/CloudSinks.vue"),
-							},
-							props: {
-								subnav: { current: "cloud-sinks" },
-							},
+							component: () => import("@/components/Preference/CloudSinks.vue"),
 						},
 						{
 							path: "sync",
-							components: {
-								subnav: () =>
-									import("@/components/Subnav/PreferenceSubnav.vue"),
-								form: () => import("@/components/Preference/Sync.vue"),
-							},
-							props: {
-								subnav: { current: "sync" },
-							},
+							component: () => import("@/components/Preference/Sync.vue"),
 						},
 					],
 				},

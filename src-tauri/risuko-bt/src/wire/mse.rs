@@ -1,9 +1,8 @@
 //! Message Stream Encryption (MSE) / Protocol Encryption (PE)
 //!
-//! Implements the BitTorrent MSE/PE handshake as described in BEP 8 (Vuze
-//! message stream encryption spec). This layer sits underneath the BEP-3
-//! peer handshake and transparently encrypts the whole TCP stream using RC4
-//! after a Diffie-Hellman exchange
+//! BitTorrent MSE/PE handshake (BEP 8, Vuze spec). Sits under the BEP-3
+//! peer handshake and encrypts the whole TCP stream with RC4 after a
+//! Diffie-Hellman exchange
 //!
 //! The handshake proceeds, in abbreviated form:
 //!
@@ -21,8 +20,8 @@
 //! `HASH('keyB', S, SKEY)` for B->A. Both RC4 instances discard the first
 //! 1024 bytes of keystream per spec
 //!
-//! Only cryptographic primitives and the byte-level handshake encode/decode
-//! live here; the actual async wire upgrade lives in `peer/connection.rs`
+//! Only crypto primitives and byte-level handshake encode/decode here; the
+//! async wire upgrade lives in `peer/connection.rs`
 
 use std::io;
 
@@ -31,7 +30,7 @@ use rand::{Rng, RngExt};
 use rc4::{KeyInit, Rc4, StreamCipher};
 use sha1::{Digest, Sha1};
 
-/// BEP-8 MSE prime P (768-bit Diffie-Hellman modulus, hex-encoded in spec).
+/// BEP-8 MSE prime P (768-bit Diffie-Hellman modulus, hex-encoded in spec)
 const P_HEX: &str = concat!(
     "FFFFFFFFFFFFFFFFC90FDAA22168C234C4C6628B80DC1CD1",
     "29024E088A67CC74020BBEA63B139B22514A08798E3404DD",
@@ -43,7 +42,7 @@ const G: u64 = 2;
 /// Length in bytes of Y_a / Y_b / S (96 bytes == 768 bits)
 pub const DH_LEN: usize = 96;
 /// Verification constant (8 zero bytes)
-const VC: [u8; 8] = [0u8; 8];
+pub const VC: [u8; 8] = [0u8; 8];
 
 /// Crypto selection bitfield. Peers advertise which they support; selection
 /// picks exactly one
@@ -80,7 +79,7 @@ impl DhKeys {
         // 160-bit private key is plenty per spec (saves CPU vs a full 768-bit one)
         let mut x_bytes = [0u8; 20];
         rng.fill_bytes(&mut x_bytes);
-        // Ensure non-zero.
+        // Ensure non-zero
         x_bytes[0] |= 0x01;
         let x = BigUint::from_bytes_be(&x_bytes);
         let p = modulus();
@@ -94,7 +93,7 @@ impl DhKeys {
     }
 
     /// Compute the shared secret S = Y_other^X mod P.
-    /// Returns an error if the peer's public key is invalid (0, 1, or >= p-1).
+    /// Returns an error if the peer's public key is invalid (0, 1, or >= p-1)
     pub fn shared_secret(&self, peer_public_be: &[u8; DH_LEN]) -> io::Result<[u8; DH_LEN]> {
         let y = BigUint::from_bytes_be(peer_public_be);
         let p = modulus();
@@ -125,7 +124,7 @@ pub fn sha1_many(parts: &[&[u8]]) -> [u8; 20] {
     r
 }
 
-/// XOR two 20-byte arrays.
+/// XOR two 20-byte arrays
 pub fn xor20(a: &[u8; 20], b: &[u8; 20]) -> [u8; 20] {
     let mut out = [0u8; 20];
     for i in 0..20 {
@@ -147,7 +146,7 @@ pub fn req3(s: &[u8; DH_LEN]) -> [u8; 20] {
     sha1_many(&[b"req3", s])
 }
 
-/// The RC4 key derivation as defined by BEP 8:
+/// RC4 key derivation per BEP 8:
 /// `HASH('keyA' | 'keyB', S, SKEY)` — 20 bytes
 pub fn rc4_key(tag: &[u8; 4], s: &[u8; DH_LEN], skey: &[u8; 20]) -> [u8; 20] {
     sha1_many(&[tag, s, skey])
@@ -175,32 +174,17 @@ pub fn gen_pad(max_len: usize) -> Vec<u8> {
     v
 }
 
-/// Errors produced while performing the MSE handshake at the byte level
+/// Errors from the byte-level MSE handshake
 #[derive(Debug, thiserror::Error)]
 pub enum MseError {
-    #[error("i/o error: {0}")]
-    Io(#[from] io::Error),
-    #[error("peer proposed unsupported crypto methods: {0:#x}")]
-    NoCommonMethod(u32),
-    #[error("verification constant mismatch")]
-    VcMismatch,
-    #[error("unknown info hash in MSE req2/req3")]
-    UnknownInfoHash,
-    #[error("sync marker not found before {0} bytes")]
-    SyncTimeout(usize),
     #[error("pad length too large: {0}")]
     PadTooLarge(u16),
     #[error("initial-payload length too large: {0}")]
     IaTooLarge(u16),
 }
 
-/// Find the first occurrence of `needle` in `hay`. Returns its starting index
-/// if found, else `None`. Used by the incoming side to locate `HASH('req1',S)`
-pub fn find_subsequence(hay: &[u8], needle: &[u8]) -> Option<usize> {
-    find_subsequence_from(hay, needle, 0)
-}
-
-/// Like [`find_subsequence`], but skips candidate offsets before `start`
+/// First occurrence of `needle` in `hay` at or after `start`, else `None`.
+/// Used by the incoming side to locate `HASH('req1',S)`
 pub fn find_subsequence_from(hay: &[u8], needle: &[u8], start: usize) -> Option<usize> {
     if needle.is_empty() || needle.len() > hay.len() {
         return None;
@@ -257,12 +241,6 @@ pub fn build_responder_payload(crypto_select: u32, pad_d: &[u8]) -> Result<Vec<u
     out.extend_from_slice(&(pad_d.len() as u16).to_be_bytes());
     out.extend_from_slice(pad_d);
     Ok(out)
-}
-
-/// Returns the constant 8-byte verification value. Used by the responder to
-/// locate the end of the encrypted preamble while searching for VC
-pub fn vc() -> [u8; 8] {
-    VC
 }
 
 #[cfg(test)]
@@ -331,9 +309,9 @@ mod tests {
     #[test]
     fn find_subsequence_works() {
         let hay = b"aaaabbbbccccddddeeeeffff";
-        assert_eq!(find_subsequence(hay, b"ccccdddd"), Some(8));
-        assert_eq!(find_subsequence(hay, b"zzzz"), None);
-        assert_eq!(find_subsequence(hay, b""), None);
+        assert_eq!(find_subsequence_from(hay, b"ccccdddd", 0), Some(8));
+        assert_eq!(find_subsequence_from(hay, b"zzzz", 0), None);
+        assert_eq!(find_subsequence_from(hay, b"", 0), None);
     }
 
     #[test]

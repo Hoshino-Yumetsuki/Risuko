@@ -12,18 +12,13 @@ use std::time::{Duration, Instant};
 use arc_swap::ArcSwapOption;
 use bytes::Bytes;
 use parking_lot::Mutex;
-// SHA-1 hashing is now encapsulated in `PieceVerifier::V1Sha1`; the loop
-// no longer hashes pieces directly
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::{interval, MissedTickBehavior};
 
-use super::core::{
-    supports_v2_wire, Id20, Lengths, MerkleProofTable, PieceVerifier, TorrentMeta,
-    ValidatedTorrentMetaV1Info,
-};
+use super::core::{supports_v2_wire, Id20, Lengths, MerkleProofTable, PieceVerifier, TorrentMeta};
 use super::peer::{connect_with_utp_fallback, PeerCommand, PeerEvent, SpawnPeer};
 use super::piece::{ChunkTracker, PieceTracker};
-use super::storage::{FileSet, FilesystemStorage, StorageBackend};
+use super::storage::{FileSet, FilesystemStorage};
 use super::tracker::{announce as tracker_announce, AnnounceEvent, AnnounceRequest};
 use super::utp::UtpSocket;
 use super::wire::extended::{
@@ -36,81 +31,30 @@ pub use stats::{
     AggregatedLiveStats, LiveStats, PeerSnapshot, Snapshot, SpeedSample, TorrentStats,
 };
 
-/// Initial per-peer concurrent 16 KiB chunk request count. Each peer's pipeline grows
-/// adaptively from this floor up to [`UB_MAX_OUTSTANDING_PER_PEER`] as it
-/// proves it can keep up. Starting low prevents one slow peer from
-/// hoarding a large block of pieces (which would later trigger a
-/// REQUEST_TIMEOUT reclaim cascade and oscillate the global download
-/// rate). The cap is enforced via the per-`Peer.max_outstanding` field;
-/// the session-level setting overrides this default unconditionally.
 const DEFAULT_MAX_OUTSTANDING_PER_PEER: usize = 6;
-/// Upper bound on the per-peer adaptive pipeline depth. With 16 KiB chunks this caps a single
-/// peer at 4 MiB in flight — enough to saturate any realistic link RTT
-/// while still allowing the chunk tracker to spread work across peers
 const UB_MAX_OUTSTANDING_PER_PEER: usize = 256;
-/// Default cap on total concurrent peers held by the torrent state machine
 const DEFAULT_MAX_PEERS: usize = 100;
-/// Cap on outbound dials whose handshake hasn't completed. Without a separate
-/// budget, a swarm where many peers are unreachable will park every slot in
-/// `pending_dials` for the connect timeout and starve real connections.
 const MAX_PENDING_DIALS: usize = 256;
-/// Time after which an outstanding chunk request to a peer is considered
-/// stale and reclaimed.
-/// If omitted, TCP-alive-but-stalled peers progressively hoard pieces until
-/// download speed collapses even while peer count stays high (each slow
-/// peer permanently marks its pieces `in_flight`, excluding them from
-/// `choose_requestable_piece`).
-///
-/// 8 s is comfortably above any realistic 16 KiB chunk RTT (a 16 Kbps link
-/// still delivers in ~8 s) while draining slow peers ~2.5× faster than the
-/// previous 20 s value. Combined with endgame duplication + Cancel, this
-/// keeps pipeline utilisation high all the way through the last 1 %
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(8);
 
-/// Disconnect peers that have not sent us any wire message for this long.
-/// The reader task has no per-read timeout post-handshake (a deliberate
-/// choice to keep the hot-path zero-cost), so without an idle eviction in
-/// the torrent loop a peer killed by a NAT idle expiry, an ISP-throttled
-/// black-holed TCP session, or a peer that crashed without sending RST
-/// will sit in `peers` forever, occupying one of the `max_peers` slots
-/// and excluding fresh tracker / DHT addresses from being dialled. Once
-/// enough peers reach this state — typical on long-running downloads
-/// against swarms with many flaky NAT-ed leechers — `peers.len() ==
-/// max_peers` and the global download rate collapses even while the UI
-/// still reports a healthy peer count. 180 s is 2× our 90 s KeepAlive
-/// cadence so a healthy peer that only ever sends KeepAlive (e.g. two
-/// idle seeders sharing nothing) is never evicted in error
 const PEER_IDLE_TIMEOUT: Duration = Duration::from_secs(180);
 
-/// A peer marked `snubbing` (one of its chunk requests timed out) is
-/// excluded from new request allocation until it delivers any Piece. If
-/// it never delivers, the soft back-off becomes a permanent slot leak —
-/// see `PEER_IDLE_TIMEOUT` for the same effect via a different path. We
-/// hard-disconnect peers that stay snubbed for this long so the slot is
-/// recycled to a peer that can actually serve us bytes
 const SNUB_EVICTION_TIMEOUT: Duration = Duration::from_secs(60);
 const PEER_SNAPSHOT_INTERVAL: Duration = Duration::from_secs(5);
 
-/// Per-peer message id we advertise for the BEP-9 `ut_metadata` extension.
-/// Peers send `Extended { ext_id: OUR_UT_METADATA_ID, .. }` to request a
-/// 16 KiB chunk of our raw `info` dict
+const UPLOAD_SLOTS: usize = 4;
+const CHOKE_EVAL_INTERVAL: Duration = Duration::from_secs(10);
+const OPTIMISTIC_ROTATE_INTERVAL: Duration = Duration::from_secs(30);
+const PIPELINE_TARGET_SECS: f32 = 4.0;
+const PIPELINE_RATE_WINDOW: Duration = Duration::from_secs(2);
+
+const PEX_INTERVAL: Duration = Duration::from_secs(60);
+const MAX_PEX_ADDED_PER_MSG: usize = 50;
+
 const OUR_UT_METADATA_ID: u8 = 3;
-/// Per-peer message id we advertise for `ut_pex` (BEP-11). Peers send
-/// `Extended { ext_id: OUR_UT_PEX_ID, .. }` carrying gossiped swarm members;
-/// we parse the `added`/`added6` fields and feed them into the dial path
-/// (see the Extended handler)
 const OUR_UT_PEX_ID: u8 = 4;
-/// Per-peer message id we advertise for `ut_holepunch` (BEP-55). Peers send
-/// `Extended { ext_id: OUR_UT_HOLEPUNCH_ID, .. }` to ask us to relay a
-/// rendezvous, or to tell us to connect to an endpoint (NAT hole punching)
-/// See the Extended handler and [`handle_holepunch`]
 const OUR_UT_HOLEPUNCH_ID: u8 = 5;
-/// Cap on the `pex_source` map (PEX-gossiped addr -> relay pid). Bounds memory
-/// on large swarms; once full we stop recording new gossip provenance, which
-/// only costs us holepunch initiation for late-discovered peers
 const MAX_PEX_SOURCE_ENTRIES: usize = 4096;
-/// BEP-9 metadata piece size: every ut_metadata DATA carries up to one
-/// 16 KiB block of the info dict, except possibly the last
 const META_PIECE_SIZE: usize = 16 * 1024;
 
 pub struct TorrentInit {
@@ -122,18 +66,11 @@ pub struct TorrentInit {
     pub max_peers: Option<usize>,
     pub encryption: super::peer::EncryptionPolicy,
     pub advertise_v2: bool,
-    /// Per-piece verifier strategy chosen at session-attach time. Hybrid
-    /// and pure-v1 torrents use SHA-1; pure-v2 torrents use SHA-256
-    /// Merkle subtree verification
     pub verifier: PieceVerifier,
-    /// Whether multi-file torrents are wrapped in a `<root>/<name>/`
-    /// subfolder (the BitTorrent default). When `false`, files are
-    /// written directly under `root_dir`. Carried on `ManagedTorrent`
-    /// so `Session::delete(with_files=true)` can locate the right paths
     pub create_subfolder: bool,
-    /// Shared µTP (BEP-29) endpoint for this session. When present, outbound
-    /// dials that fail over TCP retry over µTP. `None` disables µTP.
     pub utp: Option<Arc<UtpSocket>>,
+    pub upload_limiter: Option<Arc<crate::limiter::UploadLimiter>>,
+    pub dht: Option<Arc<super::dht::Dht>>,
 }
 
 #[derive(Debug)]
@@ -143,6 +80,7 @@ pub enum TorrentCommand {
         addr: SocketAddr,
         cmd_tx: mpsc::Sender<PeerCommand>,
         event_rx: mpsc::Receiver<PeerEvent>,
+        reserved: [u8; 8],
     },
     Pause(oneshot::Sender<()>),
     Unpause(oneshot::Sender<()>),
@@ -154,29 +92,9 @@ pub struct ManagedTorrent {
     pub info_hash: Id20,
     pub name: Option<String>,
     pub metadata: ArcSwapOption<TorrentMeta>,
-    /// Mirror of `TorrentInit::create_subfolder` so `Session::delete`
-    /// can decide whether the on-disk layout is grouped or flat.
     pub create_subfolder: bool,
-    /// Resolved per-torrent root directory: the folder that directly
-    /// contains the torrent's files on disk. For multi-file grouped
-    /// layouts this already includes the torrent name. Mirrors
-    /// `TorrentInit::root_dir` so `Session::delete(with_files=true)`
-    /// can target the actual output location rather than the session
-    /// default `output_dir` (per-torrent `opts.output_folder` overrides).
     pub root_dir: PathBuf,
-    /// Atomically updated by `torrent_loop` after Merkle tables are built.
-    /// Starts as `init.advertise_v2`; clamped to `false` when `serve_v2_layers`
-    /// turns out to be false so inbound handshakes never assert the v2 bit
-    /// without valid Merkle proof tables
     pub advertise_v2: Arc<AtomicBool>,
-    /// Pre-serialized BEP-10 extended handshake — encoded once at spawn
-    /// time from the torrent's `info_bytes` length and our extension ids.
-    /// Per-peer builder for the BEP-10 extended handshake bytes. Captures
-    /// this torrent's metadata size and our extension ids; takes the peer's
-    /// IP address per call so we can populate `yourip`. The accept loop
-    /// hands a clone of this builder to the connection layer so inbound
-    /// peers receive our extended handshake on the same async frame as
-    /// the BT handshake exchange completes (and with `yourip` set)
     pub ext_handshake_builder: crate::peer::ExtHandshakeBuilder,
     pub(crate) cmd_tx: mpsc::Sender<TorrentCommand>,
     pub(crate) stats: Arc<Mutex<TorrentStats>>,
@@ -186,13 +104,9 @@ impl ManagedTorrent {
     pub fn info_hash(&self) -> Id20 {
         self.info_hash
     }
-    /// Returns the v2 (SHA-256) info-hash if the loaded metadata advertises
-    /// one (hybrid or pure-v2 torrents). `None` for pure-v1
     pub fn info_hash_v2(&self) -> Option<crate::core::hash::Id32> {
         self.metadata.load().as_ref().and_then(|m| m.info_hash_v2)
     }
-    /// Returns the BEP-52 metadata version classification: `"v1"`,
-    /// `"v2"`, or `"hybrid"`. `None` if metadata not yet loaded
     pub fn meta_version(&self) -> Option<&'static str> {
         self.metadata
             .load()
@@ -276,6 +190,7 @@ pub async fn spawn(
         cmd_rx,
         stats,
         advertise_v2_flag,
+        handle.ext_handshake_builder.clone(),
     ));
     Ok(handle)
 }
@@ -289,84 +204,31 @@ struct Peer {
     peer_choking: bool,
     peer_interested: bool,
     outstanding: Vec<(u32, u32, u32)>,
-    /// Per-peer adaptive pipeline cap
-    /// `DefaultBtInteractive::receiveMessages`: starts at
-    /// [`DEFAULT_MAX_OUTSTANDING_PER_PEER`], doubles when this peer
-    /// fulfils ≥ 25 % of its currently-permitted slots in a window, and
-    /// is capped at [`UB_MAX_OUTSTANDING_PER_PEER`]. Slow peers stay near
-    /// the floor so their unfulfilled requests never dominate the chunk
-    /// tracker, eliminating the REQUEST_TIMEOUT reclaim cascades that
-    /// otherwise oscillate the global download rate
     max_outstanding: usize,
-    /// Number of `Piece` messages received from this peer since the last
-    /// time `max_outstanding` was grown. Used to decide when the next
-    /// doubling fires (see [`maybe_grow_pipeline`])
-    received_since_grow: usize,
-    /// "Snubbing" flag. Set when one of this peer's chunk
-    /// requests times out; cleared as soon as the peer delivers any
-    /// `Piece`. While set, [`drive_peer`] issues no new requests to it,
-    /// so the peer's stuck slots drain back into the pool naturally
-    /// instead of being immediately refilled. Without this, a peer that
-    /// briefly stalls keeps reclaiming + refilling chunks every
-    /// REQUEST_TIMEOUT, dominating the chunk tracker and starving fast
-    /// peers — the slow-decay cause of the
-    /// "speed great at first, then degrades over minutes" pattern
+    delivered_window: u32,
+    window_start: Instant,
+
     snubbing: bool,
-    /// Instant we last received any wire message from this peer. Updated
-    /// on every `PeerEvent::Message` arrival; consulted by the tick to
-    /// evict peers idle past [`PEER_IDLE_TIMEOUT`]. Initialised on
-    /// adoption / handshake so a peer is never evicted before it has had
-    /// a chance to send anything
     last_recv: Instant,
-    /// Instant the `snubbing` flag was last set, or `None` if not
-    /// snubbing. Consulted by the tick to evict peers that stay snubbed
-    /// past [`SNUB_EVICTION_TIMEOUT`] (otherwise a peer whose requests
-    /// keep timing out occupies a slot indefinitely without serving any
-    /// bytes)
     snub_since: Option<Instant>,
-    /// Per-peer message id the remote advertised for `ut_metadata` in its
-    /// BEP-10 extended handshake. `None` until that handshake is received.
-    /// We never *initiate* a `ut_metadata` request from the torrent loop
-    /// (info is already loaded) but record the id so the responder can
-    /// echo it back on DATA / REJECT replies
     their_ut_metadata_id: Option<u8>,
-    /// Per-peer message id the remote advertised for `ut_holepunch` (BEP-55)
-    /// in its extended handshake. `None` if the peer does not support
-    /// holepunch. Used to address rendezvous / connect / error messages we
-    /// send this peer (as a relay endpoint or initiator)
     their_ut_holepunch_id: Option<u8>,
+    downloaded_window: u64,
+    uploaded_window: Arc<AtomicU64>,
+    their_ut_pex_id: Option<u8>,
+    pex_sent: HashSet<SocketAddr>,
+    outbound: bool,
+    supports_fast: bool,
 }
 
-/// Result of an off-runtime piece write + verify pass
-///
-/// Verification (`PieceVerifier::V1Sha1` or `V2Merkle`) runs inside the
-/// per-piece spawned task so the torrent loop never blocks on hashing —
-/// it only consumes the boolean outcome. Sending the full piece bytes
-/// through this channel and re-spawning a `spawn_blocking` from the loop
-/// would serialize every piece completion through the select arm and
-/// stall all peer / tracker / tick events for the duration of each hash
 struct VerifyResult {
     piece_index: u32,
-    /// Set when the disk write for this piece returned an error. The
-    /// torrent loop must not mark the piece local in that case — the data
-    /// on disk is incomplete and the piece must be re-requested
     write_failed: bool,
-    /// `true` when the verifier accepted the piece bytes
     verify_ok: bool,
 }
 
-/// In-memory accumulator for chunks of an in-flight piece. Keeping the
-/// piece buffer here lets us:
-///  - Skip the disk write per chunk (we write the full piece once on
-///    completion, off the main loop)
-///  - Skip the disk read-back for SHA1 verification (hash from RAM)
-///
-/// Memory bound: at most `max_peers` pieces in flight (~ piece_length each)
 struct PieceAssembly {
     buf: Vec<u8>,
-    /// Set of chunk indices already written into `buf`. Used to ignore
-    /// duplicate chunks (which arrive in endgame mode when the same chunk
-    /// is requested from multiple peers) without double-counting bytes
     received_chunks: HashSet<u32>,
     received_bytes: u32,
     expected_bytes: u32,
@@ -376,6 +238,7 @@ struct PieceAssembly {
     completed: bool,
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn torrent_loop(
     torrent_id: usize,
     init: TorrentInit,
@@ -384,6 +247,7 @@ async fn torrent_loop(
     mut cmd_rx: mpsc::Receiver<TorrentCommand>,
     stats: Arc<Mutex<TorrentStats>>,
     advertise_v2_flag: Arc<AtomicBool>,
+    ext_handshake_builder: crate::peer::ExtHandshakeBuilder,
 ) {
     let info = Arc::new(init.meta.info.clone());
     let info_hash = init.meta.info_hash;
@@ -394,8 +258,10 @@ async fn torrent_loop(
     let lengths = init.lengths;
     let encryption = init.encryption;
     // Shared µTP endpoint (if any), handed to every outbound dial so a failed
-    // TCP connect can retry over µTP.
+    // TCP connect can retry over µTP
     let utp = init.utp.clone();
+    let upload_limiter = init.upload_limiter.clone();
+    let dht = init.dht.clone();
     // Preliminary: whether the meta supports v2 wire. Refined below to
     // `supports_v2_wire && hash_tables.is_some()` after table construction
     // so a failed build never leads us to announce truncated v2 hashes
@@ -447,20 +313,9 @@ async fn torrent_loop(
             None
         }
     };
-    // True only when we have valid Merkle tables: gates BEP-52 HASH_REQUEST
-    // serving AND v2/truncated info-hash announcement on trackers.
-    // A failed from_layer_bytes build leaves hash_tables = None so we must
-    // not advertise v2 capability in that case.
     let serve_v2_layers = supports_v2 && hash_tables.is_some();
-    // Clamp to actual capability now that hash_tables is known. Updates the
-    // shared handle field so inbound connection handling sees the same value
     let advertise_v2 = init.advertise_v2 && serve_v2_layers;
     advertise_v2_flag.store(advertise_v2, Ordering::Relaxed);
-    // Per-peer pipeline depth bounds. When the session explicitly sets
-    // `max_outstanding_per_peer` we honour it as a fixed value (legacy
-    // behaviour, useful for benchmarks / debugging); otherwise we use
-    // an adaptive range \u2014 start at the floor and grow per peer based
-    // on observed delivery rate up to the cap.
     let (pipeline_floor, pipeline_cap) = match init.max_outstanding_per_peer {
         Some(n) => {
             let n = n.max(1);
@@ -484,11 +339,11 @@ async fn torrent_loop(
     let mut piece_tracker = PieceTracker::new(lengths);
     let mut chunk_tracker = ChunkTracker::new(lengths);
     let mut piece_assemblies: HashMap<u32, PieceAssembly> = HashMap::new();
-    scan_existing_pieces(&info, &verifier, &storage, &lengths, &mut piece_tracker).await;
+    scan_existing_pieces(&verifier, &storage, &lengths, &mut piece_tracker).await;
     {
         let mut s = stats.lock();
-        s.progress_bytes = completed_bytes(&piece_tracker, &lengths);
         s.file_progress = compute_file_progress(&piece_tracker, &lengths, storage.layout());
+        s.progress_bytes = s.file_progress.iter().sum();
         s.finished = piece_tracker.is_complete();
     }
 
@@ -502,7 +357,7 @@ async fn torrent_loop(
     };
     // Unified peer-source channel: trackers and inbound PEX (ut_pex) both
     // feed discovered peer addresses here; the main loop drains it and dials
-    // (with dedup + cap enforcement). DHT feeds peers via the AddPeer command.
+    // (with dedup + cap enforcement). DHT feeds peers via the AddPeer command
     let (peer_src_tx, mut peer_addr_rx) = mpsc::channel::<SocketAddr>(256);
     let mut tracker_tasks = spawn_tracker_pollers(
         peer_src_tx.clone(),
@@ -512,27 +367,6 @@ async fn torrent_loop(
         listen_port,
         Arc::clone(&stats),
     );
-
-    // Pre-serialize the BEP-10 extended handshake once. The connection
-    // layer ships this on the wire in the same async frame that just
-    // completed the BT handshake, eliminating tokio task hops between
-    // "BT handshake done" and "ext handshake on the wire". Some peers RST
-    // the connection if our follow-up doesn't arrive within their grace
-    // window. The builder is invoked per-peer so each `yourip` field
-    // matches the dialed peer's address
-    let initial_ext_handshake_builder: crate::peer::ExtHandshakeBuilder = {
-        let metadata_size = info_bytes.len() as u64;
-        std::sync::Arc::new(move |peer_ip: std::net::IpAddr| {
-            let hs =
-                ExtHandshake::new_outgoing(OUR_UT_METADATA_ID, OUR_UT_PEX_ID, Some(metadata_size))
-                    .with_holepunch(OUR_UT_HOLEPUNCH_ID)
-                    .with_yourip(peer_ip);
-            MessageEncoder::encode(&Message::Extended {
-                ext_id: EXT_HANDSHAKE_ID,
-                payload: hs.encode(),
-            })
-        })
-    };
 
     // Large enough to not block peers: with MAX_PEERS peers each potentially
     // delivering MAX_OUTSTANDING_PER_PEER Piece events in rapid succession,
@@ -550,21 +384,21 @@ async fn torrent_loop(
     let mut holepunch_attempted: HashSet<SocketAddr> = HashSet::new();
     // Outbound dials that have been spawned but whose peer has not completed
     // the BT handshake yet. Tracked separately so the max-peer cap accounts
-    // for in-flight connection bursts, not just handshook peers.
+    // for in-flight connection bursts, not just handshook peers
     let mut pending_dials: HashMap<u32, SocketAddr> = HashMap::new();
     let registry_scope = Arc::new(());
     let mut paused = false;
     let mut tick = interval(Duration::from_millis(500));
     tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
     let mut last_tick = Instant::now();
-    // Send a BEP-3 KeepAlive (zero-length message) to every peer roughly
-    // every 90 s. Peers — most clients default to a 2-min idle timeout —
-    // will close us otherwise, which is the dominant reason a fully-seeded
-    // torrent gradually loses every connection (no Request/Piece traffic
-    // flows between two seeders, so without an explicit liveness frame
-    // the TCP session looks dead from their side).
     let mut last_keepalive = Instant::now();
     let mut last_peer_snapshot = Instant::now() - PEER_SNAPSHOT_INTERVAL;
+    let mut last_choke_eval = Instant::now();
+    let mut last_window_reset = Instant::now();
+    let mut last_optimistic_rotate = Instant::now();
+    let mut optimistic_pid: Option<u32> = None;
+    let mut choke_dirty = false;
+    let mut last_pex = Instant::now();
     let mut bytes_this_tick = (0u64, 0u64);
     // Upload bytes accumulate from spawned send tasks; share via atomic so
     // we only credit them after the disk read and channel send succeed
@@ -597,18 +431,18 @@ async fn torrent_loop(
                             peer_event_tx.clone(),
                             encryption,
                             advertise_v2,
-                            Some(initial_ext_handshake_builder.clone()),
+                            Some(ext_handshake_builder.clone()),
                             utp.clone(),
                         ));
                     }
                 }
-                TorrentCommand::AddInboundPeer { addr, cmd_tx, event_rx } => {
+                TorrentCommand::AddInboundPeer { addr, cmd_tx, event_rx, reserved } => {
                     if !paused
                         && peers.len() < max_peers
                         && known_addrs.insert(addr)
                     {
                         let pid = next_pid; next_pid += 1;
-                        adopt_inbound_peer(pid, addr, cmd_tx, event_rx, peer_event_tx.clone(), &mut peers, &lengths, &mut piece_tracker, pipeline_floor).await;
+                        adopt_inbound_peer(pid, addr, cmd_tx, event_rx, peer_event_tx.clone(), &mut peers, &lengths, &mut piece_tracker, pipeline_floor, reserved).await;
                     }
                 }
                 TorrentCommand::Pause(ack) => {
@@ -693,7 +527,7 @@ async fn torrent_loop(
                         peer_event_tx.clone(),
                         encryption,
                         advertise_v2,
-                        Some(initial_ext_handshake_builder.clone()),
+                        Some(ext_handshake_builder.clone()),
                         utp.clone(),
                     ));
                 }
@@ -715,6 +549,9 @@ async fn torrent_loop(
                     pipeline_floor,
                     pipeline_cap,
                     max_peers,
+                    &mut choke_dirty,
+                    &upload_limiter,
+                    dht.as_ref(),
                 ).await;
                 if kick && !paused {
                     drive_peer(pid, &mut peers, &mut piece_tracker, &mut chunk_tracker).await;
@@ -753,29 +590,19 @@ async fn torrent_loop(
                 // the request timeout. Without this, slow-but-TCP-alive
                 // peers progressively hoard pieces (see REQUEST_TIMEOUT
                 // docs); the symptom is downloads decaying over time
-                // even while peer count stays constant.
+                // even while peer count stays constant
                 let reclaimed = chunk_tracker.reclaim_stale(REQUEST_TIMEOUT);
                 if !reclaimed.is_empty() {
                     let mut unblocked_pieces: HashSet<u32> = HashSet::new();
-                    // Snubbing: mark every peer that owned a
-                    // reclaimed chunk so `drive_peer` stops issuing new
-                    // requests to it. The flag clears as soon as the peer
-                    // delivers any `Piece` (in `process_peer_event`) so
-                    // healthy peers recover instantly while a genuinely
-                    // stuck peer parks until its TCP read timeout
-                    // disconnects it. Crucially this does NOT shrink the
-                    // cap: a one-way shrink-on-reclaim ratchet decays
-                    // every peer toward the floor over minutes and is the
-                    // cause of the "fast at first, slow after a while"
-                    // pattern - each reclaim cycle halves the offender,
-                    // and a single 8 s blip permanently demotes a peer
-                    // that was previously fine. Snubbing punishes only
-                    // the actually-stuck peers, transiently
                     for r in &reclaimed {
                         if let Some(p) = peers.get_mut(&r.peer) {
                             if !p.snubbing {
                                 p.snubbing = true;
                                 p.snub_since = Some(Instant::now());
+                                p.max_outstanding =
+                                    shrink_pipeline(p.max_outstanding, pipeline_floor);
+                                p.delivered_window = 0;
+                                p.window_start = Instant::now();
                             }
                         }
                         unblocked_pieces.insert(r.piece);
@@ -808,16 +635,15 @@ async fn torrent_loop(
                         }
                     }
                 }
-                // Evict peers that have gone silent or stayed snubbed for
-                // too long. Without this sweep their slot is held until
-                // the (currently absent) reader-side timeout fires — i.e.
-                // never — so peers leak permanently and `peers.len()`
-                // saturates at `max_peers`, blocking fresh tracker / DHT
-                // addresses. This is the dominant cause of "download speed
-                // is great at first then collapses to 0 after a while":
-                // each silent / snubbed peer parks a slot, and the
-                // reclaim/snub mechanism alone can't free it because the
-                // peer never delivers anything to clear `snubbing`.
+                // Evict peers gone silent or snubbed too long. Without this
+                // sweep their slot is held until the (currently absent)
+                // reader-side timeout fires — i.e. never — so peers leak
+                // permanently and `peers.len()` saturates at `max_peers`,
+                // blocking fresh tracker / DHT addresses. This is the dominant
+                // cause of "download speed is great at first then collapses to
+                // 0 after a while": each silent / snubbed peer parks a slot,
+                // and the reclaim/snub mechanism alone can't free it because
+                // the peer never delivers anything to clear `snubbing`
                 {
                     let mut to_evict: Vec<u32> = Vec::new();
                     for (&pid, p) in peers.iter() {
@@ -839,20 +665,76 @@ async fn torrent_loop(
                             // same way a Disconnected event would
                             known_addrs.remove(&p.addr);
                             let _ = p.cmd_tx.try_send(PeerCommand::Disconnect);
-                            piece_tracker.remove_peer_bitfield(&p.bitfield);
-                            let freed = chunk_tracker.release_peer(pid);
-                            for piece_idx in freed {
-                                if let Ok(vpi) = lengths.validate_piece(piece_idx) {
-                                    piece_tracker.clear_in_flight(vpi);
-                                }
-                                let should_drop = piece_assemblies
-                                    .get(&piece_idx)
-                                    .is_none_or(|a| a.received_chunks.is_empty());
-                                if should_drop {
-                                    piece_assemblies.remove(&piece_idx);
-                                }
-                            }
+                            release_peer_scheduler_state(
+                                pid,
+                                &p.bitfield,
+                                &mut piece_tracker,
+                                &mut chunk_tracker,
+                                &mut piece_assemblies,
+                                &lengths,
+                            );
                         }
+                    }
+                }
+                if choke_dirty || now.duration_since(last_choke_eval) >= CHOKE_EVAL_INTERVAL {
+                    let scheduled = now.duration_since(last_window_reset) >= CHOKE_EVAL_INTERVAL;
+                    choke_dirty = false;
+                    last_choke_eval = now;
+                    if now.duration_since(last_optimistic_rotate) >= OPTIMISTIC_ROTATE_INTERVAL {
+                        last_optimistic_rotate = now;
+                        let mut interested: Vec<u32> = peers
+                            .iter()
+                            .filter(|(_, p)| p.peer_interested)
+                            .map(|(&pid, _)| pid)
+                            .collect();
+                        interested.sort_unstable();
+                        optimistic_pid = next_optimistic(&interested, optimistic_pid);
+                    }
+                    run_choke_eval(
+                        &mut peers,
+                        piece_tracker.is_complete(),
+                        optimistic_pid,
+                        scheduled,
+                    );
+                    if scheduled {
+                        last_window_reset = now;
+                    }
+                }
+                if now.duration_since(last_pex) >= PEX_INTERVAL {
+                    last_pex = now;
+                    let current: HashSet<SocketAddr> = peers
+                        .values()
+                        .filter(|p| p.outbound)
+                        .map(|p| p.addr)
+                        .collect();
+                    for p in peers.values_mut() {
+                        let Some(pex_id) = p.their_ut_pex_id else {
+                            continue;
+                        };
+                        let added: Vec<SocketAddr> = current
+                            .iter()
+                            .filter(|a| **a != p.addr && !p.pex_sent.contains(a))
+                            .take(MAX_PEX_ADDED_PER_MSG)
+                            .copied()
+                            .collect();
+                        let dropped: Vec<SocketAddr> = p
+                            .pex_sent
+                            .iter()
+                            .filter(|a| !current.contains(a))
+                            .copied()
+                            .collect();
+                        if added.is_empty() && dropped.is_empty() {
+                            continue;
+                        }
+                        for a in &dropped {
+                            p.pex_sent.remove(a);
+                        }
+                        p.pex_sent.extend(added.iter().copied());
+                        let payload = super::wire::extended::build_ut_pex(&added, &dropped);
+                        let _ = p.cmd_tx.try_send(PeerCommand::Send(Message::Extended {
+                            ext_id: pex_id,
+                            payload,
+                        }));
                     }
                 }
                 let peer_snaps = if now.duration_since(last_peer_snapshot) >= PEER_SNAPSHOT_INTERVAL {
@@ -912,10 +794,10 @@ async fn torrent_loop(
 /// Side-channel registry to pass outbound peer cmd_tx handles from the spawn
 /// task into the main loop on first `Handshook`. Keyed by `(torrent_id, pid)`
 /// because `pid` is only unique within a single torrent loop; a global
-/// `pid` keying would collide across torrents.
+/// `pid` keying would collide across torrents
 mod peer_registry {
     use super::*;
-    use once_cell::sync::Lazy;
+    use std::sync::LazyLock;
     use std::sync::Mutex as StdMutex;
 
     struct RegistryEntry {
@@ -925,7 +807,7 @@ mod peer_registry {
     }
 
     type PeerCmdRegistry = StdMutex<HashMap<(usize, u32), RegistryEntry>>;
-    static REG: Lazy<PeerCmdRegistry> = Lazy::new(|| StdMutex::new(HashMap::new()));
+    static REG: LazyLock<PeerCmdRegistry> = LazyLock::new(|| StdMutex::new(HashMap::new()));
 
     pub fn put(
         torrent_id: usize,
@@ -1025,6 +907,11 @@ async fn run_outbound_peer(
     }
 }
 
+fn fast_bit(reserved: &[u8; 8]) -> bool {
+    let (b, m) = super::wire::handshake::reserved::FAST;
+    reserved[b] & m != 0
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn adopt_inbound_peer(
     pid: u32,
@@ -1036,20 +923,9 @@ async fn adopt_inbound_peer(
     lengths: &Lengths,
     piece_tracker: &mut PieceTracker,
     pipeline_floor: usize,
+    reserved: [u8; 8],
 ) {
-    // Install the peer directly in the per-loop `peers` map. We deliberately
-    // do *not* route through the shared `peer_registry` (used for outbound
-    // dials); the registry is keyed by `(torrent_id, pid)` and torrent ids
-    // are not unique across sessions running in the same process — using it
-    // for both directions would cause cross-session take/put collisions in
-    // any environment that hosts multiple sessions (notably integration
-    // tests, but also future per-user multi-session deployments).
-    //
-    // The ext-handshake is already on the wire (the connection layer wrote
-    // it inline before pushing the `Handshook` event), so we only need to
-    // emit the optional bitfield + unchoke here. `process_peer_event`'s
-    // `Handshook` arm short-circuits on `peers.contains_key(pid)`, so the
-    // forwarded event is a benign no-op
+    let supports_fast = fast_bit(&reserved);
     peers.insert(
         pid,
         Peer {
@@ -1062,12 +938,19 @@ async fn adopt_inbound_peer(
             peer_interested: false,
             outstanding: Vec::new(),
             max_outstanding: pipeline_floor,
-            received_since_grow: 0,
+            delivered_window: 0,
+            window_start: Instant::now(),
             snubbing: false,
             last_recv: Instant::now(),
             snub_since: None,
             their_ut_metadata_id: None,
             their_ut_holepunch_id: None,
+            downloaded_window: 0,
+            uploaded_window: Arc::new(AtomicU64::new(0)),
+            their_ut_pex_id: None,
+            pex_sent: HashSet::new(),
+            outbound: false,
+            supports_fast,
         },
     );
     let bf = piece_tracker.bitfield();
@@ -1075,10 +958,6 @@ async fn adopt_inbound_peer(
         let _ = cmd_tx
             .send(PeerCommand::Send(Message::Bitfield(Bytes::from(bf))))
             .await;
-    }
-    let _ = cmd_tx.send(PeerCommand::Send(Message::Unchoke)).await;
-    if let Some(p) = peers.get_mut(&pid) {
-        p.am_choking = false;
     }
     tokio::spawn(async move {
         while let Some(ev) = event_rx.recv().await {
@@ -1120,13 +999,20 @@ async fn process_peer_event(
     pipeline_floor: usize,
     pipeline_cap: usize,
     max_peers: usize,
+    choke_dirty: &mut bool,
+    upload_limiter: &Option<Arc<crate::limiter::UploadLimiter>>,
+    dht: Option<&Arc<crate::dht::Dht>>,
 ) -> bool {
     // Return value: `true` if the caller should immediately kick the peer
     // request pipeline. Set for events that can free an outstanding slot
     // (Piece) or unblock requests (Unchoke, Bitfield, Have)
     let mut kick = false;
     match ev {
-        PeerEvent::Handshook { encrypted, .. } => {
+        PeerEvent::Handshook {
+            encrypted,
+            reserved,
+            ..
+        } => {
             if !peers.contains_key(&pid) {
                 if let Some((cmd_tx, registry_addr)) =
                     peer_registry::take(torrent_id, pid, registry_scope)
@@ -1143,7 +1029,7 @@ async fn process_peer_event(
                     // `pending_dials` may have been cleared by Pause/Stop
                     // while the connect+handshake was in flight; the
                     // registry entry is only ever written by the spawn
-                    // task that actually completed the TCP connect.
+                    // task that actually completed the TCP connect
                     let addr = pending_dials.remove(&pid).unwrap_or(registry_addr);
                     // Pending dials can outrun the max_peers cap (we allow
                     // up to MAX_PENDING_DIALS in flight). If we'd overflow,
@@ -1160,6 +1046,7 @@ async fn process_peer_event(
                         "peer connected: {addr} (encrypted={encrypted}, peers={}/{max_peers})",
                         peers.len() + 1
                     );
+                    let supports_fast = fast_bit(&reserved);
                     peers.insert(
                         pid,
                         Peer {
@@ -1172,12 +1059,19 @@ async fn process_peer_event(
                             peer_interested: false,
                             outstanding: Vec::new(),
                             max_outstanding: pipeline_floor,
-                            received_since_grow: 0,
+                            delivered_window: 0,
+                            window_start: Instant::now(),
                             snubbing: false,
                             last_recv: Instant::now(),
                             snub_since: None,
                             their_ut_metadata_id: None,
                             their_ut_holepunch_id: None,
+                            downloaded_window: 0,
+                            uploaded_window: Arc::new(AtomicU64::new(0)),
+                            their_ut_pex_id: None,
+                            pex_sent: HashSet::new(),
+                            outbound: true,
+                            supports_fast,
                         },
                     );
                     // Extended handshake (when peer supports BEP-10) is
@@ -1189,10 +1083,7 @@ async fn process_peer_event(
                             .send(PeerCommand::Send(Message::Bitfield(Bytes::from(bf))))
                             .await;
                     }
-                    let _ = cmd_tx.send(PeerCommand::Send(Message::Unchoke)).await;
-                    if let Some(p) = peers.get_mut(&pid) {
-                        p.am_choking = false;
-                    }
+                    // Choked until the tit-for-tat eval grants a slot
                 }
             }
         }
@@ -1208,11 +1099,6 @@ async fn process_peer_event(
             peer.last_recv = Instant::now();
             if tracing::enabled!(target: "diag", tracing::Level::DEBUG) {
                 let kind = match &msg {
-                    Message::KeepAlive => "KeepAlive".to_string(),
-                    Message::Choke => "Choke".to_string(),
-                    Message::Unchoke => "Unchoke".to_string(),
-                    Message::Interested => "Interested".to_string(),
-                    Message::NotInterested => "NotInterested".to_string(),
                     Message::Have { piece_index } => format!("Have({piece_index})"),
                     Message::Bitfield(b) => {
                         let set: u32 = b.iter().map(|x| x.count_ones()).sum();
@@ -1238,7 +1124,10 @@ async fn process_peer_event(
                     peer.peer_choking = false;
                     kick = true;
                 }
-                Message::Interested => peer.peer_interested = true,
+                Message::Interested => {
+                    peer.peer_interested = true;
+                    *choke_dirty = true;
+                }
                 Message::NotInterested => peer.peer_interested = false,
                 Message::Have { piece_index } => {
                     let byte = (piece_index / 8) as usize;
@@ -1259,6 +1148,29 @@ async fn process_peer_event(
                     send_interested_if_useful(peer, piece_tracker).await;
                     kick = true;
                 }
+                Message::HaveAll => {
+                    piece_tracker.remove_peer_bitfield(&peer.bitfield);
+                    for b in peer.bitfield.iter_mut() {
+                        *b = 0xff;
+                    }
+                    piece_tracker.add_peer_bitfield(&peer.bitfield);
+                    send_interested_if_useful(peer, piece_tracker).await;
+                    kick = true;
+                }
+                Message::HaveNone => {
+                    piece_tracker.remove_peer_bitfield(&peer.bitfield);
+                    for b in peer.bitfield.iter_mut() {
+                        *b = 0;
+                    }
+                }
+                Message::RejectRequest {
+                    index,
+                    begin,
+                    length,
+                } => {
+                    peer.outstanding
+                        .retain(|&(p, b, l)| !(p == index && b == begin && l == length));
+                }
                 Message::Request {
                     index,
                     begin,
@@ -1268,13 +1180,22 @@ async fn process_peer_event(
                         return false;
                     };
                     if !piece_tracker.has_local(vpi) || peer.am_choking {
+                        if peer.supports_fast {
+                            let _ =
+                                peer.cmd_tx
+                                    .try_send(PeerCommand::Send(Message::RejectRequest {
+                                        index,
+                                        begin,
+                                        length,
+                                    }));
+                        }
                         return false;
                     }
                     if length > 1024 * 1024 {
                         return false;
                     }
                     // Reject requests that straddle the piece boundary so a
-                    // malicious peer cannot trigger an out-of-bounds read.
+                    // malicious peer cannot trigger an out-of-bounds read
                     let piece_len = lengths.piece_length_of(vpi) as u64;
                     if (begin as u64).saturating_add(length as u64) > piece_len {
                         return false;
@@ -1287,8 +1208,13 @@ async fn process_peer_event(
                     let cmd_tx = peer.cmd_tx.clone();
                     let stats = stats.clone();
                     let upload_tick = Arc::clone(upload_tick);
+                    let peer_uploaded = Arc::clone(&peer.uploaded_window);
                     let upload_len = length as u64;
+                    let limiter = upload_limiter.clone();
                     tokio::spawn(async move {
+                        if let Some(l) = &limiter {
+                            l.acquire(upload_len).await;
+                        }
                         let mut buf = vec![0u8; length as usize];
                         if storage.read_at(offset, &mut buf).await.is_err() {
                             return;
@@ -1309,6 +1235,7 @@ async fn process_peer_event(
                         // before would over-report on read errors or when
                         // the peer's command channel was closed mid-flight
                         upload_tick.fetch_add(upload_len, Ordering::Relaxed);
+                        peer_uploaded.fetch_add(upload_len, Ordering::Relaxed);
                         stats.lock().uploaded_bytes += upload_len;
                     });
                 }
@@ -1317,14 +1244,14 @@ async fn process_peer_event(
                         return false;
                     };
                     // Only accept pieces that match an outstanding request;
-                    // reject unsolicited or mismatched frames.
+                    // reject unsolicited or mismatched frames
                     let requested = peer.outstanding.iter().position(|&(p, b, l)| {
                         p == index && b == begin && l as usize == data.len()
                     });
                     let Some(req_idx) = requested else {
                         return false;
                     };
-                    // Reject if data extends past the piece boundary.
+                    // Reject if data extends past the piece boundary
                     let piece_len = lengths.piece_length_of(vpi);
                     if (begin as u64).saturating_add(data.len() as u64) > piece_len as u64 {
                         return false;
@@ -1338,46 +1265,36 @@ async fn process_peer_event(
                     // as soon as it proves it can still deliver bytes
                     peer.snubbing = false;
                     peer.snub_since = None;
-                    // Adaptive pipeline grow: count successful
-                    // deliveries in the current window, double the per-peer
-                    // cap when 25 % of the cap has landed (cap at
-                    // pipeline_cap). Doing this off the steady-state Piece
-                    // path keeps fast peers ramping toward saturation while
-                    // slow peers stay near pipeline_floor and never hoard
-                    // a large share of the chunk tracker
-                    peer.received_since_grow += 1;
-                    if peer.max_outstanding < pipeline_cap
-                        && peer.received_since_grow * 4 >= peer.max_outstanding
-                    {
-                        peer.max_outstanding = (peer.max_outstanding * 2).min(pipeline_cap);
-                        peer.received_since_grow = 0;
-                        tracing::info!(
-                            target: "diag",
-                            "pipeline GROW pid={pid} addr={} {}->{} cap={pipeline_cap}",
-                            peer.addr,
-                            peer.max_outstanding / 2,
-                            peer.max_outstanding
+                    peer.downloaded_window += data.len() as u64;
+                    peer.delivered_window += 1;
+                    let window = peer.window_start.elapsed();
+                    if window >= PIPELINE_RATE_WINDOW {
+                        let target = pipeline_target(
+                            peer.delivered_window,
+                            window,
+                            pipeline_floor,
+                            pipeline_cap,
                         );
+                        if target != peer.max_outstanding {
+                            tracing::debug!(
+                                target: "diag",
+                                "pipeline TARGET pid={pid} addr={} {}->{target}",
+                                peer.addr, peer.max_outstanding
+                            );
+                            peer.max_outstanding = target;
+                        }
+                        peer.delivered_window = 0;
+                        peer.window_start = Instant::now();
                     }
-                    // Last use of `peer` — NLL releases the &mut peers borrow
-                    // here so the cancel-scan below can re-borrow `peers`
-
-                    // Drop late duplicates whose piece was already
-                    // verified by another endgame peer. process_verify_result
-                    // calls forget_piece, so accepting this would re-create
-                    // a stale chunk-state vector via mark_received and
-                    // reallocate a fresh PieceAssembly buffer — both would
-                    // then leak until the torrent is dropped
                     if piece_tracker.has_local(vpi) {
                         kick = true;
                         return kick;
                     }
 
                     // Accumulate the chunk in an in-memory piece buffer
-                    // instead of hitting disk per chunk. This is the key
-                    // throughput unlock: the previous `storage.write_at(...).await`
-                    // here serialised every download peer through one disk
-                    // write per 16 KiB chunk
+                    // instead of hitting disk per chunk. The previous
+                    // `storage.write_at(...).await` here serialised every
+                    // download peer through one disk write per 16 KiB chunk
                     let assembly = piece_assemblies
                         .entry(index)
                         .or_insert_with(|| PieceAssembly {
@@ -1533,6 +1450,7 @@ async fn process_peer_event(
                         if let Some(peer_ext) = ExtHandshake::decode(&payload) {
                             peer.their_ut_metadata_id = peer_ext.ut_metadata_id();
                             peer.their_ut_holepunch_id = peer_ext.ut_holepunch_id();
+                            peer.their_ut_pex_id = peer_ext.ut_pex_id();
                         }
                     } else if ext_id == OUR_UT_METADATA_ID {
                         serve_ut_metadata(peer, &payload, info_bytes);
@@ -1566,6 +1484,11 @@ async fn process_peer_event(
                         }
                     }
                 }
+                Message::Port(port) => {
+                    if let (Some(dht), true) = (dht, port != 0) {
+                        dht.add_node(SocketAddr::new(peer.addr.ip(), port));
+                    }
+                }
                 _ => {}
             }
         }
@@ -1589,35 +1512,18 @@ async fn process_peer_event(
                 }
             }
             // Drop the registry slot in case the peer disconnected before
-            // the Handshook event moved it into `peers`.
+            // the Handshook event moved it into `peers`
             peer_registry::remove(torrent_id, pid, registry_scope);
             if let Some(dead) = peers.remove(&pid) {
-                piece_tracker.remove_peer_bitfield(&dead.bitfield);
-                let freed = chunk_tracker.release_peer(pid);
-                for piece_idx in freed {
-                    if let Ok(vpi) = lengths.validate_piece(piece_idx) {
-                        piece_tracker.clear_in_flight(vpi);
-                    }
-                    // Performant variant: keep the piece-assembly buffer when
-                    // other peers have already contributed chunks. The freed
-                    // `Requested` slots are now `Missing` (release_peer above)
-                    // so other peers will refill them, and when the piece
-                    // completes `assembly.received_bytes` will equal
-                    // `expected_bytes`. Only drop the buffer if the dead peer
-                    // was the sole contributor — keeping an empty assembly
-                    // would just leak `piece_len` bytes per stalled piece.
-                    //
-                    // Invariant: every chunk index in `assembly.received_chunks`
-                    // corresponds to ChunkState::Received in the chunk tracker,
-                    // and release_peer only mutates Requested slots, so the
-                    // tracker stays consistent with the buffer
-                    let should_drop = piece_assemblies
-                        .get(&piece_idx)
-                        .is_none_or(|a| a.received_chunks.is_empty());
-                    if should_drop {
-                        piece_assemblies.remove(&piece_idx);
-                    }
-                }
+                *choke_dirty = true;
+                release_peer_scheduler_state(
+                    pid,
+                    &dead.bitfield,
+                    piece_tracker,
+                    chunk_tracker,
+                    piece_assemblies,
+                    lengths,
+                );
             }
         }
     }
@@ -1780,7 +1686,7 @@ fn try_initiate_holepunch(
         return;
     }
     // Only peers we learned via PEX have a known relay; tracker/DHT peers that
-    // fail to connect have no rendezvous path we can use.
+    // fail to connect have no rendezvous path we can use
     let Some(&relay_pid) = pex_source.get(&target) else {
         return;
     };
@@ -1845,13 +1751,99 @@ async fn drive_requests(
     }
 }
 
+fn pipeline_target(delivered_chunks: u32, window: Duration, floor: usize, cap: usize) -> usize {
+    let secs = window.as_secs_f32().max(0.001);
+    let rate = delivered_chunks as f32 / secs; // chunks per second
+    ((rate * PIPELINE_TARGET_SECS) as usize).clamp(floor, cap)
+}
+
+fn shrink_pipeline(current: usize, floor: usize) -> usize {
+    (current / 2).max(floor)
+}
+
+fn next_optimistic(sorted_candidates: &[u32], current: Option<u32>) -> Option<u32> {
+    if sorted_candidates.is_empty() {
+        return None;
+    }
+    let next = match current {
+        Some(cur) => sorted_candidates
+            .iter()
+            .copied()
+            .find(|&pid| pid > cur)
+            .unwrap_or(sorted_candidates[0]),
+        None => sorted_candidates[0],
+    };
+    Some(next)
+}
+
+fn select_unchoked(
+    mut candidates: Vec<(u32, u64)>,
+    optimistic: Option<u32>,
+    slots: usize,
+) -> HashSet<u32> {
+    let mut selected: HashSet<u32> = HashSet::new();
+    if let Some(pid) = optimistic.filter(|pid| candidates.iter().any(|&(c, _)| c == *pid)) {
+        selected.insert(pid);
+    }
+    // Rate desc, pid asc as a deterministic tiebreak
+    candidates.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+    for (pid, _) in candidates {
+        if selected.len() >= slots {
+            break;
+        }
+        selected.insert(pid);
+    }
+    selected
+}
+
+fn run_choke_eval(
+    peers: &mut HashMap<u32, Peer>,
+    seeding: bool,
+    optimistic: Option<u32>,
+    reset_windows: bool,
+) {
+    let candidates: Vec<(u32, u64)> = peers
+        .iter()
+        .filter(|(_, p)| p.peer_interested)
+        .map(|(&pid, p)| {
+            let rate = if seeding {
+                p.uploaded_window.load(Ordering::Relaxed)
+            } else {
+                p.downloaded_window
+            };
+            (pid, rate)
+        })
+        .collect();
+    let unchoke = select_unchoked(candidates, optimistic, UPLOAD_SLOTS);
+    for (&pid, p) in peers.iter_mut() {
+        let should_unchoke = unchoke.contains(&pid);
+        if should_unchoke
+            && p.am_choking
+            && p.cmd_tx
+                .try_send(PeerCommand::Send(Message::Unchoke))
+                .is_ok()
+        {
+            p.am_choking = false;
+        } else if !should_unchoke
+            && !p.am_choking
+            && p.cmd_tx.try_send(PeerCommand::Send(Message::Choke)).is_ok()
+        {
+            p.am_choking = true;
+        }
+        if reset_windows {
+            p.downloaded_window = 0;
+            p.uploaded_window.store(0, Ordering::Relaxed);
+        }
+    }
+}
+
 /// Send a `Cancel` message to every peer (other than `except_pid`) that has
 /// the chunk `(index, begin, length)` in its outstanding queue, and remove
 /// the entry from each peer's local outstanding Vec. Best-effort: if a
 /// peer's command channel is full or closed we skip it (the chunk will
 /// arrive and be dedup-dropped, no worse than today). This is the only
 /// thing that keeps endgame mode from saturating downstream with duplicate
-/// blocks at the very end of a download.
+/// blocks at the very end of a download
 fn cancel_outstanding(
     peers: &mut HashMap<u32, Peer>,
     except_pid: u32,
@@ -1887,7 +1879,7 @@ fn cancel_outstanding(
 /// would now be wasted bytes) or because it failed verification / disk write
 /// and is about to be re-requested from scratch (delivering stale chunks
 /// from the previous attempt would inflate received_bytes past the
-/// expected_bytes guard, forcing a second reset).
+/// expected_bytes guard, forcing a second reset)
 fn cancel_piece_outstanding(peers: &mut HashMap<u32, Peer>, piece_index: u32) {
     for other in peers.values_mut() {
         let mut i = 0;
@@ -1938,7 +1930,7 @@ async fn drive_peer(
     // next_chunk returned None (no chunk available for this peer, even under
     // endgame). Tracked so the endgame fallback below — which uses
     // PieceTracker::choose_piece (does NOT skip in_flight) — does not loop
-    // forever picking the same piece every iteration.
+    // forever picking the same piece every iteration
     let mut exhausted: HashSet<u32> = HashSet::new();
     let requestable_pieces = piece_tracker.choose_requestable_pieces(&peer.bitfield, pid);
     let mut requestable_idx = 0usize;
@@ -2031,7 +2023,6 @@ async fn drive_peer(
 }
 
 async fn scan_existing_pieces(
-    info: &ValidatedTorrentMetaV1Info,
     verifier: &PieceVerifier,
     storage: &Arc<FilesystemStorage>,
     lengths: &Lengths,
@@ -2045,13 +2036,12 @@ async fn scan_existing_pieces(
     if total == 0 {
         return;
     }
-    let _ = info; // kept for symmetry with previous signature; verifier owns v1/v2 dispatch
-                  // Cap memory rather than parallelism: the previous fixed concurrency=16
-                  // allocated 16 * piece_length bytes per batch, which on torrents with
-                  // multi-MiB pieces could push hundreds of MiB through this scan.
-                  // Derive the batch size from a byte budget so each batch allocates at
-                  // most ~MAX_SCAN_BYTES, and still cap at 16 to avoid saturating the
-                  // spawn_blocking pool on tiny-piece torrents
+    // Cap memory rather than parallelism: the previous fixed concurrency=16
+    // allocated 16 * piece_length bytes per batch, which on torrents with
+    // multi-MiB pieces could push hundreds of MiB through this scan.
+    // Derive the batch size from a byte budget so each batch allocates at
+    // most ~MAX_SCAN_BYTES, and still cap at 16 to avoid saturating the
+    // spawn_blocking pool on tiny-piece torrents
     const MAX_SCAN_BYTES: usize = 64 * 1024 * 1024;
     let plen_hint = lengths
         .validate_piece(0)
@@ -2097,18 +2087,6 @@ async fn scan_existing_pieces(
     }
 }
 
-fn completed_bytes(pt: &PieceTracker, lengths: &Lengths) -> u64 {
-    let mut total = 0u64;
-    for idx in 0..lengths.total_pieces() {
-        if let Ok(vpi) = lengths.validate_piece(idx) {
-            if pt.has_local(vpi) {
-                total += lengths.piece_length_of(vpi) as u64;
-            }
-        }
-    }
-    total
-}
-
 fn mark_verified_piece_local(pt: &mut PieceTracker, vpi: super::core::ValidPieceIndex) -> bool {
     let was_local = pt.has_local(vpi);
     pt.set_local(vpi, true);
@@ -2135,7 +2113,7 @@ fn add_piece_progress(
 
 /// Distribute the bytes of every completed piece across the files it
 /// overlaps. Used to populate `TorrentStats::file_progress` so per-file
-/// completion can be reported in the UI.
+/// completion can be reported in the UI
 fn compute_file_progress(
     pt: &PieceTracker,
     lengths: &Lengths,
@@ -2158,7 +2136,7 @@ fn compute_file_progress(
     per_file
 }
 
-/// True when a peer's bitfield reports every piece, indicating a full seeder.
+/// True when a peer's bitfield reports every piece — a full seeder
 fn peer_bitfield_is_full(bitfield: &[u8], total_pieces: usize) -> bool {
     if total_pieces == 0 {
         return false;
@@ -2251,7 +2229,7 @@ fn spawn_tracker_pollers(
                     match tracker_announce(&url, &req, Duration::from_secs(30)).await {
                         Ok(resp) => {
                             // DIAG: per-URL peer yield — quantifies whether Risuko's
-                            // (default-empty) tracker set is starving the swarm vs BitComet's.
+                            // (default-empty) tracker set is starving the swarm vs BitComet's
                             tracing::info!(
                                 target: "diag",
                                 "tracker ANNOUNCE ok url={url} event={event:?} peers={} interval_s={}",
@@ -2414,7 +2392,25 @@ mod tests {
     use crate::core::merkle::{compute_root, hash_block, MerkleProofTable, BLOCK_SIZE};
     use crate::core::Id32;
     use crate::core::TorrentMetaInfo;
+    use crate::core::ValidatedTorrentMetaV1Info;
     use std::path::Path;
+
+    #[test]
+    fn pipeline_target_tracks_delivery_rate() {
+        assert_eq!(pipeline_target(128, Duration::from_secs(2), 6, 256), 256);
+        assert_eq!(pipeline_target(2, Duration::from_secs(2), 6, 256), 6);
+        assert_eq!(pipeline_target(20, Duration::from_secs(2), 6, 256), 40);
+        assert_eq!(pipeline_target(128, Duration::from_secs(2), 32, 32), 32);
+    }
+
+    #[test]
+    fn pipeline_depth_shrinks_after_stall() {
+        // The reclaim path applies exactly this on each snub transition
+        assert_eq!(shrink_pipeline(256, 6), 128);
+        assert_eq!(shrink_pipeline(128, 6), 64);
+        assert_eq!(shrink_pipeline(8, 6), 6);
+        assert_eq!(shrink_pipeline(6, 6), 6);
+    }
 
     fn make_v2_tables(num_pieces: usize, piece_length: u32) -> (Vec<MerkleProofTable>, Id32) {
         let blocks_per_piece = piece_length / BLOCK_SIZE;
@@ -2620,5 +2616,30 @@ mod tests {
             Message::HashReject { .. } => {}
             _ => panic!("expected HashReject for None (v1-only) tables"),
         }
+    }
+
+    #[test]
+    fn choke_slots_respect_limit_and_optimistic() {
+        let candidates: Vec<(u32, u64)> =
+            vec![(1, 100), (2, 500), (3, 300), (4, 50), (5, 400), (6, 200)];
+        let set = select_unchoked(candidates.clone(), None, 4);
+        assert_eq!(set.len(), 4);
+        assert!(set.contains(&2) && set.contains(&5) && set.contains(&3) && set.contains(&6));
+
+        let set = select_unchoked(candidates, Some(4), 4);
+        assert_eq!(set.len(), 4);
+        assert!(set.contains(&4), "optimistic peer must hold a slot");
+        assert!(set.contains(&2) && set.contains(&5) && set.contains(&3));
+        assert!(!set.contains(&6), "slowest regular peer loses its slot");
+    }
+
+    #[test]
+    fn optimistic_rotation_is_round_robin() {
+        let c = [1u32, 3, 7];
+        assert_eq!(next_optimistic(&c, None), Some(1));
+        assert_eq!(next_optimistic(&c, Some(1)), Some(3));
+        assert_eq!(next_optimistic(&c, Some(3)), Some(7));
+        assert_eq!(next_optimistic(&c, Some(7)), Some(1));
+        assert_eq!(next_optimistic(&[], Some(7)), None);
     }
 }

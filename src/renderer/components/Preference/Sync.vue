@@ -1,11 +1,5 @@
 <template>
   <div class="content panel panel-layout panel-layout--v">
-    <mo-enter tag="header" preset="fadeInDown" class="panel-header">
-      <h4 class="hidden-xs-only">{{ title }}</h4>
-      <div class="preference-mobile-subnav hidden-sm-and-up">
-        <mo-subnav-switcher :title="title" :subnavs="subnavs" />
-      </div>
-    </mo-enter>
     <main class="panel-content">
       <form class="form-preference" @submit.prevent>
 
@@ -85,7 +79,6 @@
           </div>
         </div>
 
-        <!-- Mobile-only -->
         <div class="settings-section hidden-sm-and-up">
           <div class="settings-section-header">
             <div class="section-icon"><Activity :size="16" /></div>
@@ -259,9 +252,8 @@ import {
 	Zap,
 } from "@lucide/vue";
 import { syncCategories, syncCategoryIds } from "@shared/syncCategories";
-import { defineComponent, ref } from "vue";
+import { defineComponent } from "vue";
 import LoginModal from "@/components/Auth/LoginModal.vue";
-import SubnavSwitcher from "@/components/Subnav/SubnavSwitcher.vue";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useAuthStore } from "@/store/auth";
@@ -269,9 +261,8 @@ import { usePreferenceStore } from "@/store/preference";
 import { useSyncStore } from "@/store/sync";
 
 export default defineComponent({
-	name: "mo-preference-sync",
+	name: "preference-sync",
 	components: {
-		[SubnavSwitcher.name]: SubnavSwitcher,
 		LoginModal,
 		Button,
 		Input,
@@ -296,44 +287,17 @@ export default defineComponent({
 			authStore,
 			syncStore,
 			syncCategories,
-			showLoginModal: ref(false),
-			serverUrl: ref(""),
-			syncMessage: ref(""),
-			syncError: ref(false),
-			serverConfigChecked: ref(false),
+			showLoginModal: false,
+			serverUrl: "",
+			syncMessage: "",
+			syncError: false,
+			serverConfigChecked: false,
 			form: {
 				cloudSyncAuto: preferenceStore.config.cloudSyncAuto ?? false,
 			},
 		};
 	},
 	computed: {
-		title(): string {
-			return this.$t("sync.cloud-sync");
-		},
-		subnavs() {
-			return [
-				{
-					key: "basic",
-					title: this.$t("preferences.basic"),
-					route: "/preference/basic",
-				},
-				{
-					key: "advanced",
-					title: this.$t("preferences.advanced"),
-					route: "/preference/advanced",
-				},
-				{
-					key: "cloud-sinks",
-					title: this.$t("preferences.cloudSinks"),
-					route: "/preference/cloud-sinks",
-				},
-				{
-					key: "sync",
-					title: this.$t("subnav.sync"),
-					route: "/preference/sync",
-				},
-			];
-		},
 		selectedCategories(): string[] {
 			return this.syncStore.getSelectedCategories();
 		},
@@ -387,7 +351,7 @@ export default defineComponent({
 			this.syncMessage = "";
 			this.syncError = false;
 			try {
-				await this.syncStore.syncNow();
+				await this.syncStore.syncBidirectional();
 				this.syncMessage = this.$t("sync.cloud-sync-success");
 			} catch {
 				this.syncMessage = this.$t("sync.cloud-sync-fail");
@@ -398,7 +362,7 @@ export default defineComponent({
 			this.syncMessage = "";
 			this.syncError = false;
 			try {
-				await this.syncStore.restoreFromCloud();
+				await this.syncStore.pullAll();
 				this.syncMessage = this.$t("sync.cloud-sync-restore-success");
 			} catch {
 				this.syncMessage = this.$t("sync.cloud-sync-fail");

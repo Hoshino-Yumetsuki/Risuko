@@ -13,7 +13,7 @@ use rustls::{ClientConfig, RootCertStore};
 use url::Url;
 
 use crate::body::ReqBody;
-use crate::connector::{ConnIo, Connector};
+use crate::connector::Connector;
 use crate::cookies::SharedJar;
 use crate::decompress;
 use crate::error::{Error, Result};
@@ -21,7 +21,7 @@ use crate::into_url::IntoUrl;
 use crate::proxy::Proxy;
 use crate::redirect::Policy;
 use crate::request::RequestBuilder;
-use crate::resolver::{GlobalResolver, Resolve, SharedResolver};
+use crate::resolver::{GlobalResolver, SharedResolver};
 use crate::response::Response;
 
 #[derive(Clone)]
@@ -83,14 +83,13 @@ impl Client {
         let url = rb.url?;
         let timeout = rb.timeout.or(self.inner.timeout);
 
-        // Start with default headers, then let request-specific headers
-        // override them. Per-name override semantics: if the request sets any
-        // value for a header name, all default values for that name are
-        // dropped before the request's values are appended. This way a
-        // request `User-Agent` replaces the default UA instead of being sent
-        // alongside it (HTTP forbids duplicate singleton headers), while
-        // multi-valued request headers like `Accept` still preserve all
-        // values the caller appended
+        // Start with default headers, then let request headers override them.
+        // Per-name: if the request sets any value for a header name, all
+        // default values for that name are dropped before the request's values
+        // are appended. So a request `User-Agent` replaces the default UA
+        // instead of being sent alongside it (HTTP forbids duplicate singleton
+        // headers), while multi-valued request headers like `Accept` keep every
+        // value the caller appended
         let mut headers = HeaderMap::new();
         for (k, v) in self.inner.default_headers.iter() {
             headers.append(k.clone(), v.clone());
@@ -150,18 +149,15 @@ impl Client {
                 .send_once(&method, &url, &headers, body.clone())
                 .await?;
             let status = resp.status();
-            if !is_redirect_status(status) || !self.inner.redirect.follows() {
+            if !is_redirect_status(status) {
                 return Ok(resp);
             }
             redirects += 1;
-            if !self.inner.redirect.unlimited && redirects > self.inner.redirect.max {
-                return match self.inner.redirect.on_exceeded {
-                    crate::redirect::OnExceeded::Stop => Ok(resp),
-                    crate::redirect::OnExceeded::Error => Err(Error::Redirect(format!(
-                        "exceeded {} redirects",
-                        self.inner.redirect.max
-                    ))),
-                };
+            if redirects > self.inner.redirect.max {
+                return Err(Error::Redirect(format!(
+                    "exceeded {} redirects",
+                    self.inner.redirect.max
+                )));
             }
 
             let location = resp
@@ -384,7 +380,6 @@ pub struct ClientBuilder {
     pool_max_idle_per_host: Option<usize>,
     tcp_nodelay: bool,
     tcp_keepalive: Option<Duration>,
-    http1_only: bool,
     auto_gzip: bool,
     auto_brotli: bool,
     auto_deflate: bool,
@@ -407,7 +402,6 @@ impl ClientBuilder {
             pool_max_idle_per_host: None,
             tcp_nodelay: true,
             tcp_keepalive: None,
-            http1_only: false,
             auto_gzip: false,
             auto_brotli: false,
             auto_deflate: false,
@@ -464,11 +458,6 @@ impl ClientBuilder {
         self
     }
 
-    pub fn http1_only(mut self) -> Self {
-        self.http1_only = true;
-        self
-    }
-
     pub fn gzip(mut self, b: bool) -> Self {
         self.auto_gzip = b;
         self
@@ -479,18 +468,6 @@ impl ClientBuilder {
     }
     pub fn deflate(mut self, b: bool) -> Self {
         self.auto_deflate = b;
-        self
-    }
-    pub fn no_gzip(mut self) -> Self {
-        self.auto_gzip = false;
-        self
-    }
-    pub fn no_brotli(mut self) -> Self {
-        self.auto_brotli = false;
-        self
-    }
-    pub fn no_deflate(mut self) -> Self {
-        self.auto_deflate = false;
         self
     }
 
@@ -509,13 +486,7 @@ impl ClientBuilder {
         self
     }
 
-    pub fn resolver<R: Resolve + 'static>(mut self, r: R) -> Self {
-        self.resolver = Some(Arc::new(r));
-        self
-    }
-
-    /// Pin a resolver that's already shared. Unlike [`resolver`](Self::resolver),
-    /// this skips re-wrapping in a fresh `Arc`, so callers can share one
+    /// Pin a resolver that's already shared, so callers can share one
     /// resolver instance, and its cache, across several clients
     pub fn resolver_arc(mut self, r: SharedResolver) -> Self {
         self.resolver = Some(r);
@@ -541,10 +512,7 @@ impl ClientBuilder {
 
         // The connector below never advertises h2 ALPN and the plain-HTTP
         // path never initiates an h2c upgrade, so this client is HTTP/1.1
-        // only at the wire level. `hyper-util 0.1`'s `legacy::Client::Builder`
-        // has no dedicated `http1_only` knob, so honouring `self.http1_only`
-        // is purely defensive — there is no second protocol path to disable
-        let _ = self.http1_only;
+        // only at the wire level
         let mut hyper_builder = HyperClient::builder(TokioExecutor::new());
         if let Some(d) = self.pool_idle_timeout {
             hyper_builder.pool_idle_timeout(d);
@@ -668,19 +636,4 @@ impl rustls::client::danger::ServerCertVerifier for NoCertVerifier {
             RSA_PSS_SHA512,
         ]
     }
-}
-
-// hyper-util's Client requires the connector's response to implement
-// `Connection + hyper::rt::Read + hyper::rt::Write + Send + Unpin`. We
-// provide all of those for `ConnIo` in the connector module
-fn _assert_conn() {
-    fn check<
-        T: hyper::rt::Read
-            + hyper::rt::Write
-            + hyper_util::client::legacy::connect::Connection
-            + Send
-            + Unpin,
-    >() {
-    }
-    check::<ConnIo>();
 }

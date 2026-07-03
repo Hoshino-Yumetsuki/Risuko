@@ -52,12 +52,11 @@ fn with_desktop_plugins<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri:
 
 /// Resolve which directory the log appender should write to
 ///
-/// `log-dir-override` lets the user point logs at any writable directory.
-/// That matters most on Android, where the default `app_log_dir` lives in
-/// the app's private data dir and stays invisible to file managers. An
-/// empty value means "use the OS default". A non-empty value that we
-/// can't create or write falls back to the default too. Logging should
-/// not fail just because the override went stale (removed SD card,
+/// `log-dir-override` points logs at any writable directory — matters most on
+/// Android, where the default `app_log_dir` lives in the app's private data dir
+/// and stays invisible to file managers. Empty means "use the OS default"; a
+/// non-empty value we can't create or write also falls back to the default, so
+/// logging never fails just because the override went stale (removed SD card,
 /// revoked permission, typo'd path)
 fn resolve_log_dir(
     config: &risuko_engine::config::ConfigManager,
@@ -106,8 +105,8 @@ fn resolve_log_dir(
     candidate
 }
 
-/// Set up tracing subscriber with both stdout and file output.
-/// Returns a guard that must be held for the lifetime of the application.
+/// Set up the tracing subscriber with stdout and file output. Returns a guard
+/// that must be held for the application's lifetime
 fn init_logging(
     log_dir: &std::path::Path,
     log_level: &str,
@@ -138,8 +137,8 @@ fn init_logging(
 }
 
 /// Apply environment workarounds for known WebKitGTK/Linux rendering issues
-/// before any GTK/WebKit code initializes. Only sets variables that are not
-/// already defined, so users can override.
+/// before any GTK/WebKit code initializes. Only sets variables not already
+/// defined, so users can override
 #[cfg(target_os = "linux")]
 fn apply_linux_webkit_workarounds() {
     // WebKitGTK's DMA-BUF renderer (default since 2.42) frequently fails to
@@ -182,13 +181,11 @@ pub fn run() {
         let storage: Arc<dyn risuko_engine::StorageBackend> =
             Arc::new(bridge::TauriStorage::new(handle));
 
-        // Resolve the log directory and log level from user config before
-        // building AppState. Default to the OS-specific app log dir. The
-        // user can override via `log-dir-override`, for instance pointing
-        // at `/storage/emulated/0/Download/Risuko-logs` on Android so logs
-        // show up in any file manager. The override only applies if we
-        // can create and write to it. Otherwise the default kicks in so
-        // we always have somewhere to log
+        // Resolve the log directory and level from user config before building
+        // AppState. Defaults to the OS app log dir; the user can override via
+        // `log-dir-override` (e.g. `/storage/emulated/0/Download/Risuko-logs`
+        // on Android so logs show up in any file manager). The override applies
+        // only if we can create and write it, else the default kicks in
         let default_log_dir = handle.path().app_log_dir().unwrap_or_else(|_| {
             handle
                 .path()
@@ -217,7 +214,7 @@ pub fn run() {
             tracing::info!("Log directory: {}", log_dir.display());
         }
 
-        let app_state = state::AppState::new(config, storage.clone(), log_dir, log_guard)?;
+        let app_state = state::AppState::new(config, storage, log_dir, log_guard)?;
         app.manage(app_state);
         sync_open_at_login_setting(app);
 
@@ -269,39 +266,24 @@ pub fn run() {
             risuko_engine::engine::should_start_embedded_engine(&config)
         };
 
-        // Push the live Tauri event sink into the upload manager so
-        // upload events reach the frontend (we constructed it with a
-        // NoopEventSink before AppHandle was available). This must run
-        // regardless of whether the embedded engine auto-starts so that
-        // sink configuration UI receives upload events when the user
-        // starts the engine later.
-        //
-        // Fail fast on a poisoned lock or missing manager: the previous
-        // `lock().ok().and_then(...)` swallowed both, leaving the app
-        // running with no upload event plumbing and no obvious symptom
+        // Push the live Tauri event sink into the upload manager so upload
+        // events reach the frontend (we built it with a NoopEventSink before
+        // AppHandle was available). Runs regardless of whether the embedded
+        // engine auto-starts, so the sink-config UI still gets upload events
+        // when the user starts the engine later
         let event_sink_clone = event_sink.clone();
-        let upload_mgr = {
-            let state = app.state::<state::AppState>();
-            let guard = state
-                .upload_sinks
-                .lock()
-                .map_err(|e| format!("upload_sinks lock poisoned: {e}"))?;
-            guard
-                .clone()
-                .ok_or_else(|| "upload_sinks not initialized".to_string())?
-        };
+        let upload_mgr = app.state::<state::AppState>().upload_sinks.clone();
         upload_mgr.set_event_sink(event_sink_clone.clone());
-        let upload_mgr = Some(upload_mgr);
 
         // Inject SFTP/FTP/WebDAV/S3 secrets stored in the OS keychain
         // back into the upload manager. The on-disk records omit them
         // (`skip_serializing` on the protocol Configs) so without this
         // pass the user has to re-enter every password after a restart
-        if let Some(mgr) = upload_mgr.clone() {
-            let state = app.state::<state::AppState>();
-            let vault = state.vault.clone();
+        {
+            let vault = app.state::<state::AppState>().vault.clone();
             tauri::async_runtime::block_on(commands::upload_cmds::rehydrate_upload_sinks(
-                &mgr, &vault,
+                &upload_mgr,
+                &vault,
             ));
         }
 
@@ -310,7 +292,6 @@ pub fn run() {
             let config_dir = config_ref.config_dir().to_path_buf();
             drop(config_ref);
 
-            let storage_clone = storage.clone();
             tauri::async_runtime::spawn(async move {
                 let config = match risuko_engine::config::ConfigManager::with_dir(config_dir) {
                     Ok(c) => c,
@@ -319,13 +300,9 @@ pub fn run() {
                         return;
                     }
                 };
-                if let Err(e) = risuko_engine::engine::start_engine(
-                    &config,
-                    event_sink_clone,
-                    storage_clone,
-                    upload_mgr,
-                )
-                .await
+                if let Err(e) =
+                    risuko_engine::engine::start_engine(&config, event_sink_clone, Some(upload_mgr))
+                        .await
                 {
                     tracing::error!("Failed to start engine: {}", e);
                 }
@@ -358,15 +335,12 @@ pub fn run() {
         managers::flyout::setup_flyout(app)?;
 
         // Start RSS background polling
-        if let Ok(guard) = app.state::<state::AppState>().rss.lock() {
-            if let Some(rss) = guard.clone() {
-                // Must spawn into Tauri's async runtime so the tokio
-                // reactor is available for the inner tokio::spawn call.
-                tauri::async_runtime::spawn(async move {
-                    std::mem::drop(RssManager::start_polling(rss));
-                });
-            }
-        }
+        let rss = app.state::<state::AppState>().rss.clone();
+        // Must spawn into Tauri's async runtime so the tokio reactor is
+        // available for the inner tokio::spawn call
+        tauri::async_runtime::spawn(async move {
+            std::mem::drop(RssManager::start_polling(rss));
+        });
 
         Ok(())
     })
@@ -396,16 +370,10 @@ pub fn run() {
         if let tauri::WindowEvent::Focused(false) = event {
             #[cfg(not(target_os = "android"))]
             if window.label() == managers::flyout::FLYOUT_LABEL {
+                // blur also fires when the flyout hands focus to the main window it
+                // just opened; demoting then would strand the visible UI
                 #[cfg(target_os = "macos")]
-                {
-                    // Only set Accessory policy when in tray mode
-                    let run_mode = utils::run_mode::current_run_mode(window.app_handle());
-                    if utils::run_mode::is_tray_mode(run_mode) {
-                        let _ = window
-                            .app_handle()
-                            .set_activation_policy(tauri::ActivationPolicy::Accessory);
-                    }
-                }
+                managers::flyout::demote_if_ui_hidden(window.app_handle());
                 let _ = window.hide();
             }
         }
@@ -421,7 +389,6 @@ pub fn run() {
         commands::app_cmds::log_frontend,
         commands::app_cmds::factory_reset,
         commands::app_cmds::reset_session,
-        commands::app_cmds::auto_hide_window,
         commands::app_cmds::toggle_app_menu,
         commands::app_cmds::is_opened_at_login,
         commands::app_cmds::set_android_system_bars,
@@ -435,12 +402,9 @@ pub fn run() {
         commands::file_cmds::open_path,
         commands::file_cmds::trash_item,
         commands::file_cmds::rename_path,
-        commands::file_cmds::read_binary_file,
         commands::file_cmds::resolve_torrent_path,
-        commands::file_cmds::trash_generated_torrent_sidecars,
         commands::file_cmds::cleanup_generated_torrent_sidecars_for_task,
         commands::engine_cmds::restart_engine,
-        commands::engine_cmds::get_engine_status,
         commands::health_cmds::run_health_checks,
         commands::engine_cmds::add_uri,
         commands::engine_cmds::add_media,
@@ -448,8 +412,6 @@ pub fn run() {
         commands::engine_cmds::add_torrent_by_path,
         commands::engine_cmds::add_torrents_by_paths,
         commands::engine_cmds::resolve_magnet,
-        commands::engine_cmds::probe_m3u8,
-        commands::engine_cmds::calculate_active_task_progress,
         commands::engine_cmds::evaluate_low_speed_tasks,
         commands::engine_cmds::plan_auto_retry,
         commands::engine_cmds::sync_selected_task_order,
@@ -465,7 +427,6 @@ pub fn run() {
         commands::engine_cmds::get_option_engine,
         commands::engine_cmds::get_global_option_engine,
         commands::engine_cmds::get_global_stat,
-        commands::engine_cmds::change_position,
         commands::engine_cmds::save_session,
         commands::engine_cmds::get_version,
         commands::engine_cmds::pause_all_tasks,
@@ -512,7 +473,6 @@ pub fn run() {
         commands::rss_cmds::parse_rss_item_title,
         commands::rss_cmds::remove_rss_rule,
         commands::rss_cmds::get_rss_rules,
-        commands::rss_cmds::download_rss_item,
         commands::rss_cmds::delete_rss_items,
         commands::rss_cmds::mark_rss_downloaded,
         commands::rss_cmds::clear_rss_download,

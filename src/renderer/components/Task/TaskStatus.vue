@@ -18,7 +18,7 @@ const statusTypeMap = {
 };
 
 export default {
-	name: "mo-task-status",
+	name: "task-status",
 	props: {
 		theme: {
 			type: String,

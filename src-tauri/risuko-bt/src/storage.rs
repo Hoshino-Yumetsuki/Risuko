@@ -1,16 +1,15 @@
-//! Storage backend: maps piece/byte offsets to underlying files and provides
+//! Storage backend: maps piece/byte offsets to underlying files, with
 //! async read/write primitives
 //!
-//! The [`StorageBackend`] trait lets us plug alternative implementations
-//! later (e.g. in-memory for tests). The default [`FilesystemStorage`] uses
-//! positional `pread` / `pwrite` syscalls via `spawn_blocking`, which allows
-//! concurrent reads and writes to non-overlapping regions of the same file
-//! without any internal lock. This is critical for multi-peer throughput:
-//! a per-file `Mutex<File>` would serialize all chunk writes through a
-//! single async mutex, capping single-file torrents at one peer at a time
+//! [`FilesystemStorage`] uses positional `pread` / `pwrite` syscalls via
+//! `spawn_blocking`, so concurrent reads and writes to non-overlapping
+//! regions of the same file need no internal lock. This matters for
+//! multi-peer throughput: a per-file `Mutex<File>` would serialize all
+//! chunk writes through a single async mutex, capping single-file torrents
+//! at one peer at a time
 
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 
 use parking_lot::Mutex;
@@ -28,22 +27,6 @@ pub enum StorageError {
     Io(#[from] io::Error),
     #[error("offset {offset} out of torrent range ({total})")]
     OutOfRange { offset: u64, total: u64 },
-}
-
-/// Read/write primitives; async because files live behind tokio
-#[async_trait::async_trait]
-pub trait StorageBackend: Send + Sync {
-    /// Allocate all files (sparse) on disk if they don't yet exist
-    async fn preallocate(&self) -> Result<(), StorageError>;
-
-    /// Write `buf` starting at absolute torrent offset `offset`
-    async fn write_at(&self, offset: u64, buf: &[u8]) -> Result<(), StorageError>;
-
-    /// Read `buf.len()` bytes starting at absolute torrent offset `offset`
-    async fn read_at(&self, offset: u64, buf: &mut [u8]) -> Result<(), StorageError>;
-
-    /// Flush in-flight writes.
-    async fn flush(&self) -> Result<(), StorageError>;
 }
 
 /// Filesystem backed storage using the torrent's file layout
@@ -131,7 +114,7 @@ impl FilesystemStorage {
         Ok(arc)
     }
 
-    /// Flush buffered writes and drop every cached file handle,
+    /// Flush buffered writes and drop every cached file handle
     pub async fn close_handles(&self) -> Result<(), StorageError> {
         let snapshot: Vec<Arc<std::fs::File>> = {
             let mut guard = self.handles.lock();
@@ -161,14 +144,12 @@ impl FilesystemStorage {
             Ok(())
         }
     }
-}
 
-#[async_trait::async_trait]
-impl StorageBackend for FilesystemStorage {
-    async fn preallocate(&self) -> Result<(), StorageError> {
+    /// Allocate all files (sparse) on disk if they don't yet exist
+    pub async fn preallocate(&self) -> Result<(), StorageError> {
         // Open each file just long enough to preallocate, then drop the
         // handle. Caching handles here would defeat lazy opening and can
-        // exhaust the process open-file limit on torrents with many files.
+        // exhaust the process open-file limit on torrents with many files
         for f in self.layout.files().iter() {
             let path = f.path.clone();
             let target_len = f.length;
@@ -186,8 +167,8 @@ impl StorageBackend for FilesystemStorage {
                 // the file size in directory metadata. Modern filesystems
                 // (APFS, ext4, NTFS) support sparse files; set_len avoids
                 // upfront I/O while still surfacing ENOSPC on subsequent writes.
-                // Truncate oversized files as well so stale tail bytes from a
-                // previous larger allocation do not survive a "complete" download.
+                // Truncate oversized files too so stale tail bytes from a
+                // previous larger allocation don't survive a "complete" download
                 let current = file.metadata()?.len();
                 if current != target_len {
                     file.set_len(target_len)?;
@@ -200,14 +181,16 @@ impl StorageBackend for FilesystemStorage {
         Ok(())
     }
 
-    async fn write_at(&self, offset: u64, buf: &[u8]) -> Result<(), StorageError> {
+    /// Write `buf` starting at absolute torrent offset `offset`
+    pub async fn write_at(&self, offset: u64, buf: &[u8]) -> Result<(), StorageError> {
         // Generic path: copies into a Bytes once. Hot piece writes use the
         // zero-copy `write_at_owned` instead
         self.write_at_owned(offset, bytes::Bytes::copy_from_slice(buf))
             .await
     }
 
-    async fn read_at(&self, offset: u64, buf: &mut [u8]) -> Result<(), StorageError> {
+    /// Read `buf.len()` bytes starting at absolute torrent offset `offset`
+    pub async fn read_at(&self, offset: u64, buf: &mut [u8]) -> Result<(), StorageError> {
         let total = self.layout.total_length();
         let end = offset
             .checked_add(buf.len() as u64)
@@ -240,7 +223,8 @@ impl StorageBackend for FilesystemStorage {
         Ok(())
     }
 
-    async fn flush(&self) -> Result<(), StorageError> {
+    /// Flush in-flight writes
+    pub async fn flush(&self) -> Result<(), StorageError> {
         let snapshot: Vec<_> = {
             let g = self.handles.lock();
             g.iter().filter_map(|h| h.clone()).collect()
@@ -251,16 +235,6 @@ impl StorageBackend for FilesystemStorage {
                 .map_err(|e| io::Error::other(e.to_string()))??;
         }
         Ok(())
-    }
-}
-
-/// Convenience: derive the root directory for a torrent given the output
-/// folder the user chose
-pub fn torrent_root(output_dir: &Path, info: &ValidatedTorrentMetaV1Info) -> PathBuf {
-    if info.single_file_mode {
-        output_dir.to_path_buf()
-    } else {
-        output_dir.join(&info.name)
     }
 }
 
@@ -344,7 +318,7 @@ mod tests {
         let bytes = build_multi_file_torrent();
         let meta = parse_torrent(&bytes).unwrap();
         let tmp = tempfile::tempdir().unwrap();
-        let root = torrent_root(tmp.path(), &meta.info);
+        let root = tmp.path().join("root");
 
         let storage = FilesystemStorage::new(&meta.info, &root);
         storage.preallocate().await.unwrap();
@@ -372,7 +346,7 @@ mod tests {
         let bytes = build_multi_file_torrent();
         let meta = parse_torrent(&bytes).unwrap();
         let tmp = tempfile::tempdir().unwrap();
-        let root = torrent_root(tmp.path(), &meta.info);
+        let root = tmp.path().join("root");
 
         let storage = FilesystemStorage::new(&meta.info, &root);
         storage.preallocate().await.unwrap();
@@ -403,7 +377,7 @@ mod tests {
         let bytes = build_multi_file_torrent();
         let meta = parse_torrent(&bytes).unwrap();
         let tmp = tempfile::tempdir().unwrap();
-        let storage = FilesystemStorage::new(&meta.info, &torrent_root(tmp.path(), &meta.info));
+        let storage = FilesystemStorage::new(&meta.info, &tmp.path().join("root"));
         let err = storage.write_at(25, &[0u8; 10]).await.unwrap_err();
         assert!(matches!(err, StorageError::OutOfRange { .. }));
     }

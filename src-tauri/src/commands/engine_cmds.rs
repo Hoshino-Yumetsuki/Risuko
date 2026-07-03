@@ -14,13 +14,6 @@ const TEMP_DOWNLOAD_SUFFIX: &str = ".part";
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ActiveTaskProgressInput {
-    pub total_length: Value,
-    pub completed_length: Value,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct LowSpeedTaskInput {
     pub gid: String,
     pub status: String,
@@ -194,12 +187,12 @@ fn infer_out_from_uri_inner(uri: &str) -> String {
     let decoded_candidate = crate::commands::file_cmds::percent_decode_lossy(candidate);
     let decoded_candidate = decoded_candidate.trim();
     if decoded_candidate.is_empty() || !decoded_candidate.contains('.') {
-        // Opaque URL like /resources/foo/download?version=N has no
-        // extension to hint at a name. Drop in a placeholder so the task
-        // carries a stable display name; the engine swaps in the real
-        // filename once it sees Content-Disposition on the first response.
-        // Use a per-URL hash suffix so two distinct extensionless URLs
-        // queued together don't collide on the same `${dir}/download.part`
+        // Opaque URL like /resources/foo/download?version=N has no extension
+        // to hint at a name. Drop in a placeholder so the task carries a stable
+        // display name; the engine swaps in the real filename once it sees
+        // Content-Disposition on the first response. The per-URL hash suffix
+        // keeps two distinct extensionless URLs queued together from colliding
+        // on the same `${dir}/download.part`
         return placeholder_download_name(raw);
     }
     if decoded_candidate.contains('/') || decoded_candidate.contains('\\') {
@@ -212,13 +205,12 @@ fn infer_out_from_uri_inner(uri: &str) -> String {
     decoded_candidate.to_string()
 }
 
-/// Build a unique-but-deterministic placeholder filename for opaque
-/// URLs. A URL hash beats a counter or UUID here: re-adding the same
-/// link yields the same name (so retries / dedup behave) while distinct
-/// URLs get distinct names (so concurrent extensionless downloads don't
-/// share `download.part`). The engine's `filename_was_url_derived`
-/// recognizes the `download-` prefix and still adopts a real
-/// Content-Disposition name when one arrives
+/// Unique-but-deterministic placeholder filename for opaque URLs. A URL hash
+/// beats a counter or UUID: re-adding the same link yields the same name (so
+/// retries / dedup behave) while distinct URLs get distinct names (so
+/// concurrent extensionless downloads don't share `download.part`). The
+/// engine's `filename_was_url_derived` recognizes the `download-` prefix and
+/// still adopts a real Content-Disposition name when one arrives
 fn placeholder_download_name(uri: &str) -> String {
     use sha1::{Digest, Sha1};
     let mut hasher = Sha1::new();
@@ -258,61 +250,6 @@ fn ensure_temp_download_suffix(value: &str) -> String {
     }
 
     format!("{}{}", normalized, TEMP_DOWNLOAD_SUFFIX)
-}
-
-fn find_multicall_item_error(value: &Value) -> Option<&Value> {
-    let is_error_object = |target: &Value| {
-        target.is_object() && (target.get("code").is_some() || target.get("message").is_some())
-    };
-
-    if is_error_object(value) {
-        return Some(value);
-    }
-
-    let Value::Array(items) = value else {
-        return None;
-    };
-
-    for item in items {
-        if is_error_object(item) {
-            return Some(item);
-        }
-
-        if let Value::Array(entries) = item {
-            for entry in entries {
-                if is_error_object(entry) {
-                    return Some(entry);
-                }
-            }
-        }
-    }
-
-    None
-}
-
-#[tauri::command]
-pub fn calculate_active_task_progress(tasks: Vec<ActiveTaskProgressInput>) -> Result<f64, String> {
-    if tasks.is_empty() {
-        return Ok(-1.0);
-    }
-
-    let mut total = 0u128;
-    let mut completed = 0u128;
-    for task in tasks {
-        let total_length = parse_length_like(&task.total_length) as u128;
-        if total_length == 0 {
-            continue;
-        }
-
-        total += total_length;
-        completed += parse_length_like(&task.completed_length) as u128;
-    }
-
-    if total == 0 {
-        return Ok(2.0);
-    }
-
-    Ok(completed as f64 / total as f64)
 }
 
 #[tauri::command]
@@ -438,76 +375,15 @@ pub async fn restart_engine(handle: AppHandle) -> Result<(), String> {
         risuko_engine::config::ConfigManager::with_dir(config_dir).map_err(|e| e.to_string())?;
     let event_sink: std::sync::Arc<dyn risuko_engine::EventSink> =
         std::sync::Arc::new(crate::bridge::TauriEventSink::new(&handle));
-    let storage: std::sync::Arc<dyn risuko_engine::StorageBackend> =
-        std::sync::Arc::new(crate::bridge::TauriStorage::new(&handle));
-    let upload_mgr = handle
-        .state::<crate::state::AppState>()
-        .upload_sinks
-        .lock()
-        .ok()
-        .and_then(|g| g.clone());
-    risuko_engine::engine::restart_engine(&config, event_sink, storage, upload_mgr)
+    let upload_mgr = Some(
+        handle
+            .state::<crate::state::AppState>()
+            .upload_sinks
+            .clone(),
+    );
+    risuko_engine::engine::restart_engine(&config, event_sink, upload_mgr)
         .await
         .map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub async fn probe_m3u8(url: String) -> Result<Value, String> {
-    use crate::engine::m3u8::parser::{fetch_and_parse_playlist, ParsedPlaylist};
-
-    let url = url.trim().to_string();
-    if url.is_empty() {
-        return Err("URL is required".to_string());
-    }
-
-    let client = risuko_http::Client::builder()
-        .user_agent("Mozilla/5.0")
-        .build()
-        .map_err(|e| format!("Failed to build client: {e}"))?;
-
-    let playlist = fetch_and_parse_playlist(&url, &client).await?;
-
-    match playlist {
-        ParsedPlaylist::Master { mut variants } => {
-            variants.sort_by_key(|v| std::cmp::Reverse(v.bandwidth));
-            let variant_vals: Vec<Value> = variants
-                .iter()
-                .map(|v| {
-                    json!({
-                        "bandwidth": v.bandwidth,
-                        "resolution": v.resolution,
-                        "codecs": v.codecs,
-                        "url": v.url,
-                    })
-                })
-                .collect();
-            Ok(json!({
-                "type": "master",
-                "variants": variant_vals,
-            }))
-        }
-        ParsedPlaylist::Media {
-            segments,
-            end_list,
-            total_duration,
-            ..
-        } => {
-            let encrypted = segments.iter().any(|s| s.encryption.is_some());
-            Ok(json!({
-                "type": "media",
-                "segments": segments.len(),
-                "duration": total_duration,
-                "encrypted": encrypted,
-                "endList": end_list,
-            }))
-        }
-    }
-}
-
-#[tauri::command]
-pub fn get_engine_status() -> Result<bool, String> {
-    // Mirror the engine-owned liveness source used by the health report
-    Ok(engine::engine_uptime().is_some())
 }
 
 async fn add_torrent_by_path_inner(path: &str, options: Option<Value>) -> Result<String, String> {
@@ -691,7 +567,7 @@ pub async fn add_uri(
         .collect::<std::collections::HashSet<_>>();
     // preferred_out falls back to options["out"], so the uniformity check must
     // account for it too — otherwise a per-uri out that differs from the global
-    // "out" would be merged into one mirror group despite naming two outputs.
+    // "out" would be merged into one mirror group despite naming two outputs
     if let Some(out) = base_options
         .get("out")
         .and_then(|value| value.as_str())
@@ -779,41 +655,24 @@ pub async fn add_uri(
         }
 
         // Check if this is a magnet link
-        if torrent::is_magnet_uri(uri) {
-            match manager.add_magnet_task(uri, task_options).await {
-                Ok(gid) => results.push(Value::Array(vec![Value::String(gid)])),
-                Err(e) => results.push(json!({"code": 1, "message": e})),
-            }
+        let result = if torrent::is_magnet_uri(uri) {
+            manager.add_magnet_task(uri, task_options).await
         } else if is_m3u8 {
-            match manager.add_m3u8_task(uri, task_options).await {
-                Ok(gid) => results.push(Value::Array(vec![Value::String(gid)])),
-                Err(e) => results.push(json!({"code": 1, "message": e})),
-            }
+            manager.add_m3u8_task(uri, task_options).await
         } else if engine::ed2k::is_ed2k_uri(uri) {
-            match manager.add_ed2k_task(uri, task_options).await {
-                Ok(gid) => results.push(Value::Array(vec![Value::String(gid)])),
-                Err(e) => results.push(json!({"code": 1, "message": e})),
-            }
+            manager.add_ed2k_task(uri, task_options).await
         } else if engine::ftp::is_ftp_uri(uri) {
-            match manager.add_ftp_task(uri, task_options).await {
-                Ok(gid) => results.push(Value::Array(vec![Value::String(gid)])),
-                Err(e) => results.push(json!({"code": 1, "message": e})),
-            }
+            manager.add_ftp_task(uri, task_options).await
         } else if is_media {
-            match manager.add_media_task(uri, task_options).await {
-                Ok(gid) => results.push(Value::Array(vec![Value::String(gid)])),
-                Err(e) => results.push(json!({"code": 1, "message": e})),
-            }
+            manager.add_media_task(uri, task_options).await
         } else if let Some(kind) = legacy_kind {
-            match manager.add_legacy_p2p_task(kind, uri, task_options).await {
-                Ok(gid) => results.push(Value::Array(vec![Value::String(gid)])),
-                Err(e) => results.push(json!({"code": 1, "message": e})),
-            }
+            manager.add_legacy_p2p_task(kind, uri, task_options).await
         } else {
-            match manager.add_http_task(vec![uri.clone()], task_options).await {
-                Ok(gid) => results.push(Value::Array(vec![Value::String(gid)])),
-                Err(e) => results.push(json!({"code": 1, "message": e})),
-            }
+            manager.add_http_task(vec![uri.clone()], task_options).await
+        };
+        match result {
+            Ok(gid) => results.push(Value::Array(vec![Value::String(gid)])),
+            Err(e) => results.push(json!({"code": 1, "message": e})),
         }
     }
 
@@ -822,13 +681,10 @@ pub async fn add_uri(
     let mut first_error_message: Option<String> = None;
 
     for item in &results {
-        if let Some(error_item) = find_multicall_item_error(item) {
+        if let Some(obj) = item.as_object() {
             failed_count += 1;
             if first_error_message.is_none() {
-                first_error_message = error_item
-                    .get("message")
-                    .and_then(|value| value.as_str())
-                    .map(|value| value.to_string());
+                first_error_message = obj.get("message").and_then(Value::as_str).map(String::from);
             }
         }
     }
@@ -970,7 +826,6 @@ pub async fn sync_selected_task_order(
         return Err("Invalid direction".to_string());
     }
 
-    let mut selected_gids = Vec::new();
     let mut seen_gids = HashSet::new();
     let mut selected_active_gids = Vec::new();
     for task in selected_tasks {
@@ -980,12 +835,11 @@ pub async fn sync_selected_task_order(
         }
 
         if task.status.eq_ignore_ascii_case("active") {
-            selected_active_gids.push(gid.clone());
+            selected_active_gids.push(gid);
         }
-        selected_gids.push(gid);
     }
 
-    if selected_gids.is_empty() {
+    if seen_gids.is_empty() {
         return Ok(SyncOrderResult {
             moved: 0,
             partial_error: false,
@@ -994,7 +848,6 @@ pub async fn sync_selected_task_order(
 
     let manager = engine::get_manager().await.ok_or("Engine not running")?;
 
-    let selected_gid_set: HashSet<String> = selected_gids.iter().cloned().collect();
     let mut sync_error = false;
     let mut moved: u32 = 0;
 
@@ -1016,9 +869,9 @@ pub async fn sync_selected_task_order(
     // For "down": iterate in reverse order so later items move first
     let ordered_gids: Vec<String> = if normalized_direction == "up" {
         // Get current waiting queue order, filter to selected
-        manager.get_waiting_gids_in_order(&selected_gid_set).await
+        manager.get_waiting_gids_in_order(&seen_gids).await
     } else {
-        let mut v = manager.get_waiting_gids_in_order(&selected_gid_set).await;
+        let mut v = manager.get_waiting_gids_in_order(&seen_gids).await;
         v.reverse();
         v
     };
@@ -1156,12 +1009,6 @@ pub async fn get_global_option_engine() -> Result<Value, String> {
 pub async fn get_global_stat() -> Result<Value, String> {
     let manager = engine::get_manager().await.ok_or("Engine not running")?;
     Ok(manager.get_global_stat().await)
-}
-
-#[tauri::command]
-pub async fn change_position(gid: String, pos: i64, how: String) -> Result<Value, String> {
-    let manager = engine::get_manager().await.ok_or("Engine not running")?;
-    manager.change_position(&gid, pos, &how).await
 }
 
 #[tauri::command]

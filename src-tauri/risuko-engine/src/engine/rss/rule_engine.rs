@@ -140,15 +140,13 @@ pub fn quality_score(preferences: &[String], tags: &[String]) -> i32 {
         return QUALITY_BASE_SCORE;
     }
     let tags_lower: Vec<String> = tags.iter().map(|t| t.to_lowercase()).collect();
-    let mut best: Option<i32> = None;
-    for (idx, pref) in preferences.iter().enumerate() {
-        let pref_lower = pref.to_lowercase();
-        if tags_lower.iter().any(|t| t == &pref_lower) {
-            let score = QUALITY_BASE_SCORE - (idx as i32) * QUALITY_STEP;
-            best = Some(best.map(|b| b.max(score)).unwrap_or(score));
-        }
-    }
-    best.unwrap_or(0)
+    // Score strictly decreases with preference index, so the first matching
+    // preference is the best one
+    preferences
+        .iter()
+        .position(|p| tags_lower.contains(&p.to_lowercase()))
+        .map(|idx| QUALITY_BASE_SCORE - (idx as i32) * QUALITY_STEP)
+        .unwrap_or(0)
 }
 
 fn pattern_matches(p: &Pattern, text: &str) -> bool {
@@ -408,6 +406,7 @@ mod tests {
             link: "".into(),
             pub_date: None,
             description: "".into(),
+            content: String::new(),
             enclosure_url: Some("https://example/x.torrent".into()),
             enclosure_type: None,
             enclosure_length: None,

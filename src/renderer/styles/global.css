@@ -20,8 +20,6 @@
 	--color-warning: #f59e0b;
 	--color-danger: #ef4444;
 	--color-info: #94a3b8;
-	--ease-spring: var(--ease-spring);
-	--ease-decelerate: var(--ease-decelerate);
 	--color-background: var(--background);
 	--color-foreground: var(--foreground);
 	--color-card: var(--card);
@@ -44,27 +42,55 @@
 	--radius-lg: var(--radius);
 	--radius-xl: calc(var(--radius) + 4px);
 }
-
-/* ---- Light theme variables ---- */
 :root {
-	--background: #ffffff;
-	--foreground: #0a0a0a;
-	--card: #ffffff;
-	--card-foreground: #0a0a0a;
-	--popover: #ffffff;
-	--popover-foreground: #0a0a0a;
+	--bg: #ffffff;
+	--surface-1: #f8f8f9;
+	--surface-2: #f0f0f2;
+	--border: rgba(0, 0, 0, 0.07);
+	--border-strong: rgba(0, 0, 0, 0.14);
+	--text-1: #17181a;
+	--text-2: #5c5f66;
+	--text-3: #9498a1;
 	--primary: #619eff;
+	--primary-hover: color-mix(in srgb, #619eff 90%, #000);
+	--primary-active: color-mix(in srgb, #619eff 82%, #000);
+	--primary-soft: rgba(97, 158, 255, 0.1);
+	--success: #22c55e;
+	--warning: #f59e0b;
+	--danger: #ef4444;
+	--shadow-1: 0 1px 2px rgba(0, 0, 0, 0.04);
+	--shadow-2: 0 4px 16px rgba(0, 0, 0, 0.08);
+	--scrollbar-thumb: rgba(0, 0, 0, 0.15);
+	--scrollbar-thumb-hover: rgba(0, 0, 0, 0.3);
+	--scrollbar-thumb-active: rgba(0, 0, 0, 0.45);
+	--scrollbar-thumb-inactive: rgba(0, 0, 0, 0.1);
+	--graphic-box-bg: transparent;
+	--graphic-outline: rgba(27, 31, 35, 0.06);
+	--graphic-0: #ebedf0;
+	--graphic-1: #9be9a8;
+	--graphic-2: #40c463;
+	--graphic-3: #30a14e;
+	--graphic-4: #39d353;
+	--ease-out: cubic-bezier(0.25, 1, 0.5, 1);
+	--dur-1: 120ms;
+	--dur-2: 150ms;
+	--dur-3: 200ms;
+	--background: var(--bg);
+	--foreground: var(--text-1);
+	--card: var(--bg);
+	--card-foreground: var(--text-1);
+	--popover: var(--bg);
+	--popover-foreground: var(--text-1);
 	--primary-foreground: #ffffff;
-	--secondary: #f5f5f5;
-	--secondary-foreground: #171717;
-	--muted: #f5f5f5;
-	--muted-foreground: #64748b;
-	--accent: #f5f5f5;
-	--accent-foreground: #171717;
-	--destructive: #ef4444;
-	--border: #e5e5e5;
-	--input: #e5e5e5;
-	--ring: #619eff;
+	--secondary: var(--surface-2);
+	--secondary-foreground: var(--text-1);
+	--muted: var(--surface-2);
+	--muted-foreground: var(--text-2);
+	--accent: var(--surface-2);
+	--accent-foreground: var(--text-1);
+	--destructive: var(--danger);
+	--input: var(--border-strong);
+	--ring: var(--primary);
 	--radius: 0.5rem;
 	--app-font-family-system:
 		"Monospaced Number", "Chinese Quote", -apple-system, "BlinkMacSystemFont",
@@ -82,76 +108,6 @@
 		"Menlo", "Monaco", "Consolas", "Liberation Mono", monospace;
 	--app-font-family: var(--app-font-family-system);
 	--app-font-size-base: 14px;
-	--mo-bg-app: transparent;
-	--mo-titlebar-actions-color: #1f1f1f;
-	--mo-titlebar-actions-active-bg: #eee;
-	--mo-titlebar-close-active-color: #fff;
-	--mo-titlebar-close-active-bg: #fd0007;
-	--mo-app-logo-color: #4d515a;
-	--mo-app-version-color: #606266;
-	--mo-app-engine-title-color: #606266;
-	--mo-app-engine-info-color: #94a3b8;
-	--mo-app-copyright-color: #606266;
-	--mo-bg-aside: #111827;
-	--mo-aside-text-color: #fff;
-	--mo-bg-subnav: #f8fafc;
-	--mo-subnav-title-color: #1e293b;
-	--mo-subnav-action-color: #374151;
-	--mo-subnav-text-color: #94a3b8;
-	--mo-subnav-active-text-color: #619eff;
-	--mo-subnav-active-bg: rgba(97, 158, 255, 0.06);
-	--mo-subnav-border-color: #e5e7eb;
-	--mo-subnav-icon-bg: rgba(0, 0, 0, 0.05);
-	--mo-subnav-icon-color: #64748b;
-	--mo-subnav-icon-active-bg: rgba(97, 158, 255, 0.1);
-	--mo-subnav-active-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
-	--mo-bg-main: #fff;
-	--mo-bg-panel: #fff;
-	--mo-panel-title-color: #0f172a;
-	--mo-panel-border-color: rgba(0, 0, 0, 0.08);
-	--mo-task-action-color: #475569;
-	--mo-task-action-hover-color: #619eff;
-	--mo-task-action-disabled-color: rgba(71, 85, 105, 0.5);
-	--mo-task-item-bg: #fff;
-	--mo-task-item-border-color: rgba(0, 0, 0, 0.06);
-	--mo-task-item-hover-border-color: #619eff;
-	--mo-task-item-text-color: #1e293b;
-	--mo-task-item-action-bg: rgba(255, 255, 255, 0.95);
-	--mo-task-item-action-hover-bg: #619eff;
-	--mo-task-item-action-border-color: rgba(0, 0, 0, 0.06);
-	--mo-task-item-action-hover-border-color: #619eff;
-	--mo-task-item-action-color: #94a3b8;
-	--mo-task-item-action-hover-color: #fff;
-	--mo-no-task-color: #cbd5e1;
-	--mo-task-detail-box-border: #e2e8f0;
-	--mo-task-item-shadow:
-		0 1px 3px rgba(0, 0, 0, 0.04), 0 1px 2px rgba(0, 0, 0, 0.02);
-	--mo-task-item-hover-shadow:
-		0 4px 12px rgba(97, 158, 255, 0.12), 0 2px 4px rgba(0, 0, 0, 0.06);
-	--mo-task-item-active-shadow:
-		0 8px 24px rgba(97, 158, 255, 0.16), 0 4px 8px rgba(0, 0, 0, 0.08);
-	--mo-speedometer-bg: #fff;
-	--mo-speedometer-border-color: #e2e8f0;
-	--mo-speedometer-hover-border-color: #94a3b8;
-	--mo-speedometer-primary-color: #619eff;
-	--mo-speedometer-text-color: #94a3b8;
-	--mo-graphic-box-bg: transparent;
-	--mo-graphic-atom-outline-color: rgba(27, 31, 35, 0.06);
-	--mo-graphic-atom-color-0: #ebedf0;
-	--mo-graphic-atom-color-1: #9be9a8;
-	--mo-graphic-atom-color-2: #40c463;
-	--mo-graphic-atom-color-3: #30a14e;
-	--mo-graphic-atom-color-4: #39d353;
-	--mo-scrollbar-thumb: rgba(0, 0, 0, 0.15);
-	--mo-scrollbar-thumb-hover: rgba(0, 0, 0, 0.3);
-	--mo-scrollbar-thumb-active: rgba(0, 0, 0, 0.45);
-	--mo-scrollbar-thumb-inactive: rgba(0, 0, 0, 0.1);
-	--mo-input-number-btn-bg: #f1f5f9;
-	--mo-input-number-btn-hover-bg: #e2e8f0;
-	--mo-input-number-btn-color: inherit;
-	--mo-input-number-btn-hover-color: #1e293b;
-	--mo-form-static-value-color: #475569;
-	--mo-link-color: color-mix(in srgb, #fff 15%, #619eff);
 }
 
 html.font-family-system {
@@ -185,119 +141,43 @@ html.font-size-large {
 html.font-size-extra-large {
 	--app-font-size-base: 16px;
 }
-
-/* ---- Dark theme variables ---- */
 .dark {
-	--background: #111111;
-	--foreground: #ececec;
-	--card: #161616;
-	--card-foreground: #ececec;
-	--popover: #1a1a1a;
-	--popover-foreground: #ececec;
-	--primary: #619eff;
-	--primary-foreground: #ffffff;
-	--secondary: #1a1a1a;
-	--secondary-foreground: #ececec;
-	--muted: #1a1a1a;
-	--muted-foreground: #818181;
-	--accent: #1a1a1a;
-	--accent-foreground: #ececec;
-	--destructive: #ef4444;
+	--bg: #111111;
+	--surface-1: #161616;
+	--surface-2: #1e1e1e;
 	--border: rgba(255, 255, 255, 0.08);
-	--input: rgba(255, 255, 255, 0.08);
-	--ring: #619eff;
-	--mo-titlebar-actions-color: #ececec;
-	--mo-titlebar-actions-active-bg: rgba(255, 255, 255, 0.06);
-	--mo-titlebar-close-active-color: #fff;
-	--mo-titlebar-close-active-bg: #fd0007;
-	--mo-app-logo-color: #ececec;
-	--mo-app-version-color: #818181;
-	--mo-app-engine-title-color: #818181;
-	--mo-app-engine-info-color: #666666;
-	--mo-app-copyright-color: #818181;
-	--mo-bg-app: #000000;
-	--mo-bg-aside: #000000;
-	--mo-aside-text-color: #ececec;
-	--mo-bg-subnav: #0a0a0a;
-	--mo-subnav-title-color: #ececec;
-	--mo-subnav-action-color: #ececec;
-	--mo-subnav-text-color: #666666;
-	--mo-subnav-active-text-color: #619eff;
-	--mo-subnav-active-bg: rgba(97, 158, 255, 0.1);
-	--mo-subnav-border-color: rgba(255, 255, 255, 0.06);
-	--mo-subnav-icon-bg: rgba(255, 255, 255, 0.04);
-	--mo-subnav-icon-color: #666666;
-	--mo-subnav-icon-active-bg: rgba(97, 158, 255, 0.15);
-	--mo-subnav-active-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
-	--mo-bg-main: #111111;
-	--mo-bg-panel: #111111;
-	--mo-panel-title-color: #ececec;
-	--mo-panel-border-color: rgba(255, 255, 255, 0.06);
-	--mo-task-action-color: #818181;
-	--mo-task-action-hover-color: #619eff;
-	--mo-task-action-disabled-color: rgba(129, 129, 129, 0.4);
-	--mo-task-item-bg: #161616;
-	--mo-task-item-border-color: rgba(255, 255, 255, 0.06);
-	--mo-task-item-hover-border-color: #619eff;
-	--mo-task-item-text-color: #ececec;
-	--mo-task-item-action-bg: rgba(22, 22, 22, 0.95);
-	--mo-task-item-action-hover-bg: #619eff;
-	--mo-task-item-action-border-color: rgba(255, 255, 255, 0.08);
-	--mo-task-item-action-hover-border-color: #619eff;
-	--mo-task-item-action-color: #818181;
-	--mo-task-item-action-hover-color: #fff;
-	--mo-no-task-color: #666666;
-	--mo-task-detail-box-border: rgba(255, 255, 255, 0.08);
-	--mo-task-item-shadow:
-		0 1px 3px rgba(0, 0, 0, 0.4), 0 1px 2px rgba(0, 0, 0, 0.3);
-	--mo-task-item-hover-shadow:
-		0 4px 16px rgba(97, 158, 255, 0.2), 0 2px 4px rgba(0, 0, 0, 0.3);
-	--mo-task-item-active-shadow:
-		0 8px 24px rgba(97, 158, 255, 0.25), 0 4px 8px rgba(0, 0, 0, 0.4);
-	--mo-speedometer-bg: #161616;
-	--mo-speedometer-border-color: rgba(255, 255, 255, 0.08);
-	--mo-speedometer-hover-border-color: rgba(97, 158, 255, 0.4);
-	--mo-speedometer-primary-color: #619eff;
-	--mo-speedometer-text-color: #818181;
-	--mo-graphic-box-bg: #161616;
-	--mo-graphic-atom-outline-color: rgba(255, 255, 255, 0.04);
-	--mo-graphic-atom-color-0: #080808;
-	--mo-graphic-atom-color-1: #0e4429;
-	--mo-graphic-atom-color-2: #006d32;
-	--mo-graphic-atom-color-3: #26a641;
-	--mo-graphic-atom-color-4: #39d353;
-	--mo-scrollbar-thumb: rgba(255, 255, 255, 0.1);
-	--mo-scrollbar-thumb-hover: rgba(255, 255, 255, 0.2);
-	--mo-scrollbar-thumb-active: rgba(255, 255, 255, 0.3);
-	--mo-scrollbar-thumb-inactive: rgba(255, 255, 255, 0.06);
-	--mo-input-number-btn-bg: #1a1a1a;
-	--mo-input-number-btn-hover-bg: rgba(97, 158, 255, 0.1);
-	--mo-input-number-btn-color: #818181;
-	--mo-input-number-btn-hover-color: #ececec;
-	--mo-form-static-value-color: #b0b0b0;
-	--mo-link-color: color-mix(in srgb, #fff 15%, #619eff);
+	--border-strong: rgba(255, 255, 255, 0.16);
+	--text-1: #ececec;
+	--text-2: #a3a3a3;
+	--text-3: #6f6f6f;
+	--primary-hover: color-mix(in srgb, #619eff 88%, #fff);
+	--primary-active: color-mix(in srgb, #619eff 78%, #fff);
+	--primary-soft: rgba(97, 158, 255, 0.14);
+	--shadow-1: 0 1px 2px rgba(0, 0, 0, 0.3);
+	--shadow-2: 0 4px 16px rgba(0, 0, 0, 0.4);
+	--scrollbar-thumb: rgba(255, 255, 255, 0.1);
+	--scrollbar-thumb-hover: rgba(255, 255, 255, 0.2);
+	--scrollbar-thumb-active: rgba(255, 255, 255, 0.3);
+	--scrollbar-thumb-inactive: rgba(255, 255, 255, 0.06);
+	--card: var(--surface-1);
+	--popover: var(--surface-2);
+	--graphic-box-bg: var(--surface-1);
+	--graphic-outline: rgba(255, 255, 255, 0.04);
+	--graphic-0: #080808;
+	--graphic-1: #0e4429;
+	--graphic-2: #006d32;
+	--graphic-3: #26a641;
+	--graphic-4: #39d353;
 }
-
-/* ---- Shared layout primitives ---- */
 @layer components {
 	#app,
 	#container {
 		height: 100%;
-		background-color: var(--mo-bg-app);
+		background-color: var(--bg);
 	}
-	.layout-root,
 	.panel-layout {
 		display: flex;
 		min-height: 0;
-	}
-	.layout-root {
-		height: 100%;
-	}
-	.layout-root > .main,
-	.layout-root > .page-view {
-		flex: 1 1 auto;
-		min-width: 0;
-		background-color: var(--mo-bg-main);
 	}
 	.panel-layout--h {
 		flex-direction: row;
@@ -309,32 +189,18 @@ html.font-size-extra-large {
 	.panel-layout--v {
 		flex-direction: column;
 	}
-	.subnav-pane {
-		width: 220px;
-		flex: 0 0 220px;
-	}
 	.panel-content {
 		flex: 1 1 auto;
 		min-height: 0;
 		min-width: 0;
 	}
-	.draggable {
-		-webkit-app-region: drag;
-		user-select: none;
-	}
-	.non-draggable {
-		-webkit-app-region: no-drag;
-	}
 	.content {
 		padding: 0;
 	}
 	.main {
-		background-color: var(--mo-bg-main);
+		background-color: var(--bg);
 	}
 	.main.panel-layout--h {
-		overflow: hidden;
-	}
-	.main.panel-layout--h > .subnav-pane {
 		overflow: hidden;
 	}
 	.main.panel-layout--h > .content.panel-layout--v {
@@ -342,11 +208,6 @@ html.font-size-extra-large {
 		min-width: 0;
 		min-height: 0;
 		height: 100%;
-	}
-	.main.panel-layout--h > .pref-form-view {
-		flex: 1 1 auto;
-		min-width: 0;
-		overflow-y: auto;
 	}
 	.main.panel-layout--h > .content.panel-layout--v > .panel-content {
 		overflow-x: hidden;
@@ -362,39 +223,25 @@ html.font-size-extra-large {
 		font-weight: 600;
 		letter-spacing: 0.01em;
 		transition:
-			background-color 0.3s cubic-bezier(0.25, 0.1, 0.25, 1),
-			border-color 0.3s cubic-bezier(0.25, 0.1, 0.25, 1),
-			color 0.3s cubic-bezier(0.25, 0.1, 0.25, 1),
-			transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1),
-			box-shadow 0.3s cubic-bezier(0.25, 0.1, 0.25, 1);
-	}
-	.ui-button:hover {
-		transform: translateY(-1px);
+			background-color var(--dur-2) var(--ease-out),
+			border-color var(--dur-2) var(--ease-out),
+			color var(--dur-2) var(--ease-out),
+			transform var(--dur-2) var(--ease-out),
+			box-shadow var(--dur-2) var(--ease-out);
 	}
 	.ui-button:active {
-		transform: translateY(0) scale(0.98);
-		transition-duration: 0.12s;
+		transform: scale(0.98);
+		transition-duration: var(--dur-1);
 	}
-	@keyframes page-enter {
-		from {
-			opacity: 0;
-			transform: translateY(6px);
-		}
-		to {
-			opacity: 1;
-			transform: translateY(0);
-		}
-	}
-	/* Transition styles for Vue `<Transition name="page">`. */
 	.page-enter-active,
 	.page-leave-active {
 		transition:
-			opacity 0.2s ease,
-			transform 0.2s ease;
+			opacity var(--dur-2) var(--ease-out),
+			transform var(--dur-2) var(--ease-out);
 	}
 	.page-enter-from {
 		opacity: 0;
-		transform: translateY(6px);
+		transform: translateY(5px);
 	}
 	.page-leave-to {
 		opacity: 0;

@@ -62,15 +62,6 @@ pub struct HostCookies {
     pub cookies: Vec<Cookie>,
 }
 
-pub fn cookies_to_header(cookies: &[Cookie]) -> String {
-    // Join name=value pairs with semicolons — standard Cookie header format
-    cookies
-        .iter()
-        .map(|c| format!("{}={}", c.name, c.value))
-        .collect::<Vec<_>>()
-        .join("; ")
-}
-
 pub async fn list_browsers() -> Vec<BrowserInfo> {
     #[cfg(target_os = "android")]
     {
@@ -298,35 +289,5 @@ fn default_ua(browser: &str) -> String {
         _ => {
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36".into()
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn cookies_to_header_format() {
-        let cookies = vec![
-            Cookie {
-                name: "a".into(),
-                value: "1".into(),
-                domain: ".example.com".into(),
-                path: "/".into(),
-                secure: false,
-                http_only: false,
-                expires: None,
-            },
-            Cookie {
-                name: "b".into(),
-                value: "2".into(),
-                domain: ".example.com".into(),
-                path: "/".into(),
-                secure: false,
-                http_only: false,
-                expires: None,
-            },
-        ];
-        assert_eq!(cookies_to_header(&cookies), "a=1; b=2");
     }
 }

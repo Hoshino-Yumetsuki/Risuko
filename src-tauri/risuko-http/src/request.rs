@@ -68,10 +68,10 @@ impl RequestBuilder {
         self
     }
 
-    /// Attach a streaming body (already constructed via `file_stream_body`,
-    /// `ReqBody::from_stream`, etc.). The factory closure inside `body` is
-    /// re-invoked on every redirect/retry, so callers must ensure the
-    /// underlying source can be re-opened
+    /// Attach a streaming body (already constructed via
+    /// `file_stream_body_with_progress`, `ReqBody::from_stream`, etc.). The
+    /// factory closure inside `body` is re-invoked on every redirect/retry,
+    /// so callers must ensure the underlying source can be re-opened
     pub fn stream_body(mut self, body: ReqBody) -> Self {
         self.body = body;
         self

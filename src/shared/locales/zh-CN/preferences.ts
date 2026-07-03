@@ -83,6 +83,9 @@ export default {
 		"预分配会提前向磁盘申请真实块，避免下载中途出现空间不足并减少碎片。在不支持的文件系统上自动降级为截断方式。",
 	"new-task-show-downloading": "新建任务后自动跳转到下载页面",
 	"no-confirm-before-delete-task": "删除任务前无需确认",
+	"auto-file-renaming": "自动重命名重复文件",
+	"auto-file-renaming-tips":
+		"当存在同名文件时，另存为“file.1.ext”而不是覆盖原文件。",
 	"use-remote-file-time": "保存文件时使用远程文件修改时间",
 	"use-remote-file-time-tips":
 		"将文件修改时间设置为远程服务器的时间戳，而非下载完成时间。",

@@ -28,9 +28,16 @@ import api from "@/api";
 import { useSyncStore } from "@/store/sync";
 import { useTaskStore } from "@/store/task";
 
+// pre-config builds kept these in localStorage, migrated into the
+// synced config on first fetch (migrateLocalUiPreferences)
+const LEGACY_LOCAL_KEYS = {
+	engineMode: "risuko.engine-mode",
+	taskListStyle: "risuko.task-list-style",
+	sidebarCollapsed: "risuko.sidebar-collapsed",
+};
+
 export const usePreferenceStore = defineStore("preference", {
 	state: () => ({
-		engineMode: "MAX",
 		vaultEnabled: false,
 		config: {
 			locale: "auto",
@@ -40,12 +47,18 @@ export const usePreferenceStore = defineStore("preference", {
 		theme: (state) => state.config.theme,
 		locale: (state) => state.config.locale,
 		direction: (state) => getLangDirection(getLanguage(state.config.locale)),
+		engineMode: (state) =>
+			state.config.engineMode === "LIMIT" ? "LIMIT" : "MAX",
+		taskListStyle: (state) =>
+			state.config.taskListStyle === "card" ? "card" : "compact",
+		sidebarCollapsed: (state) => `${state.config.sidebarCollapsed}` === "true",
 	},
 	actions: {
 		async fetchPreference(): Promise<AppConfig> {
 			try {
 				const config = await api.fetchPreference();
 				this.updatePreference(config);
+				this.migrateLocalUiPreferences();
 				// Probe the vault before returning so callers awaiting fetchPreference
 				// observe the correct vaultEnabled state on the very next save
 				await this.fetchVaultStatus();
@@ -95,7 +108,17 @@ export const usePreferenceStore = defineStore("preference", {
 				}
 			}
 
-			return Promise.resolve(api.savePreference(config));
+			const saved = Promise.resolve(api.savePreference(config));
+			// saving limits pushes them straight to the engine (system keys),
+			// re-apply mode so MAX stays unlimited and the values keep for
+			// the next LIMIT toggle
+			if (
+				"maxOverallDownloadLimit" in normalized ||
+				"maxOverallUploadLimit" in normalized
+			) {
+				saved.then(() => this.applyEngineMode()).catch(() => undefined);
+			}
+			return saved;
 		},
 		recordHistoryDirectory(directory: string) {
 			const { historyDirectories = [], favoriteDirectories = [] } = this.config;
@@ -207,12 +230,10 @@ export const usePreferenceStore = defineStore("preference", {
 			let toStore: SavedCredential = credential;
 
 			if (this.vaultEnabled) {
-				// Derive `wasVaulted` from the *persisted* record, not from
-				// the incoming credential. Callers may construct a fresh
-				// SavedCredential without the `vaulted` flag (e.g. sink-form
-				// sync paths that don't carry vault metadata); trusting the
-				// incoming flag would silently drop the OS-keychain entry on
-				// every metadata-only save
+				// derive `wasVaulted` from the persisted record, not the incoming
+				// credential — a fresh SavedCredential may lack the `vaulted` flag
+				// (e.g. sink-form sync paths), so trusting it would drop the
+				// OS-keychain entry on every metadata-only save
 				const persisted = savedCredentials.find(
 					(c: SavedCredential) => c.id === credential.id,
 				);
@@ -244,9 +265,8 @@ export const usePreferenceStore = defineStore("preference", {
 						"[Risuko] vaultPutCredential failed, falling back to inline:",
 						(err as Error).message,
 					);
-					// Best-effort cleanup of any stale vault entry so that the
-					// inline fallback isn't silently shadowed by older keychain
-					// secrets the next time the credential is loaded
+					// best-effort cleanup of any stale vault entry so the inline
+					// fallback isn't shadowed by older keychain secrets on next load
 					try {
 						await api.vaultRemoveCredential(credential.id);
 					} catch {
@@ -306,10 +326,9 @@ export const usePreferenceStore = defineStore("preference", {
 				return credential;
 			}
 			if (!this.vaultEnabled) {
-				// Stored credential expects the OS keychain but the backend is
-				// unreachable in this session. Surface the issue so the user
-				// understands why the form fields stay blank instead of failing
-				// silently mid-download
+				// stored credential expects the OS keychain but the backend is
+				// unreachable this session; warn so blank form fields aren't a
+				// silent mystery mid-download
 				logger.warn(
 					`[Risuko] credential ${credential.id} is vaulted but the OS keychain is unavailable; secrets will not be applied.`,
 				);
@@ -407,20 +426,72 @@ export const usePreferenceStore = defineStore("preference", {
 				logger.warn("[Risuko] auto-sync tracker failed:", err);
 			}
 		},
+		applyEngineMode() {
+			const isMax = this.engineMode === "MAX";
+			return api
+				.changeGlobalOption({
+					"max-overall-download-limit": isMax
+						? 0
+						: (this.config.maxOverallDownloadLimit ?? 0),
+					"max-overall-upload-limit": isMax
+						? 0
+						: (this.config.maxOverallUploadLimit ?? 0),
+				})
+				.catch((err) => {
+					logger.warn(
+						"[Risuko] apply engine mode failed:",
+						(err as Error)?.message || err,
+					);
+				});
+		},
+		setEngineMode(mode: "MAX" | "LIMIT") {
+			this.save({ engineMode: mode === "LIMIT" ? "LIMIT" : "MAX" }).catch(
+				() => undefined,
+			);
+			return this.applyEngineMode();
+		},
 		toggleEngineMode() {
-			const nextMode = this.engineMode === "MAX" ? "LIMIT" : "MAX";
-			this.engineMode = nextMode;
-
-			const config = this.config;
-			const isMax = nextMode === "MAX";
-			api.changeGlobalOption({
-				"max-overall-download-limit": isMax
-					? 0
-					: (config.maxOverallDownloadLimit ?? 0),
-				"max-overall-upload-limit": isMax
-					? 0
-					: (config.maxOverallUploadLimit ?? 0),
-			});
+			return this.setEngineMode(this.engineMode === "MAX" ? "LIMIT" : "MAX");
+		},
+		setTaskListStyle(style: "compact" | "card") {
+			this.save({ taskListStyle: style === "card" ? "card" : "compact" }).catch(
+				() => undefined,
+			);
+		},
+		setSidebarCollapsed(collapsed: boolean) {
+			this.save({ sidebarCollapsed: !!collapsed }).catch(() => undefined);
+		},
+		// one-time migration of old localStorage UI prefs
+		migrateLocalUiPreferences() {
+			const patch: Partial<AppConfig> = {};
+			if (this.config.engineMode === undefined) {
+				const legacy = localStorage.getItem(LEGACY_LOCAL_KEYS.engineMode);
+				if (legacy === "LIMIT" || legacy === "MAX") {
+					patch.engineMode = legacy;
+				}
+			}
+			if (this.config.taskListStyle === undefined) {
+				const legacy = localStorage.getItem(LEGACY_LOCAL_KEYS.taskListStyle);
+				if (legacy === "card" || legacy === "compact") {
+					patch.taskListStyle = legacy;
+				}
+			}
+			if (this.config.sidebarCollapsed === undefined) {
+				const legacy = localStorage.getItem(LEGACY_LOCAL_KEYS.sidebarCollapsed);
+				if (legacy === "true") {
+					patch.sidebarCollapsed = true;
+				}
+			}
+			if (Object.keys(patch).length === 0) {
+				return;
+			}
+			this.save(patch, { skipSync: true })
+				.then(() => {
+					for (const key of Object.values(LEGACY_LOCAL_KEYS)) {
+						localStorage.removeItem(key);
+					}
+				})
+				.catch(() => undefined);
 		},
 	},
 });

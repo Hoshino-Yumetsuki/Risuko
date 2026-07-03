@@ -23,36 +23,13 @@ const convertToAxiosProxy = (proxyServer = "") => {
 		return;
 	}
 
-	const url = new URL(proxyServer);
-	const { username, password, protocol = "http:", hostname, port } = url;
-
-	let result: {
-		protocol: string;
-		host: string;
-		port: number | undefined;
-		auth?: { username: string; password: string };
-	} = {
+	const { username, password, protocol, hostname, port } = new URL(proxyServer);
+	return {
 		protocol: protocol.replace(":", ""),
 		host: hostname,
 		port: port ? Number(port) : undefined,
+		...(username || password ? { auth: { username, password } } : {}),
 	};
-
-	const auth =
-		username || password
-			? {
-					username,
-					password,
-				}
-			: undefined;
-
-	if (auth) {
-		result = {
-			...result,
-			auth,
-		};
-	}
-
-	return result;
 };
 
 const buildTrackerSourceCacheKey = (source = [], proxyServer = "") => {
@@ -79,7 +56,7 @@ export const fetchBtTrackerFromSource = async (
 	source: string[],
 	proxyConfig: { enable?: boolean; server?: string; scope?: string[] } = {},
 ) => {
-	if (isEmptyValue(source)) {
+	if (!source?.length) {
 		return [];
 	}
 
@@ -153,19 +130,4 @@ export const reduceTrackerString = (str = "") => {
 
 	const result = subStr.substring(0, index);
 	return result;
-};
-const isEmptyValue = (value: unknown) => {
-	if (value == null) {
-		return true;
-	}
-
-	if (Array.isArray(value) || typeof value === "string") {
-		return value.length === 0;
-	}
-
-	if (typeof value === "object") {
-		return Object.keys(value).length === 0;
-	}
-
-	return false;
 };

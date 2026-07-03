@@ -13,6 +13,8 @@ export const syncCategories: SyncCategory[] = [
 			"hide-app-menu",
 			"tray-speedometer",
 			"show-progress-bar",
+			"task-list-style",
+			"sidebar-collapsed",
 		],
 	},
 	{
@@ -59,6 +61,7 @@ export const syncCategories: SyncCategory[] = [
 			"max-download-limit",
 			"max-overall-download-limit",
 			"max-overall-upload-limit",
+			"engine-mode",
 			"max-worker-retries",
 			"netrc-path",
 			"no-netrc",

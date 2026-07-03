@@ -1,11 +1,14 @@
 <template>
-  <ui-row class="copyright">
-    <ui-col :span="6" class="copyright-left">
-      <a target="_blank" rel="noopener noreferrer" href="https://risuko.vercel.app">
-        &copy;{{ year }} Risuko
-      </a>
-    </ui-col>
-    <ui-col :span="18" class="copyright-right">
+  <div class="copyright">
+    <a
+      target="_blank"
+      rel="noopener noreferrer"
+      href="https://risuko.vercel.app"
+      class="copyright-brand"
+    >
+      &copy;{{ year }} Risuko
+    </a>
+    <nav class="copyright-links">
       <a
         target="_blank"
         rel="noopener noreferrer"
@@ -34,13 +37,13 @@
       >
         {{ $t('about.release') }}
       </a>
-    </ui-col>
-  </ui-row>
+    </nav>
+  </div>
 </template>
 
 <script lang="ts">
 export default {
-	name: "mo-copyright",
+	name: "CopyrightBar",
 	data() {
 		const year = new Date().getFullYear();
 		return {

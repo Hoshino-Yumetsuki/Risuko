@@ -17,7 +17,7 @@ const delegatedProps = reactiveOmit(props, "class");
     data-slot="sheet-overlay"
     :class="
       cn(
-        'mo-overlay-anim fixed inset-0 z-50 bg-black/80',
+        'overlay-anim fixed inset-0 z-50 bg-black/80',
         props.class,
       )
     "

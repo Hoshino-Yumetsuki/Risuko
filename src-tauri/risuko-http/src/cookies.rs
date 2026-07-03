@@ -5,7 +5,7 @@ use http::HeaderValue;
 use url::Url;
 
 /// Pluggable cookie store. Implementations decide how cookies are persisted
-/// and matched.
+/// and matched
 pub trait CookieStore: Send + Sync {
     fn set_cookies(&self, cookie_headers: &mut dyn Iterator<Item = &HeaderValue>, url: &Url);
     fn cookies(&self, url: &Url) -> Option<HeaderValue>;
@@ -124,21 +124,22 @@ impl Jar {
             let Ok(url) = Url::parse(&url_str) else {
                 continue;
             };
-            let mut cookie_str = format!("{name}={value}; Path={path}");
+            let mut builder = cookie::Cookie::build((name, value)).path(path);
             if include_subdomains {
-                cookie_str.push_str(&format!("; Domain={bare_domain}"));
+                builder = builder.domain(bare_domain);
             }
             if secure {
-                cookie_str.push_str("; Secure");
+                builder = builder.secure(true);
             }
             if let Some(epoch) = expires_epoch {
-                // RFC 1123 / IMF-fixdate is the cookie spec format. Build it
-                // manually to avoid pulling chrono in for one timestamp
-                if let Some(s) = format_http_date(epoch) {
-                    cookie_str.push_str(&format!("; Expires={s}"));
-                }
+                // Out-of-range epochs drop the attribute so the cookie
+                // becomes a session cookie instead of being rejected
+                builder =
+                    builder.expires(cookie::time::OffsetDateTime::from_unix_timestamp(epoch).ok());
             }
-            self.add_cookie_str(&cookie_str, &url);
+            if let Ok(mut store) = self.inner.lock() {
+                let _ = store.insert_raw(&builder.build(), &url);
+            }
             count += 1;
         }
         Ok(count)
@@ -175,48 +176,6 @@ impl CookieStore for Jar {
 }
 
 pub(crate) type SharedJar = Arc<dyn CookieStore>;
-
-/// Render a unix epoch as an RFC 1123 / IMF-fixdate string suitable for the
-/// `Expires=` cookie attribute. Returns `None` for values outside the
-/// representable range (we just drop the attribute in that case so the
-/// cookie becomes a session cookie instead of being rejected)
-fn format_http_date(epoch: i64) -> Option<String> {
-    if epoch < 0 {
-        return None;
-    }
-    // Days from civil date — Howard Hinnant's algorithm. Avoids pulling in
-    // chrono just to format one header
-    let secs = epoch as u64;
-    let days = (secs / 86_400) as i64;
-    let tod = secs % 86_400;
-    let hour = tod / 3600;
-    let minute = (tod % 3600) / 60;
-    let second = tod % 60;
-
-    // 1970-01-01 is day 0; convert to civil date
-    let z = days + 719_468;
-    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
-    let doe = (z - era * 146_097) as u64;
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let y = yoe as i64 + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
-    let m = (if mp < 10 { mp + 3 } else { mp - 9 }) as u32;
-    let y = y + if m <= 2 { 1 } else { 0 };
-
-    // Day-of-week via Zeller-like calc using days since 1970-01-01 (a Thu)
-    let dow_idx = ((days % 7 + 7 + 4) % 7) as usize;
-    const DAY_NAMES: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-    const MONTH_NAMES: [&str; 12] = [
-        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-    ];
-    let month_name = MONTH_NAMES.get((m as usize).checked_sub(1)?)?;
-    Some(format!(
-        "{}, {:02} {} {:04} {:02}:{:02}:{:02} GMT",
-        DAY_NAMES[dow_idx], d, month_name, y, hour, minute, second
-    ))
-}
 
 #[cfg(test)]
 mod tests {

@@ -1,21 +1,5 @@
 import { APP_THEME, TRAY_CANVAS_CONFIG } from "@shared/constants";
-
-const bytesToSize = (bytes) => {
-	const b = parseInt(bytes, 10);
-	const sizes = ["B", "KB", "MB", "GB", "TB"];
-	if (!Number.isFinite(b) || b === 0) {
-		return "0 KB";
-	}
-	// Clamp sizes >= 1 PB to TB instead of "X undefined"
-	const i = Math.min(
-		Math.trunc(Math.floor(Math.log(b) / Math.log(1024))),
-		sizes.length - 1,
-	);
-	if (i === 0) {
-		return `${b} ${sizes[i]}`;
-	}
-	return `${(b / 1024 ** i).toFixed(1)} ${sizes[i]}`;
-};
+import { bytesToSize } from "./index";
 
 const { WIDTH, HEIGHT, ICON_WIDTH, ICON_HEIGHT, TEXT_WIDTH, TEXT_FONT_SIZE } =
 	TRAY_CANVAS_CONFIG;

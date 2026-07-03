@@ -6,11 +6,10 @@
 import { commands } from "@/components/CommandManager/instance";
 
 export default {
-	name: "mo-ipc",
+	name: "ipc-bridge",
 	data() {
 		return {
 			unlisten: null as (() => void) | null,
-			alive: true,
 			bindToken: 0,
 		};
 	},
@@ -36,7 +35,7 @@ export default {
 				}
 			});
 
-			if (!this.alive || token !== this.bindToken) {
+			if (token !== this.bindToken) {
 				unlisten();
 				unlistenFile();
 				return;
@@ -55,12 +54,9 @@ export default {
 		},
 	},
 	created() {
-		this.bindIpcEvents().catch(() => {
-			/* noop */
-		});
+		this.bindIpcEvents().catch(() => {});
 	},
 	beforeUnmount() {
-		this.alive = false;
 		this.bindToken += 1;
 		this.unbindIpcEvents();
 	},

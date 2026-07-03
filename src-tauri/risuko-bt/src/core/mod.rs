@@ -9,7 +9,7 @@ pub mod metainfo;
 pub mod peer_id;
 
 pub use hash::{Id20, Id32};
-pub use lengths::{ChunkInfo, Lengths, PieceInfo, ValidPieceIndex, CHUNK_SIZE};
+pub use lengths::{ChunkInfo, Lengths, ValidPieceIndex, CHUNK_SIZE};
 pub use magnet::Magnet;
 pub use merkle::{supports_v2_wire, MerkleError, MerkleProofTable, PieceVerifier, VerifyError};
 pub use metainfo::{

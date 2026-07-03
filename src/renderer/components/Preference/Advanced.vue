@@ -1,14 +1,7 @@
 <template>
   <div class="content panel panel-layout panel-layout--v">
-    <mo-enter tag="header" preset="fadeInDown" class="panel-header">
-      <h4 class="hidden-xs-only">{{ title }}</h4>
-      <div class="preference-mobile-subnav hidden-sm-and-up">
-        <mo-subnav-switcher :title="title" :subnavs="subnavs" />
-      </div>
-    </mo-enter>
     <main class="panel-content">
       <form class="form-preference" ref="advancedForm" @submit.prevent>
-        <!-- Completion Script Section -->
         <div class="settings-section">
           <div class="settings-section-header">
             <div class="section-icon"><Terminal :size="16" /></div>
@@ -91,7 +84,6 @@
           </div>
         </div>
 
-        <!-- Proxy Section -->
         <div class="settings-section">
           <div class="settings-section-header">
             <div class="section-icon"><Globe :size="16" /></div>
@@ -155,7 +147,6 @@
           </div>
         </div>
 
-        <!-- DNS over HTTPS Section -->
         <div class="settings-section">
           <div class="settings-section-header">
             <div class="section-icon"><Globe :size="16" /></div>
@@ -242,7 +233,6 @@
           </div>
         </div>
 
-        <!-- BT Tracker Section -->
         <div class="settings-section">
           <div class="settings-section-header">
             <div class="section-icon"><Radio :size="16" /></div>
@@ -270,7 +260,7 @@
                           <X
                             :size="12"
                             class="tracker-tag-remove"
-                            @click.stop="removeTrackerSource(val)"
+                            @click.stop="toggleTrackerSource(val)"
                           />
                         </span>
                         <span
@@ -522,7 +512,6 @@
           </div>
         </div>
 
-        <!-- HTTP Network Reliability Section -->
         <div class="settings-section">
           <div class="settings-section-header">
             <div class="section-icon"><Globe :size="16" /></div>
@@ -579,7 +568,6 @@
           </div>
         </div>
 
-        <!-- Storage Section -->
         <div class="settings-section">
           <div class="settings-section-header">
             <div class="section-icon"><FileText :size="16" /></div>
@@ -618,7 +606,6 @@
           </div>
         </div>
 
-        <!-- eDonkey Server Section -->
         <div class="settings-section">
           <div class="settings-section-header">
             <div class="section-icon"><Server :size="16" /></div>
@@ -640,7 +627,6 @@
           </div>
         </div>
 
-        <!-- FTP / SFTP Section -->
         <div class="settings-section">
           <div class="settings-section-header">
             <div class="section-icon"><FileKey :size="16" /></div>
@@ -673,7 +659,6 @@
           </div>
         </div>
 
-        <!-- Saved Credentials Section -->
         <div class="settings-section">
           <div class="settings-section-header">
             <div class="section-icon"><KeyRound :size="16" /></div>
@@ -683,11 +668,10 @@
             </div>
           </div>
           <div class="settings-section-content">
-            <mo-credential-manager />
+            <credential-manager />
           </div>
         </div>
 
-        <!-- M3U8 Output Format Section -->
         <div class="settings-section">
           <div class="settings-section-header">
             <div class="section-icon"><FileText :size="16" /></div>
@@ -713,7 +697,6 @@
           </div>
         </div>
 
-        <!-- Media (yt-dlp) Section -->
         <div class="settings-section">
           <div class="settings-section-header">
             <div class="section-icon"><Video :size="16" /></div>
@@ -799,7 +782,7 @@
                 <label class="settings-select-item-label">{{
                   $t('preferences.rpc-listen-port')
                 }}</label>
-                <div class="mo-input-group">
+                <div class="input-group">
                   <Input
                     :placeholder="String(rpcDefaultPort)"
                     :maxlength="8"
@@ -807,8 +790,8 @@
                     v-model="form.rpcListenPort"
                     @blur="onRpcListenPortBlur"
                   />
-                  <span class="mo-input-append" v-if="!form.externalEngineEnabled">
-                    <i @click.prevent="onRpcPortDiceClick" style="cursor: pointer">
+                  <span class="input-append" v-if="!form.externalEngineEnabled">
+                    <i @click.prevent="rollPort('rpcListenPort', rpcDefaultPort, 20000)" style="cursor: pointer">
                       <Dices :size="12" />
                     </i>
                   </span>
@@ -816,7 +799,7 @@
               </div>
               <div class="settings-select-item">
                 <label class="settings-select-item-label">{{ $t('preferences.rpc-secret') }}</label>
-                <div class="mo-input-group">
+                <div class="input-group">
                   <Input
                     :type="hideRpcSecret ? 'password' : 'text'"
                     placeholder="RPC Secret"
@@ -824,7 +807,7 @@
                     :disabled="form.externalEngineEnabled"
                     v-model="form.rpcSecret"
                   />
-                  <span class="mo-input-append" v-if="!form.externalEngineEnabled">
+                  <span class="input-append" v-if="!form.externalEngineEnabled">
                     <i @click.prevent="onRpcSecretDiceClick" style="cursor: pointer">
                       <Dices :size="12" />
                     </i>
@@ -849,7 +832,6 @@
           </div>
         </div>
 
-        <!-- Ports Section -->
         <div class="settings-section">
           <div class="settings-section-header">
             <div class="section-icon"><Network :size="16" /></div>
@@ -861,10 +843,10 @@
             <div class="settings-select-group">
               <div class="settings-select-item">
                 <label class="settings-select-item-label">{{ $t('preferences.bt-port') }}</label>
-                <div class="mo-input-group">
+                <div class="input-group">
                   <Input placeholder="BT Port" :maxlength="8" v-model="form.listenPort" />
-                  <span class="mo-input-append">
-                    <i @click.prevent="onBtPortDiceClick" style="cursor: pointer">
+                  <span class="input-append">
+                    <i @click.prevent="rollPort('listenPort', 20000, 24999)" style="cursor: pointer">
                       <Dices :size="12" />
                     </i>
                   </span>
@@ -872,10 +854,10 @@
               </div>
               <div class="settings-select-item">
                 <label class="settings-select-item-label">{{ $t('preferences.dht-port') }}</label>
-                <div class="mo-input-group">
+                <div class="input-group">
                   <Input placeholder="DHT Port" :maxlength="8" v-model="form.dhtListenPort" />
-                  <span class="mo-input-append">
-                    <i @click.prevent="onDhtPortDiceClick" style="cursor: pointer">
+                  <span class="input-append">
+                    <i @click.prevent="rollPort('dhtListenPort', 25000, 29999)" style="cursor: pointer">
                       <Dices :size="12" />
                     </i>
                   </span>
@@ -883,10 +865,10 @@
               </div>
               <div class="settings-select-item">
                 <label class="settings-select-item-label">{{ $t('preferences.ed2k-port') }}</label>
-                <div class="mo-input-group">
+                <div class="input-group">
                   <Input placeholder="4662" :maxlength="8" v-model="form.ed2kPort" />
-                  <span class="mo-input-append">
-                    <i @click.prevent="onEd2kPortDiceClick" style="cursor: pointer">
+                  <span class="input-append">
+                    <i @click.prevent="rollPort('ed2kPort', 30000, 34999)" style="cursor: pointer">
                       <Dices :size="12" />
                     </i>
                   </span>
@@ -896,7 +878,6 @@
           </div>
         </div>
 
-        <!-- Protocol Section -->
         <div class="settings-section">
           <div class="settings-section-header">
             <div class="section-icon"><Link :size="16" /></div>
@@ -987,7 +968,6 @@
           </div>
         </div>
 
-        <!-- User Agent Section -->
         <div class="settings-section">
           <div class="settings-section-header">
             <div class="section-icon"><UserCircle :size="16" /></div>
@@ -1021,7 +1001,6 @@
           </div>
         </div>
 
-        <!-- Cookies Section -->
         <div class="settings-section">
           <div class="settings-section-header">
             <div class="section-icon"><Cookie :size="16" /></div>
@@ -1039,7 +1018,6 @@
           </div>
         </div>
 
-        <!-- Saved domain credentials -->
         <div class="settings-section">
           <div class="settings-section-header">
             <div class="section-icon"><Globe :size="16" /></div>
@@ -1102,7 +1080,6 @@
           </div>
         </div>
 
-        <!-- Netrc auth Section -->
         <div class="settings-section">
           <div class="settings-section-header">
             <div class="section-icon"><KeyRound :size="16" /></div>
@@ -1136,7 +1113,6 @@
           </div>
         </div>
 
-        <!-- Developer Section -->
         <div class="settings-section">
           <div class="settings-section-header">
             <div class="section-icon"><Code :size="16" /></div>
@@ -1145,7 +1121,6 @@
             </div>
           </div>
           <div class="settings-section-content">
-            <!-- File Paths -->
             <div class="dev-paths-grid">
               <div class="dev-path-card">
                 <div class="dev-path-card-header">
@@ -1153,7 +1128,7 @@
                   <span class="dev-path-card-label">{{ $t('preferences.app-log-path') }}</span>
                 </div>
                 <div class="dev-path-card-body">
-                  <div class="mo-input-group mo-input-group--bordered dev-log-path-group">
+                  <div class="input-group input-group--bordered dev-log-path-group">
                     <textarea
                       :value="visibleLogPath"
                       :placeholder="$t('preferences.log-dir-override-placeholder')"
@@ -1163,9 +1138,9 @@
                       rows="1"
                       wrap="off"
                     />
-                    <span class="mo-input-append dev-log-path-actions" v-if="isRenderer">
-                      <mo-select-directory @selected="handleLogDirSelected" />
-                      <mo-show-in-folder :path="visibleLogPath" :size="14" />
+                    <span class="input-append dev-log-path-actions" v-if="isRenderer">
+                      <select-directory @selected="handleLogDirSelected" />
+                      <show-in-folder :path="visibleLogPath" :size="14" />
                     </span>
                   </div>
                   <div class="form-info" style="margin-top: 4px">
@@ -1209,7 +1184,6 @@
               </div>
             </div>
 
-            <!-- Danger Zone -->
             <div class="dev-danger-zone">
               <div class="dev-danger-zone-label">
                 <AlertTriangle :size="13" />
@@ -1285,7 +1259,6 @@ import {
 	DEFAULT_ED2K_SERVERS,
 	DOH_PROVIDER_OPTIONS,
 	DOH_PROVIDERS,
-	EMPTY_STRING,
 	ENGINE_RPC_HOST,
 	ENGINE_RPC_PORT,
 	LOG_LEVELS,
@@ -1309,13 +1282,11 @@ import {
 } from "@shared/utils/tracker";
 import { invoke } from "@tauri-apps/api/core";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
-import { cloneDeep, extend, isEmpty } from "lodash";
-import randomize from "randomatic";
+import { cloneDeep, isEmpty } from "lodash";
 import api, { type CookieEntryView } from "@/api";
 import SelectDirectory from "@/components/Native/SelectDirectory.vue";
 import ShowInFolder from "@/components/Native/ShowInFolder.vue";
 import CredentialManager from "@/components/Preference/CredentialManager.vue";
-import SubnavSwitcher from "@/components/Subnav/SubnavSwitcher.vue";
 import UiButton from "@/components/ui/compat/UiButton.vue";
 import UiTooltip from "@/components/ui/compat/UiTooltip.vue";
 import { confirm } from "@/components/ui/confirm-dialog";
@@ -1338,13 +1309,6 @@ import is from "@/shims/platform";
 import { usePreferenceStore } from "@/store/preference";
 import { useTaskStore } from "@/store/task";
 
-// Map a stored DoH endpoint URL back to its provider preset so the dropdown
-// shows what's actually saved. Falls back to an explicit stored provider, then
-// to "custom" when the URL doesn't match any preset.
-// Priority: 1) URL matches a preset -> use that preset
-//           2) storedProvider is valid -> use storedProvider
-//           3) URL exists but doesn't match -> "custom"
-//           4) nothing stored -> default "cloudflare"
 const resolveDohProvider = (storedProvider, storedUrl) => {
 	const url = `${storedUrl || ""}`.trim();
 	if (url) {
@@ -1353,7 +1317,6 @@ const resolveDohProvider = (storedProvider, storedUrl) => {
 				return name;
 			}
 		}
-		// URL exists but doesn't match any preset - check if storedProvider is valid first
 		if (
 			storedProvider &&
 			storedProvider in DOH_PROVIDERS &&
@@ -1363,7 +1326,6 @@ const resolveDohProvider = (storedProvider, storedUrl) => {
 		}
 		return "custom";
 	}
-	// No URL stored - use storedProvider if valid, otherwise default
 	if (storedProvider && storedProvider in DOH_PROVIDERS) {
 		return storedProvider;
 	}
@@ -1404,7 +1366,6 @@ const initForm = (config) => {
 		dohProvider,
 		ed2kPort,
 		ed2kServer,
-		hideAppMenu,
 		lastSyncTrackerTime,
 		listenPort,
 		logDirOverride,
@@ -1469,7 +1430,6 @@ const initForm = (config) => {
 			config.youtubeFormat ??
 			config["youtube-format"] ??
 			"",
-		hideAppMenu,
 		lastSyncTrackerTime,
 		listenPort,
 		logDirOverride: typeof logDirOverride === "string" ? logDirOverride : "",
@@ -1491,7 +1451,7 @@ const initForm = (config) => {
 		},
 		rpcListenPort,
 		rpcSecret,
-		trackerSource,
+		trackerSource: Array.isArray(trackerSource) ? [...trackerSource] : [],
 		userAgent,
 		completionScriptEnabled: parseBooleanConfig(completionScriptEnabled, false),
 		completionScriptCommand: completionScriptCommand || "",
@@ -1540,11 +1500,10 @@ const normalizePortValue = (value, fallback) => {
 };
 
 export default {
-	name: "mo-preference-advanced",
+	name: "preference-advanced",
 	components: {
 		[UiButton.name]: UiButton,
 		"ui-tooltip": UiTooltip,
-		[SubnavSwitcher.name]: SubnavSwitcher,
 		[ShowInFolder.name]: ShowInFolder,
 		[SelectDirectory.name]: SelectDirectory,
 		[CredentialManager.name]: CredentialManager,
@@ -1588,7 +1547,7 @@ export default {
 	data() {
 		const preferenceStore = usePreferenceStore();
 		const formOriginal = initForm(preferenceStore.config);
-		const form = initForm(extend({}, formOriginal, changedConfig.advanced));
+		const form = initForm({ ...formOriginal, ...changedConfig.advanced });
 
 		return {
 			form,
@@ -1615,23 +1574,6 @@ export default {
 	},
 	computed: {
 		isRenderer: () => is.renderer(),
-		title() {
-			return this.$t("preferences.advanced");
-		},
-		subnavs() {
-			return [
-				{
-					key: "basic",
-					title: this.$t("preferences.basic"),
-					route: "/preference/basic",
-				},
-				{
-					key: "advanced",
-					title: this.$t("preferences.advanced"),
-					route: "/preference/advanced",
-				},
-			];
-		},
 		rpcDefaultPort() {
 			return ENGINE_RPC_PORT;
 		},
@@ -1665,17 +1607,10 @@ export default {
 			this.form[key] = !!enable;
 		},
 		handleLogDirSelected(dir: string) {
-			// The native picker hands back either a filesystem path (desktop,
-			// or Android primary storage paths translated by
-			// safUriToFilesystemPath) or a raw SAF URI for SD-card/USB roots.
-			// Trim before assigning so stray whitespace from drag-and-drop
-			// into the picker doesn't end up persisted
 			this.form.logDirOverride = `${dir || ""}`.trim();
 		},
 		copyRpcUrlToClipboard() {
-			writeText(this.currentRpcUrl).catch(() => {
-				/* noop */
-			});
+			writeText(this.currentRpcUrl).catch(() => {});
 		},
 		onExternalEngineHostBlur() {
 			const host = `${this.form.externalEngineHost || ""}`.trim();
@@ -1703,12 +1638,6 @@ export default {
 				this.form.trackerSource.splice(idx, 1);
 			} else {
 				this.form.trackerSource.push(value);
-			}
-		},
-		removeTrackerSource(value) {
-			const idx = this.form.trackerSource.indexOf(value);
-			if (idx >= 0) {
-				this.form.trackerSource.splice(idx, 1);
 			}
 		},
 		async onTestCompletionScript() {
@@ -1807,34 +1736,17 @@ export default {
 			}
 			this.form.userAgent = ua;
 		},
-		onBtPortDiceClick() {
-			const port = generateRandomInt(20000, 24999);
-			this.form.listenPort = port;
-		},
-		onDhtPortDiceClick() {
-			const port = generateRandomInt(25000, 29999);
-			this.form.dhtListenPort = port;
-		},
-		onEd2kPortDiceClick() {
-			const port = generateRandomInt(30000, 34999);
-			this.form.ed2kPort = port;
+		rollPort(field, min, max) {
+			this.form[field] = generateRandomInt(min, max);
 		},
 		onRpcListenPortBlur() {
-			if (
-				EMPTY_STRING === this.form.rpcListenPort ||
-				!this.form.rpcListenPort
-			) {
+			if ("" === this.form.rpcListenPort || !this.form.rpcListenPort) {
 				this.form.rpcListenPort = this.rpcDefaultPort;
 			}
 		},
-		onRpcPortDiceClick() {
-			const port = generateRandomInt(ENGINE_RPC_PORT, 20000);
-			this.form.rpcListenPort = port;
-		},
 		onRpcSecretDiceClick() {
 			this.hideRpcSecret = false;
-			const rpcSecret = randomize("Aa0", 16);
-			this.form.rpcSecret = rpcSecret;
+			this.form.rpcSecret = crypto.randomUUID().replaceAll("-", "");
 
 			if (this.rpcSecretTimer) {
 				clearTimeout(this.rpcSecretTimer);
@@ -1856,9 +1768,7 @@ export default {
 				const taskStore = useTaskStore();
 				taskStore.purgeTaskRecord();
 				taskStore.pauseAllTask().then(() => {
-					invoke("reset_session").catch(() => {
-						/* noop */
-					});
+					invoke("reset_session").catch(() => {});
 				});
 			}
 		},
@@ -1871,9 +1781,7 @@ export default {
 				cancelText: this.$t("app.no"),
 			});
 			if (confirmed) {
-				invoke("factory_reset").catch(() => {
-					/* noop */
-				});
+				invoke("factory_reset").catch(() => {});
 			}
 		},
 		syncFormConfig() {
@@ -1942,22 +1850,13 @@ export default {
 				};
 			}
 
-			const {
-				autoHideWindow,
-				btTracker,
-				ed2kServer,
-				rpcListenPort,
-				externalEnginePort,
-			} = data;
+			const { btTracker, ed2kServer, rpcListenPort, externalEnginePort } = data;
 
-			// Remap form key to config key
 			if ("sftpKeyPassphrase" in data) {
 				data.sftpPrivateKeyPassphrase = data.sftpKeyPassphrase;
 				delete data.sftpKeyPassphrase;
 			}
 
-			// Remap media-format form key to its kebab-case config key. Also
-			// clear the legacy youtube-format key so the two don't diverge.
 			if ("mediaFormat" in data) {
 				data["media-format"] = data.mediaFormat;
 				data["youtube-format"] = data.mediaFormat;
@@ -1968,13 +1867,6 @@ export default {
 				data.btTracker = reduceTrackerString(convertLineToComma(btTracker));
 			}
 
-			// DoH: when a preset provider is picked, pull the endpoint URL and
-			// bootstrap IPs from that preset so the engine gets concrete
-			// `doh-url` / `doh-bootstrap` values. For "custom" we keep whatever
-			// the user typed. These have to be written even when only
-			// `dohProvider` shows up in the diff, hence reading `this.form`
-			// rather than `data`. For presets, only use the preset bootstrap
-			// if the user hasn't provided a custom one.
 			if (
 				"dohProvider" in data ||
 				"dohEnable" in data ||
@@ -1986,8 +1878,6 @@ export default {
 					const preset = DOH_PROVIDERS[provider];
 					data.dohUrl = preset.url;
 					const userBootstrap = `${this.form.dohBootstrap || ""}`.trim();
-					// Only use preset bootstrap if user hasn't provided one
-					// or if their value matches the preset (indicating they didn't customize)
 					if (!userBootstrap || userBootstrap === preset.bootstrap) {
 						data.dohBootstrap = preset.bootstrap;
 					} else {
@@ -1997,8 +1887,6 @@ export default {
 					data.dohUrl = `${this.form.dohUrl || ""}`.trim();
 					data.dohBootstrap = `${this.form.dohBootstrap || ""}`.trim();
 				}
-				// Catch an enabled custom config with a non-https endpoint here,
-				// before it hits the engine, which would just reject it anyway
 				if (
 					this.form.dohEnable &&
 					provider === "custom" &&
@@ -2055,7 +1943,7 @@ export default {
 				data.ed2kServer = convertLineToComma(ed2kServer);
 			}
 
-			if (rpcListenPort === EMPTY_STRING) {
+			if (rpcListenPort === "") {
 				data.rpcListenPort = this.rpcDefaultPort;
 			}
 
@@ -2092,22 +1980,6 @@ export default {
 				.then(() => {
 					this.syncFormConfig();
 					this.$msg.success(this.$t("preferences.save-success-message"));
-					if (this.isRenderer) {
-						if ("autoHideWindow" in data) {
-							invoke("auto_hide_window", { enabled: autoHideWindow }).catch(
-								() => {
-									/* noop */
-								},
-							);
-						}
-						if ("hideAppMenu" in data) {
-							invoke("toggle_app_menu", {
-								hidden: !!data.hideAppMenu,
-							}).catch(() => {
-								/* noop */
-							});
-						}
-					}
 					changedConfig.basic = {};
 					changedConfig.advanced = {};
 				})

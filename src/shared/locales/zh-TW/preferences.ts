@@ -72,6 +72,9 @@ export default {
 		"預分配會提前向磁碟申請真實區塊，避免下載中途出現空間不足並減少碎片。在不支援的檔案系統上自動降級為截斷方式。",
 	"new-task-show-downloading": "新增任務後自動顯示下載頁面",
 	"no-confirm-before-delete-task": "刪除任務之前無需確認",
+	"auto-file-renaming": "自動重新命名重複檔案",
+	"auto-file-renaming-tips":
+		"當存在同名檔案時，另存為「file.1.ext」而非覆蓋原檔案。",
 	"use-remote-file-time": "儲存檔案時使用遠端檔案修改時間",
 	"use-remote-file-time-tips": "將檔案修改時間設為遠端伺服器的時間戳記",
 	continue: "斷點續傳",

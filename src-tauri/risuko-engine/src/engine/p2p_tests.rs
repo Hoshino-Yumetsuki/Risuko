@@ -9,18 +9,12 @@
 //!   * G2: piggybacks on Gnutella infrastructure via Shareaza
 //!   * giFT: requires a locally-running giftd, no public IPC endpoint
 //!
-//! So we exercise URI parsers, binary message codecs, and pure helpers
+//! So we exercise URI parsers and pure helpers
 
-#[cfg(feature = "adc-transfer")]
-use crate::engine::adc::nmdc::{escape_key, lock_to_key};
 use crate::engine::adc::{is_adc_uri, parse_adc_hub_uri, parse_dchub_file_uri, types::HubDialect};
 use crate::engine::g2::{is_g2_uri, parse_g2_uri};
 use crate::engine::gift::{extract_gift_name, is_gift_uri, parse_gift_uri};
-use crate::engine::gnutella::{
-    is_gnutella_uri,
-    message::{build_query, encode_header, make_guid, parse_header, PING, QUERY, QUERYHIT},
-    parse_gnutella_uri,
-};
+use crate::engine::gnutella::{is_gnutella_uri, parse_gnutella_uri};
 
 // ---------- ADC / DC ----------
 
@@ -102,41 +96,6 @@ fn dchub_file_uri_returns_none_when_no_query() {
     assert!(parse_dchub_file_uri("dchub://hub.example.com/").is_none());
 }
 
-#[test]
-#[cfg(feature = "adc-transfer")]
-fn nmdc_lock_to_key_round_trip_properties() {
-    // Algorithm correctness check: for the well-known short input the
-    // first byte mixes lock[0] xor lock[n-1] xor lock[n-2] xor 5, then
-    // every byte is nibble-swapped. Verify both invariants hold
-    let lock = b"ABCDEF";
-    let key = lock_to_key(lock);
-    assert_eq!(key.len(), lock.len());
-    // first key byte derived nibble-swap of (A xor F xor E xor 5)
-    let raw0 = lock[0] ^ lock[5] ^ lock[4] ^ 5;
-    let nibble_swapped = ((raw0 << 4) & 0xF0) | ((raw0 >> 4) & 0x0F);
-    assert_eq!(key[0], nibble_swapped);
-}
-
-#[test]
-#[cfg(feature = "adc-transfer")]
-fn nmdc_escape_key_escapes_only_reserved_bytes() {
-    let raw = vec![0u8, 1, 5, 36, 50, 96, 100, 124, 126, 200];
-    let esc = escape_key(&raw);
-    let s = String::from_utf8_lossy(&esc);
-    // each reserved byte → /%DCNxxx%/
-    for b in [0u8, 5, 36, 96, 124, 126] {
-        assert!(
-            s.contains(&format!("/%DCN{:03}%/", b)),
-            "missing escape for {b}"
-        );
-    }
-    // unreserved bytes pass through verbatim
-    assert!(esc.contains(&1u8));
-    assert!(esc.contains(&50u8));
-    assert!(esc.contains(&100u8));
-    assert!(esc.contains(&200u8));
-}
-
 // ---------- Gnutella 0.6 ----------
 
 #[test]
@@ -169,56 +128,6 @@ fn gnutella_uri_extracts_dn_and_xl() {
 fn gnutella_uri_recognises_bitprint_urn() {
     let l = parse_gnutella_uri("gnutella://h:6346/uri-res/N2R?urn:bitprint:ABCDEF.XYZ").unwrap();
     assert!(l.urn.unwrap().starts_with("urn:bitprint:"));
-}
-
-#[test]
-fn gnutella_message_header_round_trip() {
-    let guid = make_guid();
-    let hdr = encode_header(&guid, QUERY, 7, 0, 1024);
-    let (g, t, ttl, hops, len) = parse_header(&hdr).unwrap();
-    assert_eq!(g, guid);
-    assert_eq!(t, QUERY);
-    assert_eq!(ttl, 7);
-    assert_eq!(hops, 0);
-    assert_eq!(len, 1024);
-}
-
-#[test]
-fn gnutella_make_guid_marks_rfc4122_bits() {
-    let g = make_guid();
-    // variant bits forced to 10xxxxxx in byte 8
-    assert_eq!(g[8] & 0xC0, 0x80);
-    assert_eq!(g[15], 0xFF);
-    // two consecutive GUIDs differ
-    assert_ne!(make_guid(), make_guid());
-}
-
-#[test]
-fn gnutella_parse_header_rejects_short_buffer() {
-    assert!(parse_header(&[0u8; 22]).is_none());
-    assert!(parse_header(&[]).is_none());
-}
-
-#[test]
-fn gnutella_build_query_layout() {
-    let buf = build_query(0x1234, "ubuntu", Some("urn:sha1:ABC"));
-    // first 2 bytes: little-endian min-speed
-    assert_eq!(&buf[0..2], &[0x34, 0x12]);
-    // search text + null
-    assert_eq!(&buf[2..8], b"ubuntu");
-    assert_eq!(buf[8], 0);
-    // urn extension + trailing null
-    assert!(buf
-        .windows(b"urn:sha1:ABC".len())
-        .any(|w| w == b"urn:sha1:ABC"));
-    assert_eq!(*buf.last().unwrap(), 0);
-}
-
-#[test]
-fn gnutella_payload_type_constants_match_spec() {
-    assert_eq!(PING, 0x00);
-    assert_eq!(QUERY, 0x80);
-    assert_eq!(QUERYHIT, 0x81);
 }
 
 // ---------- Gnutella2 ----------

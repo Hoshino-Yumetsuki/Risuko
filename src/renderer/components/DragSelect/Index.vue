@@ -27,7 +27,7 @@ const collisionCheck = (node1, node2) =>
 	node1.top + node1.height > node2.top;
 
 export default {
-	name: "mo-drag-select",
+	name: "drag-select",
 	props: {
 		attribute: {
 			type: String,

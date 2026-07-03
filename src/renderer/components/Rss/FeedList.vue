@@ -1,59 +1,52 @@
 <template>
-  <nav class="subnav-inner">
-    <mo-enter tag="h3" preset="fadeInDown">{{ $t('subnav.rss') }}</mo-enter>
-    <ul>
-      <mo-enter
-        tag="li"
-        preset="fadeInLeft"
-        :delay="0.09"
+  <nav class="rss-feed-list">
+    <ul class="rss-feed-items">
+      <li
+        class="rss-feed-item"
         :class="{ active: currentFeedId === null }"
         @click="selectFeed(null)"
       >
-        <i class="subnav-icon">
-          <Rss :size="20" />
+        <i class="rss-feed-icon">
+          <Rss :size="15" />
         </i>
-        <span>{{ $t('rss.all-items') }}</span>
+        <span class="rss-feed-name">{{ $t('rss.all-items') }}</span>
         <span v-if="totalUnread > 0" class="rss-feed-badge">{{ totalUnread }}</span>
-      </mo-enter>
-      <mo-enter
-        tag="li"
-        preset="fadeInLeft"
-        :delay="0.13"
+      </li>
+      <li
+        class="rss-feed-item"
         :class="{ active: currentFeedId === '__downloaded__' }"
         @click="selectFeed('__downloaded__')"
       >
-        <i class="subnav-icon">
-          <Download :size="20" />
+        <i class="rss-feed-icon">
+          <Download :size="15" />
         </i>
-        <span>{{ $t('rss.downloaded') }}</span>
+        <span class="rss-feed-name">{{ $t('rss.downloaded') }}</span>
         <span v-if="downloadedCount > 0" class="rss-feed-badge">{{ downloadedCount }}</span>
-      </mo-enter>
-      <mo-enter
-        v-for="(feed, index) in feeds"
+      </li>
+      <li
+        v-for="feed in feeds"
         :key="feed.id"
-        tag="li"
-        preset="fadeInLeft"
-        :delay="feedDelay(index)"
+        class="rss-feed-item"
         :class="{
           active: currentFeedId === feed.id,
-          'rss-feed-entry--error': feed.error_count >= 3,
-          'rss-feed-entry--inactive': !feed.is_active,
+          'rss-feed-item--error': feed.error_count >= 3,
+          'rss-feed-item--inactive': !feed.is_active,
         }"
         @click="selectFeed(feed.id)"
         @contextmenu.prevent="openContextMenu($event, feed)"
       >
-        <i class="subnav-icon">
-          <CircleDot v-if="!feed.is_active" :size="20" />
-          <AlertTriangle v-else-if="feed.error_count >= 3" :size="20" />
-          <Rss v-else :size="20" />
+        <i class="rss-feed-icon">
+          <CircleDot v-if="!feed.is_active" :size="15" />
+          <AlertTriangle v-else-if="feed.error_count >= 3" :size="15" />
+          <Rss v-else :size="15" />
         </i>
         <span class="rss-feed-name" :title="feed.title">{{ feed.title }}</span>
         <span v-if="unreadCount(feed.id) > 0" class="rss-feed-badge">
           {{ unreadCount(feed.id) }}
         </span>
-      </mo-enter>
+      </li>
     </ul>
-    <div class="rss-subnav-footer">
+    <div class="rss-feed-footer">
       <Button size="sm" variant="ghost" class="rss-add-btn" @click="$emit('add-feed')">
         <Plus :size="14" />
         {{ $t('rss.add-feed') }}
@@ -106,7 +99,7 @@ import {
 import { useRssStore } from "@/store/rss";
 
 export default {
-	name: "mo-rss-feed-list",
+	name: "rss-feed-list",
 	components: {
 		AlertTriangle,
 		Button,
@@ -156,10 +149,6 @@ export default {
 		},
 	},
 	methods: {
-		feedDelay(index: number): number {
-			const MAX_DELAY = 0.6;
-			return Math.min(0.17 + index * 0.04, MAX_DELAY);
-		},
 		selectFeed(feedId: string | null) {
 			useRssStore().selectFeed(feedId);
 		},
@@ -199,40 +188,90 @@ export default {
 </script>
 
 <style scoped>
-.rss-feed-entry--inactive {
+.rss-feed-list {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  user-select: none;
+}
+
+.rss-feed-items {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  list-style: none;
+  margin: 0;
+  padding: 14px 12px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.rss-feed-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 30px;
+  padding: 0 8px;
+  border-radius: 6px;
+  color: var(--text-2);
+  font-size: 13px;
+  cursor: pointer;
+  transition:
+    color var(--dur-1) var(--ease-out),
+    background-color var(--dur-1) var(--ease-out);
+}
+
+.rss-feed-item:hover {
+  color: var(--text-1);
+  background: var(--surface-1);
+}
+
+.rss-feed-item.active {
+  color: var(--text-1);
+  background: var(--primary-soft);
+}
+
+.rss-feed-item.active .rss-feed-icon {
+  color: var(--primary);
+}
+
+.rss-feed-item--inactive {
   opacity: 0.5;
 }
 
-.rss-feed-entry--error .subnav-icon svg {
-  color: hsl(var(--destructive));
+.rss-feed-item--error .rss-feed-icon {
+  color: var(--danger);
+}
+
+.rss-feed-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: var(--text-3);
+  line-height: 0;
+  font-style: normal;
+  transition: color var(--dur-1) var(--ease-out);
 }
 
 .rss-feed-name {
   flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .rss-feed-badge {
-  font-size: 10px;
-  font-weight: 600;
-  background: var(--color-primary);
-  color: #fff;
-  border-radius: 9999px;
-  padding: 0 5px;
-  min-width: 16px;
-  height: 16px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  line-height: 1;
-  margin-left: auto;
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
 }
 
-.rss-subnav-footer {
-  padding: 8px 12px;
-  border-top: 1px solid var(--mo-subnav-border-color);
+.rss-feed-footer {
+  flex-shrink: 0;
 }
 
 .rss-add-btn {

@@ -1,4 +1,3 @@
-/* Responsive breakpoints and visibility utilities */
 @media (max-width: 567px) {
 	.ui-col--xs-24 {
 		width: 100%;
@@ -53,9 +52,15 @@
 	}
 }
 @media only screen and (min-width: 568px) {
-	.panel .panel-header {
+	.panel .panel-header,
+	.task-toolbar {
 		margin-left: 36px;
 		margin-right: 36px;
+	}
+	.settings-tabs {
+		margin-left: 36px;
+		margin-right: 36px;
+		max-width: calc(100% - 72px);
 	}
 	.task-list {
 		padding-left: 36px;
@@ -66,9 +71,6 @@
 	}
 	.form-actions {
 		padding: 24px 36px;
-	}
-	.mo-speedometer {
-		right: 36px;
 	}
 	.hidden-sm-and-up {
 		display: none !important;

@@ -24,8 +24,7 @@ use crate::engine::util::now_secs;
 
 fn item_id(guid_or_link: &str) -> String {
     use sha2::{Digest, Sha256};
-    let hash = Sha256::digest(guid_or_link.as_bytes());
-    hash.iter().map(|b| format!("{b:02x}")).collect()
+    hex::encode(Sha256::digest(guid_or_link.as_bytes()))
 }
 
 pub struct RssManager {
@@ -80,9 +79,7 @@ impl RssManager {
     // Feed CRUD
 
     pub async fn add_feed(&self, url: &str) -> Result<RssFeed, String> {
-        let body = fetch_feed_bytes(url).await?;
-        let parsed =
-            feed_rs::parser::parse(&body[..]).map_err(|e| format!("Failed to parse feed: {e}"))?;
+        let parsed = fetch_and_parse(url).await?;
 
         let title = parsed
             .title
@@ -171,12 +168,13 @@ impl RssManager {
 
                 let new_items = extract_items(feed_id, &parsed.entries);
                 let existing = s.items.entry(feed_id.to_string()).or_default();
-                let existing_ids: std::collections::HashSet<&str> =
-                    existing.iter().map(|i| i.id.as_str()).collect();
-
                 let mut fresh: Vec<RssItem> = Vec::new();
                 for item in new_items {
-                    if !existing_ids.contains(item.id.as_str()) {
+                    if let Some(old) = existing.iter_mut().find(|i| i.id == item.id) {
+                        if old.content.is_empty() && !item.content.is_empty() {
+                            old.content = item.content;
+                        }
+                    } else {
                         fresh.push(item);
                     }
                 }
@@ -209,36 +207,14 @@ impl RssManager {
     }
 
     pub async fn update_all_feeds(&self) -> Vec<(String, Vec<RssItem>)> {
-        let feeds: Vec<(String, bool)> = {
-            let s = self.store.lock().await;
-            s.feeds
-                .iter()
-                .map(|f| (f.id.clone(), f.is_active))
-                .collect()
-        };
-
-        let mut all_new = Vec::new();
-        for (feed_id, is_active) in feeds {
-            if !is_active {
-                continue;
-            }
-            match self.update_feed(&feed_id).await {
-                Ok(new_items) if !new_items.is_empty() => {
-                    all_new.push((feed_id, new_items));
-                }
-                Ok(_) => {}
-                Err(e) => {
-                    tracing::warn!("Failed to update feed {}: {}", feed_id, e);
-                }
-            }
-        }
-        all_new
+        self.update_feeds(false).await
     }
 
-    /// Update feeds whose own interval elapsed
+    /// Update active feeds; with `only_due`, skip feeds whose own interval
+    /// has not elapsed yet
     ///
     /// The background poller uses this so slow feeds do not refetch at the global wake cadence
-    async fn update_due_feeds(&self) -> Vec<(String, Vec<RssItem>)> {
+    async fn update_feeds(&self, only_due: bool) -> Vec<(String, Vec<RssItem>)> {
         let now = now_secs();
         let feeds: Vec<(String, bool, u64, Option<u64>)> = {
             let s = self.store.lock().await;
@@ -260,8 +236,7 @@ impl RssManager {
             if !is_active {
                 continue;
             }
-            let due_at = last_fetched_at.unwrap_or(0).saturating_add(interval);
-            if now < due_at {
+            if only_due && now < last_fetched_at.unwrap_or(0).saturating_add(interval) {
                 continue;
             }
             match self.update_feed(&feed_id).await {
@@ -282,13 +257,35 @@ impl RssManager {
     }
 
     pub async fn get_items(&self, feed_id: &str) -> Vec<RssItem> {
-        self.store
-            .lock()
-            .await
-            .items
-            .get(feed_id)
-            .cloned()
-            .unwrap_or_default()
+        let mut changed = false;
+        let items = {
+            let mut s = self.store.lock().await;
+            let Some(items) = s.items.get_mut(feed_id) else {
+                return Vec::new();
+            };
+            for item in items.iter_mut() {
+                if !item.is_downloaded {
+                    continue;
+                }
+                let Some(path) = item.download_path.as_deref() else {
+                    continue;
+                };
+                let path = std::path::Path::new(path);
+                if path.exists() {
+                    continue;
+                }
+                if path.parent().is_some_and(|parent| parent.exists()) {
+                    item.is_downloaded = false;
+                    item.download_path = None;
+                    changed = true;
+                }
+            }
+            items.clone()
+        };
+        if changed {
+            let _ = self.save().await;
+        }
+        items
     }
 
     /// Fetch a single item by feed/item id
@@ -303,13 +300,6 @@ impl RssManager {
             .find(|i| i.id == item_id)
             .cloned()
             .ok_or_else(|| "Item not found".to_string())
-    }
-
-    /// Decide whether an item should be downloaded as an "article" (HTML body
-    /// + inline media) versus as raw "media" (torrent/video/audio payload)
-    pub async fn is_article_item(&self, feed_id: &str, item_id: &str) -> Result<bool, String> {
-        let item = self.get_item(feed_id, item_id).await?;
-        Ok(classify_item_kind(&item) == ItemKind::Article)
     }
 
     pub async fn update_feed_settings(
@@ -358,18 +348,12 @@ impl RssManager {
     }
 
     pub async fn mark_item_read(&self, feed_id: &str, item_id: &str) -> Result<(), String> {
-        let mut s = self.store.lock().await;
-        if let Some(items) = s.items.get_mut(feed_id) {
-            if let Some(item) = items.iter_mut().find(|i| i.id == item_id) {
-                item.is_read = true;
-            }
-        }
-        drop(s);
-        self.save().await
+        self.mark_items_read(vec![(feed_id.to_string(), item_id.to_string())])
+            .await
     }
 
     /// Mark multiple items read in a single save. `entries` is a list of
-    /// `(feed_id, item_id)` pairs.
+    /// `(feed_id, item_id)` pairs
     pub async fn mark_items_read(&self, entries: Vec<(String, String)>) -> Result<(), String> {
         let mut s = self.store.lock().await;
         for (feed_id, item_id) in &entries {
@@ -447,25 +431,10 @@ impl RssManager {
         feed_id: &str,
         item_id: &str,
     ) -> Result<String, String> {
-        let s = self.store.lock().await;
-        let items = s
-            .items
-            .get(feed_id)
-            .ok_or_else(|| "Feed not found".to_string())?;
-        let item = items
-            .iter()
-            .find(|i| i.id == item_id)
-            .ok_or_else(|| "Item not found".to_string())?;
-
+        let item = self.get_item(feed_id, item_id).await?;
         item.enclosure_url
             .clone()
-            .or_else(|| {
-                if !item.link.is_empty() {
-                    Some(item.link.clone())
-                } else {
-                    None
-                }
-            })
+            .or_else(|| (!item.link.is_empty()).then(|| item.link.clone()))
             .ok_or_else(|| "No downloadable URL found for this item".to_string())
     }
 
@@ -478,16 +447,7 @@ impl RssManager {
         feed_id: &str,
         item_id: &str,
     ) -> Result<Vec<String>, String> {
-        let s = self.store.lock().await;
-        let items = s
-            .items
-            .get(feed_id)
-            .ok_or_else(|| "Feed not found".to_string())?;
-        let item = items
-            .iter()
-            .find(|i| i.id == item_id)
-            .ok_or_else(|| "Item not found".to_string())?;
-
+        let item = self.get_item(feed_id, item_id).await?;
         let mut urls: Vec<String> = Vec::new();
         if let Some(ref u) = item.enclosure_url {
             urls.push(u.clone());
@@ -511,18 +471,8 @@ impl RssManager {
         feed_id: &str,
         item_id: &str,
     ) -> Result<String, String> {
-        let s = self.store.lock().await;
-        let items = s
-            .items
-            .get(feed_id)
-            .ok_or_else(|| "Feed not found".to_string())?;
-        let item = items
-            .iter()
-            .find(|i| i.id == item_id)
-            .ok_or_else(|| "Item not found".to_string())?;
-
+        let item = self.get_item(feed_id, item_id).await?;
         item.download_path
-            .clone()
             .ok_or_else(|| "No download path recorded".to_string())
     }
 
@@ -630,7 +580,7 @@ impl RssManager {
         best
     }
 
-    /// Dry-run a rule against the most recent items (across all feeds).
+    /// Dry-run a rule against the most recent items (across all feeds)
     pub async fn dry_run_rule(&self, rule: RssRule, sample_size: usize) -> Vec<DryRunMatch> {
         let items: Vec<RssItem> = {
             let s = self.store.lock().await;
@@ -659,10 +609,6 @@ impl RssManager {
             .collect()
     }
 
-    pub async fn parse_item_title(&self, title: String) -> ParsedMeta {
-        parser::parse_title(&title)
-    }
-
     // Polling
 
     pub fn start_polling(rss: Arc<Self>) -> tokio::task::JoinHandle<()> {
@@ -684,7 +630,7 @@ impl RssManager {
                 tokio::time::sleep(tokio::time::Duration::from_secs(min_interval)).await;
 
                 // The global minimum is only the wake cadence; each feed keeps its own interval
-                let new_items_per_feed = rss.update_due_feeds().await;
+                let new_items_per_feed = rss.update_feeds(true).await;
 
                 // Auto-download matching items via the v2 rule engine
                 for (feed_id, new_items) in &new_items_per_feed {
@@ -852,7 +798,7 @@ impl RssManager {
             // Spawn a monitor task: wait for the primary download to complete,
             // then record the actual on-disk path and update episode history.
             // This mirrors the pattern in download_rss_item_tracked so that
-            // get_item_download_path and open-file affordances work correctly.
+            // get_item_download_path and open-file affordances work correctly
             let mon_store = Arc::clone(&self.store);
             let mon_storage = Arc::clone(&self.storage);
             let mon_feed_id = feed_id.to_string();
@@ -904,48 +850,16 @@ impl RssManager {
                                 .map(|p| p.to_string());
 
                             let mut s = mon_store.lock().await;
-                            if let Some(items) = s.items.get_mut(&mon_feed_id) {
-                                if let Some(it) = items.iter_mut().find(|i| i.id == mon_item_id) {
-                                    it.is_downloaded = true;
-                                    it.is_read = true;
-                                    it.download_path = download_path.clone();
-                                    it.matched_rule_id = Some(mon_rule_id.clone());
-                                }
-                            }
-                            if let Some(rule_mut) = s.rules.iter_mut().find(|r| r.id == mon_rule_id)
-                            {
-                                rule_mut.stats.last_matched_at = Some(mon_now);
-                                rule_mut.stats.match_count =
-                                    rule_mut.stats.match_count.saturating_add(1);
-                                rule_mut.stats.download_count =
-                                    rule_mut.stats.download_count.saturating_add(1);
-                            }
-                            if let Some(k) = mon_key {
-                                let storage_key = k.to_storage_key();
-                                s.episode_history.insert(
-                                    storage_key,
-                                    EpisodeRecord {
-                                        item_id: mon_item_id.clone(),
-                                        feed_id: mon_feed_id.clone(),
-                                        score: mon_score,
-                                        downloaded_at: mon_now,
-                                        file_path: download_path,
-                                        rule_id: Some(mon_rule_id.clone()),
-                                    },
-                                );
-                                if s.episode_history.len() > MAX_EPISODE_HISTORY {
-                                    let mut entries: Vec<(String, u64)> = s
-                                        .episode_history
-                                        .iter()
-                                        .map(|(k, v)| (k.clone(), v.downloaded_at))
-                                        .collect();
-                                    entries.sort_by_key(|(_, ts)| *ts);
-                                    let excess = s.episode_history.len() - MAX_EPISODE_HISTORY;
-                                    for (k, _) in entries.into_iter().take(excess) {
-                                        s.episode_history.remove(&k);
-                                    }
-                                }
-                            }
+                            record_download(
+                                &mut s,
+                                &mon_feed_id,
+                                &mon_item_id,
+                                &mon_rule_id,
+                                mon_key.as_ref(),
+                                mon_score,
+                                mon_now,
+                                download_path,
+                            );
                             let wrapper = serde_json::json!({ "data": *s });
                             drop(s);
                             let _ = mon_storage.save(RSS_STORE_KEY, &wrapper);
@@ -977,54 +891,21 @@ impl RssManager {
             });
 
             // Episode history and rule stats are handled by the monitor above.
-            // Return without the synchronous mark_item_downloaded call.
+            // Return without the synchronous mark_item_downloaded call
             return;
         };
 
-        let file_path_for_history = download_path.clone();
-        let _ = self
-            .mark_item_downloaded(feed_id, &item.id, download_path)
-            .await;
-
-        // Update episode-history and rule stats
         let mut s = self.store.lock().await;
-        if let Some(items) = s.items.get_mut(feed_id) {
-            if let Some(it) = items.iter_mut().find(|i| i.id == item.id) {
-                it.matched_rule_id = Some(rule.id.clone());
-            }
-        }
-        if let Some(rule_mut) = s.rules.iter_mut().find(|r| r.id == rule.id) {
-            rule_mut.stats.last_matched_at = Some(now);
-            rule_mut.stats.match_count = rule_mut.stats.match_count.saturating_add(1);
-            rule_mut.stats.download_count = rule_mut.stats.download_count.saturating_add(1);
-        }
-        if let Some(k) = key {
-            let storage_key = k.to_storage_key();
-            s.episode_history.insert(
-                storage_key,
-                EpisodeRecord {
-                    item_id: item.id.clone(),
-                    feed_id: feed_id.to_string(),
-                    score,
-                    downloaded_at: now,
-                    file_path: file_path_for_history,
-                    rule_id: Some(rule.id.clone()),
-                },
-            );
-            // Soft cap: prune oldest entries when we exceed the limit
-            if s.episode_history.len() > MAX_EPISODE_HISTORY {
-                let mut entries: Vec<(String, u64)> = s
-                    .episode_history
-                    .iter()
-                    .map(|(k, v)| (k.clone(), v.downloaded_at))
-                    .collect();
-                entries.sort_by_key(|(_, ts)| *ts);
-                let excess = s.episode_history.len() - MAX_EPISODE_HISTORY;
-                for (k, _) in entries.into_iter().take(excess) {
-                    s.episode_history.remove(&k);
-                }
-            }
-        }
+        record_download(
+            &mut s,
+            feed_id,
+            &item.id,
+            &rule.id,
+            key.as_ref(),
+            score,
+            now,
+            download_path,
+        );
         drop(s);
         let _ = self.save().await;
         tracing::info!("Auto-downloaded '{}' via rule '{}'", item.title, rule.name);
@@ -1052,6 +933,60 @@ fn validate_rule(rule: &RssRule) -> Result<(), String> {
 }
 
 // Helpers
+
+/// Post-download bookkeeping shared by both auto-download paths: flag the
+/// item, bump rule stats and record episode history (with a soft cap)
+#[allow(clippy::too_many_arguments)]
+fn record_download(
+    s: &mut RssStore,
+    feed_id: &str,
+    item_id: &str,
+    rule_id: &str,
+    key: Option<&EpisodeKey>,
+    score: i32,
+    now: u64,
+    path: Option<String>,
+) {
+    if let Some(items) = s.items.get_mut(feed_id) {
+        if let Some(it) = items.iter_mut().find(|i| i.id == item_id) {
+            it.is_downloaded = true;
+            it.is_read = true;
+            it.download_path = path.clone();
+            it.matched_rule_id = Some(rule_id.to_string());
+        }
+    }
+    if let Some(rule_mut) = s.rules.iter_mut().find(|r| r.id == rule_id) {
+        rule_mut.stats.last_matched_at = Some(now);
+        rule_mut.stats.match_count = rule_mut.stats.match_count.saturating_add(1);
+        rule_mut.stats.download_count = rule_mut.stats.download_count.saturating_add(1);
+    }
+    if let Some(k) = key {
+        s.episode_history.insert(
+            k.to_storage_key(),
+            EpisodeRecord {
+                item_id: item_id.to_string(),
+                feed_id: feed_id.to_string(),
+                score,
+                downloaded_at: now,
+                file_path: path,
+                rule_id: Some(rule_id.to_string()),
+            },
+        );
+        // Soft cap: prune oldest entries when we exceed the limit
+        if s.episode_history.len() > MAX_EPISODE_HISTORY {
+            let mut entries: Vec<(String, u64)> = s
+                .episode_history
+                .iter()
+                .map(|(k, v)| (k.clone(), v.downloaded_at))
+                .collect();
+            entries.sort_by_key(|(_, ts)| *ts);
+            let excess = s.episode_history.len() - MAX_EPISODE_HISTORY;
+            for (k, _) in entries.into_iter().take(excess) {
+                s.episode_history.remove(&k);
+            }
+        }
+    }
+}
 
 /// Shared HTTP client for RSS feed fetches. Building a fresh `Client` on every
 /// call would rebuild TLS state and drop keep-alive between polls, so cache
@@ -1123,6 +1058,15 @@ fn extract_items(feed_id: &str, entries: &[feed_rs::model::Entry]) -> Vec<RssIte
                 .or_else(|| entry.content.as_ref().and_then(|c| c.body.clone()))
                 .unwrap_or_default();
 
+            // Keep the full body separately: many feeds ship a short
+            // <description> plus a full <content:encoded>, and collapsing to
+            // just the summary loses the article
+            let content = entry
+                .content
+                .as_ref()
+                .and_then(|c| c.body.clone())
+                .unwrap_or_default();
+
             let pub_date = entry
                 .published
                 .or(entry.updated)
@@ -1151,6 +1095,7 @@ fn extract_items(feed_id: &str, entries: &[feed_rs::model::Entry]) -> Vec<RssIte
                 link,
                 pub_date,
                 description,
+                content,
                 enclosure_url: enc_url,
                 enclosure_type: enc_type,
                 enclosure_length: enc_len,
@@ -1190,16 +1135,16 @@ fn extract_enclosure(
         }
     }
 
-    if candidates.is_empty() {
-        return (None, None, None);
+    // Pick the highest-scoring candidate (first wins on ties). Score
+    // deprioritizes images so a cover-art / thumbnail JPG never wins over an
+    // actual torrent / video / audio payload
+    match candidates
+        .into_iter()
+        .min_by_key(|(url, mime, _)| std::cmp::Reverse(media_score(url, mime.as_deref())))
+    {
+        Some((url, mime, len)) => (Some(url), mime, len),
+        None => (None, None, None),
     }
-
-    // Pick the highest-scoring candidate. Score deprioritizes images so a
-    // cover-art / thumbnail JPG never wins over an actual torrent / video /
-    // audio payload
-    candidates.sort_by_key(|(url, mime, _)| std::cmp::Reverse(media_score(url, mime.as_deref())));
-    let (url, mime, len) = candidates.into_iter().next().unwrap();
-    (Some(url), mime, len)
 }
 
 /// Score a candidate enclosure so we prefer real media over thumbnails. Higher
@@ -1251,7 +1196,7 @@ const IMAGE_EXTS: &[&str] = &[
 ];
 
 fn has_media_ext(url: &str, exts: &[&str]) -> bool {
-    // Strip query / fragment before extension check.
+    // Strip query / fragment before extension check
     let path = url.split('?').next().unwrap_or(url);
     let path = path.split('#').next().unwrap_or(path);
     exts.iter().any(|e| path.ends_with(e))
@@ -1278,7 +1223,7 @@ fn extract_media_urls(entry: &feed_rs::model::Entry, primary: Option<&str>) -> V
             return;
         }
         // Only push absolute http(s) / magnet URLs — relative paths can't be
-        // resolved without a base href and would break the downloader.
+        // resolved without a base href and would break the downloader
         let lower = trimmed.to_ascii_lowercase();
         if !(lower.starts_with("http://")
             || lower.starts_with("https://")
@@ -1291,7 +1236,7 @@ fn extract_media_urls(entry: &feed_rs::model::Entry, primary: Option<&str>) -> V
         }
     };
 
-    // Extra enclosure links (besides the one extract_enclosure already picked).
+    // Extra enclosure links (besides the one extract_enclosure already picked)
     for link in &entry.links {
         if link.rel.as_deref() == Some("enclosure") {
             push(link.href.clone(), &mut out, &mut seen);
@@ -1305,7 +1250,7 @@ fn extract_media_urls(entry: &feed_rs::model::Entry, primary: Option<&str>) -> V
         }
     }
 
-    // HTML scrape from summary + content bodies.
+    // HTML scrape from summary + content bodies
     let mut bodies: Vec<&str> = Vec::new();
     if let Some(ref s) = entry.summary {
         bodies.push(&s.content);
@@ -1441,7 +1386,7 @@ pub enum ItemKind {
 /// values for application/video/audio/octet-stream
 const MEDIA_PAYLOAD_THRESHOLD: i32 = 400;
 
-/// Classify an item as media or article based on its enclosure metadata.
+/// Classify an item as media or article based on its enclosure metadata
 pub fn classify_item_kind(item: &RssItem) -> ItemKind {
     match item.enclosure_url.as_deref() {
         Some(url) => {
@@ -1466,10 +1411,15 @@ pub fn build_article_html(item: &RssItem) -> String {
     } else {
         html_escape(&item.title)
     };
-    let body = if item.description.is_empty() {
+    let body_src = if item.content.is_empty() {
+        &item.description
+    } else {
+        &item.content
+    };
+    let body = if body_src.is_empty() {
         "<p><em>(No content provided by the feed.)</em></p>".to_string()
     } else {
-        sanitize_article_html(&item.description)
+        sanitize_article_html(body_src)
     };
     // Only emit a <base> when the source link is an http(s) URL we can fully
     // escape. Non-http schemes (javascript:, data:, file:) would let the feed
@@ -1668,6 +1618,7 @@ mod tests {
             link: "https://example.com/item".into(),
             pub_date: Some(12345),
             description: "desc".into(),
+            content: String::new(),
             enclosure_url: Some("https://example.com/file.torrent".into()),
             enclosure_type: None,
             enclosure_length: None,
@@ -1706,7 +1657,7 @@ mod tests {
             media_score("magnet:?xt=urn:btih:abc", None)
                 > media_score("https://x/a.mp4", Some("video/mp4"))
         );
-        // Unknown mime falls back to extension hints.
+        // Unknown mime falls back to extension hints
         assert!(media_score("https://x/a.mkv", None) > media_score("https://x/a.png", None));
     }
 
@@ -1859,12 +1810,15 @@ mod tests {
             s.items
                 .insert("f1".into(), vec![sample_item("f1", "i1", "Item 1")]);
         }
-        rt.block_on(mgr.mark_item_downloaded("f1", "i1", Some("/downloads/file.txt".into())))
+        let file = ctx._dir.path().join("file.txt");
+        std::fs::write(&file, "x").unwrap();
+        let path = file.to_string_lossy().to_string();
+        rt.block_on(mgr.mark_item_downloaded("f1", "i1", Some(path.clone())))
             .unwrap();
         let items = rt.block_on(mgr.get_items("f1"));
         assert!(items[0].is_downloaded);
         assert!(items[0].is_read);
-        assert_eq!(items[0].download_path, Some("/downloads/file.txt".into()));
+        assert_eq!(items[0].download_path, Some(path));
     }
 
     #[test]
@@ -2134,6 +2088,49 @@ mod tests {
         let items = rt.block_on(mgr.get_items("f1"));
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].id, "i2");
+    }
+
+    #[test]
+    fn extract_items_keeps_full_content_alongside_summary() {
+        let xml = br#"<?xml version="1.0"?>
+<rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+<channel><title>t</title>
+<item>
+  <title>Post</title>
+  <link>https://example.com/post/</link>
+  <description>Short summary</description>
+  <content:encoded>&lt;p&gt;Full body here&lt;/p&gt;</content:encoded>
+</item>
+</channel></rss>"#;
+        let parsed = feed_rs::parser::parse(&xml[..]).unwrap();
+        let items = extract_items("f1", &parsed.entries);
+        assert_eq!(items[0].description, "Short summary");
+        assert!(items[0].content.contains("Full body here"));
+        let html = build_article_html(&items[0]);
+        assert!(html.contains("Full body here"));
+    }
+
+    #[test]
+    fn get_items_clears_downloaded_when_file_missing() {
+        let ctx = test_manager();
+        let mgr = &ctx.mgr;
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let file = ctx._dir.path().join("article.html");
+        std::fs::write(&file, "x").unwrap();
+        {
+            let mut s = mgr.store.blocking_lock();
+            s.feeds.push(sample_feed("f1", "https://a.com"));
+            let mut item = sample_item("f1", "i1", "Item 1");
+            item.is_downloaded = true;
+            item.download_path = Some(file.to_string_lossy().to_string());
+            s.items.insert("f1".into(), vec![item]);
+        }
+        let items = rt.block_on(mgr.get_items("f1"));
+        assert!(items[0].is_downloaded);
+        std::fs::remove_file(&file).unwrap();
+        let items = rt.block_on(mgr.get_items("f1"));
+        assert!(!items[0].is_downloaded);
+        assert!(items[0].download_path.is_none());
     }
 
     #[test]

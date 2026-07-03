@@ -571,23 +571,9 @@ fn interleave_by_family(addrs: impl Iterator<Item = SocketAddr>) -> Vec<SocketAd
 /// `url::Url::username()` / `password()` return the raw encoded form, but
 /// proxy auth needs the decoded bytes
 fn percent_decode_str(s: &str) -> String {
-    let bytes = s.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'%' && i + 2 < bytes.len() {
-            let hi = (bytes[i + 1] as char).to_digit(16);
-            let lo = (bytes[i + 2] as char).to_digit(16);
-            if let (Some(hi), Some(lo)) = (hi, lo) {
-                out.push(((hi << 4) | lo) as u8);
-                i += 3;
-                continue;
-            }
-        }
-        out.push(bytes[i]);
-        i += 1;
-    }
-    String::from_utf8_lossy(&out).into_owned()
+    percent_encoding::percent_decode_str(s)
+        .decode_utf8_lossy()
+        .into_owned()
 }
 
 /// SOCKS5 connect with optional local DNS and username/password auth

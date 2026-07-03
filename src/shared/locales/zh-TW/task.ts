@@ -135,6 +135,7 @@ export default {
 	"pause-task-success": '暫停任務 "{{taskName}}" 成功',
 	"pause-task-fail": '暫停任務 "{{taskName}}" 失敗',
 	"resume-task": "繼續任務",
+	"restart-task": "重新下載",
 	"stop-seeding": "停止做種",
 	"open-task": "開啟檔案",
 	"resume-task-success": '繼續任務 "{{taskName}}" 成功',
@@ -273,4 +274,9 @@ export default {
 	"mirror-remove": "移除鏡像",
 	"mirror-placeholder": "鏡像網址（同一檔案的其他伺服器）",
 	"mirror-hint": "新增指向同一檔案的鏡像網址，從多個來源並行下載。",
+	"detail-tab-general": "一般",
+	"detail-tab-activity": "活動",
+	"detail-tab-trackers": "Tracker",
+	"detail-tab-peers": "節點",
+	"detail-tab-files": "檔案",
 };

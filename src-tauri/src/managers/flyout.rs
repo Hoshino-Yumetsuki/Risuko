@@ -14,10 +14,6 @@ const FLYOUT_WIDTH: f64 = 396.0;
 #[cfg(not(target_os = "android"))]
 const FLYOUT_HEIGHT: f64 = 540.0;
 
-/// Gap in physical pixels between the tray icon and the flyout edge
-#[cfg(not(target_os = "android"))]
-const FLYOUT_GAP: i32 = 0;
-
 /// Create the flyout window
 #[cfg(not(target_os = "android"))]
 pub fn setup_flyout(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
@@ -55,6 +51,24 @@ pub fn setup_flyout(_app: &tauri::App) -> Result<(), Box<dyn std::error::Error>>
     Ok(())
 }
 
+/// Drop to Accessory policy when the flyout closes in tray mode, but only if the
+/// main window is hidden — demoting while it is visible deactivates the app and
+/// strands the window (no Dock icon, no Cmd-Tab)
+#[cfg(target_os = "macos")]
+pub fn demote_if_ui_hidden(app: &AppHandle) {
+    let run_mode = crate::utils::run_mode::current_run_mode(app);
+    if !crate::utils::run_mode::is_tray_mode(run_mode) {
+        return;
+    }
+    let main_visible = app
+        .get_webview_window("main")
+        .and_then(|w| w.is_visible().ok())
+        .unwrap_or(false);
+    if !main_visible {
+        let _ = app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+    }
+}
+
 /// Cache the tray icon rect
 #[cfg(not(target_os = "android"))]
 pub fn cache_tray_rect(app: &AppHandle, rect: &tauri::Rect, scale_factor: f64) {
@@ -77,13 +91,7 @@ pub fn toggle_flyout(app: &AppHandle) {
 
     if window.is_visible().unwrap_or(false) {
         #[cfg(target_os = "macos")]
-        {
-            // Only set Accessory policy when in tray mode
-            let run_mode = crate::utils::run_mode::current_run_mode(app);
-            if crate::utils::run_mode::is_tray_mode(run_mode) {
-                let _ = app.set_activation_policy(tauri::ActivationPolicy::Accessory);
-            }
-        }
+        demote_if_ui_hidden(app);
         let _ = window.hide();
         return;
     }
@@ -91,7 +99,7 @@ pub fn toggle_flyout(app: &AppHandle) {
     position_flyout(app, &window);
     let _ = window.show();
     let _ = window.set_focus();
-    // Wake the webview's polling loop so the panel is fresh on open.
+    // Wake the webview's polling loop so the panel is fresh on open
     let _ = window.emit("flyout:show", ());
 }
 
@@ -140,16 +148,15 @@ fn position_flyout(app: &AppHandle, window: &WebviewWindow) {
     // Window size in physical pixels
     let win_w = FLYOUT_WIDTH * scale;
     let win_h = FLYOUT_HEIGHT * scale;
-    let gap = FLYOUT_GAP as f64 * scale;
 
     // Decide above vs below using the icon center relative to the work area
     let in_top_half = icon_center_y < wa_y + wa_h / 2.0;
     let mut y = if in_top_half {
         // Place below the icon
-        icon_y + icon_h + gap
+        icon_y + icon_h
     } else {
         // Place above the icon
-        icon_y - win_h - gap
+        icon_y - win_h
     };
 
     // Horizontally center on the icon

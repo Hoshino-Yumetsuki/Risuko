@@ -32,7 +32,7 @@ pub fn is_gnutella_uri(uri: &str) -> bool {
 }
 
 /// Parse a content-direct Gnutella URI of the form
-/// `gnutella://host[:port]/uri-res/N2R?urn:sha1:<base32>[&dn=&xl=]`.
+/// `gnutella://host[:port]/uri-res/N2R?urn:sha1:<base32>[&dn=&xl=]`
 /// Returns `None` for malformed input or non-Gnutella schemes
 pub fn parse_gnutella_uri(uri: &str) -> Option<GnutellaLink> {
     let s = uri.trim();
@@ -94,25 +94,9 @@ pub fn parse_gnutella_uri(uri: &str) -> Option<GnutellaLink> {
 }
 
 fn url_decode(s: &str) -> String {
-    let bytes = s.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        let b = bytes[i];
-        if b == b'%' && i + 2 < bytes.len() {
-            if let (Some(h), Some(l)) = (
-                (bytes[i + 1] as char).to_digit(16),
-                (bytes[i + 2] as char).to_digit(16),
-            ) {
-                out.push((h * 16 + l) as u8);
-                i += 3;
-                continue;
-            }
-        }
-        out.push(if b == b'+' { b' ' } else { b });
-        i += 1;
-    }
-    String::from_utf8_lossy(&out).into_owned()
+    percent_encoding::percent_decode_str(&s.replace('+', " "))
+        .decode_utf8_lossy()
+        .to_string()
 }
 
 #[cfg(test)]

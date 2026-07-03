@@ -1,5 +1,5 @@
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -15,7 +15,7 @@ static TEMP_DIR_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// Run an M3U8/HLS download
 /// Main entry point called from manager.rs
-/// Returns the final output file path on success.
+/// Returns the final output file path on success
 #[allow(clippy::too_many_arguments)]
 pub async fn run_m3u8_download(
     uri: &str,
@@ -25,7 +25,6 @@ pub async fn run_m3u8_download(
     total: Arc<AtomicU64>,
     completed: Arc<AtomicU64>,
     speed: Arc<AtomicU64>,
-    cancelled: Arc<AtomicBool>,
     connections: Arc<AtomicU32>,
     cancel_token: CancellationToken,
     global_limiter: Arc<SpeedLimiter>,
@@ -78,7 +77,7 @@ pub async fn run_m3u8_download(
         return Err("Media playlist has no segments".to_string());
     }
 
-    check_cancelled(&cancelled, &cancel_token)?;
+    check_cancelled(&cancel_token)?;
 
     let total_segments = segments.len();
     tracing::info!(
@@ -120,7 +119,6 @@ pub async fn run_m3u8_download(
         total.clone(),
         completed.clone(),
         connections.clone(),
-        cancelled.clone(),
         cancel_token.clone(),
         global_limiter,
         task_limiter,
@@ -142,7 +140,7 @@ pub async fn run_m3u8_download(
     speed.store(0, Ordering::Relaxed);
     speed_tracker.abort();
 
-    check_cancelled(&cancelled, &cancel_token)?;
+    check_cancelled(&cancel_token)?;
 
     // Concatenate segments into final output
     let final_ts_path = concatenate_segments_unique(&seg_paths, dir_path, &filename).await?;
@@ -185,8 +183,8 @@ pub async fn run_m3u8_download(
     Ok(final_path)
 }
 
-fn check_cancelled(cancelled: &AtomicBool, cancel_token: &CancellationToken) -> Result<(), String> {
-    if cancelled.load(Ordering::Relaxed) || cancel_token.is_cancelled() {
+fn check_cancelled(cancel_token: &CancellationToken) -> Result<(), String> {
+    if cancel_token.is_cancelled() {
         return Err("cancelled".to_string());
     }
     Ok(())
@@ -277,18 +275,6 @@ fn infer_filename_from_uri(uri: &str) -> String {
     }
 }
 
-fn sanitize_filename(name: &str) -> String {
-    name.chars()
-        .map(|c| {
-            if c.is_alphanumeric() || c == '-' || c == '_' || c == '.' {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect()
-}
-
 fn temp_dir_name_for(filename: &str) -> String {
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -297,7 +283,7 @@ fn temp_dir_name_for(filename: &str) -> String {
     let counter = TEMP_DIR_COUNTER.fetch_add(1, Ordering::Relaxed);
     format!(
         ".m3u8_{}_{}_{}_{}",
-        sanitize_filename(filename),
+        crate::engine::util::safe_filename(filename, "download"),
         std::process::id(),
         nonce,
         counter
@@ -305,7 +291,7 @@ fn temp_dir_name_for(filename: &str) -> String {
 }
 
 fn final_path_candidate(dir: &Path, filename: &str, n: u32) -> PathBuf {
-    let sanitized = sanitize_filename(filename);
+    let sanitized = crate::engine::util::safe_filename(filename, "download");
     if n == 0 {
         return dir.join(sanitized);
     }
@@ -329,73 +315,32 @@ async fn concatenate_segments_unique(
     output_dir: &Path,
     filename: &str,
 ) -> Result<PathBuf, String> {
-    for n in 0u32.. {
-        let output_path = final_path_candidate(output_dir, filename, n);
-        match concatenate_segments_to_new_file(segment_paths, &output_path).await {
-            Ok(()) => return Ok(output_path),
-            Err(ConcatError::AlreadyExists) => continue,
-            Err(ConcatError::Failed(message)) => return Err(message),
-        }
+    let output_path = reserve_unique_output_path(output_dir, filename).await?;
+    if let Err(e) = concatenate_segments(segment_paths, &output_path).await {
+        let _ = tokio::fs::remove_file(&output_path).await;
+        return Err(e);
     }
-
-    Err("Failed to reserve M3U8 output filename".to_string())
+    Ok(output_path)
 }
 
-enum ConcatError {
-    AlreadyExists,
-    Failed(String),
-}
-
-async fn concatenate_segments_to_new_file(
-    segment_paths: &[PathBuf],
-    output_path: &Path,
-) -> Result<(), ConcatError> {
-    let mut output = tokio::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(output_path)
+async fn concatenate_segments(segment_paths: &[PathBuf], output_path: &Path) -> Result<(), String> {
+    let mut output = tokio::fs::File::create(output_path)
         .await
-        .map_err(|e| {
-            if e.kind() == std::io::ErrorKind::AlreadyExists {
-                ConcatError::AlreadyExists
-            } else {
-                ConcatError::Failed(format!("Failed to create output file: {e}"))
-            }
-        })?;
+        .map_err(|e| format!("Failed to create output file: {e}"))?;
 
     for path in segment_paths {
-        if !path.exists() {
-            let _ = tokio::fs::remove_file(output_path).await;
-            return Err(ConcatError::Failed(format!(
-                "Missing segment file: {}",
-                path.display()
-            )));
-        }
-        let mut seg_file = match tokio::fs::File::open(path).await {
-            Ok(file) => file,
-            Err(e) => {
-                let _ = tokio::fs::remove_file(output_path).await;
-                return Err(ConcatError::Failed(format!(
-                    "Failed to open segment {}: {e}",
-                    path.display()
-                )));
-            }
-        };
-
-        if let Err(e) = tokio::io::copy(&mut seg_file, &mut output).await {
-            let _ = tokio::fs::remove_file(output_path).await;
-            return Err(ConcatError::Failed(format!(
-                "Failed to write to output: {e}"
-            )));
-        }
+        let mut seg_file = tokio::fs::File::open(path)
+            .await
+            .map_err(|e| format!("Failed to open segment {}: {e}", path.display()))?;
+        tokio::io::copy(&mut seg_file, &mut output)
+            .await
+            .map_err(|e| format!("Failed to write to output: {e}"))?;
     }
 
-    output.flush().await.map_err(|e| {
-        let _ = std::fs::remove_file(output_path);
-        ConcatError::Failed(format!("Failed to flush output: {e}"))
-    })?;
-
-    Ok(())
+    output
+        .flush()
+        .await
+        .map_err(|e| format!("Failed to flush output: {e}"))
 }
 
 /// Attempt to remux .ts to .mp4 using system ffmpeg
@@ -417,16 +362,6 @@ async fn remux_to_mp4(ts_path: &Path) -> Result<PathBuf, String> {
         })
         .ok_or_else(|| "M3U8 output filename is not valid UTF-8".to_string())?;
     let mp4_path = reserve_unique_output_path(parent, &mp4_name).await?;
-
-    // Check ffmpeg availability
-    let ffmpeg_check = tokio::process::Command::new("ffmpeg")
-        .arg("-version")
-        .output()
-        .await;
-
-    if ffmpeg_check.is_err() {
-        return Err("ffmpeg not found on system PATH".to_string());
-    }
 
     let output = tokio::process::Command::new("ffmpeg")
         .arg("-i")
@@ -490,13 +425,6 @@ mod tests {
             infer_filename_from_uri("https://example.com/video.m3u"),
             "video.ts"
         );
-    }
-
-    #[test]
-    fn test_sanitize_filename() {
-        assert_eq!(sanitize_filename("hello world.ts"), "hello_world.ts");
-        assert_eq!(sanitize_filename("video/name:1.ts"), "video_name_1.ts");
-        assert_eq!(sanitize_filename("normal-file_01.ts"), "normal-file_01.ts");
     }
 
     #[test]

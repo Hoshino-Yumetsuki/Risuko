@@ -35,9 +35,6 @@ export const useAuthStore = defineStore("auth", {
 				(api.config?.cloudSyncServerUrl as string) || "https://api.risuko.app"
 			);
 		},
-		isServerConfigured(): boolean {
-			return !!this.serverUrl;
-		},
 	},
 	actions: {
 		getAuthHeaders() {
@@ -45,9 +42,6 @@ export const useAuthStore = defineStore("auth", {
 		},
 
 		async fetchServerConfig(): Promise<void> {
-			if (!this.serverUrl) {
-				return;
-			}
 			try {
 				const { data } = await syncAxios.get(`${this.serverUrl}/config`);
 				this.serverConfig = data.authMethods;

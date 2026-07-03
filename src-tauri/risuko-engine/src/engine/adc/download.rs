@@ -9,12 +9,12 @@
 //!   don't surface a search UI
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 
 use tokio_util::sync::CancellationToken;
 
-use super::types::{is_adc_uri, parse_adc_hub_uri, parse_dchub_file_uri, AdcError, HubDialect};
+use super::types::{is_adc_uri, parse_adc_hub_uri, parse_dchub_file_uri, AdcError};
 use crate::engine::options::EngineOptions;
 
 /// Run a single ADC / NMDC download to completion. Parses the URI, opens
@@ -24,11 +24,10 @@ use crate::engine::options::EngineOptions;
 pub async fn run_adc_download(
     uri: &str,
     dir: &str,
-    opts: &EngineOptions,
+    _opts: &EngineOptions,
     total: Arc<AtomicU64>,
     completed: Arc<AtomicU64>,
     speed: Arc<AtomicU64>,
-    cancel: Arc<AtomicBool>,
     connections: Arc<AtomicU32>,
     cancel_token: CancellationToken,
 ) -> Result<PathBuf, String> {
@@ -38,7 +37,7 @@ pub async fn run_adc_download(
         return Err(format!("not an ADC/DC URI: {uri}"));
     }
 
-    let hub = parse_adc_hub_uri(uri).map_err(|e| e.to_string())?;
+    parse_adc_hub_uri(uri).map_err(|e| e.to_string())?;
     let file = parse_dchub_file_uri(uri).ok_or_else(|| {
         "ADC/DC hub-only URIs (without TTH+size+name) are not yet supported".to_string()
     })?;
@@ -52,23 +51,15 @@ pub async fn run_adc_download(
 
     total.store(file.file_size, Ordering::Relaxed);
 
-    let nick = opts
-        .get_str("adc-nick")
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| "Risuko".to_string());
-
-    if cancel.load(Ordering::Relaxed) || cancel_token.is_cancelled() {
+    if cancel_token.is_cancelled() {
         return Err("cancelled".into());
     }
 
     // Passive-only mode,  don't bind a listening socket, so the peer
     // negotiation (`$ConnectToMe` / ADC `CTM`) cannot complete. Bail out
     // before performing hub I/O so the task fails fast instead of hanging
-    let _ = (&nick, &tth, &completed, dir);
-    match hub.dialect {
-        HubDialect::Nmdc => Err(AdcError::NoSource.to_string()),
-        HubDialect::Adc => Err(AdcError::NoSource.to_string()),
-    }
+    let _ = (&tth, &completed, dir);
+    Err(AdcError::NoSource.to_string())
 }
 
 #[cfg(test)]
@@ -77,11 +68,10 @@ mod tests {
 
     #[tokio::test]
     async fn rejects_non_adc_uri() {
-        let (total, completed, speed, cancel, conns) = (
+        let (total, completed, speed, conns) = (
             Arc::new(AtomicU64::new(0)),
             Arc::new(AtomicU64::new(0)),
             Arc::new(AtomicU64::new(0)),
-            Arc::new(AtomicBool::new(false)),
             Arc::new(AtomicU32::new(0)),
         );
         let opts = EngineOptions::from_config(&serde_json::Map::new(), &serde_json::Map::new());
@@ -92,7 +82,6 @@ mod tests {
             total,
             completed,
             speed,
-            cancel,
             conns,
             CancellationToken::new(),
         )
@@ -102,11 +91,10 @@ mod tests {
 
     #[tokio::test]
     async fn rejects_hub_only_uri_without_tth() {
-        let (total, completed, speed, cancel, conns) = (
+        let (total, completed, speed, conns) = (
             Arc::new(AtomicU64::new(0)),
             Arc::new(AtomicU64::new(0)),
             Arc::new(AtomicU64::new(0)),
-            Arc::new(AtomicBool::new(false)),
             Arc::new(AtomicU32::new(0)),
         );
         let opts = EngineOptions::from_config(&serde_json::Map::new(), &serde_json::Map::new());
@@ -117,7 +105,6 @@ mod tests {
             total,
             completed,
             speed,
-            cancel,
             conns,
             CancellationToken::new(),
         )

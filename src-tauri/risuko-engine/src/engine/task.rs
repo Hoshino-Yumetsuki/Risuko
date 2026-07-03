@@ -1,10 +1,11 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum TaskStatus {
     Active,
+    #[default]
     Waiting,
     Paused,
     Complete,
@@ -35,9 +36,10 @@ impl std::fmt::Display for TaskStatus {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum TaskKind {
+    #[default]
     Http,
     #[serde(alias = "youtube")]
     Media,
@@ -77,14 +79,12 @@ pub struct FileUri {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PeerInfo {
-    pub peer_id: String,
     pub ip: String,
     pub port: String,
-    pub bitfield: String,
+    #[serde(default)]
+    pub percent: u8,
     pub am_choking: String,
     pub peer_choking: String,
-    pub download_speed: String,
-    pub upload_speed: String,
     pub seeder: String,
 }
 
@@ -94,7 +94,7 @@ pub struct ChunkProgress {
     pub total: u64,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Default, Serialize, Deserialize)]
 pub struct DownloadTask {
     pub gid: String,
     pub status: TaskStatus,
@@ -197,37 +197,14 @@ impl DownloadTask {
 
         Self {
             gid,
-            status: TaskStatus::Waiting,
-            kind: TaskKind::Http,
             uris,
             dir,
             out,
-            total_length: 0,
-            completed_length: 0,
-            download_speed: 0,
-            upload_speed: 0,
-            upload_length: 0,
-            connections: 0,
             files: initial_files,
-            error_code: None,
-            error_message: None,
             options,
             tag,
-            info_hash: None,
-            info_hash_v2: None,
-            meta_version: None,
-            bt_name: None,
-            seeder: false,
-            num_seeders: 0,
-            peers: Vec::new(),
-            piece_length: 0,
-            num_pieces: 0,
-            bt_comment: None,
-            bt_creation_date: None,
-            bt_announce_list: Vec::new(),
             created_at: now_ms(),
-            seeding_since: 0,
-            chunk_progress: Vec::new(),
+            ..Default::default()
         }
     }
 
@@ -264,37 +241,15 @@ impl DownloadTask {
 
         Self {
             gid,
-            status: TaskStatus::Waiting,
             kind: TaskKind::Media,
             uris: vec![uri],
             dir,
             out,
-            total_length: 0,
-            completed_length: 0,
-            download_speed: 0,
-            upload_speed: 0,
-            upload_length: 0,
-            connections: 0,
             files: initial_files,
-            error_code: None,
-            error_message: None,
             options,
             tag,
-            info_hash: None,
-            info_hash_v2: None,
-            meta_version: None,
-            bt_name: None,
-            seeder: false,
-            num_seeders: 0,
-            peers: Vec::new(),
-            piece_length: 0,
-            num_pieces: 0,
-            bt_comment: None,
-            bt_creation_date: None,
-            bt_announce_list: Vec::new(),
             created_at: now_ms(),
-            seeding_since: 0,
-            chunk_progress: Vec::new(),
+            ..Default::default()
         }
     }
 
@@ -312,37 +267,13 @@ impl DownloadTask {
 
         Self {
             gid,
-            status: TaskStatus::Waiting,
             kind: TaskKind::Torrent,
-            uris: Vec::new(),
             dir,
             out,
-            total_length: 0,
-            completed_length: 0,
-            download_speed: 0,
-            upload_speed: 0,
-            upload_length: 0,
-            connections: 0,
-            files: Vec::new(),
-            error_code: None,
-            error_message: None,
             options,
             tag,
-            info_hash: None,
-            info_hash_v2: None,
-            meta_version: None,
-            bt_name: None,
-            seeder: false,
-            num_seeders: 0,
-            peers: Vec::new(),
-            piece_length: 0,
-            num_pieces: 0,
-            bt_comment: None,
-            bt_creation_date: None,
-            bt_announce_list: Vec::new(),
             created_at: now_ms(),
-            seeding_since: 0,
-            chunk_progress: Vec::new(),
+            ..Default::default()
         }
     }
 
@@ -385,37 +316,16 @@ impl DownloadTask {
 
         Self {
             gid,
-            status: TaskStatus::Waiting,
             kind: TaskKind::Ed2k,
             uris: vec![uri],
             dir,
             out,
             total_length: file_size,
-            completed_length: 0,
-            download_speed: 0,
-            upload_speed: 0,
-            upload_length: 0,
-            connections: 0,
             files: initial_files,
-            error_code: None,
-            error_message: None,
             options,
             tag,
-            info_hash: None,
-            info_hash_v2: None,
-            meta_version: None,
-            bt_name: None,
-            seeder: false,
-            num_seeders: 0,
-            peers: Vec::new(),
-            piece_length: 0,
-            num_pieces: 0,
-            bt_comment: None,
-            bt_creation_date: None,
-            bt_announce_list: Vec::new(),
             created_at: now_ms(),
-            seeding_since: 0,
-            chunk_progress: Vec::new(),
+            ..Default::default()
         }
     }
 
@@ -457,37 +367,15 @@ impl DownloadTask {
 
         Self {
             gid,
-            status: TaskStatus::Waiting,
             kind: TaskKind::M3u8,
             uris: vec![uri],
             dir,
             out,
-            total_length: 0,
-            completed_length: 0,
-            download_speed: 0,
-            upload_speed: 0,
-            upload_length: 0,
-            connections: 0,
             files: initial_files,
-            error_code: None,
-            error_message: None,
             options,
             tag,
-            info_hash: None,
-            info_hash_v2: None,
-            meta_version: None,
-            bt_name: None,
-            seeder: false,
-            num_seeders: 0,
-            peers: Vec::new(),
-            piece_length: 0,
-            num_pieces: 0,
-            bt_comment: None,
-            bt_creation_date: None,
-            bt_announce_list: Vec::new(),
             created_at: now_ms(),
-            seeding_since: 0,
-            chunk_progress: Vec::new(),
+            ..Default::default()
         }
     }
 
@@ -525,44 +413,21 @@ impl DownloadTask {
 
         Self {
             gid,
-            status: TaskStatus::Waiting,
             kind: TaskKind::Ftp,
             uris: vec![uri],
             dir,
             out,
-            total_length: 0,
-            completed_length: 0,
-            download_speed: 0,
-            upload_speed: 0,
-            upload_length: 0,
-            connections: 0,
             files: initial_files,
-            error_code: None,
-            error_message: None,
             options,
             tag,
-            info_hash: None,
-            info_hash_v2: None,
-            meta_version: None,
-            bt_name: None,
-            seeder: false,
-            num_seeders: 0,
-            peers: Vec::new(),
-            piece_length: 0,
-            num_pieces: 0,
-            bt_comment: None,
-            bt_creation_date: None,
-            bt_announce_list: Vec::new(),
             created_at: now_ms(),
-            seeding_since: 0,
-            chunk_progress: Vec::new(),
+            ..Default::default()
         }
     }
 
     /// Generic constructor for the legacy P2P / IPC protocols (ADC, Gnutella,
-    /// G2, giFT). All share the same shape: a single
-    /// URI, an inferred output filename, and no protocol-specific top-level
-    /// fields beyond what the URI carries.
+    /// G2, giFT). All share the same shape: a single URI, an inferred output
+    /// filename, and no protocol-specific top-level fields beyond the URI
     pub fn new_simple_protocol(
         gid: String,
         kind: TaskKind,
@@ -601,37 +466,16 @@ impl DownloadTask {
 
         Self {
             gid,
-            status: TaskStatus::Waiting,
             kind,
             uris: vec![uri],
             dir,
             out,
             total_length: size_hint,
-            completed_length: 0,
-            download_speed: 0,
-            upload_speed: 0,
-            upload_length: 0,
-            connections: 0,
             files: initial_files,
-            error_code: None,
-            error_message: None,
             options,
             tag,
-            info_hash: None,
-            info_hash_v2: None,
-            meta_version: None,
-            bt_name: None,
-            seeder: false,
-            num_seeders: 0,
-            peers: Vec::new(),
-            piece_length: 0,
-            num_pieces: 0,
-            bt_comment: None,
-            bt_creation_date: None,
-            bt_announce_list: Vec::new(),
             created_at: now_ms(),
-            seeding_since: 0,
-            chunk_progress: Vec::new(),
+            ..Default::default()
         }
     }
 
@@ -663,9 +507,9 @@ impl DownloadTask {
             Value::String(self.status.as_str().to_string()),
         );
         // Lowercase task kind (http/ftp/torrent/ed2k/m3u8/media/adc/gnutella/g2/gift).
-        // Surfaces protocol family to the frontend so policy decisions (e.g. skipping
-        // peer-swarm tasks from low-speed pause/resume recovery) don't have to infer
-        // it from optional sentinel fields
+        // Surfaces the protocol family so the frontend's policy decisions (e.g.
+        // skipping peer-swarm tasks from low-speed pause/resume recovery) don't
+        // infer it from optional sentinel fields
         if let Ok(Value::String(kind)) = serde_json::to_value(self.kind) {
             m.insert("kind".into(), Value::String(kind));
         }
@@ -699,16 +543,10 @@ impl DownloadTask {
         }
 
         if want_files {
-            if !self.files.is_empty() {
-                let files_val: Vec<Value> = self
-                    .files
-                    .iter()
-                    .map(|f| serde_json::to_value(f).unwrap_or(Value::Null))
-                    .collect();
-                m.insert("files".into(), Value::Array(files_val));
-            } else {
-                m.insert("files".into(), Value::Array(Vec::new()));
-            }
+            m.insert(
+                "files".into(),
+                serde_json::to_value(&self.files).unwrap_or_default(),
+            );
         }
 
         if let Some(ref code) = self.error_code {
@@ -826,14 +664,7 @@ impl DownloadTask {
 
 pub fn generate_gid() -> String {
     use rand::RngExt;
-    use std::fmt::Write;
-    let mut rng = rand::rng();
-    let bytes: [u8; 8] = rng.random();
-    let mut s = String::with_capacity(16);
-    for b in bytes {
-        let _ = write!(s, "{b:02x}");
-    }
-    s
+    format!("{:016x}", rand::rng().random::<u64>())
 }
 
 use crate::engine::util::now_ms;

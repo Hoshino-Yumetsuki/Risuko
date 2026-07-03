@@ -12,7 +12,7 @@ use tauri::{
 use tauri::{App, AppHandle};
 
 #[cfg(not(target_os = "android"))]
-use super::{emit_command, flyout, show_and_emit};
+use super::{emit_command, flyout, menu::get_menu_text, show_and_emit};
 
 #[cfg(not(target_os = "android"))]
 fn tray_event_rect(event: &TrayIconEvent) -> Option<(&tauri::Rect, (f64, f64))> {
@@ -27,71 +27,27 @@ fn tray_event_rect(event: &TrayIconEvent) -> Option<(&tauri::Rect, (f64, f64))> 
 }
 
 #[cfg(not(target_os = "android"))]
-fn get_tray_menu_text(labels: &HashMap<String, String>, id: &str, fallback: &str) -> String {
-    labels
-        .get(id)
-        .map(|value| value.trim())
-        .filter(|value| !value.is_empty())
-        .unwrap_or(fallback)
-        .to_string()
-}
-
-#[cfg(not(target_os = "android"))]
 fn build_tray_menu(
     handle: &AppHandle,
     labels: &HashMap<String, String>,
 ) -> Result<Menu<tauri::Wry>, Box<dyn std::error::Error>> {
-    let new_task = MenuItemBuilder::with_id(
-        "tray-new-task",
-        get_tray_menu_text(labels, "tray-new-task", "New Task"),
-    )
-    .build(handle)?;
-    let new_bt_task = MenuItemBuilder::with_id(
-        "tray-new-bt-task",
-        get_tray_menu_text(labels, "tray-new-bt-task", "New BT Task"),
-    )
-    .build(handle)?;
-    let open_file = MenuItemBuilder::with_id(
-        "tray-open-file",
-        get_tray_menu_text(labels, "tray-open-file", "Open Torrent File..."),
-    )
-    .build(handle)?;
+    let item = |id: &str, fb: &str| {
+        MenuItemBuilder::with_id(id, get_menu_text(labels, id, fb)).build(handle)
+    };
+
+    let new_task = item("tray-new-task", "New Task")?;
+    let new_bt_task = item("tray-new-bt-task", "New BT Task")?;
+    let open_file = item("tray-open-file", "Open Torrent File...")?;
     let sep1 = PredefinedMenuItem::separator(handle)?;
-    let show = MenuItemBuilder::with_id(
-        "tray-show",
-        get_tray_menu_text(labels, "tray-show", "Show Risuko"),
-    )
-    .build(handle)?;
-    let quick_panel = MenuItemBuilder::with_id(
-        "tray-quick-panel",
-        get_tray_menu_text(labels, "tray-quick-panel", "Quick Panel"),
-    )
-    .build(handle)?;
-    let manual = MenuItemBuilder::with_id(
-        "tray-manual",
-        get_tray_menu_text(labels, "tray-manual", "Manual"),
-    )
-    .build(handle)?;
-    let check_updates = MenuItemBuilder::with_id(
-        "tray-check-updates",
-        get_tray_menu_text(labels, "tray-check-updates", "Check for Updates..."),
-    )
-    .build(handle)?;
+    let show = item("tray-show", "Show Risuko")?;
+    let quick_panel = item("tray-quick-panel", "Quick Panel")?;
+    let manual = item("tray-manual", "Manual")?;
+    let check_updates = item("tray-check-updates", "Check for Updates...")?;
     let sep2 = PredefinedMenuItem::separator(handle)?;
-    let task_list = MenuItemBuilder::with_id(
-        "tray-task-list",
-        get_tray_menu_text(labels, "tray-task-list", "Task List"),
-    )
-    .build(handle)?;
-    let preferences = MenuItemBuilder::with_id(
-        "tray-preferences",
-        get_tray_menu_text(labels, "tray-preferences", "Preferences..."),
-    )
-    .build(handle)?;
+    let task_list = item("tray-task-list", "Task List")?;
+    let preferences = item("tray-preferences", "Preferences...")?;
     let sep3 = PredefinedMenuItem::separator(handle)?;
-    let quit =
-        MenuItemBuilder::with_id("tray-quit", get_tray_menu_text(labels, "tray-quit", "Quit"))
-            .build(handle)?;
+    let quit = item("tray-quit", "Quit")?;
 
     let menu = MenuBuilder::new(handle)
         .items(&[

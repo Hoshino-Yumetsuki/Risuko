@@ -34,19 +34,6 @@ pub enum Error {
 
 pub type Result<T> = std::result::Result<T, Error>;
 
-impl Error {
-    pub fn is_timeout(&self) -> bool {
-        matches!(self, Error::Timeout)
-    }
-
-    pub fn status(&self) -> Option<http::StatusCode> {
-        match self {
-            Error::Status(s) => Some(*s),
-            _ => None,
-        }
-    }
-}
-
 impl From<url::ParseError> for Error {
     fn from(e: url::ParseError) -> Self {
         Error::Url(e.to_string())

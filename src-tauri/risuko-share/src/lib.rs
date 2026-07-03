@@ -7,7 +7,7 @@ use std::{
         atomic::{AtomicBool, Ordering},
         Arc, Mutex,
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use anyhow::{Context, Result};
@@ -18,7 +18,11 @@ use iroh::{
     Endpoint, EndpointId, RelayMode,
 };
 use iroh_blobs::{
-    api::{downloader::DownloadProgressItem, downloader::Shuffled, Store},
+    api::{
+        blobs::{AddPathOptions, ExportMode, ExportOptions, ImportMode},
+        downloader::{DownloadProgressItem, Shuffled},
+        Store,
+    },
     format::collection::Collection,
     provider::events::{
         ConnectMode, EventMask, EventSender, ProviderMessage, RequestMode, RequestUpdate,
@@ -35,6 +39,7 @@ struct SendProgressTracker {
     total: u64,
     finished: u64,
     current_end: u64,
+    last_emit: Instant,
 }
 
 impl SendProgressTracker {
@@ -55,8 +60,9 @@ fn watch_send_request(
             if stop.load(Ordering::Relaxed) {
                 break;
             }
-            let transferred = {
+            let emit = {
                 let mut state = tracker.lock().unwrap();
+                let mut force = false;
                 match update {
                     RequestUpdate::Started { .. } => {
                         state.current_end = 0;
@@ -67,18 +73,24 @@ fn watch_send_request(
                     RequestUpdate::Completed(done) => {
                         state.finished += done.stats.payload_bytes_sent;
                         state.current_end = 0;
+                        force = true;
                     }
                     RequestUpdate::Aborted(_) => break,
                 }
-                state.transferred()
+                let now = Instant::now();
+                if force || now.duration_since(state.last_emit) >= PROGRESS_EMIT_INTERVAL {
+                    state.last_emit = now;
+                    Some((state.transferred(), state.total))
+                } else {
+                    None
+                }
             };
-            let _ = events.send(ShareEnvelope {
-                id: id.clone(),
-                event: ShareEvent::Progress {
-                    transferred,
-                    total: tracker.lock().unwrap().total,
-                },
-            });
+            if let Some((transferred, total)) = emit {
+                let _ = events.send(ShareEnvelope {
+                    id: id.clone(),
+                    event: ShareEvent::Progress { transferred, total },
+                });
+            }
         }
     });
 }
@@ -114,6 +126,9 @@ fn begin_send_transfer(
 /// Interval for polling the active connection path
 const PATH_POLL_INTERVAL: Duration = Duration::from_millis(700);
 const ONLINE_TIMEOUT: Duration = Duration::from_secs(6);
+/// Minimum interval between forwarded progress events; raw updates arrive
+/// per network chunk and would flood the Tauri IPC bridge on fast links.
+const PROGRESS_EMIT_INTERVAL: Duration = Duration::from_millis(100);
 
 /// Bind an iroh endpoint with n0 relays but WITHOUT DNS-based discovery
 async fn bind_endpoint() -> Result<Endpoint> {
@@ -232,6 +247,12 @@ impl ShareManager {
     pub async fn start_send(&self, id: String, paths: Vec<PathBuf>) -> Result<SendInfo> {
         anyhow::ensure!(!paths.is_empty(), "no files selected");
 
+        let endpoint_task = tokio::spawn(async {
+            let endpoint = bind_endpoint().await?;
+            let _ = tokio::time::timeout(ONLINE_TIMEOUT, endpoint.online()).await;
+            anyhow::Ok(endpoint)
+        });
+
         let blobs_dir = self.data_dir.join(format!("send-{id}"));
         tokio::fs::create_dir_all(&blobs_dir).await.ok();
 
@@ -248,8 +269,7 @@ impl ShareManager {
             .context("failed to open blob store")?
             .into();
 
-        // Expand the selection
-        let mut entries: Vec<(String, PathBuf)> = Vec::new();
+        let mut entries: Vec<(String, PathBuf, u64)> = Vec::new();
         let mut has_dir = false;
         for path in &paths {
             let abs = std::path::absolute(path)?;
@@ -258,32 +278,43 @@ impl ShareManager {
                 has_dir = true;
                 collect_dir(&abs, &file_name(&abs), &mut entries)?;
             } else {
-                entries.push((file_name(&abs), abs));
+                entries.push((file_name(&abs), abs, meta.len()));
             }
         }
         anyhow::ensure!(!entries.is_empty(), "no files to send");
 
-        let mut files = Vec::with_capacity(entries.len());
-        for (name, abs) in &entries {
-            let size = std::fs::metadata(abs).map(|m| m.len()).unwrap_or(0);
-            files.push(FileMeta {
+        let files: Vec<FileMeta> = entries
+            .iter()
+            .map(|(name, _, size)| FileMeta {
                 name: name.clone(),
-                size,
-            });
-        }
+                size: *size,
+            })
+            .collect();
+
+        let import_opts = |path: PathBuf| AddPathOptions {
+            path,
+            mode: ImportMode::TryReference,
+            format: BlobFormat::Raw,
+        };
 
         let ticket_hash;
         let ticket_format;
 
         // A lone single file transfers as a raw blob
         if entries.len() == 1 && !has_dir {
-            let tag = store.blobs().add_path(&entries[0].1).await?;
+            let tag = store
+                .blobs()
+                .add_path_with_opts(import_opts(entries[0].1.clone()))
+                .await?;
             ticket_hash = tag.hash;
             ticket_format = tag.format;
         } else {
             let mut items: Vec<(String, Hash)> = Vec::with_capacity(entries.len());
-            for (name, abs) in &entries {
-                let tag = store.blobs().add_path(abs).await?;
+            for (name, abs, _) in &entries {
+                let tag = store
+                    .blobs()
+                    .add_path_with_opts(import_opts(abs.clone()))
+                    .await?;
                 items.push((name.clone(), tag.hash));
             }
             let collection = Collection::from_iter(items);
@@ -293,9 +324,7 @@ impl ShareManager {
             ticket_format = BlobFormat::HashSeq;
         }
 
-        let endpoint = bind_endpoint().await?;
-        // Wait (bounded) for a relay so the ticket embeds reachable addresses
-        let _ = tokio::time::timeout(ONLINE_TIMEOUT, endpoint.online()).await;
+        let endpoint = endpoint_task.await??;
         let addr = endpoint.addr();
 
         let blobs = BlobsProtocol::new(&store, Some(event_tx));
@@ -317,6 +346,7 @@ impl ShareManager {
             total: total_bytes,
             finished: 0,
             current_end: 0,
+            last_emit: Instant::now(),
         }));
         let event_task = tokio::spawn(async move {
             let mut peer: Option<EndpointId> = None;
@@ -557,6 +587,7 @@ async fn run_receive(
         .stream()
         .await?;
 
+    let mut last_emit: Option<Instant> = None;
     while let Some(item) = stream.next().await {
         if stop.load(Ordering::Relaxed) {
             path_handle.abort();
@@ -564,13 +595,7 @@ async fn run_receive(
         }
         match item {
             DownloadProgressItem::Progress(offset) => {
-                let _ = events.send(ShareEnvelope {
-                    id: id.to_string(),
-                    event: ShareEvent::Progress {
-                        transferred: offset,
-                        total,
-                    },
-                });
+                emit_receive_progress(events, id, &mut last_emit, offset, total, false);
             }
             DownloadProgressItem::Error(err) => {
                 path_handle.abort();
@@ -583,9 +608,9 @@ async fn run_receive(
             _ => {}
         }
     }
+    emit_receive_progress(events, id, &mut last_emit, total, total, true);
     path_handle.abort();
 
-    // Export downloaded blob(s) to the destination directory
     match format {
         BlobFormat::Raw => {
             let name = files.first().map(|f| f.name.as_str()).unwrap_or("");
@@ -593,7 +618,14 @@ async fn run_receive(
             if let Some(parent) = target.parent() {
                 tokio::fs::create_dir_all(parent).await.ok();
             }
-            store.blobs().export(hash, target).await?;
+            store
+                .blobs()
+                .export_with_opts(ExportOptions {
+                    hash,
+                    mode: ExportMode::TryReference,
+                    target,
+                })
+                .await?;
         }
         _ => {
             let collection = Collection::load(hash, &store).await?;
@@ -603,13 +635,39 @@ async fn run_receive(
                     tokio::fs::create_dir_all(parent).await.ok();
                 }
                 let target = dedupe_path(target).await;
-                store.blobs().export(*child, target).await?;
+                store
+                    .blobs()
+                    .export_with_opts(ExportOptions {
+                        hash: *child,
+                        mode: ExportMode::TryReference,
+                        target,
+                    })
+                    .await?;
             }
         }
     }
 
     let _ = store.shutdown().await;
     Ok(())
+}
+
+fn emit_receive_progress(
+    events: &UnboundedSender<ShareEnvelope>,
+    id: &str,
+    last_emit: &mut Option<Instant>,
+    transferred: u64,
+    total: u64,
+    force: bool,
+) {
+    let now = Instant::now();
+    if !force && last_emit.is_some_and(|t| now.duration_since(t) < PROGRESS_EMIT_INTERVAL) {
+        return;
+    }
+    *last_emit = Some(now);
+    let _ = events.send(ShareEnvelope {
+        id: id.to_string(),
+        event: ShareEvent::Progress { transferred, total },
+    });
 }
 
 /// Poll the active connection path for a remote and emit [`ShareEvent::Path`]
@@ -664,8 +722,8 @@ fn classify_path(info: &iroh::endpoint::RemoteInfo) -> PathKind {
     }
 }
 
-/// Recursively collect files under `dir`
-fn collect_dir(dir: &Path, prefix: &str, out: &mut Vec<(String, PathBuf)>) -> Result<()> {
+/// Recursively collect files (with sizes) under `dir`
+fn collect_dir(dir: &Path, prefix: &str, out: &mut Vec<(String, PathBuf, u64)>) -> Result<()> {
     let read = std::fs::read_dir(dir).with_context(|| format!("failed to read {dir:?}"))?;
     for entry in read {
         let entry = entry?;
@@ -678,7 +736,8 @@ fn collect_dir(dir: &Path, prefix: &str, out: &mut Vec<(String, PathBuf)>) -> Re
         if file_type.is_dir() {
             collect_dir(&entry.path(), &rel, out)?;
         } else if file_type.is_file() {
-            out.push((rel, entry.path()));
+            let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
+            out.push((rel, entry.path(), size));
         }
         // symlinks (file_type.is_symlink()) are intentionally skipped
     }
@@ -735,4 +794,28 @@ fn sanitize_rel_path(name: &str) -> PathBuf {
         out.push("risuko-received");
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn receiver_forces_final_progress_emit() {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut last_emit = Some(Instant::now());
+        emit_receive_progress(&tx, "t1", &mut last_emit, 100, 100, true);
+
+        let env = rx
+            .try_recv()
+            .expect("forced final emit must punch through the throttle");
+        assert_eq!(env.id, "t1");
+        assert!(matches!(
+            env.event,
+            ShareEvent::Progress {
+                transferred: 100,
+                total: 100
+            }
+        ));
+    }
 }

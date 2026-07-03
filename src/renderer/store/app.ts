@@ -57,7 +57,6 @@ export const useAppStore = defineStore("app", {
 			version: "",
 			enabledFeatures: [],
 		},
-		engineOptions: {},
 		interval: BASE_INTERVAL,
 		stat: {
 			downloadSpeed: 0,
@@ -109,19 +108,6 @@ export const useAppStore = defineStore("app", {
 				return null;
 			}
 		},
-		async fetchEngineOptions() {
-			try {
-				const data = await api.getGlobalOption();
-				this.engineOptions = { ...this.engineOptions, ...data };
-				return data;
-			} catch (err: unknown) {
-				logger.warn(
-					"[Risuko] fetchEngineOptions failed:",
-					(err as Error).message,
-				);
-				return null;
-			}
-		},
 		async fetchGlobalStat() {
 			try {
 				const data = await api.getGlobalStat();
@@ -138,11 +124,10 @@ export const useAppStore = defineStore("app", {
 					stat.downloadSpeed = 0;
 					this.increaseInterval();
 				}
-				// Only commit when at least one tracked field actually
-				// changed. Idle ticks otherwise produce identical stats
-				// every poll, and unconditional assignment churns Vue
-				// reactive observers all over the renderer (subnav badges,
-				// speedometer, tray, header) for no real change
+				// only commit when a tracked field changed — idle ticks produce
+				// identical stats every poll, and blind assignment churns Vue
+				// observers across the renderer (subnav badges, speedometer,
+				// tray, header) for nothing
 				const prev = this.stat as Record<string, number>;
 				let changed = false;
 				for (const k of Object.keys(stat)) {
@@ -214,9 +199,6 @@ export const useAppStore = defineStore("app", {
 				this.cloudflareSkipHosts.push(host);
 			}
 		},
-		changeAddTaskType(taskType: string) {
-			this.addTaskType = taskType;
-		},
 		updateAddTaskUrl(uri = "") {
 			this.addTaskUrl = uri;
 		},
@@ -249,18 +231,8 @@ export const useAppStore = defineStore("app", {
 		updateAddTaskOptions(options = {}) {
 			this.addTaskOptions = { ...options };
 		},
-		updateInterval(millisecond: number) {
-			let interval = millisecond;
-			if (millisecond > MAX_INTERVAL) {
-				interval = MAX_INTERVAL;
-			}
-			if (millisecond < MIN_INTERVAL) {
-				interval = MIN_INTERVAL;
-			}
-			if (this.interval === interval) {
-				return;
-			}
-			this.interval = interval;
+		updateInterval(ms: number) {
+			this.interval = Math.min(MAX_INTERVAL, Math.max(MIN_INTERVAL, ms));
 		},
 		resetInterval() {
 			this.interval = BASE_INTERVAL;
@@ -325,11 +297,9 @@ export const useAppStore = defineStore("app", {
 		},
 		async fetchProgress() {
 			try {
-				const data = await api.fetchActiveTaskList({
+				const tasks = await api.fetchActiveTaskList({
 					keys: ["totalLength", "completedLength"],
 				});
-				const tasks = Array.isArray(data) ? data : [];
-				let progress = -1;
 
 				if (tasks.length === 0) {
 					this.progress = -1;
@@ -337,23 +307,7 @@ export const useAppStore = defineStore("app", {
 					return;
 				}
 
-				try {
-					const nativeProgress = Number(
-						await api.calculateActiveTaskProgress({ tasks }),
-					);
-					const normalizedNativeProgress =
-						nativeProgress === 2 ? -1 : nativeProgress;
-					progress = Number.isFinite(normalizedNativeProgress)
-						? normalizedNativeProgress
-						: calcRendererProgress(tasks);
-				} catch (nativeErr) {
-					logger.warn(
-						"[Risuko] calculateActiveTaskProgress failed, fallback to renderer:",
-						(nativeErr as Error)?.message || nativeErr,
-					);
-					progress = calcRendererProgress(tasks);
-				}
-
+				const progress = calcRendererProgress(tasks);
 				this.progress = progress === 2 ? -1 : progress;
 				await this.syncAndroidDownloadNotification({
 					progress: this.progress,

@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
-/// Risuko error codes for download failures.
+/// Risuko error codes for download failures
 ///
 /// Codes are grouped by category:
 /// - 1xx: General / unknown errors
@@ -9,7 +9,6 @@ use std::fmt;
 /// - 3xx: HTTP errors (4xx/5xx responses, redirects)
 /// - 4xx: File system errors (disk full, permission, path)
 /// - 5xx: Protocol-specific errors (torrent, ed2k, m3u8, ftp)
-/// - 6xx: Resource errors (out of memory, too many connections)
 /// - 9xx: Internal / engine errors
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ErrorCode(pub u16);
@@ -17,8 +16,6 @@ pub struct ErrorCode(pub u16);
 impl ErrorCode {
     // -- General --
     pub const UNKNOWN: Self = Self(100);
-    pub const CANCELLED: Self = Self(101);
-    pub const CHECKSUM_MISMATCH: Self = Self(102);
 
     // -- Network --
     pub const DNS_RESOLUTION_FAILED: Self = Self(200);
@@ -48,10 +45,6 @@ impl ErrorCode {
     // -- File system --
     pub const DISK_FULL: Self = Self(400);
     pub const PERMISSION_DENIED: Self = Self(401);
-    pub const FILE_NOT_FOUND: Self = Self(402);
-    pub const FILE_ALREADY_EXISTS: Self = Self(403);
-    pub const INVALID_PATH: Self = Self(404);
-    pub const IO_ERROR: Self = Self(405);
 
     // -- Protocol-specific --
     pub const TORRENT_METADATA_FAILED: Self = Self(500);
@@ -75,79 +68,8 @@ impl ErrorCode {
     pub const MEDIA_AUTH_REQUIRED: Self = Self(541);
     pub const MEDIA_FORMAT_UNAVAILABLE: Self = Self(542);
 
-    // -- Resource --
-    pub const OUT_OF_MEMORY: Self = Self(600);
-    pub const TOO_MANY_CONNECTIONS: Self = Self(601);
-
     // -- Internal --
     pub const ENGINE_NOT_RUNNING: Self = Self(900);
-    pub const INVALID_PARAMETER: Self = Self(901);
-    pub const SESSION_CORRUPT: Self = Self(902);
-
-    pub fn code(&self) -> u16 {
-        self.0
-    }
-
-    pub fn description(&self) -> &'static str {
-        match self.0 {
-            100 => "Unknown error",
-            101 => "Download cancelled",
-            102 => "Checksum verification failed",
-
-            200 => "DNS resolution failed",
-            201 => "Connection refused by remote host",
-            202 => "Connection reset by remote host",
-            203 => "Connection timed out",
-            204 => "Network unreachable",
-            205 => "TLS/SSL handshake failed",
-            206 => "Proxy connection failed",
-
-            300 => "HTTP 401 Unauthorized",
-            301 => "HTTP 403 Forbidden",
-            302 => "HTTP 404 Not Found",
-            303 => "HTTP 416 Range Not Satisfiable",
-            304 => "HTTP 429 Too Many Requests",
-            305 => "HTTP 5xx Server Error",
-            306 => "HTTP 503 Service Unavailable",
-            307 => "Too many redirects",
-            308 => "HTTP response error",
-            315 => "Cloudflare challenge detected",
-
-            400 => "Disk full or quota exceeded",
-            401 => "Permission denied",
-            402 => "File not found on disk",
-            403 => "File already exists",
-            404 => "Invalid file path",
-            405 => "I/O error",
-
-            500 => "Failed to resolve torrent metadata",
-            501 => "No seeds available for torrent",
-            502 => "Invalid torrent file",
-            503 => "BitTorrent v2 piece layers unavailable",
-            510 => "ED2K server unreachable",
-            511 => "File not found on ED2K network",
-            520 => "Failed to parse M3U8 playlist",
-            521 => "Failed to download M3U8 segment",
-            522 => "Failed to decrypt M3U8 segment",
-            530 => "FTP login failed",
-            531 => "File not found on FTP server",
-            532 => "FTP transfer failed",
-            533 => "SFTP authentication failed",
-            534 => "SFTP host key verification failed",
-            540 => "yt-dlp not found in PATH",
-            541 => "Media authentication required",
-            542 => "Media format unavailable",
-
-            600 => "Out of memory",
-            601 => "Too many concurrent connections",
-
-            900 => "Engine not running",
-            901 => "Invalid parameter",
-            902 => "Session data corrupt",
-
-            _ => "Unknown error",
-        }
-    }
 }
 
 impl fmt::Display for ErrorCode {
@@ -175,9 +97,9 @@ fn contains_status(haystack: &str, code: &str) -> bool {
     false
 }
 
-/// Classify an error message string into an appropriate error code.
+/// Classify an error message string into an error code
 ///
-/// For HTTP downloads, also pass the protocol kind for better classification.
+/// For HTTP downloads, also pass the protocol kind for better classification
 pub fn classify_error(msg: &str, protocol: &str) -> ErrorCode {
     let lower = msg.to_lowercase();
 

@@ -128,7 +128,7 @@ pub fn parse_title(raw: &str) -> ParsedMeta {
 
     meta.quality_tags = quality_tags;
 
-    // Year (avoid swallowing into series). Take the first occurrence.
+    // Year (avoid swallowing into series). Take the first occurrence
     if let Some(c) = r.year.captures(title) {
         if let Ok(y) = c.get(1).unwrap().as_str().parse::<u32>() {
             meta.year = Some(y);
@@ -147,7 +147,7 @@ pub fn parse_title(raw: &str) -> ParsedMeta {
         if let Some(c) = r.group.captures(title) {
             let candidate = c.get(1).unwrap().as_str();
             // Heuristic: avoid matching quality / codec / source-suffix tokens
-            // (e.g. the trailing "DL" of "WEB-DL", "RIP" of "BD-RIP").
+            // (e.g. the trailing "DL" of "WEB-DL", "RIP" of "BD-RIP")
             let lower = candidate.to_lowercase();
             let is_known_token = matches!(
                 lower.as_str(),
@@ -194,7 +194,6 @@ pub fn parse_title(raw: &str) -> ParsedMeta {
     if let Some(c) = r.season_episode.captures(title) {
         meta.season = c.get(1).and_then(|m| m.as_str().parse().ok());
         meta.episode = c.get(2).and_then(|m| m.as_str().parse().ok());
-        meta.episode_end = c.get(3).and_then(|m| m.as_str().parse().ok());
         ep_match_end = c.get(0).map(|m| m.start());
     } else if let Some(c) = r.season_episode_x.captures(title) {
         meta.season = c.get(1).and_then(|m| m.as_str().parse().ok());
@@ -207,7 +206,7 @@ pub fn parse_title(raw: &str) -> ParsedMeta {
         ep_match_end = c.get(0).map(|m| m.start());
     } else if let Some(c) = r.anime_loose.captures(title) {
         // Only accept if surrounded by anime-style markers AND title has a
-        // bracket group (to reduce false positives).
+        // bracket group (to reduce false positives)
         if meta.group.is_some() {
             let n: Option<u32> = c.get(1).and_then(|m| m.as_str().parse().ok());
             if let Some(n) = n {
