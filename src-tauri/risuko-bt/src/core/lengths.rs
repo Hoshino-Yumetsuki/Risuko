@@ -17,12 +17,6 @@ pub enum LengthError {
     BadPieceIndex(u32),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct PieceInfo {
-    pub piece_index: ValidPieceIndex,
-    pub len: u32,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ChunkInfo {
     pub piece_index: ValidPieceIndex,
@@ -120,13 +114,6 @@ impl Lengths {
             self.last_piece_length
         } else {
             self.piece_length
-        }
-    }
-
-    pub fn piece_info(&self, idx: ValidPieceIndex) -> PieceInfo {
-        PieceInfo {
-            piece_index: idx,
-            len: self.piece_length_of(idx),
         }
     }
 

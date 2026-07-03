@@ -1,10 +1,8 @@
 <template>
   <Dialog :open="visible" @update:open="handleDialogOpenChange">
     <DialogContent class="app-about-dialog" :show-close-button="true">
-      <mo-app-info :version="version" :engine="engineInfo" />
-      <DialogFooter>
-        <mo-copyright />
-      </DialogFooter>
+      <app-info :version="version" :engine="engineInfo" />
+      <copyright />
     </DialogContent>
   </Dialog>
 </template>
@@ -12,15 +10,14 @@
 <script lang="ts">
 import AppInfo from "@/components/About/AppInfo.vue";
 import Copyright from "@/components/About/Copyright.vue";
-import { Dialog, DialogContent, DialogFooter } from "@/components/ui/dialog";
+import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { useAppStore } from "@/store/app";
 
 export default {
-	name: "mo-about-panel",
+	name: "about-panel",
 	components: {
 		Dialog,
 		DialogContent,
-		DialogFooter,
 		[AppInfo.name]: AppInfo,
 		[Copyright.name]: Copyright,
 	},

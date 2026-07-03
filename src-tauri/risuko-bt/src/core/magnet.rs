@@ -8,7 +8,6 @@
 use std::str::FromStr;
 
 use super::hash::{Id20, Id32};
-use super::metainfo::TorrentInfoHashes;
 
 #[derive(Debug, thiserror::Error)]
 pub enum MagnetError {
@@ -50,17 +49,6 @@ impl Magnet {
     /// v2 (SHA-256) infohash if present
     pub fn info_hash_v2(&self) -> Option<Id32> {
         self.info_hash_v2
-    }
-
-    pub fn hashes(&self) -> TorrentInfoHashes {
-        TorrentInfoHashes {
-            v1: self.info_hash_v1,
-            v2: self.info_hash_v2,
-        }
-    }
-
-    pub fn as_id20(&self) -> Option<Id20> {
-        Some(self.info_hash)
     }
 
     pub fn parse(input: &str) -> Result<Self, MagnetError> {

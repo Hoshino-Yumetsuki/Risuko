@@ -1,4 +1,3 @@
-/* Torrent upload and select */
 @layer components {
 	.upload-torrent {
 		width: 100%;
@@ -30,12 +29,12 @@
 	}
 	.upload-torrent-drop .upload-text {
 		font-size: 14px;
-		color: var(--mo-color-text-secondary, #606266);
+		color: var(--text-2);
 	}
 	.upload-torrent-drop .torrent-name {
 		margin-top: 4px;
 		font-size: 13px;
-		color: #909399;
+		color: var(--text-3);
 		line-height: 16px;
 	}
 	.selective-torrent .torrent-name {
@@ -219,9 +218,6 @@
 		display: flex;
 		justify-content: flex-end;
 		margin-top: 10px;
-	}
-	.dark .upload-torrent-drop {
-		border-color: rgba(255, 255, 255, 0.12);
 	}
 	.dark .upload-torrent-drop .upload-text {
 		color: var(--muted-foreground);

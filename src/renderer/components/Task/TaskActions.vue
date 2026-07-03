@@ -118,15 +118,13 @@ import {
 	RefreshCw,
 	Trash2,
 } from "@lucide/vue";
-import { ADD_TASK_TYPE } from "@shared/constants";
 import { bytesToSize } from "@shared/utils";
 import { toast } from "vue-sonner";
 import { commands } from "@/components/CommandManager/instance";
-import { useAppStore } from "@/store/app";
 import { useTaskStore } from "@/store/task";
 
 export default {
-	name: "mo-task-actions",
+	name: "task-actions",
 	components: {
 		Trash2,
 		RefreshCw,
@@ -137,7 +135,6 @@ export default {
 		ArrowUp,
 		ArrowDown,
 	},
-	props: ["task"],
 	data() {
 		return {
 			refreshing: false,
@@ -147,9 +144,6 @@ export default {
 	computed: {
 		currentList() {
 			return useTaskStore().currentList;
-		},
-		taskList() {
-			return useTaskStore().taskList;
 		},
 		selectedGidListCount() {
 			return useTaskStore().selectedGidList.length;
@@ -314,9 +308,6 @@ export default {
 						this.$msg.error(this.$t("task.purge-record-fail"));
 					}
 				});
-		},
-		onAddClick() {
-			useAppStore().showAddTaskDialog(ADD_TASK_TYPE.URI);
 		},
 		formatBytes(value, precision = 1) {
 			return bytesToSize(value, precision);

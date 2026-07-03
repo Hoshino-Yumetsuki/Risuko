@@ -1,6 +1,6 @@
 use serde_json::{Map, Value};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
@@ -18,10 +18,6 @@ pub fn is_youtube_uri(uri: &str) -> bool {
         return false;
     }
 
-    if trimmed.starts_with("https://youtu.be/") || trimmed.starts_with("http://youtu.be/") {
-        return true;
-    }
-
     let parsed = match url::Url::parse(trimmed) {
         Ok(url) => url,
         Err(_) => return false,
@@ -32,12 +28,7 @@ pub fn is_youtube_uri(uri: &str) -> bool {
         None => return false,
     };
 
-    host == "youtube.com"
-        || host == "www.youtube.com"
-        || host == "m.youtube.com"
-        || host == "music.youtube.com"
-        || host.ends_with(".youtube.com")
-        || host == "youtu.be"
+    host == "youtube.com" || host.ends_with(".youtube.com") || host == "youtu.be"
 }
 
 const MEDIA_HOST_SUFFIXES: &[&str] = &[
@@ -75,11 +66,6 @@ pub fn is_media_uri(uri: &str) -> bool {
         return false;
     }
 
-    // Bare-host shorthand for youtu.be (kept parity with is_youtube_uri)
-    if trimmed.starts_with("https://youtu.be/") || trimmed.starts_with("http://youtu.be/") {
-        return true;
-    }
-
     let parsed = match url::Url::parse(trimmed) {
         Ok(url) => url,
         Err(_) => return false,
@@ -102,7 +88,7 @@ pub fn is_media_uri(uri: &str) -> bool {
         .any(|suffix| host == *suffix || host.ends_with(&format!(".{suffix}")))
 }
 
-/// Read the per-task `force-ytdlp` flag (accepts bool or "true"/"false" case-insensitive).
+/// Read the per-task `force-ytdlp` flag (accepts bool or "true"/"false" case-insensitive)
 pub fn is_force_ytdlp(options: &Map<String, Value>) -> bool {
     options
         .get("force-ytdlp")
@@ -131,7 +117,7 @@ pub async fn check_yt_dlp_available() -> Result<(), String> {
 }
 
 /// Probe for an ffmpeg binary on PATH, returning its path if usable. The
-/// result is cached for the process lifetime.
+/// result is cached for the process lifetime
 pub async fn find_ffmpeg() -> Option<PathBuf> {
     FFMPEG_PATH
         .get_or_init(|| async {
@@ -150,11 +136,6 @@ pub async fn find_ffmpeg() -> Option<PathBuf> {
         })
         .await
         .clone()
-}
-
-/// True when ffmpeg is available to merge/remux yt-dlp output
-pub async fn ffmpeg_available() -> bool {
-    find_ffmpeg().await.is_some()
 }
 
 fn parse_na_u64(s: &str) -> Option<u64> {
@@ -213,7 +194,6 @@ pub async fn run_media_download(
     total: Arc<AtomicU64>,
     completed: Arc<AtomicU64>,
     speed: Arc<AtomicU64>,
-    cancel: Arc<AtomicBool>,
     connections: Arc<AtomicU32>,
     cancel_token: CancellationToken,
     // Sender for the resolved destination filename
@@ -330,7 +310,6 @@ pub async fn run_media_download(
     loop {
         tokio::select! {
             _ = cancel_token.cancelled() => {
-                cancel.store(true, Ordering::Relaxed);
                 let _ = child.kill().await;
                 let _ = child.wait().await;
                 let _ = stderr_task.await;
@@ -411,16 +390,7 @@ pub async fn run_media_download(
 
     let stderr_lines = stderr_task.await.unwrap_or_default();
     if !status.success() {
-        let stderr_summary = stderr_lines
-            .iter()
-            .rev()
-            .take(5)
-            .cloned()
-            .collect::<Vec<_>>()
-            .into_iter()
-            .rev()
-            .collect::<Vec<_>>()
-            .join("\n");
+        let stderr_summary = stderr_lines[stderr_lines.len().saturating_sub(5)..].join("\n");
         if stderr_summary.is_empty() {
             return Err(format!("yt-dlp failed with exit code {:?}", status.code()));
         }
@@ -573,15 +543,8 @@ pub async fn get_media_info(url: &str, options: &Map<String, Value>) -> Result<M
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        let last = stderr
-            .lines()
-            .rev()
-            .take(3)
-            .collect::<Vec<_>>()
-            .into_iter()
-            .rev()
-            .collect::<Vec<_>>()
-            .join("\n");
+        let lines: Vec<_> = stderr.lines().collect();
+        let last = lines[lines.len().saturating_sub(3)..].join("\n");
         return Err(if last.is_empty() {
             format!("yt-dlp failed with exit code {:?}", output.status.code())
         } else {

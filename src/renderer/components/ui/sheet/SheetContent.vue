@@ -37,7 +37,7 @@ const forwarded = useForwardPropsEmits(delegatedProps, emits);
       data-slot="sheet-content"
       :class="
         cn(
-          'mo-sheet-anim bg-background fixed z-50 flex flex-col gap-4 shadow-lg',
+          'sheet-anim bg-background fixed z-50 flex flex-col gap-4 shadow-lg',
           side === 'right' &&
             'inset-y-0 right-0 h-full w-3/4 border-l sm:max-w-sm',
           side === 'left' &&
@@ -55,7 +55,6 @@ const forwarded = useForwardPropsEmits(delegatedProps, emits);
       <DialogClose
         class="focus:ring-ring/50 data-[state=open]:bg-secondary absolute top-4 right-4 rounded-xs opacity-70 transition-opacity hover:opacity-100 focus:ring-2 focus:outline-hidden disabled:pointer-events-none"
       >
-        <!-- <X class="size-4" /> -->
         <span class="sr-only">Close</span>
       </DialogClose>
     </DialogContent>

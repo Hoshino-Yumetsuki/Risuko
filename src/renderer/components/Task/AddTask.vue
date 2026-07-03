@@ -21,7 +21,6 @@
       </DialogHeader>
 
       <div class="atd-scroll min-h-0 flex-1 overflow-y-auto">
-        <!-- Drop / Input zone -->
         <div class="flex flex-col gap-2 px-4 pt-3">
           <Textarea
             ref="uri"
@@ -58,7 +57,6 @@
           </div>
         </div>
 
-        <!-- Queue zone -->
         <div class="mt-3 mb-12 px-4">
           <div
             v-if="queue.length === 0"
@@ -83,7 +81,7 @@
                 :exit="motionExit"
                 :transition="motionTransition"
               >
-                <mo-batch-item-card
+                <batch-item-card
                   :item="item"
                   :disabled="submitting"
                   @remove="removeItem"
@@ -96,22 +94,21 @@
           </Accordion>
         </div>
 
-        <!-- Shared options -->
         <div class="border-t border-border/60 px-4 py-3">
           <div class="grid grid-cols-[1fr_88px] gap-2">
             <div>
               <label class="mb-1 block text-[11px] text-muted-foreground">{{ $t('task.task-dir') }}</label>
-              <div class="mo-input-group mo-input-group--bordered">
-                <span class="mo-input-prepend">
-                  <mo-history-directory @selected="handleHistoryDirectorySelected" />
+              <div class="input-group input-group--bordered">
+                <span class="input-prepend">
+                  <history-directory @selected="handleHistoryDirectorySelected" />
                 </span>
                 <Input
                   v-model="form.dir"
                   readonly
                   class="path-indicator-field flex-1 shadow-none rounded-none border-none noinput"
                 />
-                <span class="mo-input-append" v-if="isRenderer">
-                  <mo-select-directory @selected="handleNativeDirectorySelected" />
+                <span class="input-append" v-if="isRenderer">
+                  <select-directory @selected="handleNativeDirectorySelected" />
                 </span>
               </div>
             </div>
@@ -122,7 +119,6 @@
           </div>
         </div>
 
-        <!-- Advanced options -->
         <AnimatePresence>
           <Motion
             v-if="showAdvanced"
@@ -285,7 +281,7 @@
           </Motion>
         </div>
       </DialogFooter>
-      <mo-loading-overlay :show="submitting" :text="$t('task.loading-add-task')" />
+      <loading-overlay :show="submitting" :text="$t('task.loading-add-task')" />
     </DialogContent>
   </Dialog>
 </template>
@@ -348,7 +344,7 @@ interface FileLikeWithPath {
 }
 
 export default {
-	name: "mo-add-task",
+	name: "add-task-dialog",
 	components: {
 		[BatchItemCard.name]: BatchItemCard,
 		[HistoryDirectory.name]: HistoryDirectory,
@@ -392,7 +388,6 @@ export default {
 	},
 	computed: {
 		isRenderer: () => is.renderer(),
-		isMas: () => is.mas(),
 		queue(): BatchQueueItem[] {
 			return useAppStore().addTaskQueue;
 		},
@@ -424,9 +419,6 @@ export default {
 			return this.queue.length + this.draftLinkCount;
 		},
 		cookiePickerUrl(): string {
-			// A draft can hold a magnet alongside an HTTP URL on later
-			// lines; only the HTTP one is meaningful for the cookie
-			// picker, so scan all parsed links rather than just the first
 			const fromDraft = splitTaskLinks(this.uriDraft || "").find((u) =>
 				/^https?:\/\//i.test(u),
 			);
@@ -519,7 +511,6 @@ export default {
 				app: useAppStore().$state,
 				preference: usePreferenceStore().$state,
 			});
-			// pull pre-seeded torrents (drag-drop or commands)
 			const seeded = useAppStore().addTaskTorrents;
 			if (seeded.length > 0) {
 				const items = seeded
@@ -530,7 +521,6 @@ export default {
 				}
 				useAppStore().addTaskAddTorrents({ fileList: [] });
 			}
-			// pre-seeded uri
 			const seededUri = useAppStore().addTaskUrl;
 			let hasSeededUri = false;
 			if (seededUri?.trim()) {
@@ -541,24 +531,28 @@ export default {
 			}
 			this.lastQueueLength = useAppStore().addTaskQueue.length;
 			this.openItemIds = useAppStore().addTaskQueue.map((it) => it.id);
-			// Auto fill from clipboard when nothing else seeded the input.
 			if (!hasSeededUri && !(this.uriDraft || "").trim()) {
 				this.tryFillFromClipboard();
 			}
-			// Focus the URI textarea for immediate typing/pasting.
 			this.$nextTick(() => {
 				this.focusUriInput();
 			});
+		},
+		readClipboardText(): Promise<string> {
+			if (is.linux()) {
+				if (!navigator.clipboard?.readText) {
+					return Promise.reject(new Error("clipboard API unavailable"));
+				}
+				return navigator.clipboard.readText();
+			}
+			return readText();
 		},
 		async tryFillFromClipboard() {
 			let text = "";
 			let timeoutId: ReturnType<typeof setTimeout> | undefined;
 			try {
-				// Race clipboard read against a timeout to prevent GTK main-thread
-				// deadlock on Linux (WebKitGTK clipboard IPC can block indefinitely
-				// if fired while the dialog portal is still mounting).
 				text = await Promise.race([
-					readText(),
+					this.readClipboardText(),
 					new Promise<string>((_resolve, reject) => {
 						timeoutId = setTimeout(
 							() => reject(new Error("clipboard timeout")),
@@ -579,7 +573,6 @@ export default {
 			if (!firstLine || !isLikelyTaskLink(firstLine)) {
 				return;
 			}
-			// Don't clobber if user already typed something between open and read.
 			if ((this.uriDraft || "").trim()) {
 				return;
 			}
@@ -618,9 +611,6 @@ export default {
 			});
 		},
 		handleUriEnter(ev: KeyboardEvent) {
-			if (ev.shiftKey) {
-				return;
-			}
 			ev.preventDefault();
 			this.commitUriDraft();
 		},
@@ -720,8 +710,6 @@ export default {
 				if (!selected) {
 					return;
 				}
-				// `multiple: true` is documented to return string[] | null, but be
-				// defensive: a single string would also be a valid path here.
 				const arr = Array.isArray(selected) ? selected : [selected];
 				const items: BatchQueueItem[] = [];
 				for (const path of arr) {
@@ -761,16 +749,13 @@ export default {
 		onNewTaskShowDownloadingChange(enable: boolean) {
 			this.form.newTaskShowDownloading = !!enable;
 		},
-		buildSharedOptions(extra: Record<string, unknown> = {}) {
+		buildSharedOptions() {
 			const base = buildOption(ADD_TASK_TYPE.TORRENT, this.form);
-			// strip selectFile / out from shared (per-item)
 			delete (base as Record<string, unknown>).selectFile;
 			delete (base as Record<string, unknown>).out;
-			return { ...base, ...extra };
+			return base;
 		},
 		normalizeAddTaskError(err: unknown): string {
-			// Tauri rejects with a string payload (typically an i18n key).
-			// Engine-thrown errors may carry a `rawMessage` and i18n `message`.
 			if (typeof err === "string") {
 				return err.startsWith("task.") ? this.$t(err) : err;
 			}
@@ -790,8 +775,6 @@ export default {
 				return;
 			}
 			const appStore = useAppStore();
-			// Commit any pending draft URI(s) so users can click Add directly
-			// after pasting/typing without first hitting Enter.
 			if ((this.uriDraft || "").trim()) {
 				this.commitUriDraft();
 			}
@@ -815,13 +798,10 @@ export default {
 			let okCount = 0;
 			let failCount = 0;
 
-			// Mark all as submitting
 			for (const it of items) {
 				appStore.updateBatchItem(it.id, { status: "submitting", error: "" });
 			}
 
-			// Short-circuit torrent items missing a resolvable path so they don't
-			// stay in the "submitting" state and are reflected in fail totals.
 			if (invalidTorrentItems.length > 0) {
 				const invalidMsg = this.$t("task.new-task-torrent-required");
 				for (const it of invalidTorrentItems) {
@@ -833,7 +813,6 @@ export default {
 				}
 			}
 
-			// Torrents: batch
 			if (torrentItems.length > 0) {
 				try {
 					const sharedOpts = this.buildSharedOptions();
@@ -872,13 +851,9 @@ export default {
 				}
 			}
 
-			// URIs / magnets: per-item submission so a single failure doesn't
-			// poison the whole batch and so per-item filenames can be inferred.
 			for (const it of uriItems) {
 				try {
 					const uri = it.uri as string;
-					// Primary URL plus any user-added mirrors (same file, other
-					// servers) submitted as one task's mirror array.
 					const uris = [uri, ...(it.mirrors ?? [])]
 						.map((s) => s.trim())
 						.filter(Boolean);
@@ -891,8 +866,6 @@ export default {
 					) {
 						sharedOpts.selectFile = sel;
 					}
-					// Media (yt-dlp) per-item options: force routing for URLs the
-					// allowlist doesn't cover, and pass the chosen format selector.
 					if (it.forceYtdlp) {
 						sharedOpts.forceYtdlp = true;
 					}
@@ -934,7 +907,6 @@ export default {
 				toast.warning(
 					this.$t("task.batch-partial-success", { ok: okCount, total }),
 				);
-				// Hide successes via exit animation
 				const remaining = appStore.addTaskQueue.filter(
 					(it) => it.status !== "success",
 				);
@@ -986,9 +958,6 @@ function isLikelyTaskLink(line: string): boolean {
 </script>
 
 <style scoped>
-.add-task-dialog :deep(.upload-torrent) {
-  display: none;
-}
 .atd-scroll {
   scrollbar-width: none;
   -ms-overflow-style: none;

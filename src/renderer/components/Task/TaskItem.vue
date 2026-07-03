@@ -2,14 +2,14 @@
   <div
     :key="task._displayKey || task.gid"
     class="task-item"
-    :class="{ 'is-active': shouldPulse, 'is-complete': isComplete, selected: selected }"
+    :class="{ 'is-active': shouldPulse, 'is-complete': isComplete, selected: selected, 'has-files': isMultiFileBT, 'task-item--card': isCardView }"
     v-on:dblclick="onDbClick"
   >
-    <div class="task-status-indicator" :class="`status-${taskStatus}`"></div>
-    <div class="task-content">
-      <div class="task-header">
+    <div class="task-item-main">
+      <div class="task-item-row">
+        <span class="task-status-dot" :class="`status-${taskStatus}`"></span>
         <div class="task-name" :title="taskFullName">
-          <span>{{ taskFullName }}</span>
+          <span class="task-name-text">{{ taskFullName }}</span>
           <span
             v-if="task.tag"
             class="task-tag"
@@ -18,15 +18,15 @@
             {{ task.tag }}
           </span>
         </div>
-        <mo-task-item-actions mode="LIST" :task="task" />
+        <task-item-actions v-if="!isAndroidCard" mode="LIST" :task="task" />
       </div>
-      <div class="task-progress">
-        <mo-task-progress
+      <div class="task-card-progress">
+        <task-progress
           :completed="Number(task.completedLength)"
           :total="Number(task.totalLength)"
           :status="taskStatus"
         />
-        <mo-task-progress-info :task="task" />
+        <task-progress-info :task="task" />
       </div>
       <div v-if="isMultiFileBT" class="task-files">
         <button
@@ -49,7 +49,7 @@
               <span class="task-file-name" :title="file.path">{{ file.name }}</span>
               <span class="task-file-pct">{{ file.percent }}%</span>
             </div>
-            <mo-task-progress
+            <task-progress
               :completed="file.completed"
               :total="file.total"
               :status="file.status"
@@ -59,6 +59,9 @@
             </div>
           </div>
         </div>
+      </div>
+      <div v-if="isAndroidCard" class="task-card-actions">
+        <task-item-actions mode="LIST" :task="task" />
       </div>
     </div>
   </div>
@@ -75,6 +78,8 @@ import {
 	getTaskName,
 } from "@shared/utils";
 import logger from "@shared/utils/logger";
+import is from "@/shims/platform";
+import { usePreferenceStore } from "@/store/preference";
 import { useTaskStore } from "@/store/task";
 import { getTaskFullPath, openItem } from "@/utils/native";
 import TaskItemActions from "./TaskItemActions.vue";
@@ -82,7 +87,7 @@ import TaskProgress from "./TaskProgress.vue";
 import TaskProgressInfo from "./TaskProgressInfo.vue";
 
 export default {
-	name: "mo-task-item",
+	name: "task-item",
 	components: {
 		[TaskItemActions.name]: TaskItemActions,
 		[TaskProgress.name]: TaskProgress,
@@ -105,6 +110,15 @@ export default {
 		};
 	},
 	computed: {
+		isCardView() {
+			return usePreferenceStore().taskListStyle === "card";
+		},
+		isAndroid() {
+			return is.android();
+		},
+		isAndroidCard() {
+			return this.isAndroid && this.isCardView;
+		},
 		taskFullName() {
 			return getTaskName(this.task, {
 				defaultName: this.$t("task.get-task-name"),
@@ -123,8 +137,6 @@ export default {
 			const files = Array.isArray(this.task.files) ? this.task.files : [];
 			return checkTaskIsBT(this.task) && files.length > 1;
 		},
-		// Selected files of a multi-file BT torrent, each with its own
-		// progress so the grouped card can show per-file status
 		displayFiles() {
 			const files = Array.isArray(this.task.files) ? this.task.files : [];
 			return files
@@ -182,9 +194,8 @@ export default {
 			}
 			const hue = Math.abs(hash % 360);
 			return {
-				backgroundColor: `hsl(${hue}, 65%, 90%)`,
-				color: `hsl(${hue}, 70%, 25%)`,
-				border: `1px solid hsl(${hue}, 65%, 80%)`,
+				backgroundColor: `hsl(${hue} 60% 50% / 0.14)`,
+				color: `hsl(${hue} 45% 45%)`,
 			};
 		},
 	},
@@ -199,8 +210,6 @@ export default {
 			}
 		},
 		async openTask() {
-			// `openItem` delegates to Rust so each platform can open the file its own way
-			// Android uses a SAF document URI plus the file MIME, then shows the normal chooser
 			const { taskName } = this;
 			this.$msg.info(this.$t("task.opening-task-message", { taskName }));
 			const fullPath = getTaskFullPath(this.task);

@@ -9,12 +9,12 @@ use risuko_engine::engine::manager::TaskManager;
 use risuko_engine::engine::options::EngineOptions;
 use risuko_engine::engine::rpc::RpcServer;
 
-use crate::progress::{self, extract_filename, format_size, format_size_speed, parse_num};
-use crate::rpc_client::RpcClient;
 use crate::{
     ConfigAction, ConfigCommand, DownloadArgs, GidArgs, PauseArgs, RemoveArgs, ResumeArgs, RpcArgs,
     RssAction, RssCommand, ServeArgs, StatusArgs,
 };
+use risuko_cli::progress::{self, extract_filename, format_size, format_size_speed, parse_num};
+use risuko_cli::rpc_client::RpcClient;
 
 fn resolve_rpc_secret(explicit: Option<String>) -> Option<String> {
     explicit

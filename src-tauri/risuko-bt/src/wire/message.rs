@@ -20,6 +20,9 @@ pub mod id {
     pub const PIECE: u8 = 7;
     pub const CANCEL: u8 = 8;
     pub const PORT: u8 = 9;
+    pub const HAVE_ALL: u8 = 0x0E;
+    pub const HAVE_NONE: u8 = 0x0F;
+    pub const REJECT_REQUEST: u8 = 0x10;
     /// BEP-10 extension protocol container.
     pub const EXTENDED: u8 = 20;
     /// BEP 52: request a Merkle layer slice for a given pieces-root
@@ -67,6 +70,13 @@ pub enum Message {
         length: u32,
     },
     Port(u16),
+    HaveAll,
+    HaveNone,
+    RejectRequest {
+        index: u32,
+        begin: u32,
+        length: u32,
+    },
     Extended {
         ext_id: u8,
         payload: Bytes,
@@ -159,6 +169,18 @@ impl MessageEncoder {
             Message::Port(port) => {
                 buf.put_u8(id::PORT);
                 buf.put_u16(*port);
+            }
+            Message::HaveAll => buf.put_u8(id::HAVE_ALL),
+            Message::HaveNone => buf.put_u8(id::HAVE_NONE),
+            Message::RejectRequest {
+                index,
+                begin,
+                length,
+            } => {
+                buf.put_u8(id::REJECT_REQUEST);
+                buf.put_u32(*index);
+                buf.put_u32(*begin);
+                buf.put_u32(*length);
             }
             Message::Extended { ext_id, payload } => {
                 buf.put_u8(id::EXTENDED);
@@ -345,6 +367,31 @@ impl MessageDecoder {
                     });
                 }
                 Message::Port(buf.get_u16())
+            }
+            id::HAVE_ALL => {
+                take(buf, remaining, id)?;
+                Message::HaveAll
+            }
+            id::HAVE_NONE => {
+                take(buf, remaining, id)?;
+                Message::HaveNone
+            }
+            id::REJECT_REQUEST => {
+                if remaining != 12 {
+                    return Err(MessageError::Truncated {
+                        id,
+                        expected: 12,
+                        got: remaining,
+                    });
+                }
+                let index = buf.get_u32();
+                let begin = buf.get_u32();
+                let length = buf.get_u32();
+                Message::RejectRequest {
+                    index,
+                    begin,
+                    length,
+                }
             }
             id::EXTENDED => {
                 if remaining < 1 {
@@ -620,6 +667,24 @@ mod tests {
             assert_eq!((base_layer, index, length, proof_layers), (2, 8, 1, 0));
         } else {
             panic!();
+        }
+    }
+
+    #[test]
+    fn fast_extension_round_trips() {
+        assert!(matches!(round_trip(Message::HaveAll), Message::HaveAll));
+        assert!(matches!(round_trip(Message::HaveNone), Message::HaveNone));
+        match round_trip(Message::RejectRequest {
+            index: 3,
+            begin: 16_384,
+            length: 16_384,
+        }) {
+            Message::RejectRequest {
+                index,
+                begin,
+                length,
+            } => assert_eq!((index, begin, length), (3, 16_384, 16_384)),
+            other => panic!("expected RejectRequest, got {other:?}"),
         }
     }
 }

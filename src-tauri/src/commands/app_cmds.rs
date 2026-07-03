@@ -96,23 +96,15 @@ pub async fn reset_session(handle: AppHandle) -> Result<(), String> {
         risuko_engine::config::ConfigManager::with_dir(config_dir).map_err(|e| e.to_string())?;
     let event_sink: std::sync::Arc<dyn risuko_engine::EventSink> =
         std::sync::Arc::new(crate::bridge::TauriEventSink::new(&handle));
-    let storage: std::sync::Arc<dyn risuko_engine::StorageBackend> =
-        std::sync::Arc::new(crate::bridge::TauriStorage::new(&handle));
-    let upload_mgr = handle
-        .state::<crate::state::AppState>()
-        .upload_sinks
-        .lock()
-        .ok()
-        .and_then(|g| g.clone());
-    risuko_engine::engine::start_engine(&config, event_sink, storage, upload_mgr)
+    let upload_mgr = Some(
+        handle
+            .state::<crate::state::AppState>()
+            .upload_sinks
+            .clone(),
+    );
+    risuko_engine::engine::start_engine(&config, event_sink, upload_mgr)
         .await
         .map_err(|e| e.to_string())?;
-    Ok(())
-}
-
-#[tauri::command]
-pub fn auto_hide_window(enabled: bool) -> Result<(), String> {
-    tracing::info!("auto_hide_window: {}", enabled);
     Ok(())
 }
 
@@ -194,54 +186,26 @@ pub async fn shutdown_system(handle: AppHandle) -> Result<(), String> {
     {
         // Set quit flag but don't stop engine; OS shutdown will terminate everything
         // If OS shutdown fails, engine remains running so app stays functional
-        handle
-            .state::<crate::state::AppState>()
-            .is_quitting
-            .store(true, Ordering::SeqCst);
+        let state = handle.state::<crate::state::AppState>();
+        state.is_quitting.store(true, Ordering::SeqCst);
+
+        #[cfg(target_os = "windows")]
+        let args = ["/s", "/t", "0"];
+        #[cfg(not(target_os = "windows"))]
+        let args = ["-h", "now"];
 
         // Attempt OS shutdown; rollback quit flag on failure
-        #[cfg(target_os = "windows")]
-        {
-            let status = std::process::Command::new("shutdown")
-                .args(["/s", "/t", "0"])
-                .status()
-                .map_err(|e| {
-                    // Rollback quit flag on failure
-                    handle
-                        .state::<crate::state::AppState>()
-                        .is_quitting
-                        .store(false, Ordering::SeqCst);
-                    format!("shutdown failed: {e}")
-                })?;
-            if !status.success() {
-                handle
-                    .state::<crate::state::AppState>()
-                    .is_quitting
-                    .store(false, Ordering::SeqCst);
-                return Err(format!("shutdown command failed: {:?}", status));
-            }
-        }
-
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
-        {
-            let status = std::process::Command::new("shutdown")
-                .args(["-h", "now"])
-                .status()
-                .map_err(|e| {
-                    // Rollback quit flag on failure
-                    handle
-                        .state::<crate::state::AppState>()
-                        .is_quitting
-                        .store(false, Ordering::SeqCst);
-                    format!("shutdown failed: {e}")
-                })?;
-            if !status.success() {
-                handle
-                    .state::<crate::state::AppState>()
-                    .is_quitting
-                    .store(false, Ordering::SeqCst);
-                return Err(format!("shutdown command failed: {:?}", status));
-            }
+        let rollback = || state.is_quitting.store(false, Ordering::SeqCst);
+        let status = std::process::Command::new("shutdown")
+            .args(args)
+            .status()
+            .map_err(|e| {
+                rollback();
+                format!("shutdown failed: {e}")
+            })?;
+        if !status.success() {
+            rollback();
+            return Err(format!("shutdown command failed: {:?}", status));
         }
 
         Ok(())

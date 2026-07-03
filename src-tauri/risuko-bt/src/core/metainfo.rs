@@ -5,8 +5,6 @@
 //! info dict with an enumerator over per-file details, matching the API shape
 //! that `engine::torrent` consumes from librqbit
 
-use std::path::PathBuf;
-
 use super::super::bencode::{decode_dict_field_raw, Value};
 use super::hash::{sha1, sha256, Id20, Id32};
 
@@ -53,10 +51,6 @@ impl MetaVersion {
     pub fn has_v1(&self) -> bool {
         matches!(self, Self::V1 | Self::Hybrid)
     }
-
-    pub fn has_v2(&self) -> bool {
-        matches!(self, Self::V2 | Self::Hybrid)
-    }
 }
 
 /// Pair of optional v1/v2 info-hashes identifying a torrent. At least one
@@ -68,21 +62,9 @@ pub struct TorrentInfoHashes {
 }
 
 impl TorrentInfoHashes {
-    /// The 20-byte hash to send in BEP-3 handshakes, MSE/PE SKEY derivation,
-    /// trackers and the v1 DHT. Per BEP 52, pure-v2 torrents send the
-    /// leading 20 bytes of the SHA-256 info-hash; hybrid/v1 send the SHA-1
-    pub fn wire_infohash(&self) -> Id20 {
-        if let Some(v1) = self.v1 {
-            return v1;
-        }
-        // pure v2: truncate. unwrap is safe — at least one is always set
-        self.v2.expect("TorrentInfoHashes empty").truncate_to_id20()
-    }
-
-    /// All 20-byte hashes to announce on for this torrent. For hybrid
-    /// torrents this returns both the v1 hash and the truncated v2 hash so
-    /// peers from either swarm can be discovered. For v1-only or v2-only
-    /// torrents this returns a single hash
+    /// All 20-byte hashes to announce on for this torrent. Hybrid returns
+    /// both the v1 hash and the truncated v2 hash so peers from either swarm
+    /// are reachable; v1-only or v2-only returns a single hash
     pub fn announce_infohashes(&self) -> Vec<Id20> {
         let mut out = Vec::with_capacity(2);
         if let Some(v1) = self.v1 {
@@ -187,18 +169,6 @@ impl ValidatedTorrentMetaV1Info {
         })
     }
 
-    /// Build a [`PathBuf`] rooted at `base` for a file entry
-    pub fn file_path(&self, base: &std::path::Path, idx: usize) -> PathBuf {
-        let mut p = base.to_path_buf();
-        if !self.single_file_mode {
-            p.push(&self.name);
-        }
-        for c in &self.files[idx].path {
-            p.push(c);
-        }
-        p
-    }
-
     pub fn piece_count(&self) -> u32 {
         if self.pieces.is_empty() {
             // Pure-v2 facade: derive piece count from total length and piece
@@ -211,17 +181,6 @@ impl ValidatedTorrentMetaV1Info {
         } else {
             (self.pieces.len() / 20) as u32
         }
-    }
-
-    pub fn piece_hash(&self, idx: u32) -> Option<Id20> {
-        if self.pieces.is_empty() {
-            // Pure-v2: no SHA-1 piece hashes. Verification routes through
-            // `PieceVerifier::V2Merkle` instead
-            return None;
-        }
-        let start = idx as usize * 20;
-        let slice = self.pieces.get(start..start + 20)?;
-        Id20::from_slice(slice).ok()
     }
 
     pub fn total_length(&self) -> u64 {
@@ -258,11 +217,9 @@ pub enum FileTreeNode {
 pub struct ValidatedTorrentMetaV2Info {
     pub name: String,
     pub piece_length: u32,
-    pub meta_version: u32,
     /// BEP 27 private flag at info-dict level (same semantics as v1)
     pub private: bool,
-    pub file_tree: FileTreeNode,
-    /// Flat file list in stable order matching `file_tree` traversal
+    /// Flat file list in stable order matching `file tree` traversal
     pub files: Vec<TorrentMetaInfoV2>,
 }
 
@@ -280,12 +237,9 @@ pub fn parse_info_v2_from_bytes(
     info_bytes: &[u8],
 ) -> Result<Option<ValidatedTorrentMetaV2Info>, MetaError> {
     let value = super::super::bencode::decode_all(info_bytes)?;
-    let dict = value.as_dict().ok_or(MetaError::BadInfo("info not dict"))?;
-    let v2_meta_version = dict
-        .iter()
-        .find(|(k, _)| k == b"meta version")
-        .and_then(|(_, v)| v.as_int());
-    let has_v2 = matches!(v2_meta_version, Some(2)) && dict.iter().any(|(k, _)| k == b"file tree");
+    value.as_dict().ok_or(MetaError::BadInfo("info not dict"))?;
+    let has_v2 = matches!(value.get(b"meta version").and_then(Value::as_int), Some(2))
+        && value.get(b"file tree").is_some();
     if !has_v2 {
         return Ok(None);
     }
@@ -295,15 +249,14 @@ pub fn parse_info_v2_from_bytes(
 /// Parse a `.torrent` blob
 pub fn parse_torrent(bytes: &[u8]) -> Result<TorrentMeta, MetaError> {
     let value = super::super::bencode::decode_all(bytes)?;
-    let dict = value
+    value
         .as_dict()
         .ok_or(MetaError::BadInfo("top-level not dict"))?;
 
-    let announce = get_str(dict, b"announce");
-    let announce_list = dict
-        .iter()
-        .find(|(k, _)| k == b"announce-list")
-        .and_then(|(_, v)| v.as_list())
+    let announce = get_str(&value, b"announce");
+    let announce_list = value
+        .get(b"announce-list")
+        .and_then(Value::as_list)
         .map(|tiers| {
             tiers
                 .iter()
@@ -316,30 +269,25 @@ pub fn parse_torrent(bytes: &[u8]) -> Result<TorrentMeta, MetaError> {
                 .collect::<Vec<Vec<String>>>()
         })
         .unwrap_or_default();
-    let comment = get_str(dict, b"comment");
-    let created_by = get_str(dict, b"created by");
-    let encoding = get_str(dict, b"encoding");
-    let creation_date = dict
-        .iter()
-        .find(|(k, _)| k == b"creation date")
-        .and_then(|(_, v)| v.as_int());
+    let comment = get_str(&value, b"comment");
+    let created_by = get_str(&value, b"created by");
+    let encoding = get_str(&value, b"encoding");
+    let creation_date = value.get(b"creation date").and_then(Value::as_int);
 
     // Recover raw bytes of the `info` field to compute the info-hash
     let (info_value, info_raw) =
         decode_dict_field_raw(bytes, b"info")?.ok_or(MetaError::MissingInfo)?;
 
-    let info_dict = info_value
+    info_value
         .as_dict()
         .ok_or(MetaError::BadInfo("info not dict"))?;
 
     // Detect v1/v2 presence
-    let has_v1 = info_dict.iter().any(|(k, _)| k == b"pieces");
-    let v2_meta_version = info_dict
-        .iter()
-        .find(|(k, _)| k == b"meta version")
-        .and_then(|(_, v)| v.as_int());
-    let has_v2 =
-        matches!(v2_meta_version, Some(2)) && info_dict.iter().any(|(k, _)| k == b"file tree");
+    let has_v1 = info_value.get(b"pieces").is_some();
+    let has_v2 = matches!(
+        info_value.get(b"meta version").and_then(Value::as_int),
+        Some(2)
+    ) && info_value.get(b"file tree").is_some();
 
     let meta_version = match (has_v1, has_v2) {
         (true, true) => MetaVersion::Hybrid,
@@ -354,7 +302,7 @@ pub fn parse_torrent(bytes: &[u8]) -> Result<TorrentMeta, MetaError> {
         // routed through `PieceVerifier::V2Merkle` instead of SHA-1
         let v2 = validate_info_v2(&info_value)?;
         let info_hash_v2_val = sha256(info_raw);
-        let piece_layers = parse_piece_layers(dict)?;
+        let piece_layers = parse_piece_layers(&value)?;
         let info = synthesize_v1_facade_from_v2(&v2);
         // Pure-v2 from a `.torrent` requires `piece layers` for every file
         // larger than one piece (otherwise per-piece verification has no
@@ -399,7 +347,7 @@ pub fn parse_torrent(bytes: &[u8]) -> Result<TorrentMeta, MetaError> {
     };
 
     let piece_layers = if has_v2 {
-        parse_piece_layers(dict)?
+        parse_piece_layers(&value)?
     } else {
         std::collections::BTreeMap::new()
     };
@@ -421,38 +369,33 @@ pub fn parse_torrent(bytes: &[u8]) -> Result<TorrentMeta, MetaError> {
     })
 }
 
-fn get_str(dict: &[(Vec<u8>, Value)], key: &[u8]) -> Option<String> {
-    dict.iter()
-        .find(|(k, _)| k == key)
-        .and_then(|(_, v)| v.as_str().map(String::from))
+fn get_str(value: &Value, key: &[u8]) -> Option<String> {
+    value.get(key).and_then(|v| v.as_str().map(String::from))
 }
 
 fn validate_info(value: &Value) -> Result<ValidatedTorrentMetaV1Info, MetaError> {
-    let info = value.as_dict().ok_or(MetaError::BadInfo("info not dict"))?;
+    value.as_dict().ok_or(MetaError::BadInfo("info not dict"))?;
 
-    let piece_length = info
-        .iter()
-        .find(|(k, _)| k == b"piece length")
-        .and_then(|(_, v)| v.as_int())
+    let piece_length = value
+        .get(b"piece length")
+        .and_then(Value::as_int)
         .ok_or(MetaError::BadInfo("piece length missing"))?;
     if !(0..=u32::MAX as i64).contains(&piece_length) || piece_length == 0 {
         return Err(MetaError::BadInfo("piece length out of range"));
     }
     let piece_length = piece_length as u32;
 
-    let pieces_bytes = info
-        .iter()
-        .find(|(k, _)| k == b"pieces")
-        .and_then(|(_, v)| v.as_bytes())
+    let pieces_bytes = value
+        .get(b"pieces")
+        .and_then(Value::as_bytes)
         .ok_or(MetaError::BadInfo("pieces missing"))?;
     if pieces_bytes.is_empty() || pieces_bytes.len() % 20 != 0 {
         return Err(MetaError::BadPieces);
     }
 
-    let name = info
-        .iter()
-        .find(|(k, _)| k == b"name")
-        .and_then(|(_, v)| v.as_str())
+    let name = value
+        .get(b"name")
+        .and_then(Value::as_str)
         .ok_or(MetaError::BadUtf8 { field: "name" })?
         .to_string();
     // Sanitize against directory traversal; apply the same rules as file path components
@@ -460,34 +403,28 @@ fn validate_info(value: &Value) -> Result<ValidatedTorrentMetaV1Info, MetaError>
         return Err(MetaError::BadInfo("torrent name unsafe"));
     }
 
-    let private = info
-        .iter()
-        .find(|(k, _)| k == b"private")
-        .and_then(|(_, v)| v.as_int())
+    let private = value
+        .get(b"private")
+        .and_then(Value::as_int)
         .is_some_and(|n| n != 0);
 
-    let (files, single_file_mode) = if let Some(list) = info
-        .iter()
-        .find(|(k, _)| k == b"files")
-        .and_then(|(_, v)| v.as_list())
+    let (files, single_file_mode) = if let Some(list) = value.get(b"files").and_then(Value::as_list)
     {
         let mut files = Vec::with_capacity(list.len());
         for entry in list {
-            let entry = entry
+            entry
                 .as_dict()
                 .ok_or(MetaError::BadInfo("files entry not dict"))?;
             let length = entry
-                .iter()
-                .find(|(k, _)| k == b"length")
-                .and_then(|(_, v)| v.as_int())
+                .get(b"length")
+                .and_then(Value::as_int)
                 .ok_or(MetaError::BadInfo("file length missing"))?;
             if length < 0 {
                 return Err(MetaError::BadInfo("file length negative"));
             }
             let path_list = entry
-                .iter()
-                .find(|(k, _)| k == b"path")
-                .and_then(|(_, v)| v.as_list())
+                .get(b"path")
+                .and_then(Value::as_list)
                 .ok_or(MetaError::BadInfo("file path missing"))?;
             let mut path_components = Vec::with_capacity(path_list.len());
             for c in path_list {
@@ -506,10 +443,9 @@ fn validate_info(value: &Value) -> Result<ValidatedTorrentMetaV1Info, MetaError>
         }
         (files, false)
     } else {
-        let length = info
-            .iter()
-            .find(|(k, _)| k == b"length")
-            .and_then(|(_, v)| v.as_int())
+        let length = value
+            .get(b"length")
+            .and_then(Value::as_int)
             .ok_or(MetaError::BadInfo("single-file length missing"))?;
         if length <= 0 {
             return Err(MetaError::ZeroLength);
@@ -591,23 +527,21 @@ fn synthesize_v1_facade_from_v2(v2: &ValidatedTorrentMetaV2Info) -> ValidatedTor
 /// Parse the v2 view of an `info` dict. Caller has already verified the
 /// presence of `meta version=2` and `file tree`
 fn validate_info_v2(value: &Value) -> Result<ValidatedTorrentMetaV2Info, MetaError> {
-    let info = value
+    value
         .as_dict()
         .ok_or(MetaError::BadInfoV2("info not dict"))?;
 
-    let meta_version = info
-        .iter()
-        .find(|(k, _)| k == b"meta version")
-        .and_then(|(_, v)| v.as_int())
+    let meta_version = value
+        .get(b"meta version")
+        .and_then(Value::as_int)
         .ok_or(MetaError::BadInfoV2("meta version missing"))?;
     if meta_version != 2 {
         return Err(MetaError::BadInfoV2("unsupported meta version"));
     }
 
-    let piece_length = info
-        .iter()
-        .find(|(k, _)| k == b"piece length")
-        .and_then(|(_, v)| v.as_int())
+    let piece_length = value
+        .get(b"piece length")
+        .and_then(Value::as_int)
         .ok_or(MetaError::BadInfoV2("piece length missing"))?;
     if !(0..=u32::MAX as i64).contains(&piece_length) || piece_length == 0 {
         return Err(MetaError::BadInfoV2("piece length out of range"));
@@ -620,20 +554,17 @@ fn validate_info_v2(value: &Value) -> Result<ValidatedTorrentMetaV2Info, MetaErr
         ));
     }
 
-    let name = info
-        .iter()
-        .find(|(k, _)| k == b"name")
-        .and_then(|(_, v)| v.as_str())
+    let name = value
+        .get(b"name")
+        .and_then(Value::as_str)
         .ok_or(MetaError::BadUtf8 { field: "v2 name" })?
         .to_string();
     if name.is_empty() || name == "." || name == ".." || name.contains('/') || name.contains('\\') {
         return Err(MetaError::BadInfoV2("v2 name unsafe"));
     }
 
-    let file_tree_value = info
-        .iter()
-        .find(|(k, _)| k == b"file tree")
-        .map(|(_, v)| v)
+    let file_tree_value = value
+        .get(b"file tree")
         .ok_or(MetaError::BadInfoV2("file tree missing"))?;
 
     let file_tree = parse_file_tree(file_tree_value)?;
@@ -651,19 +582,16 @@ fn validate_info_v2(value: &Value) -> Result<ValidatedTorrentMetaV2Info, MetaErr
     }
 
     // BEP 27 private flag at info-dict level. Same int-as-bool decoding as v1
-    let private = info
-        .iter()
-        .find(|(k, _)| k == b"private")
-        .and_then(|(_, v)| v.as_int())
+    let private = value
+        .get(b"private")
+        .and_then(Value::as_int)
         .map(|i| i != 0)
         .unwrap_or(false);
 
     Ok(ValidatedTorrentMetaV2Info {
         name,
         piece_length,
-        meta_version: meta_version as u32,
         private,
-        file_tree,
         files,
     })
 }
@@ -677,22 +605,19 @@ fn parse_file_tree(value: &Value) -> Result<FileTreeNode, MetaError> {
 
     // Leaf: a dict with the single empty-string key
     if dict.len() == 1 && dict[0].0.is_empty() {
-        let leaf = dict[0]
-            .1
-            .as_dict()
+        let leaf = &dict[0].1;
+        leaf.as_dict()
             .ok_or(MetaError::BadInfoV2("file tree leaf payload not dict"))?;
         let length = leaf
-            .iter()
-            .find(|(k, _)| k == b"length")
-            .and_then(|(_, v)| v.as_int())
+            .get(b"length")
+            .and_then(Value::as_int)
             .ok_or(MetaError::BadInfoV2("file tree leaf length missing"))?;
         if length < 0 {
             return Err(MetaError::BadInfoV2("file tree leaf length negative"));
         }
         let pieces_root = leaf
-            .iter()
-            .find(|(k, _)| k == b"pieces root")
-            .and_then(|(_, v)| v.as_bytes())
+            .get(b"pieces root")
+            .and_then(Value::as_bytes)
             .map(Id32::from_slice)
             .transpose()
             .map_err(|_| MetaError::BadInfoV2("pieces root not 32 bytes"))?;
@@ -767,14 +692,8 @@ fn flatten_file_tree(
 /// Parse top-level `piece layers` dict (BEP 52). Each key is a 32-byte
 /// pieces-root; each value is the concatenated SHA-256 hashes of the
 /// piece-aligned chunks below it (one 32-byte hash per piece)
-fn parse_piece_layers(
-    top: &[(Vec<u8>, Value)],
-) -> Result<std::collections::BTreeMap<Id32, Vec<u8>>, MetaError> {
-    let layers_value = top
-        .iter()
-        .find(|(k, _)| k == b"piece layers")
-        .map(|(_, v)| v);
-    let Some(value) = layers_value else {
+fn parse_piece_layers(top: &Value) -> Result<std::collections::BTreeMap<Id32, Vec<u8>>, MetaError> {
+    let Some(value) = top.get(b"piece layers") else {
         return Ok(std::collections::BTreeMap::new());
     };
     let dict = value
@@ -861,14 +780,6 @@ mod tests {
         let top = Value::Dict(vec![(b"info".to_vec(), info)]);
         let bytes = super::super::super::bencode::encode_to_vec(&top);
         assert!(matches!(parse_torrent(&bytes), Err(MetaError::BadInfo(_))));
-    }
-
-    #[test]
-    fn piece_hash_extractable() {
-        let bytes = synth_single_file("a", 16 * 1024, 100);
-        let meta = parse_torrent(&bytes).unwrap();
-        let h = meta.info.piece_hash(0).unwrap();
-        assert_eq!(h.0, [0u8; 20]);
     }
 
     /// Build a hybrid v1+v2 .torrent with a single-file `file tree`. Hashes
@@ -1041,28 +952,6 @@ mod tests {
         let bytes = super::super::super::bencode::encode_to_vec(&top);
         let err = parse_torrent(&bytes).unwrap_err();
         assert!(matches!(err, MetaError::BadInfoV2(_)), "got {err:?}");
-    }
-
-    #[test]
-    fn wire_infohash_prefers_v1() {
-        let v1 = Id20([0xaau8; 20]);
-        let v2 = Id32([0xbbu8; 32]);
-        assert_eq!(
-            TorrentInfoHashes {
-                v1: Some(v1),
-                v2: Some(v2),
-            }
-            .wire_infohash(),
-            v1
-        );
-        assert_eq!(
-            TorrentInfoHashes {
-                v1: None,
-                v2: Some(v2),
-            }
-            .wire_infohash(),
-            v2.truncate_to_id20()
-        );
     }
 
     #[test]

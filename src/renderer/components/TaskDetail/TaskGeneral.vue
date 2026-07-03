@@ -1,5 +1,33 @@
 <template>
-  <div class="mo-task-general" v-if="task">
+  <div class="task-general" v-if="task">
+    <div class="activity-stats general-stats">
+      <div class="activity-stat-item" v-if="!isSeeder">
+        <span class="activity-stat-label">{{ $t('task.task-download-speed') }}</span>
+        <span class="activity-stat-value">{{ formatBytes(displayDownloadSpeed) }}/s</span>
+      </div>
+      <div class="activity-stat-item" v-if="isBT">
+        <span class="activity-stat-label">{{ $t('task.task-upload-speed') }}</span>
+        <span class="activity-stat-value">{{ formatBytes(Number(task.uploadSpeed || 0)) }}/s</span>
+      </div>
+      <div class="activity-stat-item">
+        <span class="activity-stat-label">{{ $t('task.remaining-prefix') }}</span>
+        <span class="activity-stat-value">{{ remainingText }}</span>
+      </div>
+      <div class="activity-stat-item">
+        <span class="activity-stat-label">{{ $t('task.task-connections') }}</span>
+        <span class="activity-stat-value">{{ task.connections }}</span>
+      </div>
+      <div class="activity-stat-item" v-if="isBT">
+        <span class="activity-stat-label">{{ $t('task.task-num-seeders') }}</span>
+        <span class="activity-stat-value">{{ task.numSeeders }}</span>
+      </div>
+      <div class="activity-stat-item">
+        <span class="activity-stat-label">{{ $t('task.task-file-size') }}</span>
+        <span class="activity-stat-value">
+          {{ formatBytes(task.completedLength) }} / {{ formatBytes(task.totalLength) }}
+        </span>
+      </div>
+    </div>
     <div class="general-card">
       <div class="general-card-row">
         <span class="general-card-label">{{ $t('task.task-gid') }}</span>
@@ -13,13 +41,13 @@
         <span class="general-card-label">{{ $t('task.task-dir') }}</span>
         <span class="general-card-value general-card-value--dir">
           <span class="dir-text">{{ path }}</span>
-          <mo-show-in-folder v-if="isRenderer" :path="revealPath" />
+          <show-in-folder v-if="isRenderer" :path="revealPath" />
         </span>
       </div>
       <div class="general-card-row">
         <span class="general-card-label">{{ $t('task.task-status') }}</span>
         <span class="general-card-value"
-          ><mo-task-status :theme="currentTheme" :status="taskStatus"
+          ><task-status :theme="currentTheme" :status="taskStatus"
         /></span>
       </div>
       <div class="general-card-row" v-if="task.errorCode && task.errorCode !== '0'">
@@ -76,6 +104,8 @@ import {
 	getTaskName,
 	getTaskUri,
 	localeDateTimeFormat,
+	timeFormat,
+	timeRemaining,
 } from "@shared/utils";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import ShowInFolder from "@/components/Native/ShowInFolder.vue";
@@ -86,7 +116,7 @@ import { usePreferenceStore } from "@/store/preference";
 import { getTaskRevealDir, getTaskRevealPath } from "@/utils/native";
 
 export default {
-	name: "mo-task-general",
+	name: "task-general",
 	components: {
 		[ShowInFolder.name]: ShowInFolder,
 		[TaskStatus.name]: TaskStatus,
@@ -130,6 +160,30 @@ export default {
 		isBT() {
 			return checkTaskIsBT(this.task);
 		},
+		displayDownloadSpeed() {
+			return Number(this.task?.downloadSpeed || 0);
+		},
+		remaining() {
+			return timeRemaining(
+				this.task?.totalLength,
+				this.task?.completedLength,
+				this.displayDownloadSpeed,
+			);
+		},
+		remainingText() {
+			if (this.task?.status !== TASK_STATUS.ACTIVE || this.remaining <= 0) {
+				return "—";
+			}
+			return timeFormat(this.remaining, {
+				prefix: "",
+				i18n: {
+					gt1d: this.$t("app.gt1d"),
+					hour: this.$t("app.hour"),
+					minute: this.$t("app.minute"),
+					second: this.$t("app.second"),
+				},
+			});
+		},
 		pieceLengthText() {
 			return bytesToSize(this.task?.pieceLength);
 		},
@@ -140,6 +194,7 @@ export default {
 		},
 	},
 	methods: {
+		formatBytes: bytesToSize,
 		handleCopyClick() {
 			const uri = getTaskUri(this.task);
 			writeText(uri).then(() => {

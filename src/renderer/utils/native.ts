@@ -4,16 +4,20 @@ import {
 	TEMP_DOWNLOAD_SUFFIX,
 } from "@shared/constants";
 import type { DownloadTask } from "@shared/types/task";
-import { getFileNameFromFile, isMagnetTask } from "@shared/utils";
+import {
+	getFileNameFromFile,
+	isMagnetTask,
+	stripTempDownloadSuffix,
+} from "@shared/utils";
 import logger from "@shared/utils/logger";
 import { invoke } from "@tauri-apps/api/core";
 import { toast } from "vue-sonner";
 
 // Android SAF folder picker returns a tree URI like
 // `content://com.android.externalstorage.documents/tree/primary%3ADownload`.
-// The engine writes via filesystem paths, so map common external-storage
-// authorities back to `/storage/...`. Other authorities (SD/USB/cloud) don't
-// map cleanly and are returned as-is. Shared by SelectDirectory + Share.
+// Engine writes via filesystem paths, so map common external-storage
+// authorities back to `/storage/...`. Other authorities (SD/USB/cloud) are
+// returned as-is. Shared by SelectDirectory + Share
 export function safUriToFilesystemPath(uri: string): string {
 	if (typeof uri !== "string" || !uri.startsWith("content://")) {
 		return uri;
@@ -60,28 +64,15 @@ function dirname(path = ""): string {
 	return value.slice(0, index);
 }
 
-const hasTempDownloadSuffix = (fullPath = ""): boolean => {
-	return `${fullPath || ""}`.toLowerCase().endsWith(TEMP_DOWNLOAD_SUFFIX);
-};
-
-const stripTempDownloadSuffix = (fullPath = ""): string => {
-	const value = `${fullPath || ""}`;
-	if (!hasTempDownloadSuffix(value)) {
-		return value;
-	}
-	return value.slice(0, value.length - TEMP_DOWNLOAD_SUFFIX.length);
-};
-
 const chunkMetaPath = (partPath = ""): string => `${partPath}.chunks`;
 
 const sleep = (ms: number): Promise<void> =>
 	new Promise((resolve) => window.setTimeout(resolve, ms));
 
 const cleanupTempSidecars = async (paths: string[]): Promise<void> => {
-	// Only retry paths that actually throw (locked/busy like a Windows file handle).
-	// If trash_item returns false the sidecar never existed and won't appear now.
-	// If it returns true the sidecar is already gone. Retrying either case just
-	// spams IPC/logs and forces unnecessary sleeps in the common no-op path
+	// only retry paths that actually throw (locked/busy, like a Windows file handle)
+	// trash_item false = sidecar never existed, true = already gone; retrying
+	// either just spams IPC/logs and adds needless sleeps on the no-op path
 	let pending = [
 		...new Set(paths.map((path) => `${path || ""}`.trim())),
 	].filter(Boolean);
@@ -127,8 +118,8 @@ export const showItemInFolder = async (
 	);
 
 	// One call for desktop and Android
-	// Rust picks the native reveal path, and Android opens the folder through ACTION_VIEW
-	// That skips the old picker detour where the user had to tap the file again
+	// Rust picks the native reveal path; Android opens the folder via ACTION_VIEW
+	// skips the old picker detour where the user had to tap the file again
 	try {
 		await invoke("reveal_in_folder", { path: revealPath || fallback });
 	} catch (err) {
@@ -268,7 +259,7 @@ export const finalizeCompletedDownloadPath = async (
 	const sourcePath = getTaskFullPath(task, {
 		normalizeCompletedPath: false,
 	});
-	if (!hasTempDownloadSuffix(sourcePath)) {
+	if (!sourcePath.toLowerCase().endsWith(TEMP_DOWNLOAD_SUFFIX)) {
 		return sourcePath;
 	}
 

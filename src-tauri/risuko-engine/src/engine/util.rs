@@ -15,6 +15,33 @@ pub(crate) fn now_ms() -> u64 {
         .as_millis() as u64
 }
 
+/// If `dir/name` already exists, return `dir/stem.1.ext`, `dir/stem.2.ext`, etc.
+pub(crate) fn dedup_path(dir: &std::path::Path, name: &str) -> std::path::PathBuf {
+    let candidate = dir.join(name);
+    if !candidate.exists() {
+        return candidate;
+    }
+
+    let (stem, ext) = match name.rfind('.') {
+        Some(dot) if dot > 0 => (&name[..dot], &name[dot..]), // "file.txt" -> ("file", ".txt")
+        _ => (name, ""),                                      // "noext" -> ("noext", "")
+    };
+
+    for n in 1u32.. {
+        let numbered = if ext.is_empty() {
+            format!("{stem}.{n}")
+        } else {
+            format!("{stem}.{n}{ext}")
+        };
+        let path = dir.join(&numbered);
+        if !path.exists() {
+            return path;
+        }
+    }
+    // Unreachable in practice
+    candidate
+}
+
 pub(crate) fn safe_filename(name: &str, fallback: &str) -> String {
     let cleaned: String = name
         .chars()
@@ -38,10 +65,7 @@ pub(crate) fn safe_filename(name: &str, fallback: &str) -> String {
 }
 
 fn is_windows_device_name(name: &str) -> bool {
-    let stem = name
-        .rsplit_once('.')
-        .map(|(stem, _)| stem)
-        .unwrap_or(name);
+    let stem = name.rsplit_once('.').map(|(stem, _)| stem).unwrap_or(name);
     let upper = stem.to_ascii_uppercase();
     if matches!(upper.as_str(), "CON" | "PRN" | "AUX" | "NUL") {
         return true;

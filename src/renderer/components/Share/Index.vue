@@ -1,8 +1,8 @@
 <template>
   <div class="content panel panel-layout panel-layout--v share-page">
-    <mo-enter tag="header" preset="fadeInDown" class="panel-header">
+    <motion-enter tag="header" preset="fadeInDown" class="panel-header">
       <h4 class="share-title">{{ $t('share.title') }}</h4>
-    </mo-enter>
+    </motion-enter>
 
     <main class="panel-content">
       <div class="share-body">
@@ -263,7 +263,6 @@
           </div>
         </Tabs>
 
-        <!-- TRANSFERS -->
         <section v-if="otherTransfers.length" class="settings-section share-transfers">
           <div class="settings-section-header">
             <div class="section-icon"><ArrowRightLeft :size="16" /></div>
@@ -375,7 +374,7 @@ import {
 import { safUriToFilesystemPath } from "@/utils/native";
 
 export default defineComponent({
-	name: "mo-share",
+	name: "share-page",
 	components: {
 		Tabs,
 		TabsList,
@@ -959,7 +958,7 @@ export default defineComponent({
   border-radius: 12px;
   background: #fff;
   padding: 10px;
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.12);
+  box-shadow: var(--shadow-2);
 }
 .share-qr-hint {
   margin: 0;
@@ -973,7 +972,7 @@ export default defineComponent({
   gap: 10px;
   padding-bottom: 12px;
   margin-bottom: 4px;
-  border-bottom: 1px solid var(--border, rgba(127, 127, 127, 0.14));
+  border-bottom: 1px solid var(--border);
 }
 
 .share-result-status {
@@ -990,7 +989,7 @@ export default defineComponent({
 
 .share-result-status-icon {
   flex: 0 0 auto;
-  color: var(--primary, #6750a4);
+  color: var(--primary);
 }
 
 .share-result-status-text {
@@ -1097,23 +1096,23 @@ export default defineComponent({
 
 .share-badge--direct,
 .share-badge--mixed {
-  background: color-mix(in srgb, #2e7d32 18%, transparent);
+  background: color-mix(in srgb, var(--success) 16%, transparent);
   color: #2e7d32;
 }
 
 .share-badge--relay {
-  background: color-mix(in srgb, #ed6c02 20%, transparent);
+  background: color-mix(in srgb, var(--warning) 18%, transparent);
   color: #b45309;
 }
 
 :global(html.dark) .share-badge--direct,
 :global(html.dark) .share-badge--mixed {
-  background: color-mix(in srgb, #66bb6a 24%, transparent);
+  background: color-mix(in srgb, var(--success) 24%, transparent);
   color: #a5d6a7;
 }
 
 :global(html.dark) .share-badge--relay {
-  background: color-mix(in srgb, #ffa726 24%, transparent);
+  background: color-mix(in srgb, var(--warning) 24%, transparent);
   color: #ffcc80;
 }
 
@@ -1225,7 +1224,7 @@ export default defineComponent({
   height: 56px;
   border-radius: 999px;
   background: color-mix(in srgb, var(--primary, #6750a4) 14%, transparent);
-  color: var(--primary, #6750a4);
+  color: var(--primary);
 }
 
 .share-login-title {
@@ -1251,7 +1250,7 @@ export default defineComponent({
   align-items: flex-start;
   gap: 12px;
   padding: 12px 0;
-  border-bottom: 1px solid var(--border, rgba(127, 127, 127, 0.14));
+  border-bottom: 1px solid var(--border);
 }
 
 .share-transfer:last-child {

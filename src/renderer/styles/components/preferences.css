@@ -1,4 +1,3 @@
-/* Preferences / Settings form */
 @layer components {
 	input.noinput {
 		pointer-events: none;
@@ -26,11 +25,78 @@
 		bottom: 0;
 		z-index: 10;
 		margin: 0 -28px;
-		padding: 16px 28px;
-		background: linear-gradient(to top, var(--background) 70%, transparent);
+		padding: 12px 28px;
+		background: var(--bg);
+		border-top: 1px solid var(--border);
 		display: flex;
 		justify-content: flex-end;
 		gap: 10px;
+	}
+
+	.settings-tabs {
+		flex-shrink: 0;
+		align-self: flex-start;
+		display: inline-flex;
+		gap: 2px;
+		margin: 8px 16px 12px;
+		padding: 3px;
+		border: 1px solid var(--border);
+		border-radius: 8px;
+		background: var(--surface-1);
+		overflow-x: auto;
+		max-width: calc(100% - 32px);
+	}
+	.settings-tab {
+		position: relative;
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		padding: 5px 12px;
+		border-radius: 5px;
+		font-size: 12.5px;
+		font-weight: 500;
+		color: var(--text-2);
+		text-decoration: none;
+		white-space: nowrap;
+		transition: color var(--dur-1) var(--ease-out);
+	}
+	.settings-tab:hover {
+		color: var(--text-1);
+	}
+	.settings-tab.active {
+		color: var(--text-1);
+	}
+	.settings-tab-pill {
+		position: absolute;
+		inset: 0;
+		border-radius: 5px;
+		background: var(--bg);
+		box-shadow: var(--shadow-1);
+		border: 1px solid var(--border);
+	}
+	.dark .settings-tab-pill {
+		background: var(--surface-2);
+		box-shadow: none;
+	}
+	.settings-tab-icon,
+	.settings-tab-label {
+		position: relative;
+		z-index: 1;
+	}
+	.settings-tab-icon {
+		color: var(--text-3);
+		transition: color var(--dur-1) var(--ease-out);
+	}
+	.settings-tab.active .settings-tab-icon {
+		color: var(--primary);
+	}
+	.preference-page > .pref-form-view {
+		flex: 1 1 auto;
+		min-height: 0;
+	}
+	.preference-page > .pref-form-view > .panel-content {
+		overflow-x: hidden;
+		overflow-y: auto;
 	}
 	.settings-section {
 		margin-bottom: 28px;
@@ -47,16 +113,16 @@
 		border-bottom: 1px solid var(--border);
 	}
 	.section-icon {
-		width: 32px;
-		height: 32px;
-		min-width: 32px;
-		min-height: 32px;
+		width: 28px;
+		height: 28px;
+		min-width: 28px;
+		min-height: 28px;
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		background: linear-gradient(135deg, #619eff 0%, #a78bfa 100%);
+		background: var(--surface-2);
 		border-radius: calc(var(--radius) - 2px);
-		color: #fff;
+		color: var(--text-2);
 		flex-shrink: 0;
 		line-height: 0;
 	}
@@ -155,7 +221,7 @@
 	.settings-select-item [data-slot="select-trigger"] {
 		width: 100% !important;
 	}
-	.settings-select-item .mo-number-input-wrap {
+	.settings-select-item .number-input-wrap {
 		width: 100%;
 	}
 	.settings-select-group--stack {
@@ -286,12 +352,25 @@
 		color: var(--primary-foreground);
 		background: var(--primary);
 	}
+	.task-style-segmented {
+		grid-template-columns: repeat(2, minmax(110px, max-content));
+		width: max-content;
+		min-width: 0;
+		align-self: flex-start;
+	}
+	.task-style-segmented .font-size-segment {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		gap: 6px;
+		padding: 0 14px;
+	}
 	.settings-inline-input {
 		display: flex;
 		align-items: center;
 		gap: 8px;
 	}
-	.settings-inline-input .mo-number-input-wrap {
+	.settings-inline-input .number-input-wrap {
 		flex: 1 1 0;
 		min-width: 0;
 	}
@@ -324,9 +403,6 @@
 	}
 	.form-info a:hover {
 		text-decoration: underline;
-	}
-	.dark .section-icon {
-		background: linear-gradient(135deg, #619eff 0%, #8cc0ff 100%);
 	}
 	.proxy-scope-group {
 		display: flex;
@@ -390,7 +466,7 @@
 		font-size: 12px;
 		font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
 	}
-	.mo-input-group.dev-log-path-group {
+	.input-group.dev-log-path-group {
 		align-items: stretch;
 		border: 1px solid var(--border);
 		border-radius: calc(var(--radius) - 2px);
@@ -419,14 +495,14 @@
 		outline-offset: -2px;
 		box-shadow: inset 0 0 0 1px var(--foreground);
 	}
-	.mo-input-group--bordered > .mo-input-append.dev-log-path-actions {
+	.input-group--bordered > .input-append.dev-log-path-actions {
 		gap: 0;
 		padding: 0;
 		border-left: 1px solid var(--border);
 		background: var(--muted);
 	}
-	.mo-input-append.dev-log-path-actions .select-directory.ui-button,
-	.mo-input-append.dev-log-path-actions .show-in-folder {
+	.input-append.dev-log-path-actions .select-directory.ui-button,
+	.input-append.dev-log-path-actions .show-in-folder {
 		width: 36px;
 		height: 36px;
 		min-width: 36px;
@@ -438,8 +514,8 @@
 		color: var(--muted-foreground);
 		box-shadow: none;
 	}
-	.mo-input-append.dev-log-path-actions .select-directory.ui-button:hover,
-	.mo-input-append.dev-log-path-actions .show-in-folder:hover {
+	.input-append.dev-log-path-actions .select-directory.ui-button:hover,
+	.input-append.dev-log-path-actions .show-in-folder:hover {
 		background: color-mix(in srgb, var(--foreground) 7%, transparent);
 		transform: none;
 	}
@@ -597,7 +673,6 @@
 		background: rgba(248, 113, 113, 0.1);
 	}
 
-	/* Credential Manager */
 	.credential-manager-empty {
 		padding: 20px 0;
 		text-align: center;

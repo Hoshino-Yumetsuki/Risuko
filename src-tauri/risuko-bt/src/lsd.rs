@@ -1,10 +1,10 @@
-//! BEP-14 Local Service Discovery.
+//! BEP-14 Local Service Discovery
 //!
 //! Announces info-hashes over UDP multicast on the local link so peers on
 //! the same LAN can find each other without trackers. Both IPv4
 //! (`239.192.152.143:6771`) and IPv6 (`ff15::efc0:988f:6771`) groups are
 //! supported; bind failures on one family downgrade to a warning and do not
-//! fail the whole service.
+//! fail the whole service
 //!
 //! Messages are HTTP-like:
 //!
@@ -42,7 +42,7 @@ const MAX_DATAGRAM: usize = 1280;
 
 /// Running LSD service; output arrives on the `Receiver` returned by
 /// [`LocalServiceDiscovery::spawn`]. Dropping [`LocalServiceDiscovery`]
-/// cancels all background tasks.
+/// cancels all background tasks
 pub struct LocalServiceDiscovery {
     inner: Arc<LsdInner>,
     join_handles: Mutex<Vec<JoinHandle<()>>>,
@@ -52,16 +52,16 @@ struct LsdInner {
     cookie: String,
     announce_port: u16,
     info_hashes: Mutex<HashSet<Id20>>,
-    // Per-source rate limiter keyed by (info_hash, ip).
+    // Per-source rate limiter keyed by (info_hash, ip)
     rate: Mutex<HashMap<(Id20, IpAddr), Instant>>,
     tx_out: mpsc::Sender<(Id20, SocketAddr)>,
-    // Wake the announcer immediately on add_infohash.
+    // Wake the announcer immediately on add_infohash
     wake_tx: mpsc::Sender<()>,
 }
 
 impl LocalServiceDiscovery {
     /// Spawn the service. Returns the handle and a receiver yielding
-    /// `(info_hash, peer_addr)` for every valid incoming announce.
+    /// `(info_hash, peer_addr)` for every valid incoming announce
     #[allow(clippy::type_complexity)]
     pub fn spawn(
         announce_port: u16,
@@ -156,7 +156,7 @@ fn bind_v4() -> std::io::Result<UdpSocket> {
     sock.set_nonblocking(true)?;
     sock.bind(&SocketAddr::from(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, LSD_PORT)).into())?;
     sock.join_multicast_v4(&LSD_V4, &Ipv4Addr::UNSPECIFIED)?;
-    // Restrict multicast to the LAN.
+    // Restrict multicast to the LAN
     sock.set_multicast_ttl_v4(1)?;
     sock.set_multicast_loop_v4(false)?;
     UdpSocket::from_std(sock.into())
@@ -188,14 +188,14 @@ async fn announce_loop(
 ) {
     let mut tick = tokio::time::interval(ANNOUNCE_INTERVAL);
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-    // Announce immediately on start.
+    // Announce immediately on start
     let _ = tick.tick().await;
     loop {
         do_announce(v4.as_deref(), v6.as_deref(), &inner).await;
         tokio::select! {
             _ = tick.tick() => {}
             _ = wake.recv() => {
-                // De-bounce: the wake might be a batch; flush any more.
+                // De-bounce: the wake might be a batch; flush any more
                 while wake.try_recv().is_ok() {}
             }
         }
@@ -207,7 +207,7 @@ async fn do_announce(v4: Option<&UdpSocket>, v6: Option<&UdpSocket>, inner: &Lsd
     if hashes.is_empty() {
         return;
     }
-    // Chunk info-hash lists so each datagram stays within a typical MTU.
+    // Chunk info-hash lists so each datagram stays within a typical MTU
     let chunk = 20; // 20 hashes ~ 900 bytes of Infohash headers
     for slice in hashes.chunks(chunk) {
         if let Some(sock) = v4 {
@@ -262,7 +262,7 @@ async fn recv_loop(sock: Arc<UdpSocket>, inner: Arc<LsdInner>) {
         let Some(parsed) = parse_announce(&buf[..n]) else {
             continue;
         };
-        // Drop own announces via cookie.
+        // Drop own announces via cookie
         if parsed.cookie.as_deref() == Some(&inner.cookie) {
             continue;
         }
@@ -281,16 +281,16 @@ async fn recv_loop(sock: Arc<UdpSocket>, inner: Arc<LsdInner>) {
                 .collect()
         };
         for ih in matched {
-            // Rate limit 1 peer per (info_hash, ip) per second.
+            // Rate limit 1 peer per (info_hash, ip) per second
             let key = (ih, from.ip());
             let now = Instant::now();
             {
                 let mut rate = inner.rate.lock();
-                // Garbage-collect stale entries opportunistically.
+                // Garbage-collect stale entries opportunistically
                 if rate.len() > 4096 {
                     rate.retain(|_, t| now.duration_since(*t) < RATE_LIMIT_WINDOW * 4);
                 }
-                // Hard cap: reject if still over limit after GC.
+                // Hard cap: reject if still over limit after GC
                 if rate.len() > 8192 {
                     continue;
                 }
@@ -314,7 +314,7 @@ struct AnnounceMsg {
 }
 
 fn parse_announce(buf: &[u8]) -> Option<AnnounceMsg> {
-    // httparse expects a request line like "GET / HTTP/1.1"; BT-SEARCH fits.
+    // httparse expects a request line like "GET / HTTP/1.1"; BT-SEARCH fits
     let mut headers = [httparse::EMPTY_HEADER; 32];
     let mut req = httparse::Request::new(&mut headers);
     req.parse(buf).ok()?;
@@ -348,24 +348,6 @@ fn random_cookie() -> String {
     let mut rng = rand::rng();
     let n: u64 = rng.random();
     format!("{n:016x}")
-}
-
-// ---------------------------------------------------------------------------
-// Back-compat shim for call sites that used the stub API.
-// ---------------------------------------------------------------------------
-
-pub struct Lsd {
-    _service: Arc<LocalServiceDiscovery>,
-}
-
-impl Lsd {
-    pub async fn spawn(
-        info_hashes: Vec<Id20>,
-        port: u16,
-    ) -> std::io::Result<(Self, mpsc::Receiver<(Id20, SocketAddr)>)> {
-        let (svc, rx) = LocalServiceDiscovery::spawn(port, info_hashes)?;
-        Ok((Self { _service: svc }, rx))
-    }
 }
 
 #[cfg(test)]

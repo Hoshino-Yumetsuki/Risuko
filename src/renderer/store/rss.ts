@@ -10,12 +10,10 @@ const STORAGE_KEY = "risuko.rss-items-per-page";
 const PREFS_STORAGE_KEY = "risuko.rss-reader-prefs";
 
 export type DensityMode = "compact" | "comfortable";
-export type ReaderMode = "split" | "list";
 export type SortMode = "newest" | "oldest" | "size-desc" | "rule-match";
 
 interface ReaderPrefs {
 	densityMode: DensityMode;
-	readerMode: ReaderMode;
 	unreadOnly: boolean;
 	matchedOnly: boolean;
 	sortMode: SortMode;
@@ -23,7 +21,6 @@ interface ReaderPrefs {
 
 const DEFAULT_PREFS: ReaderPrefs = {
 	densityMode: "comfortable",
-	readerMode: "list",
 	unreadOnly: false,
 	matchedOnly: false,
 	sortMode: "newest",
@@ -43,7 +40,6 @@ function loadItemsPerPage(): number {
 }
 
 const VALID_DENSITY_MODES: DensityMode[] = ["compact", "comfortable"];
-const VALID_READER_MODES: ReaderMode[] = ["split", "list"];
 const VALID_SORT_MODES: SortMode[] = [
 	"newest",
 	"oldest",
@@ -59,9 +55,6 @@ function loadPrefs(): ReaderPrefs {
 			const prefs: ReaderPrefs = { ...DEFAULT_PREFS };
 			if (VALID_DENSITY_MODES.includes(parsed.densityMode as DensityMode)) {
 				prefs.densityMode = parsed.densityMode as DensityMode;
-			}
-			if (VALID_READER_MODES.includes(parsed.readerMode as ReaderMode)) {
-				prefs.readerMode = parsed.readerMode as ReaderMode;
 			}
 			if (typeof parsed.unreadOnly === "boolean") {
 				prefs.unreadOnly = parsed.unreadOnly;
@@ -98,12 +91,10 @@ export const useRssStore = defineStore("rss", {
 			rules: [] as RssRule[],
 			loading: false,
 			selectedItemIds: [] as string[],
-			selectedItemId: null as string | null,
 			filterText: "",
 			itemsPerPage: loadItemsPerPage(),
 			currentPage: 1,
 			densityMode: prefs.densityMode,
-			readerMode: prefs.readerMode,
 			unreadOnly: prefs.unreadOnly,
 			matchedOnly: prefs.matchedOnly,
 			sortMode: prefs.sortMode,
@@ -122,19 +113,14 @@ export const useRssStore = defineStore("rss", {
 		currentItems(): RssItem[] {
 			let items: RssItem[];
 			if (!this.currentFeedId || this.currentFeedId === "__downloaded__") {
-				const downloadedOnly = this.currentFeedId === "__downloaded__";
-				const allItems: RssItem[] = [];
-				for (const key of Object.keys(this.items)) {
-					const feedItems = this.items[key];
-					if (feedItems) {
-						for (const item of feedItems) {
-							if (!downloadedOnly || item.is_downloaded) {
-								allItems.push(item);
-							}
-						}
-					}
-				}
-				items = allItems;
+				// pinia getter `this` loses the Record value type here
+				const all = Object.values(
+					this.items as Record<string, RssItem[]>,
+				).flat();
+				items =
+					this.currentFeedId === "__downloaded__"
+						? all.filter((i) => i.is_downloaded)
+						: all;
 			} else {
 				items = (this.items[this.currentFeedId] ?? []).slice();
 			}
@@ -366,9 +352,9 @@ export const useRssStore = defineStore("rss", {
 			}
 
 			try {
-				// Use tracked download: backend monitors completion in a background task
-				// and emits rss:download-complete / rss:download-error events.
-				// This returns immediately with the gid, keeping the UI non-blocking.
+				// tracked download: backend watches completion in a background task
+				// and emits rss:download-complete / rss:download-error; returns
+				// immediately with the gid so the UI doesn't block
 				await api.downloadRssItemTracked(
 					feedId,
 					itemId,
@@ -412,14 +398,9 @@ export const useRssStore = defineStore("rss", {
 			this.rules = this.rules.filter((r) => r.id !== ruleId);
 		},
 
-		selectItem(itemId: string | null) {
-			this.selectedItemId = itemId;
-		},
-
 		_persistPrefs() {
 			savePrefs({
 				densityMode: this.densityMode,
-				readerMode: this.readerMode,
 				unreadOnly: this.unreadOnly,
 				matchedOnly: this.matchedOnly,
 				sortMode: this.sortMode,
@@ -428,10 +409,6 @@ export const useRssStore = defineStore("rss", {
 
 		setDensityMode(mode: DensityMode) {
 			this.densityMode = mode;
-			this._persistPrefs();
-		},
-		setReaderMode(mode: ReaderMode) {
-			this.readerMode = mode;
 			this._persistPrefs();
 		},
 		setUnreadOnly(value: boolean) {
@@ -474,6 +451,26 @@ export const useRssStore = defineStore("rss", {
 			}
 		},
 
+		// Commit optimistic read flags, reverting them on failure
+		async _commitRead(entries: [string, string][]) {
+			if (entries.length === 0) {
+				return;
+			}
+			try {
+				await api.markRssItemsRead(entries);
+			} catch (_e) {
+				for (const [fid, itemId] of entries) {
+					const it = this.items[fid]?.find((i) => i.id === itemId);
+					if (it) {
+						it.is_read = false;
+					}
+				}
+				if (this.unreadOnly) {
+					this.ensurePageInRange();
+				}
+			}
+		},
+
 		async markAllRead(feedId?: string) {
 			const feedIds = feedId ? [feedId] : Object.keys(this.items);
 			const entries: [string, string][] = [];
@@ -492,22 +489,7 @@ export const useRssStore = defineStore("rss", {
 			if (this.unreadOnly) {
 				this.ensurePageInRange();
 			}
-			if (entries.length > 0) {
-				try {
-					await api.markRssItemsRead(entries);
-				} catch (_e) {
-					// Revert on failure
-					for (const [fid, itemId] of entries) {
-						const it = this.items[fid]?.find((i) => i.id === itemId);
-						if (it) {
-							it.is_read = false;
-						}
-					}
-					if (this.unreadOnly) {
-						this.ensurePageInRange();
-					}
-				}
-			}
+			await this._commitRead(entries);
 		},
 
 		async markItemsReadBulk(items: { feed_id: string; id: string }[]) {
@@ -526,21 +508,7 @@ export const useRssStore = defineStore("rss", {
 			if (this.unreadOnly) {
 				this.ensurePageInRange();
 			}
-			if (entries.length > 0) {
-				try {
-					await api.markRssItemsRead(entries);
-				} catch (_e) {
-					for (const [fid, itemId] of entries) {
-						const it = this.items[fid]?.find((i) => i.id === itemId);
-						if (it) {
-							it.is_read = false;
-						}
-					}
-					if (this.unreadOnly) {
-						this.ensurePageInRange();
-					}
-				}
-			}
+			await this._commitRead(entries);
 		},
 
 		async updateFeedSettings(

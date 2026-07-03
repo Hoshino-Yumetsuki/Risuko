@@ -7,14 +7,12 @@
 </template>
 
 <script lang="ts">
-import { EMPTY_STRING } from "@shared/constants";
-import { checkTaskIsBT, checkTaskIsSeeder } from "@shared/utils";
+import { checkTaskIsBT } from "@shared/utils";
 import { convertTrackerDataToLine } from "@shared/utils/tracker";
 import { Textarea } from "@/components/ui/textarea";
-import is from "@/shims/platform";
 
 export default {
-	name: "mo-task-trackers",
+	name: "task-trackers",
 	components: {
 		Textarea,
 	},
@@ -24,20 +22,16 @@ export default {
 		},
 	},
 	computed: {
-		isRenderer: () => is.renderer(),
 		isBT() {
 			return checkTaskIsBT(this.task);
 		},
-		isSeeder() {
-			return checkTaskIsSeeder(this.task);
-		},
 		announceList() {
 			if (!this.isBT) {
-				return EMPTY_STRING;
+				return "";
 			}
 
 			const { bittorrent } = this.task;
-			const data = bittorrent.announceList.map((i: string[]) => i[0]);
+			const data = (bittorrent.announceList || []).map((i: string[]) => i[0]);
 			return convertTrackerDataToLine(data);
 		},
 	},

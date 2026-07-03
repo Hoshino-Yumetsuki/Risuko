@@ -71,7 +71,7 @@ impl CookieStore {
                     path.display()
                 );
                 if path.exists() {
-                    let backup = corrupt_backup_path(&path);
+                    let backup = path.with_extension(format!("json.corrupt-{}", now_secs()));
                     if let Err(rename_err) = std::fs::rename(&path, &backup) {
                         tracing::error!(
                             "cookie store backup failed (rename {} -> {}): {rename_err}; refusing to overwrite",
@@ -227,44 +227,8 @@ fn write_to_disk(path: &Path, state: &StoreFile) -> Result<(), String> {
         .map_err(|e| format!("serialize cookie store failed: {e}"))?;
     let tmp = path.with_extension("json.tmp");
     std::fs::write(&tmp, json).map_err(|e| format!("write cookie store failed: {e}"))?;
-    if let Err(e) = std::fs::rename(&tmp, path) {
-        // On Windows rename fails if the destination exists; remove it and retry.
-        // Only attempt removal for AlreadyExists — other errors (permission, I/O)
-        // are returned as-is so the existing cookie store is never deleted on
-        // transient failures.
-        if e.kind() != std::io::ErrorKind::AlreadyExists {
-            return Err(format!("rename cookie store failed: {e}"));
-        }
-        if let Err(re) = std::fs::remove_file(path) {
-            // Clean up the temp file so we don't leave it behind, then surface
-            // the original rename error together with the remove failure
-            let _ = std::fs::remove_file(&tmp);
-            return Err(format!(
-                "rename cookie store failed: {e}; remove existing failed: {re}"
-            ));
-        }
-        std::fs::rename(&tmp, path).map_err(|e2| format!("rename cookie store failed: {e2}"))?;
-    }
+    std::fs::rename(&tmp, path).map_err(|e| format!("rename cookie store failed: {e}"))?;
     Ok(())
-}
-
-/// Pick a side-by-side backup path that doesn't already exist. The
-/// browser_cookies.json file is the canonical one we don't want to
-/// overwrite when load fails, so we move it aside before starting fresh
-fn corrupt_backup_path(path: &Path) -> std::path::PathBuf {
-    let stamp = now_secs();
-    let mut candidate = path.with_extension(format!("json.corrupt-{stamp}"));
-    // Extremely unlikely to collide, but be defensive in case the user
-    // already has a stale backup with the same timestamp
-    let mut suffix = 1u32;
-    while candidate.exists() {
-        candidate = path.with_extension(format!("json.corrupt-{stamp}-{suffix}"));
-        suffix += 1;
-        if suffix > 100 {
-            break;
-        }
-    }
-    candidate
 }
 
 /// Render the entry's cookies into a single `Cookie:` header value
@@ -370,7 +334,7 @@ mod tests {
         }
         let listed = store.list();
         assert!(listed.len() <= MAX_ENTRIES);
-        // The oldest (h0..h4) should be evicted. h0 specifically should not exist.
+        // The oldest (h0..h4) should be evicted. h0 specifically should not exist
         assert!(store.find_for_url("https://h0.example.com").is_none());
     }
 

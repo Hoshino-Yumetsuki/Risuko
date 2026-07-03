@@ -11,7 +11,6 @@ export interface HealthCheck {
 	id: string;
 	status: HealthStatus;
 	message: string;
-	hint: string | null;
 	fix: HealthFix | null;
 	details: Record<string, unknown> | null;
 }

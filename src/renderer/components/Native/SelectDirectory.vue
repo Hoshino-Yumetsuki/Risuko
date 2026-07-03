@@ -19,17 +19,11 @@ import is from "@/shims/platform";
 import { safUriToFilesystemPath } from "@/utils/native";
 
 export default {
-	name: "mo-select-directory",
+	name: "select-directory",
 	inheritAttrs: false,
 	components: {
 		UiButton,
 		Folder,
-	},
-	props: {},
-	computed: {
-		isAndroid() {
-			return is.android();
-		},
 	},
 	methods: {
 		async onFolderClick() {

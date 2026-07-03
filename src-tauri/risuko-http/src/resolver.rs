@@ -19,7 +19,7 @@ pub type Resolving = Pin<Box<dyn Future<Output = Result<Addrs>> + Send>>;
 /// Implementations resolve a *bare hostname* (no `:port`). The built-in
 /// [`GaiResolver`] feeds `tokio::net::lookup_host` a `(host, 0)` tuple, so
 /// every [`Addrs`] entry it produces has port `0`. Callers (the connector)
-/// are responsible for substituting the real destination port via
+/// must substitute the real destination port via
 /// `SocketAddr::new(addr.ip(), port)` before connecting. Third-party
 /// implementers must not parse a `"host:port"` string out of `host` and
 /// must not embed a meaningful port in the returned [`SocketAddr`]s
@@ -48,10 +48,10 @@ impl Resolve for GaiResolver {
 
 pub(crate) type SharedResolver = Arc<dyn Resolve>;
 
-/// Process-wide resolver override.
+/// Process-wide resolver override
 ///
-/// Clients built without an explicit `.resolver(...)` use [`GlobalResolver`],
-/// which reads this slot on every single `resolve()` call. So a swap takes hold
+/// Clients built without an explicit `.resolver_arc(...)` use [`GlobalResolver`],
+/// which reads this slot on every `resolve()` call. So a swap takes hold
 /// right away, even for clients that get built once and then cached for the
 /// life of the process (think the `OnceLock` clients in the RSS, UPnP and
 /// BitTorrent-tracker code). `None` means fall back to system DNS
@@ -96,8 +96,8 @@ mod tests {
     #[test]
     #[serial_test::serial]
     fn global_resolver_defaults_to_system() {
-        // With nothing installed, GlobalResolver falls through to GaiResolver.
-        // Just check the slot is empty rather than hitting the network
+        // With nothing installed, GlobalResolver falls through to GaiResolver;
+        // check the slot is empty rather than hitting the network
         set_global_resolver(None);
         assert!(global_resolver().is_none());
     }

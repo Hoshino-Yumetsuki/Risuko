@@ -1,4 +1,4 @@
-import { EMPTY_STRING, TASK_STATUS } from "@shared/constants";
+import { TASK_STATUS } from "@shared/constants";
 import type {
 	DownloadFile,
 	DownloadTask,
@@ -7,7 +7,6 @@ import type {
 } from "@shared/types/task";
 import { calcProgress, checkTaskIsBT, getTaskName } from "@shared/utils";
 import logger from "@shared/utils/logger";
-import { getSelectableTaskKeys } from "@shared/utils/taskSelection";
 import { defineStore } from "pinia";
 import api from "@/api";
 import { useAppStore } from "@/store/app";
@@ -32,12 +31,6 @@ const speedHistoryCache = new Map<string, SpeedSample[]>();
 
 export function getSpeedHistory(gid: string): SpeedSample[] {
 	return speedHistoryCache.get(gid) || [];
-}
-
-/** Row count for the task list
- * Each task renders as a single card, including multi-file BT torrents */
-function countDisplayRows(tasks: DownloadTask[]): number {
-	return tasks.length;
 }
 
 function sampleSpeedsFromTasks(tasks: DownloadTask[]): boolean {
@@ -78,7 +71,6 @@ type TaskSortBy = "default" | "name" | "size" | "time";
 type TaskSortOrder = "asc" | "desc";
 type DisplayTask = DownloadTask & {
 	_displayKey: string;
-	_isFileEntry?: boolean;
 };
 
 const clampTasksPerPage = (value: number) => {
@@ -96,10 +88,7 @@ const clampTasksPerPage = (value: number) => {
 };
 
 const loadTasksPerPage = () => {
-	if (typeof window === "undefined" || !window.localStorage) {
-		return DEFAULT_TASKS_PER_PAGE;
-	}
-	const saved = window.localStorage.getItem(TASKS_PER_PAGE_STORAGE_KEY);
+	const saved = localStorage.getItem(TASKS_PER_PAGE_STORAGE_KEY);
 	if (saved === null) {
 		return DEFAULT_TASKS_PER_PAGE;
 	}
@@ -107,10 +96,7 @@ const loadTasksPerPage = () => {
 };
 
 const loadSortBy = (): TaskSortBy => {
-	if (typeof window === "undefined" || !window.localStorage) {
-		return "default";
-	}
-	const saved = window.localStorage.getItem(SORT_BY_STORAGE_KEY);
+	const saved = localStorage.getItem(SORT_BY_STORAGE_KEY);
 	if (saved === "name" || saved === "size" || saved === "time") {
 		return saved;
 	}
@@ -118,10 +104,7 @@ const loadSortBy = (): TaskSortBy => {
 };
 
 const loadSortOrder = (): TaskSortOrder => {
-	if (typeof window === "undefined" || !window.localStorage) {
-		return "asc";
-	}
-	const saved = window.localStorage.getItem(SORT_ORDER_STORAGE_KEY);
+	const saved = localStorage.getItem(SORT_ORDER_STORAGE_KEY);
 	if (saved === "desc") {
 		return "desc";
 	}
@@ -144,16 +127,12 @@ export const useTaskStore = defineStore("task", {
 	state: () => ({
 		currentList: "active",
 		taskDetailVisible: false,
-		currentTaskGid: EMPTY_STRING,
-		enabledFetchPeers: false,
+		currentTaskGid: "",
 		currentTaskItem: null as (DownloadTask & { peers?: PeerInfo[] }) | null,
 		currentTaskFiles: [] as DownloadFile[],
 		currentTaskPeers: [] as PeerInfo[],
 		seedingList: [] as string[],
 		taskList: [] as DownloadTask[],
-		// Selection lives at row level
-		// Single-file tasks use `<gid>`, while BT file rows use `<gid>#f<index>`
-		// Use `selectedGids` when aria2 needs the deduped torrent gid list
 		selectedGidList: [] as string[],
 		speedHistoryRev: 0,
 		taskOrderMap: {
@@ -268,19 +247,10 @@ export const useTaskStore = defineStore("task", {
 			const end = start + state.tasksPerPage;
 			return this.sortedTaskList.slice(start, end);
 		},
-		// Underlying gids from the row selection
-		// Use this for aria2 calls like pause, resume, and remove
-		// Raw `selectedGidList` can include file-row suffixes
 		selectedGids(state): string[] {
-			const set = new Set<string>();
-			for (const key of state.selectedGidList) {
-				const hashIdx = key.indexOf("#");
-				set.add(hashIdx === -1 ? key : key.slice(0, hashIdx));
-			}
-			return [...set];
+			return state.selectedGidList;
 		},
 		// Selected rows as `DisplayTask` objects
-		// Callers get the same shape as a clicked row, including `_isFileEntry` and per-file `files`
 		selectedTaskRows(state): DisplayTask[] {
 			if (state.selectedGidList.length === 0) {
 				return [];
@@ -298,29 +268,19 @@ export const useTaskStore = defineStore("task", {
 				return tasks;
 			}
 
-			const orderIndex = new Map(order.map((gid, index) => [gid, index]));
-			const fallbackIndex = new Map(
+			const orderIndex = new Map<string, number>(
+				order.map((gid, index) => [gid, index]),
+			);
+			const fallbackIndex = new Map<string, number>(
 				tasks.map((task, index) => [task.gid, index]),
 			);
 
-			return [...tasks].sort((a, b) => {
-				const aOrderIndex = orderIndex.get(a.gid);
-				const bOrderIndex = orderIndex.get(b.gid);
-				const aIndex =
-					typeof aOrderIndex === "number"
-						? aOrderIndex
-						: Number.MAX_SAFE_INTEGER;
-				const bIndex =
-					typeof bOrderIndex === "number"
-						? bOrderIndex
-						: Number.MAX_SAFE_INTEGER;
-				if (aIndex !== bIndex) {
-					return aIndex - bIndex;
-				}
-				return (
-					(fallbackIndex.get(a.gid) || 0) - (fallbackIndex.get(b.gid) || 0)
-				);
-			});
+			return [...tasks].sort(
+				(a, b) =>
+					(orderIndex.get(a.gid) ?? Number.MAX_SAFE_INTEGER) -
+						(orderIndex.get(b.gid) ?? Number.MAX_SAFE_INTEGER) ||
+					(fallbackIndex.get(a.gid) || 0) - (fallbackIndex.get(b.gid) || 0),
+			);
 		},
 		updateTaskOrder(type: string, gids: string[] = []) {
 			this.taskOrderMap = {
@@ -336,10 +296,7 @@ export const useTaskStore = defineStore("task", {
 			this.fetchList();
 		},
 		updateCurrentPage(listType: string, page: number) {
-			const maxPage = Math.max(
-				1,
-				Math.ceil(this.sortedTaskList.length / this.tasksPerPage),
-			);
+			const maxPage = this.totalPages;
 			const normalizedPage = Math.min(
 				Math.max(Math.floor(Number(page) || 1), 1),
 				maxPage,
@@ -352,10 +309,7 @@ export const useTaskStore = defineStore("task", {
 		},
 		ensurePageInRange(listType = this.currentList) {
 			const currentPage = this.currentPageMap[listType] || 1;
-			const maxPage = Math.max(
-				1,
-				Math.ceil(this.sortedTaskList.length / this.tasksPerPage),
-			);
+			const maxPage = this.totalPages;
 			if (currentPage > maxPage) {
 				this.updateCurrentPage(listType, maxPage);
 			}
@@ -370,9 +324,7 @@ export const useTaskStore = defineStore("task", {
 			const next = clampTasksPerPage(value);
 			this.tasksPerPage = next;
 			this.ensurePageInRange(this.currentList);
-			if (typeof window !== "undefined" && window.localStorage) {
-				window.localStorage.setItem(TASKS_PER_PAGE_STORAGE_KEY, `${next}`);
-			}
+			localStorage.setItem(TASKS_PER_PAGE_STORAGE_KEY, `${next}`);
 		},
 		setFilterText(text: string) {
 			this.filterText = text;
@@ -385,16 +337,12 @@ export const useTaskStore = defineStore("task", {
 		setSortBy(sortBy: TaskSortBy) {
 			this.sortBy = sortBy;
 			this.ensurePageInRange(this.currentList);
-			if (typeof window !== "undefined" && window.localStorage) {
-				window.localStorage.setItem(SORT_BY_STORAGE_KEY, sortBy);
-			}
+			localStorage.setItem(SORT_BY_STORAGE_KEY, sortBy);
 		},
 		setSortOrder(order: TaskSortOrder) {
 			this.sortOrder = order;
 			this.ensurePageInRange(this.currentList);
-			if (typeof window !== "undefined" && window.localStorage) {
-				window.localStorage.setItem(SORT_ORDER_STORAGE_KEY, order);
-			}
+			localStorage.setItem(SORT_ORDER_STORAGE_KEY, order);
 		},
 		toggleSortOrder() {
 			this.setSortOrder(this.sortOrder === "asc" ? "desc" : "asc");
@@ -433,7 +381,7 @@ export const useTaskStore = defineStore("task", {
 				// Count visible rows, not raw backend tasks, so the sidebar matches the list
 				this.taskCountMap = {
 					...this.taskCountMap,
-					[type]: countDisplayRows(orderedData),
+					[type]: orderedData.length,
 				};
 				this.ensurePageInRange(type);
 				this.updateTaskOrder(
@@ -503,10 +451,10 @@ export const useTaskStore = defineStore("task", {
 					const stoppedOnlyArr = stoppedArr.filter(
 						(t) => t.status !== TASK_STATUS.COMPLETE,
 					);
-					activeCount = countDisplayRows(activeArr);
-					waitingCount = countDisplayRows(waitingArr);
-					completedCount = countDisplayRows(completedArr);
-					stoppedCount = countDisplayRows(stoppedOnlyArr);
+					activeCount = activeArr.length;
+					waitingCount = waitingArr.length;
+					completedCount = completedArr.length;
+					stoppedCount = stoppedOnlyArr.length;
 					allCount = activeCount + waitingCount + completedCount + stoppedCount;
 				} catch {
 					// Keep previous counts on failure
@@ -566,7 +514,9 @@ export const useTaskStore = defineStore("task", {
 			this.selectedGidList = list;
 		},
 		selectAllTask() {
-			const selectableKeys = getSelectableTaskKeys(this.paginatedTaskList);
+			const selectableKeys = this.paginatedTaskList
+				.map((task) => task._displayKey || task.gid || "")
+				.filter(Boolean);
 			const selectedKeys = new Set(this.selectedGidList);
 			const allSelected =
 				selectableKeys.length > 0 &&
@@ -580,7 +530,6 @@ export const useTaskStore = defineStore("task", {
 				return data;
 			} catch (err: unknown) {
 				logger.warn("[Risuko] fetchItem failed:", (err as Error).message);
-				this.updateCurrentTaskItem(null);
 				return null;
 			}
 		},
@@ -588,7 +537,6 @@ export const useTaskStore = defineStore("task", {
 			try {
 				const data = await api.fetchTaskItemWithPeers({ gid });
 				if (!data) {
-					this.updateCurrentTaskItem(null);
 					return null;
 				}
 				this.updateCurrentTaskItem(data);
@@ -598,7 +546,6 @@ export const useTaskStore = defineStore("task", {
 					"[Risuko] fetchItemWithPeers failed:",
 					(err as Error).message,
 				);
-				this.updateCurrentTaskItem(null);
 				return null;
 			}
 		},
@@ -628,16 +575,13 @@ export const useTaskStore = defineStore("task", {
 		hideTaskDetail() {
 			this.taskDetailVisible = false;
 		},
-		toggleEnabledFetchPeers(enabled: boolean) {
-			this.enabledFetchPeers = enabled;
-		},
 		updateCurrentTaskItem(
 			task: (DownloadTask & { peers?: PeerInfo[] }) | null,
 		) {
 			this.currentTaskItem = task;
 			if (task) {
 				this.currentTaskFiles = task.files;
-				this.currentTaskPeers = task.peers;
+				this.currentTaskPeers = task.peers ?? this.currentTaskPeers;
 			} else {
 				this.currentTaskFiles = [];
 				this.currentTaskPeers = [];
@@ -775,15 +719,7 @@ export const useTaskStore = defineStore("task", {
 			this.seedingList = [...this.seedingList, gid];
 		},
 		removeFromSeedingList(gid: string) {
-			const idx = this.seedingList.indexOf(gid);
-			if (idx === -1) {
-				return;
-			}
-
-			this.seedingList = [
-				...this.seedingList.slice(0, idx),
-				...this.seedingList.slice(idx + 1),
-			];
+			this.seedingList = this.seedingList.filter((g) => g !== gid);
 		},
 		stopSeeding({ gid }: { gid: string }) {
 			return this.pauseTask({ gid, status: "active" }).then(() => {
@@ -821,8 +757,6 @@ export const useTaskStore = defineStore("task", {
 			}
 		},
 		batchResumeSelectedTasks() {
-			// `selectedGids` already dedupes per-row keys back to gid level
-			// so we don't call aria2 with the same gid twice
 			const gids: string[] = this.selectedGids;
 			if (gids.length === 0) {
 				return;
@@ -843,12 +777,6 @@ export const useTaskStore = defineStore("task", {
 				this.fetchList();
 				this.saveSession();
 			});
-		},
-		batchForcePauseTask(gids: string[]) {
-			return api.batchForcePauseTask({ gids });
-		},
-		batchResumeTask(gids: string[]) {
-			return api.batchResumeTask({ gids });
 		},
 		batchRemoveTask(gids: string[]) {
 			return api
@@ -918,8 +846,6 @@ export const useTaskStore = defineStore("task", {
 			options: { onSyncError?: (error: unknown) => void } = {},
 		) {
 			const { onSyncError } = options;
-			// Move underlying torrent gids, not individual file rows
-			// Multiple selected files inside one torrent collapse to that one torrent
 			const selectedGids = this.selectedGids;
 			if (selectedGids.length === 0) {
 				return 0;

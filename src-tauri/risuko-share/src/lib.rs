@@ -595,17 +595,7 @@ async fn run_receive(
         }
         match item {
             DownloadProgressItem::Progress(offset) => {
-                let now = Instant::now();
-                if last_emit.is_none_or(|t| now.duration_since(t) >= PROGRESS_EMIT_INTERVAL) {
-                    last_emit = Some(now);
-                    let _ = events.send(ShareEnvelope {
-                        id: id.to_string(),
-                        event: ShareEvent::Progress {
-                            transferred: offset,
-                            total,
-                        },
-                    });
-                }
+                emit_receive_progress(events, id, &mut last_emit, offset, total, false);
             }
             DownloadProgressItem::Error(err) => {
                 path_handle.abort();
@@ -618,6 +608,7 @@ async fn run_receive(
             _ => {}
         }
     }
+    emit_receive_progress(events, id, &mut last_emit, total, total, true);
     path_handle.abort();
 
     match format {
@@ -658,6 +649,25 @@ async fn run_receive(
 
     let _ = store.shutdown().await;
     Ok(())
+}
+
+fn emit_receive_progress(
+    events: &UnboundedSender<ShareEnvelope>,
+    id: &str,
+    last_emit: &mut Option<Instant>,
+    transferred: u64,
+    total: u64,
+    force: bool,
+) {
+    let now = Instant::now();
+    if !force && last_emit.is_some_and(|t| now.duration_since(t) < PROGRESS_EMIT_INTERVAL) {
+        return;
+    }
+    *last_emit = Some(now);
+    let _ = events.send(ShareEnvelope {
+        id: id.to_string(),
+        event: ShareEvent::Progress { transferred, total },
+    });
 }
 
 /// Poll the active connection path for a remote and emit [`ShareEvent::Path`]
@@ -784,4 +794,28 @@ fn sanitize_rel_path(name: &str) -> PathBuf {
         out.push("risuko-received");
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn receiver_forces_final_progress_emit() {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut last_emit = Some(Instant::now());
+        emit_receive_progress(&tx, "t1", &mut last_emit, 100, 100, true);
+
+        let env = rx
+            .try_recv()
+            .expect("forced final emit must punch through the throttle");
+        assert_eq!(env.id, "t1");
+        assert!(matches!(
+            env.event,
+            ShareEvent::Progress {
+                transferred: 100,
+                total: 100
+            }
+        ));
+    }
 }

@@ -80,12 +80,11 @@ pub struct SpawnPeer {
     pub read_timeout: Duration,
     pub encryption: EncryptionPolicy,
     pub advertise_v2: bool,
-    /// Optional builder for the BEP-10 extended handshake bytes. Invoked by
-    /// the connection layer immediately after the BT handshake exchange
-    /// completes, inside the same task. Eliminates the multi-hop tokio
-    /// latency between "BT handshake done" and "ext handshake on the wire"
-    /// and lets callers populate `yourip`. The bytes are only sent when the
-    /// remote advertises the BEP-10 reserved bit
+    /// Optional builder for the BEP-10 extended handshake bytes. Invoked
+    /// right after the BT handshake exchange, in the same task, so there's no
+    /// tokio hop between "BT handshake done" and "ext handshake on the wire",
+    /// and callers can populate `yourip`. Sent only when the remote advertises
+    /// the BEP-10 reserved bit
     pub ext_handshake_builder: Option<ExtHandshakeBuilder>,
 }
 
@@ -115,6 +114,7 @@ pub async fn connect(spawn: SpawnPeer) -> std::io::Result<(PeerHandle, mpsc::Rec
     let stream = timeout(spawn.connect_timeout, TcpStream::connect(spawn.addr))
         .await
         .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "connect timeout"))??;
+    let _ = stream.set_nodelay(true);
     drive_handshake(stream, spawn).await
 }
 
@@ -160,7 +160,7 @@ pub async fn connect_with_utp_fallback(
                 tracing::debug!("tcp dial to {addr} failed ({tcp_err}); connected via µTP");
                 connect_utp_plaintext(stream, spawn).await
             }
-            // Surface the TCP error — it's usually the more actionable one.
+            // Surface the TCP error — it's usually the more actionable one
             Err(_) => Err(tcp_err),
         },
     }
@@ -169,54 +169,10 @@ pub async fn connect_with_utp_fallback(
 /// Accept an inbound peer connection: peer sends handshake first, we reply
 /// `known_hashes` is the list of info-hashes the responder currently hosts;
 /// it is used both to validate plaintext handshakes and to resolve the
-/// obfuscated req2 field in MSE handshakes
-pub async fn accept(
-    stream: TcpStream,
-    our_peer_id: Id20,
-    known_hashes: Vec<Id20>,
-    read_timeout: Duration,
-) -> std::io::Result<(PeerHandle, mpsc::Receiver<PeerEvent>)> {
-    accept_with_policy(
-        stream,
-        our_peer_id,
-        known_hashes,
-        read_timeout,
-        EncryptionPolicy::Prefer,
-    )
-    .await
-}
-
-pub async fn accept_with_policy_and_capabilities(
-    stream: TcpStream,
-    our_peer_id: Id20,
-    known_hashes: Vec<KnownInfoHash>,
-    read_timeout: Duration,
-    policy: EncryptionPolicy,
-) -> std::io::Result<(PeerHandle, mpsc::Receiver<PeerEvent>)> {
-    accept_with_policy_inner(stream, our_peer_id, known_hashes, read_timeout, policy).await
-}
-
-/// Accept with an explicit encryption policy. The first byte is peeked:
+/// obfuscated req2 field in MSE handshakes. The first byte is peeked:
 /// `0x13` means plaintext BEP-3; any other byte is treated as the start of
 /// an MSE handshake (Ya)
-pub async fn accept_with_policy(
-    stream: TcpStream,
-    our_peer_id: Id20,
-    known_hashes: Vec<Id20>,
-    read_timeout: Duration,
-    policy: EncryptionPolicy,
-) -> std::io::Result<(PeerHandle, mpsc::Receiver<PeerEvent>)> {
-    accept_with_policy_inner(
-        stream,
-        our_peer_id,
-        known_hashes.into_iter().map(Into::into).collect(),
-        read_timeout,
-        policy,
-    )
-    .await
-}
-
-async fn accept_with_policy_inner(
+pub async fn accept(
     stream: TcpStream,
     our_peer_id: Id20,
     known_hashes: Vec<KnownInfoHash>,
@@ -227,11 +183,11 @@ async fn accept_with_policy_inner(
 
     // Peek the first 20 bytes (1 pstrlen + 19-byte "BitTorrent protocol")
     // so we can reliably distinguish plaintext from MSE. A single-byte check
-    // would misclassify ~1/256 MSE connections whose Ya happens to start with 0x13.
+    // would misclassify ~1/256 MSE connections whose Ya happens to start with 0x13
     //
     // `TcpStream::peek` can return fewer than 20 bytes if the peer's handshake
     // arrives slowly, so we loop until we have 20 bytes, see a definitive
-    // non-plaintext first byte, or hit the read timeout.
+    // non-plaintext first byte, or hit the read timeout
     let mut probe = [0u8; 20];
     let plaintext_first_byte = timeout(read_timeout, async {
         loop {
@@ -243,14 +199,14 @@ async fn accept_with_policy_inner(
                 ));
             }
             // If the very first byte isn't 0x13, this is definitely not a
-            // plaintext BT handshake — no need to wait for more data.
+            // plaintext BT handshake — no need to wait for more data
             if probe[0] != 0x13 {
                 return Ok(false);
             }
             if n >= 20 {
                 return Ok(&probe[1..20] == b"BitTorrent protocol");
             }
-            // We have a 0x13 lead but not enough bytes yet; yield and retry.
+            // We have a 0x13 lead but not enough bytes yet; yield and retry
             tokio::task::yield_now().await;
         }
     })
@@ -264,7 +220,16 @@ async fn accept_with_policy_inner(
                 "policy requires encryption; rejecting plaintext",
             ));
         }
-        accept_plaintext(stream, addr, our_peer_id, known_hashes, read_timeout).await
+        let (reader, writer) = stream.into_split();
+        accept_plaintext_generic(
+            reader,
+            writer,
+            addr,
+            our_peer_id,
+            known_hashes,
+            read_timeout,
+        )
+        .await
     } else {
         if matches!(policy, EncryptionPolicy::PlaintextOnly) {
             return Err(std::io::Error::new(
@@ -282,25 +247,6 @@ async fn accept_with_policy_inner(
         )
         .await
     }
-}
-
-async fn accept_plaintext(
-    stream: TcpStream,
-    addr: SocketAddr,
-    our_peer_id: Id20,
-    known_hashes: Vec<KnownInfoHash>,
-    read_timeout: Duration,
-) -> std::io::Result<(PeerHandle, mpsc::Receiver<PeerEvent>)> {
-    let (reader, writer) = stream.into_split();
-    accept_plaintext_generic(
-        reader,
-        writer,
-        addr,
-        our_peer_id,
-        known_hashes,
-        read_timeout,
-    )
-    .await
 }
 
 /// Accept an inbound µTP peer: run the plaintext BEP-3 responder handshake directly
@@ -332,7 +278,7 @@ pub async fn accept_utp_plaintext(
 /// so TCP (`into_split` halves) and µTP (`tokio::io::split` halves) share the
 /// exact same logic: read the peer's handshake, validate the info-hash against
 /// `known_hashes`, reply with ours, optionally write the ext-handshake, then
-/// hand off to `finish_spawn`.
+/// hand off to `finish_spawn`
 async fn accept_plaintext_generic<R, W>(
     mut reader: R,
     mut writer: W,
@@ -397,12 +343,12 @@ async fn drive_handshake(
             // plaintext-only peer because the failed handshake leaves us
             // unable to reuse the socket; we'd have to redial for the
             // fallback. With plaintext-first we only redial for the rare
-            // ISP-blocked case.
+            // ISP-blocked case
             //
             // Bound the plaintext attempt by connect_timeout so a peer that
             // accepts the TCP connect but never sends the handshake cannot
             // tie us up for the much longer read_timeout before we fall
-            // back to MSE.
+            // back to MSE
             let (reader, writer) = stream.into_split();
             let plaintext = timeout(
                 spawn.connect_timeout,
@@ -422,6 +368,7 @@ async fn drive_handshake(
                 .map_err(|_| {
                     std::io::Error::new(std::io::ErrorKind::TimedOut, "connect timeout")
                 })??;
+            let _ = stream.set_nodelay(true);
             // Log the MSE outcome so a debug-level log captures whether the
             // encrypted fallback ever succeeds. Without this, an operator
             // troubleshooting "0 KB/s" only sees N "trying mse" lines and
@@ -445,7 +392,7 @@ async fn drive_handshake(
 /// Run the plaintext BEP-3 handshake over an already-split byte stream and
 /// spawn the reader/writer tasks. Generic over the transport so both TCP
 /// (`OwnedReadHalf`/`OwnedWriteHalf`) and µTP (`tokio::io::split` halves) can
-/// share the exact same handshake logic.
+/// share the exact same handshake logic
 async fn connect_plaintext<R, W>(
     mut reader: R,
     mut writer: W,
@@ -486,6 +433,38 @@ where
         Box::new(reader),
         Box::new(writer),
     )
+}
+
+/// Read from `r` until `buf` holds at least `n` bytes, bounded by `deadline`.
+/// `what` labels the phase in timeout / EOF error messages
+async fn read_until(
+    r: &mut (impl AsyncRead + Unpin),
+    buf: &mut Vec<u8>,
+    n: usize,
+    deadline: tokio::time::Instant,
+    what: &str,
+) -> std::io::Result<()> {
+    let mut chunk = [0u8; 256];
+    while buf.len() < n {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                format!("{what} timeout"),
+            ));
+        }
+        let read = timeout(remaining, r.read(&mut chunk))
+            .await
+            .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, what.to_string()))??;
+        if read == 0 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                format!("eof in {what}"),
+            ));
+        }
+        buf.extend_from_slice(&chunk[..read]);
+    }
+    Ok(())
 }
 
 /// Perform the BEP-8 MSE handshake as the initiator (A), then send the BEP-3
@@ -618,25 +597,7 @@ async fn connect_mse(
     let tail_start = off;
     let mut tail = recv[tail_start..].to_vec();
     // If we don't yet have 14 bytes, read more encrypted bytes
-    while tail.len() < 14 {
-        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-        if remaining.is_zero() {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::TimedOut,
-                "mse header timeout",
-            ));
-        }
-        let n = timeout(remaining, read_h.read(&mut chunk))
-            .await
-            .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "mse header"))??;
-        if n == 0 {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::UnexpectedEof,
-                "eof in mse header",
-            ));
-        }
-        tail.extend_from_slice(&chunk[..n]);
-    }
+    read_until(&mut read_h, &mut tail, 14, deadline, "mse header").await?;
     dec_in.apply_keystream(&mut tail[..14]);
     // tail[0..8] now equals VC (sanity check already done)
     let crypto_select = u32::from_be_bytes([tail[8], tail[9], tail[10], tail[11]]);
@@ -650,25 +611,7 @@ async fn connect_mse(
 
     // Ensure we have PadD buffered (and decrypt it), then anything after is
     // already-plaintext-in-our-BT-sense data
-    while tail.len() < 14 + pad_d_len {
-        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-        if remaining.is_zero() {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::TimedOut,
-                "mse padd timeout",
-            ));
-        }
-        let n = timeout(remaining, read_h.read(&mut chunk))
-            .await
-            .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "mse padd"))??;
-        if n == 0 {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::UnexpectedEof,
-                "eof in pad_d",
-            ));
-        }
-        tail.extend_from_slice(&chunk[..n]);
-    }
+    read_until(&mut read_h, &mut tail, 14 + pad_d_len, deadline, "mse padd").await?;
     if pad_d_len > 0 {
         dec_in.apply_keystream(&mut tail[14..14 + pad_d_len]);
     }
@@ -701,27 +644,9 @@ async fn connect_mse(
     ) = if use_rc4 {
         let mut pending = leftover;
         // Read BT handshake (68 bytes) from pending + stream, decrypting as
-        // we go.
+        // we go
         let mut hs_bytes = Vec::with_capacity(HANDSHAKE_LEN);
-        while pending.len() < HANDSHAKE_LEN {
-            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-            if remaining.is_zero() {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::TimedOut,
-                    "mse hs timeout",
-                ));
-            }
-            let n = timeout(remaining, read_h.read(&mut chunk))
-                .await
-                .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "mse hs"))??;
-            if n == 0 {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::UnexpectedEof,
-                    "eof in encrypted bt hs",
-                ));
-            }
-            pending.extend_from_slice(&chunk[..n]);
-        }
+        read_until(&mut read_h, &mut pending, HANDSHAKE_LEN, deadline, "mse hs").await?;
         hs_bytes.extend_from_slice(&pending[..HANDSHAKE_LEN]);
         dec_in.apply_keystream(&mut hs_bytes);
         let rest = pending[HANDSHAKE_LEN..].to_vec();
@@ -742,25 +667,14 @@ async fn connect_mse(
         // Plaintext after MSE negotiation. Leftover bytes are already BT
         // handshake beginning
         let mut pending = leftover;
-        while pending.len() < HANDSHAKE_LEN {
-            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-            if remaining.is_zero() {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::TimedOut,
-                    "mse/plain hs timeout",
-                ));
-            }
-            let n = timeout(remaining, read_h.read(&mut chunk))
-                .await
-                .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "mse/plain hs"))??;
-            if n == 0 {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::UnexpectedEof,
-                    "eof in plain bt hs",
-                ));
-            }
-            pending.extend_from_slice(&chunk[..n]);
-        }
+        read_until(
+            &mut read_h,
+            &mut pending,
+            HANDSHAKE_LEN,
+            deadline,
+            "mse/plain hs",
+        )
+        .await?;
         let hs_bytes = &pending[..HANDSHAKE_LEN];
         let rest = pending[HANDSHAKE_LEN..].to_vec();
         let mut hs_arr = [0u8; HANDSHAKE_LEN];
@@ -773,7 +687,7 @@ async fn connect_mse(
                 "info hash mismatch after mse",
             ));
         }
-        let r = PrefixedReadHalf::new(read_h, rest);
+        let r = std::io::Cursor::new(rest).chain(read_h);
         (Box::new(r), Box::new(write_h), remote_hs)
     };
 
@@ -856,25 +770,7 @@ async fn accept_mse(
     };
 
     // Fetch req2^req3 (20 bytes right after req1)
-    while recv.len() < req1_off + 40 {
-        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-        if remaining.is_zero() {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::TimedOut,
-                "mse req2 timeout",
-            ));
-        }
-        let n = timeout(remaining, read_h.read(&mut chunk))
-            .await
-            .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "mse req2"))??;
-        if n == 0 {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::UnexpectedEof,
-                "eof in req2",
-            ));
-        }
-        recv.extend_from_slice(&chunk[..n]);
-    }
+    read_until(&mut read_h, &mut recv, req1_off + 40, deadline, "mse req2").await?;
     let mut req23 = [0u8; 20];
     req23.copy_from_slice(&recv[req1_off + 20..req1_off + 40]);
     let req3_s = mse::req3(&s);
@@ -902,28 +798,10 @@ async fn accept_mse(
     let enc_start = req1_off + 40;
     let mut enc_buf = recv[enc_start..].to_vec();
     // Need at least 8+4+2 = 14 bytes before we can learn PadC length
-    while enc_buf.len() < 14 {
-        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-        if remaining.is_zero() {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::TimedOut,
-                "mse ia-head timeout",
-            ));
-        }
-        let n = timeout(remaining, read_h.read(&mut chunk))
-            .await
-            .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "mse ia-head"))??;
-        if n == 0 {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::UnexpectedEof,
-                "eof in ia-head",
-            ));
-        }
-        enc_buf.extend_from_slice(&chunk[..n]);
-    }
+    read_until(&mut read_h, &mut enc_buf, 14, deadline, "mse ia-head").await?;
     // Decrypt the 14-byte header
     dec_in.apply_keystream(&mut enc_buf[..14]);
-    if enc_buf[0..8] != mse::vc() {
+    if enc_buf[0..8] != mse::VC {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
             "mse: vc mismatch after req2 resolve",
@@ -938,25 +816,14 @@ async fn accept_mse(
         ));
     }
     // Need PadC + len(IA) (2 bytes)
-    while enc_buf.len() < 14 + pad_c_len + 2 {
-        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-        if remaining.is_zero() {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::TimedOut,
-                "mse padc timeout",
-            ));
-        }
-        let n = timeout(remaining, read_h.read(&mut chunk))
-            .await
-            .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "mse padc"))??;
-        if n == 0 {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::UnexpectedEof,
-                "eof in padc",
-            ));
-        }
-        enc_buf.extend_from_slice(&chunk[..n]);
-    }
+    read_until(
+        &mut read_h,
+        &mut enc_buf,
+        14 + pad_c_len + 2,
+        deadline,
+        "mse padc",
+    )
+    .await?;
     dec_in.apply_keystream(&mut enc_buf[14..14 + pad_c_len + 2]);
     let ia_len_off = 14 + pad_c_len;
     let ia_len = u16::from_be_bytes([enc_buf[ia_len_off], enc_buf[ia_len_off + 1]]) as usize;
@@ -967,25 +834,14 @@ async fn accept_mse(
         ));
     }
     let ia_off = ia_len_off + 2;
-    while enc_buf.len() < ia_off + ia_len {
-        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-        if remaining.is_zero() {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::TimedOut,
-                "mse ia timeout",
-            ));
-        }
-        let n = timeout(remaining, read_h.read(&mut chunk))
-            .await
-            .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "mse ia"))??;
-        if n == 0 {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::UnexpectedEof,
-                "eof in ia",
-            ));
-        }
-        enc_buf.extend_from_slice(&chunk[..n]);
-    }
+    read_until(
+        &mut read_h,
+        &mut enc_buf,
+        ia_off + ia_len,
+        deadline,
+        "mse ia",
+    )
+    .await?;
     if ia_len > 0 {
         dec_in.apply_keystream(&mut enc_buf[ia_off..ia_off + ia_len]);
     }
@@ -1014,7 +870,7 @@ async fn accept_mse(
     write_h.write_all(&reply).await?;
 
     // IA may contain A's BT handshake. MSE peers are allowed to send an
-    // empty IA and defer the BT handshake to the encrypted stream.
+    // empty IA and defer the BT handshake to the encrypted stream
     if !ia_bytes.is_empty() && ia_bytes.len() < HANDSHAKE_LEN {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
@@ -1047,7 +903,7 @@ async fn accept_mse(
             read_h, dec_in,
             // Any bytes A sent after IA belong on the encrypted stream;
             // they are already decrypted up to ia_off+ia_len (in enc_buf)
-            // but any after that are still encrypted. Wait — leftover is
+            // but any after that are still encrypted. leftover is
             // the raw, still-encrypted tail; the Rc4ReadHalf will decrypt
             // as it streams
             leftover,
@@ -1085,7 +941,7 @@ async fn accept_mse(
         finish_spawn(addr, our_peer_id, remote_hs, true, Box::new(r), Box::new(w))
     } else {
         write_h.write_all(&our_hs).await?;
-        let r = PrefixedReadHalf::new(read_h, leftover);
+        let r = std::io::Cursor::new(leftover).chain(read_h);
         let remote_hs = match remote_hs_from_ia {
             Some(hs) => hs,
             None => {
@@ -1178,59 +1034,20 @@ fn finish_spawn(
     Ok((PeerHandle { addr, tx: cmd_tx }, event_rx))
 }
 
-/// Read half with a replay prefix: yields `prefix` bytes before delegating
-/// to the underlying stream. Used to "un-peek" handshake tail bytes we had
-/// to buffer during MSE negotiation
-struct PrefixedReadHalf {
-    inner: tokio::net::tcp::OwnedReadHalf,
-    prefix: Vec<u8>,
-    pos: usize,
-}
-
-impl PrefixedReadHalf {
-    fn new(inner: tokio::net::tcp::OwnedReadHalf, prefix: Vec<u8>) -> Self {
-        Self {
-            inner,
-            prefix,
-            pos: 0,
-        }
-    }
-}
-
-impl AsyncRead for PrefixedReadHalf {
-    fn poll_read(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &mut ReadBuf<'_>,
-    ) -> Poll<std::io::Result<()>> {
-        if self.pos < self.prefix.len() {
-            let remaining = &self.prefix[self.pos..];
-            let n = remaining.len().min(buf.remaining());
-            buf.put_slice(&remaining[..n]);
-            self.pos += n;
-            return Poll::Ready(Ok(()));
-        }
-        Pin::new(&mut self.inner).poll_read(cx, buf)
-    }
-}
-
 /// RC4-encrypting read half. Any residual bytes we already pulled from the
-/// socket while scanning the MSE handshake are replayed via `prefix`; they
-/// are *still encrypted* under the peer's key, so the same cipher applies
+/// socket while scanning the MSE handshake are replayed via the chained
+/// cursor prefix; they are *still encrypted* under the peer's key, so the
+/// same cipher applies to everything the chain yields
 struct Rc4ReadHalf {
-    inner: tokio::net::tcp::OwnedReadHalf,
+    inner: tokio::io::Chain<std::io::Cursor<Vec<u8>>, tokio::net::tcp::OwnedReadHalf>,
     cipher: MseRc4,
-    prefix: Vec<u8>,
-    pos: usize,
 }
 
 impl Rc4ReadHalf {
     fn new(inner: tokio::net::tcp::OwnedReadHalf, cipher: MseRc4, prefix: Vec<u8>) -> Self {
         Self {
-            inner,
+            inner: std::io::Cursor::new(prefix).chain(inner),
             cipher,
-            prefix,
-            pos: 0,
         }
     }
 }
@@ -1241,18 +1058,6 @@ impl AsyncRead for Rc4ReadHalf {
         cx: &mut Context<'_>,
         buf: &mut ReadBuf<'_>,
     ) -> Poll<std::io::Result<()>> {
-        if self.pos < self.prefix.len() {
-            let remaining = self.prefix.len() - self.pos;
-            let n = remaining.min(buf.remaining());
-            let start = self.pos;
-            let end = start + n;
-            // Decrypt in place on a scratch copy, then copy into buf
-            let mut scratch = self.prefix[start..end].to_vec();
-            self.cipher.apply_keystream(&mut scratch);
-            buf.put_slice(&scratch);
-            self.pos += n;
-            return Poll::Ready(Ok(()));
-        }
         let filled_before = buf.filled().len();
         match Pin::new(&mut self.inner).poll_read(cx, buf) {
             Poll::Ready(Ok(())) => {
@@ -1288,6 +1093,27 @@ impl Rc4WriteHalf {
             pending_off: 0,
         }
     }
+
+    /// Write queued ciphertext through to the socket, in order. Clears the
+    /// pending buffer once fully drained
+    fn poll_drain(&mut self, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        while self.pending_off < self.pending.len() {
+            match Pin::new(&mut self.inner).poll_write(cx, &self.pending[self.pending_off..]) {
+                Poll::Ready(Ok(0)) => {
+                    return Poll::Ready(Err(std::io::Error::new(
+                        std::io::ErrorKind::WriteZero,
+                        "rc4 write zero",
+                    )));
+                }
+                Poll::Ready(Ok(n)) => self.pending_off += n,
+                Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
+                Poll::Pending => return Poll::Pending,
+            }
+        }
+        self.pending.clear();
+        self.pending_off = 0;
+        Poll::Ready(Ok(()))
+    }
 }
 
 impl AsyncWrite for Rc4WriteHalf {
@@ -1297,26 +1123,10 @@ impl AsyncWrite for Rc4WriteHalf {
         buf: &[u8],
     ) -> Poll<std::io::Result<usize>> {
         // Flush any pending ciphertext first so we always commit bytes in order
-        while self.pending_off < self.pending.len() {
-            let me = &mut *self;
-            let slice = &me.pending[me.pending_off..];
-            match Pin::new(&mut me.inner).poll_write(cx, slice) {
-                Poll::Ready(Ok(0)) => {
-                    return Poll::Ready(Err(std::io::Error::new(
-                        std::io::ErrorKind::WriteZero,
-                        "rc4 write zero",
-                    )));
-                }
-                Poll::Ready(Ok(n)) => {
-                    me.pending_off += n;
-                }
-                Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
-                Poll::Pending => return Poll::Pending,
-            }
-        }
-        if self.pending_off >= self.pending.len() && !self.pending.is_empty() {
-            self.pending.clear();
-            self.pending_off = 0;
+        match self.poll_drain(cx) {
+            Poll::Ready(Ok(())) => {}
+            Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
+            Poll::Pending => return Poll::Pending,
         }
 
         if buf.is_empty() {
@@ -1328,74 +1138,28 @@ impl AsyncWrite for Rc4WriteHalf {
         self.pending = scratch;
         self.pending_off = 0;
         let consumed = buf.len();
-        // Opportunistically flush
-        while self.pending_off < self.pending.len() {
-            let me = &mut *self;
-            let slice = &me.pending[me.pending_off..];
-            match Pin::new(&mut me.inner).poll_write(cx, slice) {
-                Poll::Ready(Ok(0)) => {
-                    return Poll::Ready(Err(std::io::Error::new(
-                        std::io::ErrorKind::WriteZero,
-                        "rc4 write zero",
-                    )));
-                }
-                Poll::Ready(Ok(n)) => {
-                    me.pending_off += n;
-                }
-                Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
-                Poll::Pending => {
-                    // Report the caller's bytes as consumed; the ciphertext
-                    // is safely queued in `pending`
-                    return Poll::Ready(Ok(consumed));
-                }
-            }
+        // Opportunistically flush. If the socket is not ready, report the
+        // caller's bytes as consumed; the ciphertext is safely queued in
+        // `pending`
+        match self.poll_drain(cx) {
+            Poll::Ready(Err(e)) => Poll::Ready(Err(e)),
+            Poll::Ready(Ok(())) | Poll::Pending => Poll::Ready(Ok(consumed)),
         }
-        self.pending.clear();
-        self.pending_off = 0;
-        Poll::Ready(Ok(consumed))
     }
 
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-        while self.pending_off < self.pending.len() {
-            let me = &mut *self;
-            let slice = &me.pending[me.pending_off..];
-            match Pin::new(&mut me.inner).poll_write(cx, slice) {
-                Poll::Ready(Ok(0)) => {
-                    return Poll::Ready(Err(std::io::Error::new(
-                        std::io::ErrorKind::WriteZero,
-                        "rc4 flush zero",
-                    )));
-                }
-                Poll::Ready(Ok(n)) => me.pending_off += n,
-                Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
-                Poll::Pending => return Poll::Pending,
-            }
+        match self.poll_drain(cx) {
+            Poll::Ready(Ok(())) => Pin::new(&mut self.inner).poll_flush(cx),
+            other => other,
         }
-        self.pending.clear();
-        self.pending_off = 0;
-        Pin::new(&mut self.inner).poll_flush(cx)
     }
 
     fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-        // Drain any ciphertext that poll_write queued in `pending`.
-        while self.pending_off < self.pending.len() {
-            let me = &mut *self;
-            let slice = &me.pending[me.pending_off..];
-            match Pin::new(&mut me.inner).poll_write(cx, slice) {
-                Poll::Ready(Ok(0)) => {
-                    return Poll::Ready(Err(std::io::Error::new(
-                        std::io::ErrorKind::WriteZero,
-                        "rc4 shutdown flush zero",
-                    )));
-                }
-                Poll::Ready(Ok(n)) => me.pending_off += n,
-                Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
-                Poll::Pending => return Poll::Pending,
-            }
+        // Drain any ciphertext that poll_write queued in `pending`
+        match self.poll_drain(cx) {
+            Poll::Ready(Ok(())) => Pin::new(&mut self.inner).poll_shutdown(cx),
+            other => other,
         }
-        self.pending.clear();
-        self.pending_off = 0;
-        Pin::new(&mut self.inner).poll_shutdown(cx)
     }
 }
 
@@ -1512,9 +1276,15 @@ mod tests {
 
         let accept_fut = tokio::spawn(async move {
             let (stream, _) = listener.accept().await.unwrap();
-            accept(stream, peer_b, vec![info_hash], Duration::from_secs(5))
-                .await
-                .unwrap()
+            accept(
+                stream,
+                peer_b,
+                vec![info_hash.into()],
+                Duration::from_secs(5),
+                EncryptionPolicy::Prefer,
+            )
+            .await
+            .unwrap()
         });
 
         let (handle_a, rx_a) = connect(SpawnPeer {
@@ -1577,7 +1347,14 @@ mod tests {
 
         let accept_fut = tokio::spawn(async move {
             let (stream, _) = listener.accept().await.unwrap();
-            accept(stream, peer_b, vec![hash_b], Duration::from_secs(5)).await
+            accept(
+                stream,
+                peer_b,
+                vec![hash_b.into()],
+                Duration::from_secs(5),
+                EncryptionPolicy::Prefer,
+            )
+            .await
         });
 
         let res = connect(SpawnPeer {
@@ -1604,10 +1381,10 @@ mod tests {
 
         let accept_fut = tokio::spawn(async move {
             let (stream, _) = listener.accept().await.unwrap();
-            accept_with_policy(
+            accept(
                 stream,
                 peer_b,
-                vec![info_hash],
+                vec![info_hash.into()],
                 Duration::from_secs(10),
                 EncryptionPolicy::RequireEncryption,
             )
@@ -1673,7 +1450,7 @@ mod tests {
         let server_addr = server_sock.local_addr();
 
         // Minimal peer: accept a µTP stream, exchange BT handshakes, then push
-        // one peer message so the client's reader task surfaces it.
+        // one peer message so the client's reader task surfaces it
         let server = tokio::spawn(async move {
             let mut s = server_sock.accept().await.unwrap();
             let mut buf = [0u8; HANDSHAKE_LEN];
@@ -1687,7 +1464,7 @@ mod tests {
                 .await
                 .unwrap();
             s.flush().await.unwrap();
-            // Keep the connection alive until the client has read everything.
+            // Keep the connection alive until the client has read everything
             tokio::time::sleep(Duration::from_millis(300)).await;
         });
 
@@ -1743,7 +1520,7 @@ mod tests {
 
         // The peer listens on µTP only — no TCP listener exists on this UDP
         // port number — so the client's TCP dial is refused and it must fall
-        // back to µTP to connect.
+        // back to µTP to connect
         let server_sock = UtpSocket::bind("127.0.0.1:0".parse().unwrap())
             .await
             .unwrap();
@@ -1805,7 +1582,7 @@ mod tests {
 
         // Responder: accept the inbound µTP stream and run the plaintext BT
         // handshake through the production `accept_utp_plaintext` path, then
-        // push one message so the initiator's reader surfaces it.
+        // push one message so the initiator's reader surfaces it
         let server = tokio::spawn(async move {
             let s = server_sock.accept().await.unwrap();
             let known = vec![KnownInfoHash {

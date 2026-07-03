@@ -1,11 +1,10 @@
-/* UI compat wrappers and grid columns */
 @layer components {
-	.mo-table-wrapper {
+	.table-wrapper {
 		border: 1px solid var(--border);
 		border-radius: calc(var(--radius) - 2px);
 		overflow: hidden;
 	}
-	.mo-table-wrapper th {
+	.table-wrapper th {
 		padding: 2px 0;
 	}
 	.ui-switch {

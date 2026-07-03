@@ -1,7 +1,5 @@
 //! ADC / DC URI parsing and shared types
 
-use std::net::SocketAddr;
-
 /// Errors emitted by the ADC / NMDC pipeline
 #[derive(Debug, thiserror::Error)]
 pub enum AdcError {
@@ -35,15 +33,6 @@ pub struct HubInfo {
 pub enum HubDialect {
     Adc,
     Nmdc,
-}
-
-/// Identity and reachability of a peer participating in the same hub
-#[derive(Debug, Clone, Default)]
-pub struct PeerInfo {
-    pub nick: String,
-    pub addr: Option<SocketAddr>,
-    /// CID for ADC, hashed for NMDC active mode handshake
-    pub cid: Option<String>,
 }
 
 /// One result row from a hub search: file name, size, and optional TTH
@@ -162,28 +151,9 @@ pub fn parse_dchub_file_uri(uri: &str) -> Option<FileEntry> {
 
 /// Minimal URL-encoded string decoder (handles %XX hex escapes and `+` -> space)
 fn urlencoding_decode(s: &str) -> String {
-    let bytes = s.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        let b = bytes[i];
-        if b == b'%' && i + 2 < bytes.len() {
-            let hi = (bytes[i + 1] as char).to_digit(16);
-            let lo = (bytes[i + 2] as char).to_digit(16);
-            if let (Some(h), Some(l)) = (hi, lo) {
-                out.push((h * 16 + l) as u8);
-                i += 3;
-                continue;
-            }
-        }
-        if b == b'+' {
-            out.push(b' ');
-        } else {
-            out.push(b);
-        }
-        i += 1;
-    }
-    String::from_utf8_lossy(&out).into_owned()
+    percent_encoding::percent_decode_str(&s.replace('+', " "))
+        .decode_utf8_lossy()
+        .to_string()
 }
 
 #[cfg(test)]

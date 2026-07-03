@@ -6,7 +6,7 @@
 //! single line ending in `\n`, fields are space-separated
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -53,7 +53,6 @@ pub async fn run_gift_download(
     total: Arc<AtomicU64>,
     completed: Arc<AtomicU64>,
     speed: Arc<AtomicU64>,
-    cancel: Arc<AtomicBool>,
     connections: Arc<AtomicU32>,
     cancel_token: CancellationToken,
 ) -> Result<PathBuf, String> {
@@ -126,7 +125,7 @@ pub async fn run_gift_download(
     let mut last_progress: Option<(tokio::time::Instant, u64)> = None;
     let mut line = String::new();
     loop {
-        if cancel.load(Ordering::Relaxed) || cancel_token.is_cancelled() {
+        if cancel_token.is_cancelled() {
             if let Some(id) = transfer_id.as_ref() {
                 let _ = wr
                     .write_all(format!("TRANSFER REMOVE id={id}\n").as_bytes())

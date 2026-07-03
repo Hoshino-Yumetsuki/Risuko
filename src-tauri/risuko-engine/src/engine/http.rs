@@ -30,9 +30,9 @@ const CHUNK_MAX_RETRIES: u32 = 5;
 /// Public so integration tests can size payloads in piece-boundary terms
 /// instead of hard-coding 1 MiB
 pub const PIECE_SIZE: u64 = 1024 * 1024;
-/// Sidecar format version. Bump when the on-disk schema changes
+/// Sidecar format version, bump when the on-disk schema changes
 const META_VERSION: u32 = 2;
-/// How often the periodic save task snapshots piece progress to disk.
+/// How often the periodic save task snapshots piece progress to disk
 const META_SAVE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2);
 /// Error substring returned when a stale .part was removed
 const STALE_PART_REMOVED: &str = "stale partial file removed";
@@ -55,14 +55,6 @@ impl ChunkRange {
     fn to_range_header_value(self) -> String {
         format!("bytes={}-{}", self.start, self.end)
     }
-}
-
-/// Outcome from a single stream call. Per-piece progress is tracked via the
-/// shared `piece_completed: Arc<AtomicU32>` that the writer task updates as
-/// bytes hit disk — the caller reads that atomic instead of relying on a
-/// returned byte count
-struct StreamOutcome {
-    error: Option<String>,
 }
 
 /// Per-piece resume entry. Sparse: only pieces with `c > 0` are persisted
@@ -185,9 +177,9 @@ fn delete_chunk_meta(part_path: &Path) {
 // release it back to the pool on transient error (state -> 0, completed
 // bytes preserved so the next claimant resumes mid-piece)
 //
-// This naturally implements work stealing: fast workers pull more pieces;
-// slow or idle workers simply pull fewer. There is no explicit "steal from
-// peer X" call because nothing is owned long-term.
+// Work stealing for free: fast workers pull more pieces, slow ones pull
+// fewer. No explicit "steal from peer X" call because nothing is owned
+// long-term
 
 /// Free / in-flight / done state encoded in a single byte for cheap CAS
 const PIECE_FREE: u8 = 0;
@@ -195,7 +187,7 @@ const PIECE_INFLIGHT: u8 = 1;
 const PIECE_DONE: u8 = 2;
 
 struct Piece {
-    /// Absolute byte offset in the output file.
+    /// Absolute byte offset in the output file
     offset: u64,
     /// Piece length in bytes (last piece may be < PIECE_SIZE)
     length: u32,
@@ -203,7 +195,7 @@ struct Piece {
     /// because positioned writes are issued in order from the writer task.
     /// Wrapped in Arc so the writer task can hold a clone independently
     completed: Arc<AtomicU32>,
-    /// Lifecycle state — see PIECE_* constants.
+    /// Lifecycle state — see PIECE_* constants
     state: AtomicU8,
 }
 
@@ -254,7 +246,7 @@ impl PieceQueue {
                 )
                 .is_ok()
             {
-                // Move hint past this slot. Best-effort — racy stores are fine.
+                // Move hint past this slot. Best-effort — racy stores are fine
                 self.next_hint.store(i + 1, Ordering::Relaxed);
                 return Some(i);
             }
@@ -286,27 +278,6 @@ impl PieceQueue {
             .iter()
             .all(|p| p.state.load(Ordering::Acquire) == PIECE_DONE)
     }
-}
-
-/// Build a HTTP Client with common settings applied from options
-///
-/// `cookie_jar` is shared with the range-request client so both clients see
-/// the same cookie store; passing `None` disables the cookie provider for
-/// this client
-fn build_client(
-    options: &Map<String, Value>,
-    cookie_jar: Option<std::sync::Arc<risuko_http::Jar>>,
-) -> Result<Client, String> {
-    build_client_inner(options, true, cookie_jar)
-}
-
-/// Build a client without automatic decompression — needed for range requests
-/// where we must receive raw bytes at exact file offsets
-fn build_client_no_decompress(
-    options: &Map<String, Value>,
-    cookie_jar: Option<std::sync::Arc<risuko_http::Jar>>,
-) -> Result<Client, String> {
-    build_client_inner(options, false, cookie_jar)
 }
 
 /// aria2 default: 60s connect timeout when not configured
@@ -466,7 +437,38 @@ async fn verify_piece_checksums(
     .map_err(|e| format!("verify task panicked: {e}"))?
 }
 
-fn build_client_inner(
+/// Run the optional piece + whole-file integrity checks on the finished
+/// output, deleting it on mismatch so a retry can't resume corrupted bytes
+async fn verify_output(
+    path: &Path,
+    content_length: u64,
+    piece_checksums: &Option<super::hasher::PieceChecksums>,
+    whole_checksum: &Option<super::hasher::WholeChecksum>,
+) -> Result<(), String> {
+    if let Some(expected) = piece_checksums {
+        if let Err(e) = verify_piece_checksums(path, content_length, expected).await {
+            tracing::warn!("piece checksum failed, deleting output: {e}");
+            let _ = fs::remove_file(path);
+            return Err(e);
+        }
+    }
+    if let Some(expected) = whole_checksum {
+        if let Err(e) = verify_whole_file(path, expected).await {
+            tracing::warn!("integrity check failed, deleting output: {e}");
+            let _ = fs::remove_file(path);
+            return Err(e);
+        }
+    }
+    Ok(())
+}
+
+/// Build a HTTP Client with common settings applied from options
+///
+/// `decompress` is off for range requests, which must receive raw bytes at
+/// exact file offsets. `cookie_jar` is shared with the range-request client
+/// so both clients see the same cookie store; passing `None` disables the
+/// cookie provider for this client
+fn build_client(
     options: &Map<String, Value>,
     decompress: bool,
     cookie_jar: Option<std::sync::Arc<risuko_http::Jar>>,
@@ -489,18 +491,13 @@ fn build_client_inner(
         // `lowest-speed-limit` watchdog in `run_speed_tracker`
         .tcp_nodelay(true)
         // Long-lived chunk connections benefit from generous keepalive, and
-        // a large idle pool keeps every chunk worker on its own TCP stream.
+        // a large idle pool keeps every chunk worker on its own TCP stream
         .tcp_keepalive(std::time::Duration::from_secs(60))
         .pool_idle_timeout(std::time::Duration::from_secs(90))
         .pool_max_idle_per_host(64);
 
     if decompress {
         builder = builder.gzip(true).brotli(true).deflate(true);
-    } else {
-        // Range/chunk workers MUST stay on HTTP/1.1. HTTP/2 multiplexes every
-        // "parallel" request onto a single TCP stream, collapsing aggregate
-        // throughput from a single origin. aria2 makes the same choice
-        builder = builder.no_gzip().no_brotli().no_deflate().http1_only();
     }
 
     if let Some(proxy_url) = options
@@ -561,7 +558,7 @@ fn build_headers(options: &Map<String, Value>) -> HeaderMap {
     let mut headers = HeaderMap::new();
 
     // `header` arrives as an aria2 array of strings, or a newline-joined
-    // string. Accept both — string-only silently dropped headers (#106).
+    // string. Accept both — string-only silently dropped headers (#106)
     if let Some(header_val) = options.get("header") {
         let lines: Vec<&str> = if let Some(s) = header_val.as_str() {
             s.split('\n').collect()
@@ -682,44 +679,6 @@ fn build_mirror_headers(
         .collect()
 }
 
-/// Run an HTTP/FTP download. This is the main entry point called from manager.rs
-/// Returns the final file path on success
-pub async fn run_http_download(
-    uri: &str,
-    dir: &str,
-    out: &str,
-    options: &Map<String, Value>,
-    total: Arc<AtomicU64>,
-    completed: Arc<AtomicU64>,
-    speed: Arc<AtomicU64>,
-    cancelled: Arc<AtomicBool>,
-    connections: Arc<AtomicU32>,
-    cancel_token: CancellationToken,
-    global_limiter: Arc<SpeedLimiter>,
-    task_limiter: Arc<SpeedLimiter>,
-    chunk_completed: Vec<Arc<AtomicU64>>,
-) -> Result<PathBuf, String> {
-    // Single-URI entry point — kept for callers that don't have a mirror
-    // list. Internally delegates to the multi-URI path with a 1-element vec
-    run_http_download_multi(
-        &[uri.to_string()],
-        dir,
-        out,
-        options,
-        total,
-        completed,
-        speed,
-        cancelled,
-        connections,
-        cancel_token,
-        global_limiter,
-        task_limiter,
-        chunk_completed,
-        Arc::new(parking_lot::Mutex::new(None)),
-    )
-    .await
-}
-
 /// Multi-URI entry point. Iterates `uris` according to the configured
 /// selector strategy. A non-cancellation error from one URI bumps that
 /// host's fail count and triggers a try with the next viable URI; the loop
@@ -734,7 +693,6 @@ pub async fn run_http_download_multi(
     total: Arc<AtomicU64>,
     completed: Arc<AtomicU64>,
     speed: Arc<AtomicU64>,
-    cancelled: Arc<AtomicBool>,
     connections: Arc<AtomicU32>,
     cancel_token: CancellationToken,
     global_limiter: Arc<SpeedLimiter>,
@@ -782,13 +740,13 @@ pub async fn run_http_download_multi(
             total.clone(),
             completed.clone(),
             speed.clone(),
-            cancelled.clone(),
             connections.clone(),
             cancel_token.clone(),
             global_limiter.clone(),
             task_limiter.clone(),
             chunk_completed.clone(),
             adopted_filename.clone(),
+            false,
         )
         .await;
 
@@ -802,16 +760,16 @@ pub async fn run_http_download_multi(
                 return Ok(path);
             }
             Err(e) => {
-                // Cancellation isn't a mirror fault — propagate immediately.
-                if cancelled.load(Ordering::Relaxed) || cancel_token.is_cancelled() {
+                // Cancellation isn't a mirror fault — propagate immediately
+                if cancel_token.is_cancelled() {
                     return Err(e);
                 }
                 stats.record_failure(&super::uri_selector::host_of(uri));
                 tracing::warn!("Mirror {} failed: {e}", super::uri_selector::host_of(uri));
                 last_err = Some(e);
-                // Reset counters before retrying the next mirror so progress
-                // accounting doesn't double-count partial bytes from a
-                // Clear `total` so a failed mirror's content-length cannot leak into an unknown-length mirror
+                // Reset counters before the next mirror so progress accounting
+                // doesn't double-count partial bytes. Clear `total` so a failed
+                // mirror's content-length can't leak into an unknown-length mirror
                 completed.store(0, Ordering::Relaxed);
                 total.store(0, Ordering::Relaxed);
                 speed.store(0, Ordering::Relaxed);
@@ -833,13 +791,13 @@ async fn run_single_uri_download(
     total: Arc<AtomicU64>,
     completed: Arc<AtomicU64>,
     speed: Arc<AtomicU64>,
-    cancelled: Arc<AtomicBool>,
     connections: Arc<AtomicU32>,
     cancel_token: CancellationToken,
     global_limiter: Arc<SpeedLimiter>,
     task_limiter: Arc<SpeedLimiter>,
     chunk_completed: Vec<Arc<AtomicU64>>,
     adopted_filename: Arc<parking_lot::Mutex<Option<String>>>,
+    is_stale_retry: bool,
 ) -> Result<PathBuf, String> {
     tracing::info!("Starting download: uri={uri}, dir={dir}, out={out}");
     let dir_path = Path::new(dir);
@@ -904,7 +862,7 @@ async fn run_single_uri_download(
     let mirror_strategy = super::uri_selector::strategy_from_options(options);
 
     // aria2-compatible `min-split-size` (bytes, with K/M suffixes accepted).
-    // Default 1 MiB — smaller files use a single connection.
+    // Default 1 MiB — smaller files use a single connection
     let min_split_size = parse_size_option(options.get("min-split-size"))
         .unwrap_or(DEFAULT_MIN_SPLIT_SIZE)
         .max(1);
@@ -913,9 +871,9 @@ async fn run_single_uri_download(
     // the range-request client see the same cookies (load-cookies file is
     // parsed exactly once here)
     let cookie_jar = load_cookie_jar(options);
-    let client = build_client(options, cookie_jar.clone())?;
+    let client = build_client(options, true, cookie_jar.clone())?;
     let range_client = if split > 1 {
-        build_client_no_decompress(options, cookie_jar)?
+        build_client(options, false, cookie_jar)?
     } else {
         client.clone()
     };
@@ -926,17 +884,10 @@ async fn run_single_uri_download(
     let stall = StallWatchdog::from_options(options);
     let falloc_mode = {
         let mode = super::falloc::Mode::from_option(options.get("file-allocation"));
-        #[cfg(target_os = "android")]
-        {
-            // Android fallocate support varies by filesystem/device, so avoid blocking preallocation there
-            if mode == super::falloc::Mode::Falloc {
-                super::falloc::Mode::None
-            } else {
-                mode
-            }
-        }
-        #[cfg(not(target_os = "android"))]
-        {
+        // Android fallocate support varies by filesystem/device, so avoid blocking preallocation there
+        if cfg!(target_os = "android") && mode == super::falloc::Mode::Falloc {
+            super::falloc::Mode::None
+        } else {
             mode
         }
     };
@@ -951,6 +902,13 @@ async fn run_single_uri_download(
         .get("remote-time")
         .and_then(|v| v.as_bool().or_else(|| v.as_str().map(|s| s == "true")))
         .unwrap_or(false);
+
+    // aria2-compatible `auto-file-renaming`: on (default) a name collision
+    // finalizes as "stem.N.ext"; off overwrites the existing file
+    let auto_rename = options
+        .get("auto-file-renaming")
+        .and_then(|v| v.as_bool().or_else(|| v.as_str().map(|s| s == "true")))
+        .unwrap_or(true);
 
     // Check for existing partial download
     let existing_size = if part_path.exists() {
@@ -1054,28 +1012,20 @@ async fn run_single_uri_download(
                     stall.clone(),
                     falloc_mode,
                     max_worker_retries,
+                    auto_rename,
                 )
                 .await;
                 if let Ok(ref path) = result {
                     if let Some(ref lm) = last_modified_header {
                         apply_remote_file_time(path, lm);
                     }
-                    if let Some(ref expected) = piece_checksums {
-                        if let Err(e) =
-                            verify_piece_checksums(path, probe.content_length, expected).await
-                        {
-                            tracing::warn!("piece checksum failed, deleting output: {e}");
-                            let _ = fs::remove_file(path);
-                            return Err(e);
-                        }
-                    }
-                    if let Some(ref expected) = whole_checksum {
-                        if let Err(e) = verify_whole_file(path, expected).await {
-                            tracing::warn!("integrity check failed, deleting output: {e}");
-                            let _ = fs::remove_file(path);
-                            return Err(e);
-                        }
-                    }
+                    verify_output(
+                        path,
+                        probe.content_length,
+                        &piece_checksums,
+                        &whole_checksum,
+                    )
+                    .await?;
                 }
                 return result;
             }
@@ -1103,7 +1053,7 @@ async fn run_single_uri_download(
     // multi-chunk path, reuse the probe's request shape for the single
     // connection: the range client (HTTP/1.1, identity encoding) plus an
     // explicit `Range: bytes=0-`. Some signed-URL CDNs (e.g. Quark) accept the
-    // Range probe but reject a plain full GET with 412 Precondition Failed.
+    // Range probe but reject a plain full GET with 412 Precondition Failed
     let probe_confirmed_range = is_http
         && split > 1
         && probe_for_name
@@ -1132,7 +1082,6 @@ async fn run_single_uri_download(
             total.clone(),
             completed.clone(),
             speed.clone(),
-            cancelled.clone(),
             cancel_token.clone(),
             &filename,
             dir_path,
@@ -1141,13 +1090,13 @@ async fn run_single_uri_download(
             stall.clone(),
             filename_was_url_derived,
             probe_confirmed_range,
+            auto_rename,
         )
         .await;
 
         match attempt {
             Err(ref e)
                 if single_attempt < max_worker_retries
-                    && !cancelled.load(Ordering::Relaxed)
                     && !cancel_token.is_cancelled()
                     && is_transient_single_error(e) =>
             {
@@ -1165,9 +1114,10 @@ async fn run_single_uri_download(
         }
     };
 
-    // If a stale .part was removed, retry once from scratch
-    let final_result = match result {
-        Err(ref e) if e.contains(STALE_PART_REMOVED) => {
+    // If a stale .part was removed, retry once from scratch by re-entering
+    // the full pipeline (probe, multi-chunk, verify) with fresh counters
+    if let Err(ref e) = result {
+        if e.contains(STALE_PART_REMOVED) && !is_stale_retry {
             tracing::info!("Retrying download after stale .part removal");
             delete_chunk_meta(&part_path);
             completed.store(0, Ordering::Relaxed);
@@ -1176,129 +1126,50 @@ async fn run_single_uri_download(
             for cc in &chunk_completed {
                 cc.store(0, Ordering::Relaxed);
             }
-
-            if is_http && split > 1 {
-                if let Ok(probe) = probe_range_support(&range_client, uri, &headers).await {
-                    if probe.range_supported
-                        && probe.content_length > min_split_size.saturating_mul(split as u64)
-                    {
-                        if use_remote_time {
-                            last_modified_header = probe.last_modified.clone();
-                        }
-                        connections.store(split as u32, Ordering::Relaxed);
-                        // Per-mirror headers: base + host-specific netrc auth.
-                        let mirror_headers = build_mirror_headers(all_uris, &base_headers, options);
-                        let mc_result = run_multi_chunk(
-                            &range_client,
-                            all_uris,
-                            mirror_strategy,
-                            max_conn_per_server,
-                            &part_path,
-                            probe.content_length,
-                            split,
-                            &mirror_headers,
-                            total,
-                            completed,
-                            speed,
-                            cancel_token,
-                            &filename,
-                            dir_path,
-                            global_limiter,
-                            task_limiter,
-                            probe.etag,
-                            &chunk_completed,
-                            stall.clone(),
-                            falloc_mode,
-                            max_worker_retries,
-                        )
-                        .await;
-                        if let Ok(ref path) = mc_result {
-                            if let Some(ref lm) = last_modified_header {
-                                apply_remote_file_time(path, lm);
-                            }
-                            if let Some(ref expected) = piece_checksums {
-                                if let Err(e) =
-                                    verify_piece_checksums(path, probe.content_length, expected)
-                                        .await
-                                {
-                                    tracing::warn!("piece checksum failed, deleting output: {e}");
-                                    let _ = fs::remove_file(path);
-                                    return Err(e);
-                                }
-                            }
-                            if let Some(ref expected) = whole_checksum {
-                                if let Err(e) = verify_whole_file(path, expected).await {
-                                    tracing::warn!("integrity check failed, deleting output: {e}");
-                                    let _ = fs::remove_file(path);
-                                    return Err(e);
-                                }
-                            }
-                        }
-                        return mc_result;
-                    }
-                }
-            }
-
-            connections.store(1, Ordering::Relaxed);
-            run_single_download(
-                &client,
+            return Box::pin(run_single_uri_download(
                 uri,
-                &part_path,
-                &headers,
+                all_uris,
+                dir,
+                out,
+                options,
                 total,
                 completed,
                 speed,
-                cancelled,
+                connections,
                 cancel_token,
-                &filename,
-                dir_path,
                 global_limiter,
                 task_limiter,
-                stall,
-                filename_was_url_derived,
-                probe_confirmed_range,
-            )
-            .await
+                chunk_completed,
+                adopted_filename,
+                true,
+            ))
+            .await;
         }
-        other => other,
-    };
+    }
 
-    match final_result {
+    match result {
         Ok((path, lm)) => {
             if use_remote_time {
                 if let Some(ref lm_str) = lm {
                     apply_remote_file_time(&path, lm_str);
                 }
             }
-            // Piece-level integrity for the single-connection path. Use the
-            // finished file's own size as content_length so the last (short)
-            // piece is hashed correctly. Mirrors the multi-chunk path so piece
-            // enforcement is consistent across all download paths.
-            if let Some(ref expected) = piece_checksums {
+            // Integrity for the single-connection path. Use the finished
+            // file's own size as content_length so the last (short) piece is
+            // hashed correctly. Mirrors the multi-chunk path so enforcement
+            // is consistent across all download paths
+            let content_length = if piece_checksums.is_some() {
                 match fs::metadata(&path) {
-                    Ok(meta) => {
-                        if let Err(e) = verify_piece_checksums(&path, meta.len(), expected).await {
-                            tracing::warn!("piece checksum failed, deleting output: {e}");
-                            let _ = fs::remove_file(&path);
-                            return Err(e);
-                        }
-                    }
+                    Ok(meta) => meta.len(),
                     Err(e) => {
                         let _ = fs::remove_file(&path);
                         return Err(format!("stat for piece verify: {e}"));
                     }
                 }
-            }
-            // Whole-file integrity: hash the final renamed file. On
-            // mismatch, delete it so retry doesn't pick up corrupted bytes
-            // as "resumable progress"
-            if let Some(ref expected) = whole_checksum {
-                if let Err(e) = verify_whole_file(&path, expected).await {
-                    tracing::warn!("integrity check failed, deleting output: {e}");
-                    let _ = fs::remove_file(&path);
-                    return Err(e);
-                }
-            }
+            } else {
+                0
+            };
+            verify_output(&path, content_length, &piece_checksums, &whole_checksum).await?;
             Ok(path)
         }
         Err(e) => Err(e),
@@ -1561,7 +1432,7 @@ async fn probe_range_support(
         return Ok(no_range);
     }
 
-    if range_supported_from_probe_status(status) {
+    if status == 206 {
         // Parse Content-Range: bytes 0-0/TOTAL
         if let Some(cr) = resp
             .headers()
@@ -1584,12 +1455,9 @@ async fn probe_range_support(
         return Ok(no_range);
     }
 
-    if status == 200 {
-        // A 200 to a concrete Range request is not a byte-range response
-        // Keep filename/type metadata, but stay out of multi-chunk mode
-        return Ok(no_range);
-    }
-
+    // Anything else (including a 200 to a concrete Range request) is not a
+    // byte-range response. Keep filename/type metadata, but stay out of
+    // multi-chunk mode
     Ok(no_range)
 }
 
@@ -1734,6 +1602,7 @@ async fn run_multi_chunk(
     stall: StallWatchdog,
     falloc_mode: super::falloc::Mode,
     max_retries: u32,
+    auto_rename: bool,
 ) -> Result<PathBuf, String> {
     total.store(content_length, Ordering::Relaxed);
 
@@ -1747,7 +1616,7 @@ async fn run_multi_chunk(
     );
 
     // Restore piece progress from sidecar BEFORE pre-allocating so the
-    // file-size check inside load_piece_meta is meaningful.
+    // file-size check inside load_piece_meta is meaningful
     if let Some(meta) = load_piece_meta(part_path, content_length, &expected_etag) {
         let mut total_resumed: u64 = 0;
         for pp in &meta.pieces {
@@ -1802,7 +1671,7 @@ async fn run_multi_chunk(
     });
 
     // Periodic sidecar save: snapshot piece progress every META_SAVE_INTERVAL
-    // so a SIGKILL never loses more than that interval of in-flight bytes.
+    // so a SIGKILL never loses more than that interval of in-flight bytes
     let save_part = part_path.to_path_buf();
     let save_queue = Arc::clone(&queue);
     let save_etag = expected_etag.clone();
@@ -1820,14 +1689,14 @@ async fn run_multi_chunk(
         }
     });
 
-    // Build the shared mirror pool.
+    // Build the shared mirror pool
     let multi_mirror = uris.len() > 1;
     let pool = Arc::new(MirrorPool::new(
         uris.to_vec(),
         strategy,
         max_conn_per_server,
     ));
-    // Per-mirror headers, indexed parallel to pool.uris. Shared read-only.
+    // Per-mirror headers, indexed parallel to pool.uris. Shared read-only
     let mirror_headers = Arc::new(mirror_headers.to_vec());
     let piece_etag = if multi_mirror {
         None
@@ -1892,7 +1761,7 @@ async fn run_multi_chunk(
     // Drain the save task: abort cancels at the next await, but a save
     // iteration mid-flight can still complete its synchronous fs::write.
     // Awaiting here guarantees no save lands on disk after we proceed to
-    // delete_chunk_meta below.
+    // delete_chunk_meta below
     let _ = save_task.await;
     speed.store(0, Ordering::Relaxed);
 
@@ -1909,7 +1778,7 @@ async fn run_multi_chunk(
     }
 
     if !errors.is_empty() {
-        // Persist current piece progress so the next attempt resumes correctly.
+        // Persist current piece progress so the next attempt resumes correctly
         save_piece_meta(part_path, &queue, content_length, &expected_etag);
 
         if errors.iter().all(|e| e.contains("cancelled")) {
@@ -1941,12 +1810,12 @@ async fn run_multi_chunk(
     }
     delete_chunk_meta(part_path);
     tracing::debug!("run_multi_chunk finalizing: part_path={part_path:?}, filename={filename:?}");
-    finalize_download(part_path, filename, dir_path)
+    finalize_download(part_path, filename, dir_path, auto_rename)
 }
 
 /// Worker loop: claim a piece, pick a mirror, download it, mark it done; repeat.
 /// Returns Ok(()) when the queue is exhausted (this worker is finished),
-/// or Err on cancellation or after exceeding retry budget on one piece.
+/// or Err on cancellation or after exceeding retry budget on one piece
 #[allow(clippy::too_many_arguments)]
 async fn piece_worker(
     worker_id: usize,
@@ -2030,12 +1899,12 @@ async fn piece_worker(
         .await;
         pool.release(&mirror_key);
 
-        // The writer task already incremented piece_completed per Bytes flushed.
+        // The writer task already incremented piece_completed per Bytes flushed
         let now_completed = piece_completed.load(Ordering::Relaxed);
         let downloaded = (now_completed as u64).saturating_sub(already as u64);
 
-        match outcome.error {
-            None => {
+        match outcome {
+            Ok(()) => {
                 if now_completed >= piece_length {
                     pool.record_success(&mirror_key, downloaded, started.elapsed().as_secs_f64());
                     queue.complete(idx);
@@ -2063,11 +1932,11 @@ async fn piece_worker(
                     tokio::time::sleep(std::time::Duration::from_secs(retry_count as u64)).await;
                 }
             }
-            Some(e) if e.contains("cancelled") => {
+            Err(e) if e.contains("cancelled") => {
                 queue.release(idx);
                 return Err(e);
             }
-            Some(e) => {
+            Err(e) => {
                 pool.record_failure(&mirror_key);
                 queue.release(idx);
                 retry_count += 1;
@@ -2105,7 +1974,7 @@ async fn download_piece_stream(
     worker_completed: Option<&Arc<AtomicU64>>,
     piece_completed: &Arc<AtomicU32>,
     expected_total: Option<u64>,
-) -> StreamOutcome {
+) -> Result<(), String> {
     let mut req = client
         .get(uri)
         .headers(headers.clone())
@@ -2117,14 +1986,10 @@ async fn download_piece_stream(
         }
     }
 
-    let resp = match req.send().await {
-        Ok(r) => r,
-        Err(e) => {
-            return StreamOutcome {
-                error: Some(format!("HTTP request failed: {e}")),
-            };
-        }
-    };
+    let resp = req
+        .send()
+        .await
+        .map_err(|e| format!("HTTP request failed: {e}"))?;
 
     let status = resp.status().as_u16();
 
@@ -2132,17 +1997,13 @@ async fn download_piece_stream(
         log_cloudflare_diagnostic(client, headers, resp.headers(), uri);
         let err = cloudflare_error(uri, status);
         drain_response_body(resp).await;
-        return StreamOutcome { error: Some(err) };
+        return Err(err);
     }
 
     if let Some(expected) = expected_etag {
         if let Some(actual) = resp.headers().get(ETAG).and_then(|v| v.to_str().ok()) {
             if actual != expected {
-                return StreamOutcome {
-                    error: Some(
-                        "Server file changed (ETag mismatch), aborting download".to_string(),
-                    ),
-                };
+                return Err("Server file changed (ETag mismatch), aborting download".to_string());
             }
         }
     }
@@ -2205,17 +2066,13 @@ async fn download_piece_stream(
             "Piece request got HTTP {status} for range {}",
             range.to_range_header_value()
         );
-        return StreamOutcome {
-            error: Some(format!("HTTP error: {status}")),
-        };
+        return Err(format!("HTTP error: {status}"));
     }
 
     if status != 206 {
-        return StreamOutcome {
-            error: Some(format!(
-                "Expected 206 Partial Content with matching Content-Range, got {status}"
-            )),
-        };
+        return Err(format!(
+            "Expected 206 Partial Content with matching Content-Range, got {status}"
+        ));
     }
     if let Some(cr) = resp
         .headers()
@@ -2226,13 +2083,11 @@ async fn download_piece_stream(
             if let Some(dash) = cr[space + 1..].find('-') {
                 if let Ok(range_start) = cr[space + 1..space + 1 + dash].parse::<u64>() {
                     if range_start != range.start {
-                        return StreamOutcome {
-                            error: Some(format!(
-                                "Expected 206 Partial Content with matching Content-Range: \
-                                 requested start {} but got {range_start}",
-                                range.start
-                            )),
-                        };
+                        return Err(format!(
+                            "Expected 206 Partial Content with matching Content-Range: \
+                             requested start {} but got {range_start}",
+                            range.start
+                        ));
                     }
                 }
             }
@@ -2243,31 +2098,25 @@ async fn download_piece_stream(
                 if tail != "*" {
                     if let Ok(got_total) = tail.parse::<u64>() {
                         if got_total != want_total {
-                            return StreamOutcome {
-                                error: Some(format!(
-                                    "mirror size mismatch: expected total {want_total} but got \
-                                     {got_total} (serving a different file)"
-                                )),
-                            };
+                            return Err(format!(
+                                "mirror size mismatch: expected total {want_total} but got \
+                                 {got_total} (serving a different file)"
+                            ));
                         }
                     }
                 }
             }
         }
     } else {
-        return StreamOutcome {
-            error: Some(
-                "Expected 206 Partial Content with matching Content-Range, \
-                 but Content-Range header is missing"
-                    .to_string(),
-            ),
-        };
+        return Err("Expected 206 Partial Content with matching Content-Range, \
+             but Content-Range header is missing"
+            .to_string());
     }
 
     let mut stream = resp.bytes_stream();
     // Cap writes at the requested range length. A misbehaving server that
     // returns more bytes than asked must NOT pwrite past the piece into the
-    // next piece's region in the pre-allocated file.
+    // next piece's region in the pre-allocated file
     let max_bytes = range.end - range.start + 1;
     let writer = ChunkWriter::spawn(
         Arc::clone(file),
@@ -2282,9 +2131,7 @@ async fn download_piece_stream(
         tokio::select! {
             _ = cancel_token.cancelled() => {
                 let _ = writer.finish().await;
-                return StreamOutcome {
-                    error: Some("Download cancelled".to_string()),
-                };
+                return Err("Download cancelled".to_string());
             }
             chunk = stream.next() => {
                 match chunk {
@@ -2295,30 +2142,16 @@ async fn download_piece_stream(
 
                         if !writer.send(bytes).await {
                             let _ = writer.finish().await;
-                            return StreamOutcome {
-                                error: Some(
-                                    "Writer task closed unexpectedly".to_string(),
-                                ),
-                            };
+                            return Err("Writer task closed unexpectedly".to_string());
                         }
                     }
                     Some(Err(e)) => {
                         let _ = writer.finish().await;
-                        return StreamOutcome {
-                            error: Some(format!("Stream error: {e}")),
-                        };
+                        return Err(format!("Stream error: {e}"));
                     }
                     None => {
-                        match writer.finish().await {
-                            Ok(_) => {
-                                return StreamOutcome { error: None };
-                            }
-                            Err(e) => {
-                                return StreamOutcome {
-                                    error: Some(e),
-                                };
-                            }
-                        }
+                        writer.finish().await?;
+                        return Ok(());
                     }
                 }
             }
@@ -2327,7 +2160,7 @@ async fn download_piece_stream(
 }
 
 /// Parse a JSON value as a byte-size: integer bytes, or a string with optional
-/// `K`/`M`/`G` suffix (case-insensitive). Returns `None` for missing/invalid.
+/// `K`/`M`/`G` suffix (case-insensitive). Returns `None` for missing/invalid
 fn parse_size_option(value: Option<&Value>) -> Option<u64> {
     let v = value?;
     if let Some(n) = v.as_u64() {
@@ -2348,7 +2181,7 @@ fn parse_size_option(value: Option<&Value>) -> Option<u64> {
 
 /// Cross-platform positioned write: writes the entire buffer at the given
 /// offset without touching the shared file cursor. Safe to call concurrently
-/// from multiple threads on the same `File` handle.
+/// from multiple threads on the same `File` handle
 #[cfg(unix)]
 fn pwrite_all(file: &std::fs::File, offset: u64, buf: &[u8]) -> std::io::Result<()> {
     use std::os::unix::fs::FileExt;
@@ -2372,7 +2205,7 @@ fn pwrite_all(file: &std::fs::File, offset: u64, buf: &[u8]) -> std::io::Result<
     Ok(())
 }
 
-/// fsync via blocking thread.
+/// fsync via blocking thread
 async fn sync_file(file: &Arc<std::fs::File>) -> Result<(), String> {
     let file = Arc::clone(file);
     tokio::task::spawn_blocking(move || file.sync_all())
@@ -2384,7 +2217,7 @@ async fn sync_file(file: &Arc<std::fs::File>) -> Result<(), String> {
 /// Dedicated chunk writer: a single `spawn_blocking` thread per piece that
 /// pulls `Bytes` from an MPSC channel and `pwrite`s them sequentially to the
 /// pre-allocated file. No userspace memcpy (Bytes flows straight from HTTP
-/// client to pwrite), no per-flush spawn_blocking churn.
+/// client to pwrite), no per-flush spawn_blocking churn
 struct ChunkWriter {
     tx: tokio::sync::mpsc::Sender<Bytes>,
     join: tokio::task::JoinHandle<Result<u64, String>>,
@@ -2394,7 +2227,7 @@ impl ChunkWriter {
     /// `max_bytes` caps the total bytes this writer will pwrite. Excess input
     /// is silently dropped so a misbehaving server returning more data than
     /// the requested Range can never overwrite adjacent pieces in the
-    /// pre-allocated file. `None` means unlimited (single-connection path).
+    /// pre-allocated file. `None` means unlimited (single-connection path)
     fn spawn(
         file: Arc<std::fs::File>,
         start_offset: u64,
@@ -2405,7 +2238,7 @@ impl ChunkWriter {
     ) -> Self {
         // Bounded channel = backpressure. Cap ~4 MiB worth of in-flight Bytes
         // (16 messages * typical 16-256 KiB each) so we never balloon RAM if
-        // the disk is briefly slower than the network.
+        // the disk is briefly slower than the network
         let (tx, mut rx) = tokio::sync::mpsc::channel::<Bytes>(16);
         let join = tokio::task::spawn_blocking(move || {
             let mut offset = start_offset;
@@ -2414,7 +2247,7 @@ impl ChunkWriter {
             while let Some(mut bytes) = rx.blocking_recv() {
                 if let Some(rem) = remaining {
                     if rem == 0 {
-                        // Drain extra data without writing — server overran.
+                        // Drain extra data without writing — server overran
                         continue;
                     }
                     if (bytes.len() as u64) > rem {
@@ -2468,7 +2301,7 @@ impl ChunkWriter {
 /// status (4xx/5xx — mirror failover handles those a level up), a Cloudflare
 /// challenge, integrity failures, and stall-watchdog trips. Everything else —
 /// connection resets, body-read errors, timeouts, transient DNS/connect
-/// hiccups — is treated as transient and retried with resume.
+/// hiccups — is treated as transient and retried with resume
 fn is_transient_single_error(e: &str) -> bool {
     if e.contains("cancelled")
         || e.contains(STALE_PART_REMOVED)
@@ -2503,7 +2336,6 @@ async fn run_single_download(
     total: Arc<AtomicU64>,
     completed: Arc<AtomicU64>,
     speed: Arc<AtomicU64>,
-    cancelled: Arc<AtomicBool>,
     cancel_token: CancellationToken,
     filename: &str,
     dir_path: &Path,
@@ -2512,6 +2344,7 @@ async fn run_single_download(
     stall: StallWatchdog,
     filename_was_url_derived: bool,
     force_range: bool,
+    auto_rename: bool,
 ) -> Result<(PathBuf, Option<String>), String> {
     let existing_size = if part_path.exists() {
         fs::metadata(part_path).map(|m| m.len()).unwrap_or(0)
@@ -2527,7 +2360,7 @@ async fn run_single_download(
     } else if force_range {
         // Mirror the successful Range probe's request shape. Some signed-URL
         // CDNs (e.g. Quark) reject a plain full GET with 412 Precondition
-        // Failed but serve the identical URL when a Range request is issued.
+        // Failed but serve the identical URL when a Range request is issued
         req = req
             .header(RANGE, "bytes=0-")
             .header(ACCEPT_ENCODING, "identity");
@@ -2537,7 +2370,7 @@ async fn run_single_download(
     );
 
     let resp = req.send().await.map_err(|e| {
-        if cancelled.load(Ordering::Relaxed) {
+        if cancel_token.is_cancelled() {
             "Download cancelled".to_string()
         } else {
             format!("Download failed: {e}")
@@ -2669,7 +2502,7 @@ async fn run_single_download(
     // Single-connection path also uses the dedicated writer thread:
     // zero-copy Bytes -> pwrite, no userspace memcpy. No max_bytes cap here
     // — the file isn't pre-allocated, so trailing extra bytes are appended
-    // rather than corrupting other regions.
+    // rather than corrupting other regions
     let writer = ChunkWriter::spawn(
         Arc::clone(&file),
         write_offset,
@@ -2705,7 +2538,7 @@ async fn run_single_download(
         }
     };
 
-    // Always drain the writer so all queued Bytes hit disk before we sync.
+    // Always drain the writer so all queued Bytes hit disk before we sync
     let writer_result = writer.finish().await;
 
     let result = match (result, writer_result) {
@@ -2729,7 +2562,7 @@ async fn run_single_download(
     tracing::debug!(
         "run_single_download finalizing: part_path={part_path:?}, final_filename={final_filename:?}"
     );
-    let final_path = finalize_download(part_path, &final_filename, dir_path)?;
+    let final_path = finalize_download(part_path, &final_filename, dir_path, auto_rename)?;
     Ok((final_path, resp_last_modified))
 }
 
@@ -2808,14 +2641,26 @@ async fn run_speed_tracker(
     speed.store(0, Ordering::Relaxed);
 }
 
-/// Rename the .part file to the final filename
-fn finalize_download(part_path: &Path, filename: &str, dir_path: &Path) -> Result<PathBuf, String> {
+/// Rename the .part file to the final filename. With `auto_rename` (the
+/// aria2 `auto-file-renaming` default) a finished file already holding
+/// that name is never clobbered — the new file gets "stem.N.ext" instead;
+/// with it off the existing file is overwritten
+fn finalize_download(
+    part_path: &Path,
+    filename: &str,
+    dir_path: &Path,
+    auto_rename: bool,
+) -> Result<PathBuf, String> {
     let final_name = if let Some(stripped) = filename.strip_suffix(PART_SUFFIX) {
         stripped.to_string()
     } else {
         filename.to_string()
     };
-    let final_path = dir_path.join(&final_name);
+    let final_path = if auto_rename {
+        super::util::dedup_path(dir_path, &final_name)
+    } else {
+        dir_path.join(&final_name)
+    };
     tracing::debug!(
         "finalize_download: part_path={part_path:?}, filename={filename:?}, final_path={final_path:?}"
     );
@@ -2826,7 +2671,7 @@ fn finalize_download(part_path: &Path, filename: &str, dir_path: &Path) -> Resul
 }
 
 /// Apply the remote server's Last-Modified time to the downloaded file.
-/// `last_modified_str` is the raw HTTP Last-Modified header value (RFC 2822 / RFC 7231).
+/// `last_modified_str` is the raw HTTP Last-Modified header value (RFC 2822 / RFC 7231)
 fn apply_remote_file_time(path: &Path, last_modified_str: &str) {
     if let Some(ft) = parse_http_date(last_modified_str) {
         if let Err(e) = filetime::set_file_mtime(path, ft) {
@@ -2842,72 +2687,15 @@ fn apply_remote_file_time(path: &Path, last_modified_str: &str) {
     }
 }
 
-/// Parse an HTTP date string into a `FileTime`.
-/// Supports the three formats allowed by RFC 7231:
-///   - `Sun, 06 Nov 1994 08:49:37 GMT` (preferred)
-///   - `Sunday, 06-Nov-94 08:49:37 GMT`
-///   - `Sun Nov  6 08:49:37 1994`
+/// Parse an HTTP date string (all three RFC 7231 formats) into a `FileTime`
 fn parse_http_date(s: &str) -> Option<filetime::FileTime> {
-    // Try std::time parsing via httpdate-style manual parse
-    let s = s.trim();
-    // Use the simple approach: try to parse common HTTP date formats
-    static MONTHS: &[&str] = &[
-        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-    ];
-
-    fn month_num(m: &str) -> Option<u32> {
-        MONTHS
-            .iter()
-            .position(|&name| name.eq_ignore_ascii_case(m))
-            .map(|i| i as u32 + 1)
-    }
-
-    // Try RFC 7231 preferred format: "Sun, 06 Nov 1994 08:49:37 GMT"
-    let parts: Vec<&str> = s.split_whitespace().collect();
-    if parts.len() == 6 && parts[5].eq_ignore_ascii_case("GMT") {
-        let day: u32 = parts[1].trim_end_matches(',').parse().ok()?;
-        let month = month_num(parts[2])?;
-        let year: i64 = parts[3].parse().ok()?;
-        let time_parts: Vec<&str> = parts[4].split(':').collect();
-        if time_parts.len() == 3 {
-            let hour: u32 = time_parts[0].parse().ok()?;
-            let min: u32 = time_parts[1].parse().ok()?;
-            let sec: u32 = time_parts[2].parse().ok()?;
-
-            // Calculate seconds since epoch
-            let days = days_from_civil(year, month, day)?;
-            let secs = days * 86400 + hour as i64 * 3600 + min as i64 * 60 + sec as i64;
-            if secs >= 0 {
-                return Some(filetime::FileTime::from_unix_time(secs, 0));
-            }
-        }
-    }
-
-    None
-}
-
-fn range_supported_from_probe_status(status: u16) -> bool {
-    status == 206
-}
-
-/// Convert a civil date (year, month, day) to days since Unix epoch.
-/// Algorithm from Howard Hinnant.
-fn days_from_civil(y: i64, m: u32, d: u32) -> Option<i64> {
-    if !(1..=12).contains(&m) || !(1..=31).contains(&d) {
-        return None;
-    }
-    let y = if m <= 2 { y - 1 } else { y };
-    let m = m as i64;
-    let d = d as i64;
-    let era = if y >= 0 { y } else { y - 399 } / 400;
-    let yoe = (y - era * 400) as u64;
-    let doy = (153 * (if m > 2 { m - 3 } else { m + 9 }) + 2) / 5 + d - 1;
-    let doe = yoe as i64 * 365 + yoe as i64 / 4 - yoe as i64 / 100 + doy;
-    Some(era * 146097 + doe - 719468)
+    httpdate::parse_http_date(s.trim())
+        .ok()
+        .map(filetime::FileTime::from_system_time)
 }
 
 /// Sanitize a filename to prevent path traversal attacks.
-/// Strips directory components, `..`, and path separators.
+/// Strips directory components, `..`, and path separators
 fn sanitize_filename(name: &str) -> String {
     let base = Path::new(name)
         .file_name()
@@ -2927,10 +2715,9 @@ fn sanitize_filename(name: &str) -> String {
 /// or when adopting it would trample another `.part` already in
 /// progress on disk under the same name. We deliberately do *not*
 /// block adoption when a finalized file with the target name already
-/// exists — `finalize_download` overwrites by design (matches aria2's
-/// default `allow-overwrite=true` semantics) and rejecting adoption
-/// here would silently leave the file under the placeholder name even
-/// for legitimate re-downloads.
+/// exists — `finalize_download` dedups to "stem.N.ext" at rename time,
+/// and rejecting adoption here would silently leave the file under the
+/// placeholder name even for legitimate re-downloads.
 /// Returns the new (filename, part_path) pair when adoption fires
 fn adopt_suggested_filename(
     suggested: &str,
@@ -3038,14 +2825,10 @@ fn content_type_from_headers(headers: &HeaderMap) -> Option<String> {
     }
 }
 
+/// `content_type` is already normalized (lowercased, params stripped) by
+/// `content_type_from_headers` at every call site
 fn extension_from_content_type(content_type: &str) -> Option<&'static str> {
-    match content_type
-        .split(';')
-        .next()?
-        .trim()
-        .to_ascii_lowercase()
-        .as_str()
-    {
+    match content_type {
         "image/png" => Some("png"),
         "image/jpeg" | "image/jpg" => Some("jpg"),
         "image/gif" => Some("gif"),
@@ -3115,7 +2898,7 @@ pub fn filename_from_content_disposition(headers: &HeaderMap) -> Option<String> 
     let raw_bytes = headers.get("content-disposition")?.as_bytes();
     let raw = String::from_utf8_lossy(raw_bytes);
 
-    // Prefer filename* (RFC 5987) since it can carry non-ASCII names.
+    // Prefer filename* (RFC 5987) since it can carry non-ASCII names
     let mut star_value: Option<String> = None;
     let mut plain_value: Option<String> = None;
 
@@ -3156,36 +2939,9 @@ pub fn filename_from_content_disposition(headers: &HeaderMap) -> Option<String> 
 }
 
 fn url_decode(s: &str) -> String {
-    // Decode percent-escapes into raw bytes, then interpret the buffer
-    // as UTF-8. Going byte-by-byte and casting each octet to `char` was
-    // the previous behavior — it produced mojibake whenever a multi-byte
-    // UTF-8 sequence (e.g. `%E4%B8%AD`) showed up in `filename*=`
-    // RFC 5987 ext-values. `from_utf8_lossy` keeps the original ASCII
-    // path intact and only kicks in for the rare invalid case
-    let bytes = s.as_bytes();
-    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'%' && i + 2 < bytes.len() {
-            if let (Some(hi), Some(lo)) = (hex_val(bytes[i + 1]), hex_val(bytes[i + 2])) {
-                out.push(hi << 4 | lo);
-                i += 3;
-                continue;
-            }
-        }
-        out.push(bytes[i]);
-        i += 1;
-    }
-    String::from_utf8_lossy(&out).into_owned()
-}
-
-fn hex_val(b: u8) -> Option<u8> {
-    match b {
-        b'0'..=b'9' => Some(b - b'0'),
-        b'a'..=b'f' => Some(b - b'a' + 10),
-        b'A'..=b'F' => Some(b - b'A' + 10),
-        _ => None,
-    }
+    percent_encoding::percent_decode_str(s)
+        .decode_utf8_lossy()
+        .into_owned()
 }
 
 #[cfg(test)]
@@ -3302,7 +3058,7 @@ mod tests {
             "attachment; filename=\"../../etc/passwd\"",
         )]);
         // sanitize_filename collapses path components — exact result depends
-        // on the helper, but must not contain a slash.
+        // on the helper, but must not contain a slash
         let got = filename_from_content_disposition(&headers).unwrap();
         assert!(!got.contains('/'));
         assert!(!got.contains('\\'));
@@ -3381,12 +3137,6 @@ mod tests {
     }
 
     #[test]
-    fn range_probe_200_does_not_confirm_range_support() {
-        assert!(!range_supported_from_probe_status(200));
-        assert!(range_supported_from_probe_status(206));
-    }
-
-    #[test]
     fn piece_queue_partitions_content_into_1mib_pieces() {
         let total = PIECE_SIZE * 3 + 7;
         let q = PieceQueue::new(total);
@@ -3445,7 +3195,7 @@ mod tests {
         std::fs::write(&part, vec![0u8; (PIECE_SIZE * 3) as usize]).unwrap();
 
         let q = Arc::new(PieceQueue::new(PIECE_SIZE * 3));
-        // Mark piece 0 fully done, piece 1 half done, piece 2 untouched.
+        // Mark piece 0 fully done, piece 1 half done, piece 2 untouched
         q.pieces[0]
             .completed
             .store(PIECE_SIZE as u32, Ordering::Relaxed);
@@ -3460,14 +3210,14 @@ mod tests {
         let loaded = load_piece_meta(&part, PIECE_SIZE * 3, &etag).expect("meta");
         assert_eq!(loaded.version, META_VERSION);
         assert_eq!(loaded.content_length, PIECE_SIZE * 3);
-        // Sparse: only pieces with c > 0 are recorded.
+        // Sparse: only pieces with c > 0 are recorded
         assert_eq!(loaded.pieces.len(), 2);
         let p0 = loaded.pieces.iter().find(|p| p.i == 0).unwrap();
         let p1 = loaded.pieces.iter().find(|p| p.i == 1).unwrap();
         assert_eq!(p0.c, PIECE_SIZE as u32);
         assert_eq!(p1.c, PIECE_SIZE as u32 / 2);
 
-        // ETag mismatch invalidates resume.
+        // ETag mismatch invalidates resume
         let other = Some("\"xyz\"".to_string());
         assert!(load_piece_meta(&part, PIECE_SIZE * 3, &other).is_none());
 
@@ -3479,11 +3229,11 @@ mod tests {
     #[test]
     fn adopt_suggested_filename_proceeds_when_finalized_target_exists() {
         // A finalized file with the same name as the CD suggestion is
-        // NOT a blocker — finalize_download is the layer that decides
-        // overwrite policy, and refusing here would just trap legitimate
-        // re-downloads under the placeholder name (regression: re-fetch
-        // of `StoragePeek.jar` ended up named `download-<hash>` because
-        // a prior copy lived in the directory)
+        // NOT a blocker — finalize_download dedups at rename time, and
+        // refusing here would just trap legitimate re-downloads under
+        // the placeholder name (regression: re-fetch of `StoragePeek.jar`
+        // ended up named `download-<hash>` because a prior copy lived
+        // in the directory)
         let dir = tempfile::tempdir().unwrap();
         let dir_path = dir.path();
         let current_part = dir_path.join("download.part");
@@ -3510,6 +3260,40 @@ mod tests {
             result.is_none(),
             "must not adopt when another .part is mid-flight"
         );
+    }
+
+    #[test]
+    fn finalize_download_dedups_when_target_exists() {
+        // Duplicate name must not clobber the finished file — aria2's
+        // auto-file-renaming default picks "stem.N.ext" instead
+        let dir = tempfile::tempdir().unwrap();
+        let dir_path = dir.path();
+        std::fs::write(dir_path.join("Report.pdf"), b"original").unwrap();
+        let part = dir_path.join("Report.pdf.part");
+        std::fs::write(&part, b"second download").unwrap();
+
+        let final_path = finalize_download(&part, "Report.pdf", dir_path, true).unwrap();
+
+        assert_eq!(final_path, dir_path.join("Report.1.pdf"));
+        assert_eq!(
+            std::fs::read(dir_path.join("Report.pdf")).unwrap(),
+            b"original"
+        );
+        assert_eq!(std::fs::read(&final_path).unwrap(), b"second download");
+    }
+
+    #[test]
+    fn finalize_download_overwrites_when_renaming_disabled() {
+        let dir = tempfile::tempdir().unwrap();
+        let dir_path = dir.path();
+        std::fs::write(dir_path.join("Report.pdf"), b"original").unwrap();
+        let part = dir_path.join("Report.pdf.part");
+        std::fs::write(&part, b"second download").unwrap();
+
+        let final_path = finalize_download(&part, "Report.pdf", dir_path, false).unwrap();
+
+        assert_eq!(final_path, dir_path.join("Report.pdf"));
+        assert_eq!(std::fs::read(&final_path).unwrap(), b"second download");
     }
 
     #[test]

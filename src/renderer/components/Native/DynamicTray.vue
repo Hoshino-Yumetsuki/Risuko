@@ -10,16 +10,16 @@
 <script lang="ts">
 import { APP_THEME } from "@shared/constants";
 import { getInverseTheme } from "@shared/utils";
-import trayIconDarkActive from "@static/mo-tray-dark-active@2x.png";
-import trayIconDarkNormal from "@static/mo-tray-dark-normal@2x.png";
-import trayIconLightActive from "@static/mo-tray-light-active@2x.png";
-import trayIconLightNormal from "@static/mo-tray-light-normal@2x.png";
+import trayIconDarkActive from "@static/tray-dark-active@2x.png";
+import trayIconDarkNormal from "@static/tray-dark-normal@2x.png";
+import trayIconLightActive from "@static/tray-light-active@2x.png";
+import trayIconLightNormal from "@static/tray-light-normal@2x.png";
 import { useAppStore } from "@/store/app";
 
 const cache: Record<string, ImageBitmap> = {};
 
 export default {
-	name: "mo-dynamic-tray",
+	name: "dynamic-tray",
 	props: {
 		showSpeed: {
 			type: Boolean,
@@ -52,9 +52,6 @@ export default {
 		},
 		speed() {
 			return useAppStore().stat.uploadSpeed + useAppStore().stat.downloadSpeed;
-		},
-		scale() {
-			return 2;
 		},
 		currentTheme() {
 			const { theme, focused } = this;
@@ -107,7 +104,6 @@ export default {
 				currentTheme: theme,
 				uploadSpeed,
 				downloadSpeed,
-				scale,
 				iconKey,
 				showSpeed,
 			} = this;
@@ -125,7 +121,7 @@ export default {
 					uploadSpeed,
 					downloadSpeed,
 					showSpeed,
-					scale,
+					scale: 2,
 				},
 			});
 		},

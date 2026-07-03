@@ -128,7 +128,10 @@ impl WebdavSink {
 
             let mut req = self
                 .client
-                .request(http_method_mkcol(), url.as_str())
+                .request(
+                    risuko_http::Method::from_bytes(b"MKCOL").expect("MKCOL is a valid HTTP token"),
+                    url.as_str(),
+                )
                 .timeout(Duration::from_secs(30));
             if let Some(auth) = self.auth_header() {
                 req = req.header("authorization", auth);
@@ -151,12 +154,6 @@ impl WebdavSink {
         }
         Ok(())
     }
-}
-
-fn http_method_mkcol() -> risuko_http::Method {
-    // Custom method per RFC 4918. `Method::from_bytes` is infallible for
-    // valid token strings
-    risuko_http::Method::from_bytes(b"MKCOL").expect("MKCOL is a valid HTTP token")
 }
 
 #[async_trait]
@@ -325,12 +322,5 @@ mod tests {
             s.auth_header().unwrap(),
             "Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ=="
         );
-    }
-
-    #[test]
-    fn mkcol_method_is_valid() {
-        // Must not panic — verifies the method token is a valid HTTP token
-        let m = http_method_mkcol();
-        assert_eq!(m.as_str(), "MKCOL");
     }
 }

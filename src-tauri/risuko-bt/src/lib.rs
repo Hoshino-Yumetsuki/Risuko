@@ -4,6 +4,7 @@ pub mod api;
 pub mod bencode;
 pub mod core;
 pub mod dht;
+pub mod limiter;
 pub mod lsd;
 pub mod magnet;
 pub mod peer;
@@ -24,6 +25,6 @@ pub use core::{generate_peer_id, Id20, Lengths, Magnet};
 pub use peer::EncryptionPolicy;
 pub use session::{
     AddTorrent, AddTorrentOptions, AddTorrentResponse, ListOnlyResponse, ListenerOptions, Session,
-    SessionOptions, SessionPersistenceConfig, UpnpStatus,
+    SessionOptions, UpnpStatus,
 };
 pub use torrent::{ManagedTorrent, PeerSnapshot, TorrentStats};

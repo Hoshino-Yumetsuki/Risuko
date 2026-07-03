@@ -1,11 +1,10 @@
 #!/usr/bin/env node
 
 /**
- * risuko-app — Downloads and launches the Risuko desktop app.
+ * risuko-app — downloads and launches the Risuko desktop app
  *
- * On first run for a given version, the platform-appropriate release asset is
- * downloaded from GitHub Releases and cached locally. Subsequent runs use the
- * cached binary directly.
+ * On first run for a given version, the platform release asset is downloaded
+ * from GitHub Releases and cached. Later runs use the cached binary
  *
  * Cache locations:
  *   macOS:   ~/Library/Application Support/risuko-launcher/<version>/
@@ -21,7 +20,6 @@ const { execFileSync, spawn } = require("node:child_process");
 
 const PKG_VERSION = require("./package.json").version;
 const REPO = "YueMiyuki/risuko";
-const SHA256_SIDECAR_REQUIRED_VERSION = "0.4.0";
 
 class DownloadHttpError extends Error {
 	constructor(statusCode, url) {
@@ -82,7 +80,7 @@ Cache location:
 const { platform, arch } = process;
 
 // Asset naming scheme: Risuko_{version}_{platform}_{arch}.{ext}
-// Matches process.platform and process.arch directly — no translation needed.
+// Matches process.platform and process.arch directly — no translation needed
 /** @type {Record<string, { ext: string, extract: 'tar'|'chmod'|'none', binary: string }>} */
 const PLATFORM_INFO = {
 	darwin: {
@@ -145,7 +143,7 @@ function getCacheDir() {
 // -- Download with redirect + progress --
 
 /**
- * Downloads `url` to `destPath`, following redirects and printing progress.
+ * Downloads `url` to `destPath`, following redirects and printing progress
  * @param {string} url
  * @param {string} destPath
  * @returns {Promise<void>}
@@ -207,16 +205,14 @@ function download(url, destPath) {
 	});
 }
 
-function downloadText(url) {
-	const tmpDir = fs.mkdtempSync(
-		path.join(require("node:os").tmpdir(), "risuko-launcher-"),
-	);
-	const tmpPath = path.join(tmpDir, "download.txt");
-	return download(url, tmpPath)
-		.then(() => fs.readFileSync(tmpPath, "utf8"))
-		.finally(() => {
-			fs.rmSync(tmpDir, { recursive: true, force: true });
-		});
+async function downloadText(url) {
+	const res = await fetch(url, {
+		headers: { "User-Agent": "risuko-app-launcher" },
+	});
+	if (!res.ok) {
+		throw new DownloadHttpError(res.status, url);
+	}
+	return res.text();
 }
 
 function sha256File(filePath) {
@@ -246,101 +242,20 @@ function parseExpectedSha256(text, assetName) {
 	throw new Error(`No SHA-256 digest found for ${assetName}`);
 }
 
-function compareReleaseVersions(left, right) {
-	const leftMatch = /^v?(\d+)\.(\d+)\.(\d+)(.*)/.exec(left);
-	const rightMatch = /^v?(\d+)\.(\d+)\.(\d+)(.*)/.exec(right);
-	if (!leftMatch || !rightMatch) {
-		return null;
-	}
-	for (let i = 1; i <= 3; i++) {
-		const diff = Number(leftMatch[i]) - Number(rightMatch[i]);
-		if (diff !== 0) {
-			return diff;
-		}
-	}
-
-	function parseSuffix(suffix) {
-		let prerelease = null;
-		let build = null;
-		const buildIdx = suffix.indexOf("+");
-		if (buildIdx !== -1) {
-			build = suffix.slice(buildIdx + 1);
-			suffix = suffix.slice(0, buildIdx);
-		}
-		if (suffix === "") {
-			return { prerelease, build };
-		}
-		if (suffix.startsWith("-")) {
-			prerelease = suffix.slice(1);
-		} else {
-			return null;
-		}
-		return { prerelease, build };
-	}
-
-	const leftParsed = parseSuffix(leftMatch[4]);
-	const rightParsed = parseSuffix(rightMatch[4]);
-	if (!leftParsed || !rightParsed) {
-		return null;
-	}
-
-	// Build metadata is ignored for precedence.
-	const pre1 = leftParsed.prerelease;
-	const pre2 = rightParsed.prerelease;
-	if (pre1 === pre2) {
-		return 0;
-	}
-	if (pre1 === null) {
-		return 1;
-	}
-	if (pre2 === null) {
-		return -1;
-	}
-
-	const parts1 = pre1.split(".");
-	const parts2 = pre2.split(".");
-	const len = Math.max(parts1.length, parts2.length);
-	for (let i = 0; i < len; i++) {
-		const p1 = parts1[i];
-		const p2 = parts2[i];
-		if (p1 === undefined) {
-			return -1;
-		}
-		if (p2 === undefined) {
-			return 1;
-		}
-
-		const isNum1 = /^[0-9]+$/.test(p1);
-		const isNum2 = /^[0-9]+$/.test(p2);
-
-		if (isNum1 && isNum2) {
-			const n1 = BigInt(p1);
-			const n2 = BigInt(p2);
-			if (n1 !== n2) {
-				return n1 < n2 ? -1 : 1;
-			}
-		} else if (isNum1 && !isNum2) {
-			return -1;
-		} else if (!isNum1 && isNum2) {
-			return 1;
-		} else {
-			if (p1 < p2) {
-				return -1;
-			}
-			if (p1 > p2) {
-				return 1;
-			}
-		}
-	}
-	return 0;
-}
-
 function isLegacyChecksumRelease(releaseVersion) {
-	const order = compareReleaseVersions(
-		releaseVersion,
-		SHA256_SIDECAR_REQUIRED_VERSION,
-	);
-	return order !== null && order < 0;
+	const m = /^v?(\d+)\.(\d+)\.(\d+)(.*)/.exec(releaseVersion);
+	if (!m) {
+		return false;
+	}
+	// SHA-256 sidecars ship from 0.4.0 onward
+	const required = [0, 4, 0];
+	for (let i = 0; i < 3; i++) {
+		if (Number(m[i + 1]) !== required[i]) {
+			return Number(m[i + 1]) < required[i];
+		}
+	}
+	// a prerelease of the boundary version predates it
+	return m[4].startsWith("-");
 }
 
 async function verifySha256(assetPath, checksumUrl, assetName) {
@@ -395,13 +310,7 @@ function extract(entry, assetPath, cacheDir) {
 			break;
 
 		case "none":
-			// Portable Windows exe — already in place, no extraction needed.
-			break;
-
-		case "nsis":
-			// Silent NSIS install: /S = silent, /D= must be last arg (no quoting)
-			execFileSync(assetPath, [`/S`, `/D=${cacheDir}`], { stdio: "inherit" });
-			fs.unlinkSync(assetPath);
+			// Portable Windows exe — already in place, no extraction needed
 			break;
 
 		default:

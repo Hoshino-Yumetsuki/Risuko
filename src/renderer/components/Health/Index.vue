@@ -1,6 +1,6 @@
 <template>
   <div class="main panel panel-layout panel-layout--v health-panel">
-    <mo-enter tag="header" preset="fadeInDown" class="panel-header health-header">
+    <motion-enter tag="header" preset="fadeInDown" class="panel-header health-header">
       <h4 class="health-title">{{ $t('health.title') }}</h4>
       <Button
         size="sm"
@@ -13,17 +13,17 @@
         <RefreshCw :size="14" :class="{ 'animate-spin': loading }" />
         <span>{{ loading ? $t('health.loading') : $t('health.run-all') }}</span>
       </Button>
-    </mo-enter>
-    <p class="health-subtitle">{{ $t('health.subtitle') }}</p>
-    <div v-if="report" class="health-meta-row">
-      <span class="health-overall" :class="`health-status-${report.overallStatus}`">
-        <component :is="iconFor(report.overallStatus)" :size="14" />
-        {{ $t(`health.statuses.${report.overallStatus}`) }}
-      </span>
-      <span class="health-last-run" :title="lastRunTitle">
-        {{ $t('health.last-run') }}: {{ lastRunRelative }}
-      </span>
-    </div>
+      <p class="page-desc">{{ $t('health.subtitle') }}</p>
+      <div v-if="report" class="page-meta">
+        <span class="health-overall" :class="`health-status-${report.overallStatus}`">
+          <component :is="iconFor(report.overallStatus)" :size="14" />
+          {{ $t(`health.statuses.${report.overallStatus}`) }}
+        </span>
+        <span class="health-last-run" :title="lastRunTitle">
+          {{ $t('health.last-run') }}: {{ lastRunRelative }}
+        </span>
+      </div>
+    </motion-enter>
 
     <main class="panel-content health-body">
       <div class="health-body-inner">
@@ -37,28 +37,23 @@
           <span>{{ $t('health.loading') }}</span>
         </div>
 
-        <mo-health-category-card
-          v-for="cat in report?.categories ?? []"
-          :key="cat.id"
-          :category="cat"
-          :loading="loadingCategories.has(cat.id)"
-          @run="onRunCategory(cat.id)"
-          @fix="onFix"
-        />
+        <div v-if="report?.categories?.length" class="health-groups">
+          <health-category-card
+            v-for="cat in report.categories"
+            :key="cat.id"
+            :category="cat"
+            :loading="loadingCategories.has(cat.id)"
+            @run="onRunCategory(cat.id)"
+            @fix="onFix"
+          />
+        </div>
       </div>
     </main>
   </div>
 </template>
 
 <script lang="ts">
-import {
-	AlertCircle,
-	AlertTriangle,
-	CheckCircle2,
-	CircleDashed,
-	RefreshCw,
-	XCircle,
-} from "@lucide/vue";
+import { AlertCircle, RefreshCw } from "@lucide/vue";
 import type {
 	HealthCategoryId,
 	HealthFix,
@@ -69,23 +64,17 @@ import { mapState } from "pinia";
 import { Button } from "@/components/ui/button";
 import { useHealthStore } from "@/store/health";
 import HealthCategoryCard from "./CategoryCard.vue";
-
-const STATUS_ICON: Record<HealthStatus, unknown> = {
-	ok: CheckCircle2,
-	warn: AlertTriangle,
-	fail: XCircle,
-	skipped: CircleDashed,
-};
+import { STATUS_ICON } from "./CheckRow.vue";
 
 const REFRESH_INTERVAL_MS = 15_000;
 
 export default {
-	name: "mo-content-health",
+	name: "health-page",
 	components: {
 		AlertCircle,
 		Button,
 		RefreshCw,
-		"mo-health-category-card": HealthCategoryCard,
+		"health-category-card": HealthCategoryCard,
 	},
 	data() {
 		return {
@@ -209,34 +198,6 @@ export default {
 	height: 100%;
 	overflow: hidden;
 }
-.health-header {
-	display: flex;
-	flex-direction: row;
-	align-items: center;
-	justify-content: space-between;
-	gap: 16px;
-	padding: 16px 28px;
-	flex-wrap: wrap;
-	border-bottom: 1px solid var(--border);
-}
-.health-title {
-	margin: 0;
-	font-size: 16px;
-	font-weight: 600;
-	letter-spacing: -0.01em;
-}
-.health-subtitle {
-	margin: 4px 28px 0;
-	font-size: 12px;
-	color: var(--muted-foreground);
-}
-.health-meta-row {
-	display: flex;
-	align-items: center;
-	gap: 12px;
-	flex-wrap: wrap;
-	padding: 8px 28px 0;
-}
 .health-overall {
 	display: inline-flex;
 	align-items: center;
@@ -252,11 +213,11 @@ export default {
 	color: var(--primary);
 }
 .health-status-warn {
-	background: color-mix(in srgb, #f59e0b 18%, transparent);
+	background: color-mix(in srgb, var(--warning) 18%, transparent);
 	color: #b45309;
 }
 .health-status-fail {
-	background: color-mix(in srgb, #ef4444 18%, transparent);
+	background: color-mix(in srgb, var(--danger) 18%, transparent);
 	color: #b91c1c;
 }
 .health-status-skipped {
@@ -284,10 +245,16 @@ export default {
 .health-body-inner {
 	max-width: 880px;
 	margin: 0 auto;
-	padding: 20px 28px 80px;
+	padding: 16px 36px 80px;
 	display: flex;
 	flex-direction: column;
-	gap: 14px;
+	gap: 12px;
+}
+.health-groups {
+	border: 1px solid var(--border);
+	border-radius: 8px;
+	background: var(--surface-1);
+	overflow: hidden;
 }
 .health-error {
 	display: flex;
@@ -295,7 +262,7 @@ export default {
 	gap: 8px;
 	padding: 12px 14px;
 	border-radius: var(--radius);
-	background: color-mix(in srgb, #ef4444 12%, transparent);
+	background: color-mix(in srgb, var(--danger) 12%, transparent);
 	color: #b91c1c;
 	font-size: 13px;
 }

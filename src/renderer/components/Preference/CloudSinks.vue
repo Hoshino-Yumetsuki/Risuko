@@ -1,14 +1,7 @@
 <template>
   <div class="content panel panel-layout panel-layout--v">
-    <mo-enter tag="header" preset="fadeInDown" class="panel-header">
-      <h4 class="hidden-xs-only">{{ title }}</h4>
-      <div class="preference-mobile-subnav hidden-sm-and-up">
-        <mo-subnav-switcher :title="title" :subnavs="subnavs" />
-      </div>
-    </mo-enter>
     <main class="panel-content">
       <div class="form-preference">
-        <!-- Sinks Section -->
         <div class="settings-section">
           <div class="settings-section-header">
             <div class="section-icon"><Cloud :size="16" /></div>
@@ -65,7 +58,7 @@
                     v-if="store.defaultSinkId !== sink.id"
                     size="sm"
                     variant="ghost"
-                    @click="onSetDefault(sink.id)"
+                    @click="store.setDefaultSink(sink.id)"
                   >
                     <Star :size="13" />
                     <span class="ml-1">{{ $t('cloudSinks.makeDefault') }}</span>
@@ -80,7 +73,7 @@
                     class="action-danger"
                     :aria-label="$t('cloudSinks.delete')"
                     :title="`${$t('cloudSinks.delete')} — ${sink.label}`"
-                    @click="askRemove(sink)"
+                    @click="removingSink = sink"
                   >
                     <Trash2 :size="13" />
                   </Button>
@@ -90,7 +83,6 @@
           </div>
         </div>
 
-        <!-- Rules Section -->
         <div class="settings-section">
           <div class="settings-section-header">
             <div class="section-icon"><Filter :size="16" /></div>
@@ -164,7 +156,7 @@
                     class="action-danger"
                     :aria-label="$t('cloudSinks.deleteRule')"
                     :title="`${$t('cloudSinks.deleteRule')} — ${rule.label || $t('cloudSinks.unnamedRule')}`"
-                    @click="askRemoveRule(rule)"
+                    @click="removingRule = rule"
                   >
                     <Trash2 :size="13" />
                   </Button>
@@ -174,7 +166,6 @@
           </div>
         </div>
 
-        <!-- Recent Uploads -->
         <div class="settings-section">
           <div class="settings-section-header">
             <div class="section-icon"><Activity :size="16" /></div>
@@ -232,8 +223,10 @@
       </div>
     </main>
 
-    <!-- Add / Edit Dialog -->
-    <Dialog :open="dialogOpen" @update:open="onDialogOpenChange">
+    <Dialog
+      :open="dialogOpen"
+      @update:open="(v: boolean) => { if (!v) dialogOpen = false }"
+    >
       <DialogContent class="cloud-sink-dialog" :show-close-button="true">
         <DialogHeader>
           <DialogTitle>{{ dialogTitle }}</DialogTitle>
@@ -241,7 +234,6 @@
         </DialogHeader>
 
         <div class="dialog-form">
-          <!-- Identity row -->
           <div class="grid-2">
             <div class="dialog-field">
               <Label for="cs-label">{{ $t('cloudSinks.label') }}</Label>
@@ -268,7 +260,6 @@
             </div>
           </div>
 
-          <!-- WebDAV -->
           <template v-if="form.kind === 'webdav'">
             <div class="dialog-field">
               <Label for="cs-endpoint">{{ $t('cloudSinks.endpoint') }}</Label>
@@ -313,7 +304,6 @@
             </div>
           </template>
 
-          <!-- S3 -->
           <template v-else-if="form.kind === 's3'">
             <div class="dialog-field">
               <Label>{{ $t('cloudSinks.s3Endpoint') }}</Label>
@@ -365,7 +355,6 @@
             </div>
           </template>
 
-          <!-- SFTP -->
           <template v-else-if="form.kind === 'sftp'">
             <div class="grid-host-port">
               <div class="dialog-field">
@@ -419,7 +408,6 @@
             </div>
           </template>
 
-          <!-- FTP -->
           <template v-else-if="form.kind === 'ftp'">
             <div class="grid-host-port">
               <div class="dialog-field">
@@ -473,7 +461,6 @@
 
           <hr class="dialog-sep" />
 
-          <!-- Post-action -->
           <div class="grid-2">
             <div class="dialog-field">
               <Label>{{ $t('cloudSinks.postAction') }}</Label>
@@ -515,7 +502,6 @@
       </DialogContent>
     </Dialog>
 
-    <!-- Confirm remove -->
     <Dialog
       :open="!!removingSink"
       @update:open="(v: boolean) => { if (!v) removingSink = null }"
@@ -540,8 +526,10 @@
       </DialogContent>
     </Dialog>
 
-    <!-- Rule Add / Edit Dialog -->
-    <Dialog :open="ruleDialogOpen" @update:open="onRuleDialogOpenChange">
+    <Dialog
+      :open="ruleDialogOpen"
+      @update:open="(v: boolean) => { if (!v) ruleDialogOpen = false }"
+    >
       <DialogContent class="cloud-sink-dialog" :show-close-button="true">
         <DialogHeader>
           <DialogTitle>{{ ruleDialogTitle }}</DialogTitle>
@@ -549,7 +537,6 @@
         </DialogHeader>
 
         <div class="dialog-form">
-          <!-- Identity row -->
           <div class="grid-2">
             <div class="dialog-field">
               <Label for="rule-label">{{ $t('cloudSinks.label') }}</Label>
@@ -589,7 +576,6 @@
 
           <hr class="dialog-sep" />
 
-          <!-- Categories -->
           <div class="dialog-field">
             <Label>{{ $t('cloudSinks.ruleCategories') }}</Label>
             <DropdownMenu>
@@ -631,7 +617,6 @@
             </DropdownMenu>
           </div>
 
-          <!-- Task kinds -->
           <div class="dialog-field">
             <Label>{{ $t('cloudSinks.ruleTaskKinds') }}</Label>
             <DropdownMenu>
@@ -673,7 +658,6 @@
             </DropdownMenu>
           </div>
 
-          <!-- Extensions + Size: horizontal grid like sink dialog -->
           <div class="grid-2">
             <div class="dialog-field">
               <Label for="rule-ext">{{ $t('cloudSinks.ruleExtensions') }}</Label>
@@ -762,7 +746,6 @@
       </DialogContent>
     </Dialog>
 
-    <!-- Confirm remove rule -->
     <Dialog
       :open="!!removingRule"
       @update:open="(v: boolean) => { if (!v) removingRule = null }"
@@ -974,7 +957,7 @@ function emptyForm(): FormState {
 }
 
 export default defineComponent({
-	name: "mo-cloud-sinks",
+	name: "preference-cloud-sinks",
 	components: {
 		Activity,
 		AlertCircle,
@@ -1032,12 +1015,6 @@ export default defineComponent({
 		store() {
 			return useUploadSinkStore();
 		},
-		title(): string {
-			return this.$t("preferences.cloudSinks") as string;
-		},
-		subnavs(): { name: string; path: string; current: string }[] {
-			return [];
-		},
 		dialogTitle(): string {
 			return this.editingId
 				? (this.$t("cloudSinks.editSink") as string)
@@ -1077,8 +1054,6 @@ export default defineComponent({
 		} catch (err) {
 			logger.warn("CloudSinks: fetchAll failed", err);
 		} finally {
-			// Always wire up live event listeners so in-flight uploads
-			// surface in the UI even if the initial fetch failed
 			await this.store.initEventListeners();
 		}
 	},
@@ -1153,9 +1128,6 @@ export default defineComponent({
 				f.s3.region = c.region;
 				f.s3.bucket = c.bucket;
 				f.s3.accessKeyId = c.accessKeyId;
-				// Backend strips secrets on read; default to empty so the input
-				// renders blank and the merge_secrets path on save can preserve
-				// the stored value when the user doesn't retype it
 				f.s3.secretAccessKey = c.secretAccessKey ?? "";
 				f.s3.prefix = c.prefix ?? "";
 				f.s3.forcePathStyle = !!c.forcePathStyle;
@@ -1180,11 +1152,6 @@ export default defineComponent({
 			this.dialogError = "";
 			this.dialogOpen = true;
 		},
-		onDialogOpenChange(open: boolean) {
-			if (!open) {
-				this.dialogOpen = false;
-			}
-		},
 		buildConfig(): SinkConfig {
 			switch (this.form.kind) {
 				case "webdav":
@@ -1204,9 +1171,6 @@ export default defineComponent({
 						region: this.form.s3.region.trim(),
 						bucket: this.form.s3.bucket.trim(),
 						accessKeyId: this.form.s3.accessKeyId.trim(),
-						// Only forward a secret when the user actually typed one;
-						// an empty string would clobber the stored credential on the
-						// backend (see merge_secrets in upload/manager.rs)
 						...(secret ? { secretAccessKey: secret } : {}),
 						prefix: this.form.s3.prefix.trim(),
 						forcePathStyle: this.form.s3.forcePathStyle,
@@ -1255,9 +1219,6 @@ export default defineComponent({
 					if (!this.form.s3.accessKeyId.trim()) {
 						return this.$t("cloudSinks.errS3AccessKeyRequired") as string;
 					}
-					// Secrets are only required when creating a new sink. On
-					// edit, an empty input means “keep the stored secret” — the
-					// backend's merge_secrets() reuses the persisted value
 					if (!this.editingId && !this.form.s3.secretAccessKey.trim()) {
 						return this.$t("cloudSinks.errS3SecretKeyRequired") as string;
 					}
@@ -1340,9 +1301,6 @@ export default defineComponent({
 			}
 			this.saving = false;
 		},
-		askRemove(sink: UploadSinkRecord) {
-			this.removingSink = sink;
-		},
 		async onRemoveConfirmed() {
 			if (!this.removingSink) {
 				return;
@@ -1378,20 +1336,7 @@ export default defineComponent({
 				this.testingId = null;
 			}
 		},
-		async onSetDefault(id: string) {
-			await this.store.setDefaultSink(id);
-		},
 		mapSinkToCredential(record: UploadSinkRecord): SavedCredential | null {
-			// Timestamps intentionally omitted here: `syncCredential` assigns
-			// `createdAt`/`lastUsedAt` only when the credential is new, so
-			// edits (renames, host changes, password updates) preserve the
-			// original timestamps instead of resetting them on every sync.
-			//
-			// Secret fields owned by this protocol are always included
-			// (even when empty) so the merge loop in `syncCredential` can
-			// distinguish "untouched" (key absent) from "explicit clear"
-			// (key === ""), allowing the user to actually wipe a stored
-			// secret by saving a sink with the field cleared
 			const base: Partial<SavedCredential> = {
 				id: record.id,
 				label: record.label,
@@ -1433,7 +1378,6 @@ export default defineComponent({
 				const credential: SavedCredential = {
 					...existing,
 					...mapped,
-					// Preserve original timestamps on edits
 					createdAt: existing.createdAt,
 					lastUsedAt: existing.lastUsedAt,
 				};
@@ -1449,10 +1393,6 @@ export default defineComponent({
 					string,
 					string | undefined
 				>;
-				// Distinguish "untouched" (key absent on mapped) from
-				// "explicit clear" (key present with empty string). Treating
-				// any falsy value as "keep existing" — the previous behavior
-				// — silently reverted user-initiated clears
 				for (const key of CREDENTIAL_SECRET_FIELDS) {
 					if (!Object.hasOwn(mappedRec, key)) {
 						if (existingRec[key] !== undefined) {
@@ -1507,7 +1447,6 @@ export default defineComponent({
 			}
 			return `${bytesToSize(job.uploaded)} / ${bytesToSize(job.size)}`;
 		},
-		// ----- Rules -----
 		toggleSelection(arr: string[], value: string) {
 			const idx = arr.indexOf(value);
 			if (idx >= 0) {
@@ -1532,9 +1471,6 @@ export default defineComponent({
 						.map((c) => {
 							const key = `cloudSinks.cat_${c}`;
 							const t = this.$t(key) as string;
-							// $t echoes the key back when no translation exists;
-							// fall back to the raw id so unknown categories
-							// stay visible instead of showing the path
 							return t === key ? c : t;
 						})
 						.join(", "),
@@ -1583,16 +1519,8 @@ export default defineComponent({
 			this.ruleDialogError = "";
 			this.ruleDialogOpen = true;
 		},
-		onRuleDialogOpenChange(open: boolean) {
-			if (!open) {
-				this.ruleDialogOpen = false;
-			}
-		},
 		buildRule(): UploadRule {
-			const exts = this.ruleForm.extensionsText
-				.split(/[,\s]+/)
-				.map((e) => e.trim().toLowerCase().replace(/^\./, ""))
-				.filter(Boolean);
+			const exts = this.parsedExtensions;
 			const minMb = Number(this.ruleForm.minSizeMb);
 			const maxMb = Number(this.ruleForm.maxSizeMb);
 			return {
@@ -1668,9 +1596,6 @@ export default defineComponent({
 				toast.error(String((e as Error)?.message || e));
 			}
 		},
-		askRemoveRule(rule: UploadRule) {
-			this.removingRule = rule;
-		},
 		async onRemoveRuleConfirmed() {
 			if (!this.removingRule) {
 				return;
@@ -1694,7 +1619,6 @@ export default defineComponent({
 	color: hsl(var(--muted-foreground));
 }
 
-/* ---------- Sink cards ---------- */
 .sink-list {
 	display: flex;
 	flex-direction: column;
@@ -1803,7 +1727,6 @@ export default defineComponent({
 	color: hsl(var(--destructive));
 }
 
-/* ---------- Empty states ---------- */
 .empty-state {
 	display: flex;
 	flex-direction: column;
@@ -1838,7 +1761,6 @@ export default defineComponent({
 	margin: 0;
 }
 
-/* ---------- Job rows ---------- */
 .job-list {
 	display: flex;
 	flex-direction: column;
@@ -1923,7 +1845,6 @@ export default defineComponent({
 	display: flex;
 }
 
-/* ---------- Dialog ---------- */
 .cloud-sink-dialog {
 	max-width: 720px;
 	width: calc(100vw - 48px);
@@ -1943,8 +1864,6 @@ export default defineComponent({
 	max-height: 65vh;
 	overflow-y: auto;
 	padding-right: 4px;
-	/* Keep scroll behaviour but hide the visible scrollbar — the dialog
-	   reads cleaner without a permanent track on the right edge */
 	scrollbar-width: none;
 	-ms-overflow-style: none;
 }
@@ -2043,51 +1962,6 @@ export default defineComponent({
 	padding: 8px 10px;
 }
 
-/* ---------- Chips (rule selectors) ---------- */
-.chip-row {
-	display: flex;
-	flex-wrap: wrap;
-	gap: 6px;
-}
-
-.chip {
-	display: inline-flex;
-	align-items: center;
-	gap: 4px;
-	padding: 4px 10px;
-	font-size: 12px;
-	border-radius: 999px;
-	border: 1px solid hsl(var(--border));
-	background: hsl(var(--card));
-	color: hsl(var(--muted-foreground));
-	cursor: pointer;
-	user-select: none;
-	transition:
-		background-color 0.15s ease,
-		color 0.15s ease,
-		border-color 0.15s ease;
-}
-
-.chip input {
-	display: none;
-}
-
-.chip:hover {
-	border-color: hsl(var(--ring) / 0.5);
-	color: hsl(var(--foreground));
-}
-
-.chip--on {
-	background: hsl(var(--primary) / 0.12);
-	color: hsl(var(--primary));
-	border-color: hsl(var(--primary) / 0.4);
-}
-
-.chip--on:hover {
-	color: hsl(var(--primary));
-}
-
-/* ---------- Rule dialog ---------- */
 .field-row {
 	display: flex;
 	align-items: baseline;
@@ -2103,7 +1977,6 @@ export default defineComponent({
 	font-variant-numeric: tabular-nums;
 }
 
-/* ---------- Multi-select dropdown ---------- */
 .multi-select {
 	display: flex;
 	align-items: center;
@@ -2182,49 +2055,6 @@ export default defineComponent({
 	min-width: var(--reka-dropdown-menu-trigger-width, 200px);
 }
 
-.chip-grid {
-	display: flex;
-	flex-wrap: wrap;
-	gap: 6px;
-}
-
-.chip-tile {
-	display: inline-flex;
-	align-items: center;
-	gap: 4px;
-	padding: 5px 10px;
-	font-size: 12px;
-	font-weight: 500;
-	border-radius: 6px;
-	border: 1px solid hsl(var(--border));
-	background: hsl(var(--card));
-	color: hsl(var(--muted-foreground));
-	cursor: pointer;
-	user-select: none;
-	transition:
-		background-color 0.12s ease,
-		color 0.12s ease,
-		border-color 0.12s ease,
-		box-shadow 0.12s ease;
-}
-
-.chip-tile:hover {
-	color: hsl(var(--foreground));
-	border-color: hsl(var(--ring) / 0.5);
-}
-
-.chip-tile--on,
-.chip-tile--on:hover {
-	background: hsl(var(--primary));
-	color: hsl(var(--primary-foreground));
-	border-color: hsl(var(--primary));
-	box-shadow: 0 1px 2px hsl(var(--primary) / 0.25);
-}
-
-.chip-tile__check {
-	flex-shrink: 0;
-}
-
 .size-range {
 	display: flex;
 	align-items: center;
@@ -2287,7 +2117,6 @@ export default defineComponent({
 	opacity: 0.55;
 }
 
-/* ---------- Confirm ---------- */
 .cloud-sink-confirm {
 	max-width: 420px;
 }

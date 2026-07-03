@@ -1,5 +1,5 @@
 <template>
-  <div class="mo-history-directory">
+  <div class="history-directory">
     <Popover>
       <PopoverTrigger as-child>
         <ui-button size="sm" variant="ghost" class="history-button">
@@ -7,22 +7,22 @@
         </ui-button>
       </PopoverTrigger>
       <PopoverContent
-        :style="{ width: width + 'px' }"
-        class="mo-directory-popper"
+        style="width: 360px"
+        class="directory-popper"
         side="bottom"
         align="start"
       >
-        <div class="mo-directory-empty" v-if="empty">
+        <div class="directory-empty" v-if="empty">
           {{ $t('task.no-task') }}
         </div>
-        <ul class="mo-directory-list" v-if="favoriteDirectories.length > 0">
+        <ul class="directory-list" v-if="favoriteDirectories.length > 0">
           <li
             v-for="directory in favoriteDirectories"
             :key="directory"
             @click.stop="() => handleSelectItem(directory)"
           >
-            <span class="mo-directory-path" :title="directory">{{ directory }}</span>
-            <span class="mo-directory-actions">
+            <span class="directory-path" :title="directory">{{ directory }}</span>
+            <span class="directory-actions">
               <Star
                 :size="18"
                 class="history-icon icon-history-favorited"
@@ -36,15 +36,15 @@
             </span>
           </li>
         </ul>
-        <div class="mo-directory-divider" v-if="showDivider" />
-        <ul class="mo-directory-list" v-if="historyDirectories.length > 0">
+        <div class="directory-divider" v-if="showDivider" />
+        <ul class="directory-list" v-if="historyDirectories.length > 0">
           <li
             v-for="directory in historyDirectories"
             :key="directory"
             @click.stop="() => handleSelectItem(directory)"
           >
-            <span class="mo-directory-path" :title="directory">{{ directory }}</span>
-            <span class="mo-directory-actions">
+            <span class="directory-path" :title="directory">{{ directory }}</span>
+            <span class="directory-actions">
               <StarOff
                 v-if="showFavoriteAction"
                 :size="18"
@@ -67,7 +67,6 @@
 <script lang="ts">
 import { History, Star, StarOff, Trash2 } from "@lucide/vue";
 import { MAX_NUM_OF_DIRECTORIES } from "@shared/constants";
-import { cloneArray } from "@shared/utils";
 import logger from "@shared/utils/logger";
 import UiButton from "@/components/ui/compat/UiButton.vue";
 import {
@@ -78,7 +77,7 @@ import {
 import { usePreferenceStore } from "@/store/preference";
 
 export default {
-	name: "mo-history-directory",
+	name: "history-directory",
 	components: {
 		[UiButton.name]: UiButton,
 		Popover,
@@ -89,21 +88,19 @@ export default {
 		StarOff,
 		Trash2,
 	},
-	props: {
-		width: {
-			type: Number,
-			default: 360,
-		},
-	},
 	data() {
 		return {};
 	},
 	computed: {
 		historyDirectories() {
-			return cloneArray(usePreferenceStore().config.historyDirectories, true);
+			return [
+				...(usePreferenceStore().config.historyDirectories || []),
+			].reverse();
 		},
 		favoriteDirectories() {
-			return cloneArray(usePreferenceStore().config.favoriteDirectories, true);
+			return [
+				...(usePreferenceStore().config.favoriteDirectories || []),
+			].reverse();
 		},
 		empty() {
 			const { favoriteDirectories, historyDirectories } = this;

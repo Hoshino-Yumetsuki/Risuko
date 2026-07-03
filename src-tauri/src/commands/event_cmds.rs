@@ -73,9 +73,9 @@ pub fn on_speed_change(
                     "{}\n{}: {}/s  {}: {}/s",
                     app_name,
                     download_label,
-                    format_speed(download_speed),
+                    crate::cli::progress::format_size(download_speed),
                     upload_label,
-                    format_speed(upload_speed)
+                    crate::cli::progress::format_size(upload_speed)
                 )
             } else {
                 app_name.clone()
@@ -139,7 +139,7 @@ pub fn update_tray(
     {
         if let Some(tray) = handle.tray_by_id("main") {
             let image = tauri::image::Image::new_owned(image_data, width, height);
-            let _ = tray.set_icon(Some(image));
+            let _ = tray.set_icon_with_as_template(Some(image), true);
         }
         Ok(())
     }
@@ -159,23 +159,6 @@ pub fn update_app_menu_labels(
     labels: HashMap<String, String>,
 ) -> Result<(), String> {
     crate::managers::menu::update_menu_labels(&handle, &labels)
-}
-
-#[cfg(any(test, not(target_os = "android")))]
-fn format_speed(bytes: u64) -> String {
-    const KB: u64 = 1024;
-    const MB: u64 = 1024 * KB;
-    const GB: u64 = 1024 * MB;
-
-    if bytes >= GB {
-        format!("{:.1} GB", bytes as f64 / GB as f64)
-    } else if bytes >= MB {
-        format!("{:.1} MB", bytes as f64 / MB as f64)
-    } else if bytes >= KB {
-        format!("{:.1} KB", bytes as f64 / KB as f64)
-    } else {
-        format!("{} B", bytes)
-    }
 }
 
 fn apply_download_inhibit(downloading: bool) {
@@ -202,12 +185,12 @@ fn apply_download_inhibit(downloading: bool) {
     SLEEP_INHIBIT_ACTIVE.store(downloading, std::sync::atomic::Ordering::Relaxed);
 }
 
-/// Tracks whether sleep is currently inhibited. Updated by `apply_download_inhibit`
-/// on every platform; read by health checks via `sleep_inhibit_active()`.
+/// Whether sleep is currently inhibited. Set by `apply_download_inhibit` on
+/// every platform; read by health checks via `sleep_inhibit_active()`
 static SLEEP_INHIBIT_ACTIVE: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
-/// Whether the app is currently inhibiting system sleep.
+/// Whether the app is inhibiting system sleep
 pub fn sleep_inhibit_active() -> bool {
     SLEEP_INHIBIT_ACTIVE.load(std::sync::atomic::Ordering::Relaxed)
 }
@@ -436,32 +419,32 @@ pub fn cleanup_download_inhibit() {
 
 #[cfg(test)]
 mod tests {
-    use super::format_speed;
+    use crate::cli::progress::format_size;
 
     #[test]
-    fn format_speed_bytes() {
-        assert_eq!(format_speed(0), "0 B");
-        assert_eq!(format_speed(512), "512 B");
-        assert_eq!(format_speed(1023), "1023 B");
+    fn format_size_bytes() {
+        assert_eq!(format_size(0), "0 B");
+        assert_eq!(format_size(512), "512 B");
+        assert_eq!(format_size(1023), "1023 B");
     }
 
     #[test]
-    fn format_speed_kb() {
-        assert_eq!(format_speed(1024), "1.0 KB");
-        assert_eq!(format_speed(1536), "1.5 KB");
-        assert_eq!(format_speed(1024 * 1024 - 1), "1024.0 KB");
+    fn format_size_kb() {
+        assert_eq!(format_size(1024), "1.0 KB");
+        assert_eq!(format_size(1536), "1.5 KB");
+        assert_eq!(format_size(1024 * 1024 - 1), "1024.0 KB");
     }
 
     #[test]
-    fn format_speed_mb() {
-        assert_eq!(format_speed(1024 * 1024), "1.0 MB");
-        assert_eq!(format_speed(1024 * 1024 * 15), "15.0 MB");
+    fn format_size_mb() {
+        assert_eq!(format_size(1024 * 1024), "1.0 MB");
+        assert_eq!(format_size(1024 * 1024 * 15), "15.0 MB");
     }
 
     #[test]
-    fn format_speed_gb() {
-        assert_eq!(format_speed(1024 * 1024 * 1024), "1.0 GB");
-        assert_eq!(format_speed(1024 * 1024 * 1024 * 3), "3.0 GB");
+    fn format_size_gb() {
+        assert_eq!(format_size(1024 * 1024 * 1024), "1.0 GB");
+        assert_eq!(format_size(1024 * 1024 * 1024 * 3), "3.0 GB");
     }
 }
 

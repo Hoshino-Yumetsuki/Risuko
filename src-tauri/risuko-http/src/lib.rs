@@ -30,32 +30,21 @@ pub use http::header;
 pub use http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode, Uri};
 pub use url::Url;
 
-/// Helper: build a streaming `ReqBody` that reads from a fresh `tokio::fs::File`
-/// each time it is polled. Suitable for large file uploads (WebDAV PUT, S3 PUT)
+/// Build a streaming `ReqBody` that reads from a fresh `tokio::fs::File` each
+/// time it is polled. For large file uploads (WebDAV PUT, S3 PUT)
 ///
-/// The path is captured by the factory; on every send (including redirect/retry
-/// replays) a brand-new `File` is opened so the stream can be re-driven from
-/// byte zero.
+/// The path is captured by the factory; every send (including redirect/retry
+/// replays) opens a new `File` so the stream re-drives from byte zero. Calls
+/// `on_progress(bytes_sent_so_far)` after each chunk, aborts mid-stream when
+/// `cancel` is set
 ///
-/// The advertised `Content-Length` is derived from the file's actual size at
-/// construction time — any value supplied by the caller is intentionally
-/// ignored. Trusting caller-supplied lengths risks framing the request with
-/// stale metadata and uploading a truncated file
-pub fn file_stream_body(path: std::path::PathBuf, _content_length: Option<u64>) -> ReqBody {
-    file_stream_body_inner(path, None, None)
-}
-
-/// Same as [`file_stream_body`] but invokes `on_progress(bytes_sent_so_far)`
-/// after each chunk and aborts mid-stream when `cancel` is set.
+/// The progress total is per send attempt (counters reset on retry/redirect,
+/// so callers should clamp it against the known total). Cancel is checked
+/// before every chunk yield, so even multi-GB uploads interrupt promptly
 ///
-/// The progress callback receives the running total of bytes the body has
-/// pushed *in the current send attempt* (counters reset on retry/redirect, so
-/// callers should clamp the reported value against the known total). Cancel
-/// is checked before every chunk yield so even multi-GB uploads can be
-/// interrupted promptly.
-///
-/// `_content_length` is accepted for source-compat but ignored — see
-/// [`file_stream_body`] for why
+/// `_content_length` is accepted for source-compat but ignored — the advertised
+/// `Content-Length` comes from the file's actual size at construction. Trusting
+/// caller-supplied lengths risks stale framing and a truncated upload
 pub fn file_stream_body_with_progress<F>(
     path: std::path::PathBuf,
     _content_length: u64,
@@ -65,18 +54,13 @@ pub fn file_stream_body_with_progress<F>(
 where
     F: Fn(u64) + Send + Sync + 'static,
 {
-    file_stream_body_inner(path, Some(std::sync::Arc::new(on_progress)), cancel)
-}
-
-fn file_stream_body_inner(
-    path: std::path::PathBuf,
-    on_progress: Option<std::sync::Arc<dyn Fn(u64) + Send + Sync + 'static>>,
-    cancel: Option<tokio_util::sync::CancellationToken>,
-) -> ReqBody {
-    // Whole-file uploads always advertise the live filesystem size so the
-    // request headers can never disagree with the body produced by the
-    // stream. The range helper handles slicing
-    file_stream_body_range_inner(path, 0, None, on_progress, cancel)
+    file_stream_body_range_inner(
+        path,
+        0,
+        None,
+        Some(std::sync::Arc::new(on_progress)),
+        cancel,
+    )
 }
 
 /// Same as [`file_stream_body_with_progress`] but reads only `len` bytes
@@ -114,18 +98,15 @@ fn file_stream_body_range_inner(
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::Arc;
 
-    // Stat the file synchronously at construction time so the
-    // `Content-Length` header advertised on the request matches what the
-    // body will actually deliver. Doing this only inside the lazy stream
-    // factory was too late — the request layer had already framed headers
-    // from the (potentially stale) caller-supplied length, so a shrunk
-    // file or an over-large `take` produced HTTP framing that disagreed
-    // with the body.
+    // Stat the file at construction so the advertised `Content-Length` matches
+    // what the body delivers. Doing it only inside the lazy stream factory was
+    // too late — the request layer had already framed headers from the
+    // (possibly stale) caller-supplied length, so a shrunk file or over-large
+    // `take` produced framing that disagreed with the body
     //
-    // If the stat itself fails (file went missing, permission denied) we
-    // fall back to the caller-supplied length so the deferred open inside
-    // the stream factory still surfaces the IO error to the caller; the
-    // request will still fail, just one layer deeper
+    // If the stat fails (file missing, permission denied) fall back to the
+    // caller-supplied length so the deferred open in the stream factory still
+    // surfaces the IO error; the request fails anyway, one layer deeper
     let verified_length = match std::fs::metadata(&path) {
         Ok(meta) => {
             let remaining = meta.len().saturating_sub(offset);

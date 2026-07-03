@@ -44,8 +44,7 @@ struct UploadStore {
     #[serde(default = "default_concurrency")]
     max_concurrency: usize,
     /// Fallback secret map used when the OS keychain vault is unavailable.
-    /// Each key is a sink id; the value is the JSON secrets object that
-    /// would normally live in the vault.
+    /// Key is a sink id, value the JSON secrets object that would normally live in the vault
     #[serde(default)]
     secret_fallback: HashMap<String, Value>,
 }
@@ -81,16 +80,12 @@ pub struct UploadJob {
     pub finished_at: Option<u64>,
 }
 
-struct ActiveJob {
-    progress: watch::Receiver<UploadProgress>,
-}
-
 pub struct UploadSinkManager {
     store: Arc<RwLock<UploadStore>>,
     storage: Arc<dyn StorageBackend>,
     event_sink: StdMutex<Arc<dyn EventSink>>,
     jobs: Arc<Mutex<HashMap<String, UploadJob>>>,
-    active: Arc<Mutex<HashMap<String, ActiveJob>>>,
+    active: Arc<Mutex<HashMap<String, watch::Receiver<UploadProgress>>>>,
     /// Cancellation tokens for every spawned job — populated at enqueue
     /// time so even queued jobs (still waiting on the semaphore) can be
     /// cancelled by the user. Cleared once the job reaches a terminal state
@@ -196,8 +191,7 @@ impl UploadSinkManager {
         let active = self.active.lock().await;
         for job in jobs.iter_mut() {
             if let Some(a) = active.get(&job.id) {
-                let p = a.progress.borrow();
-                job.uploaded = p.uploaded;
+                job.uploaded = a.borrow().uploaded;
             }
         }
         jobs.sort_by_key(|j| std::cmp::Reverse(j.created_at));
@@ -553,10 +547,7 @@ impl UploadSinkManager {
             uploaded: 0,
             total: size,
         });
-        self.active
-            .lock()
-            .await
-            .insert(job_id.clone(), ActiveJob { progress: rx });
+        self.active.lock().await.insert(job_id.clone(), rx);
 
         // Mark active. Mutate under the lock, then drop the guard before
         // emitting so the broadcast/event sink can never re-enter the manager
@@ -697,19 +688,6 @@ impl UploadSinkManager {
 
 /// Evict oldest terminal jobs so at most `max_terminal` remain
 fn prune_terminal_jobs(jobs: &mut HashMap<String, UploadJob>, max_terminal: usize) {
-    let terminal_count = jobs
-        .values()
-        .filter(|j| {
-            matches!(
-                j.status,
-                JobStatus::Complete | JobStatus::Failed | JobStatus::Cancelled
-            )
-        })
-        .count();
-    if terminal_count <= max_terminal {
-        return;
-    }
-    // Collect terminal job ids oldest-first, then drop the excess
     let mut terminal: Vec<(u64, String)> = jobs
         .values()
         .filter(|j| {
@@ -720,8 +698,12 @@ fn prune_terminal_jobs(jobs: &mut HashMap<String, UploadJob>, max_terminal: usiz
         })
         .map(|j| (j.created_at, j.id.clone()))
         .collect();
+    if terminal.len() <= max_terminal {
+        return;
+    }
+    // Drop the oldest excess terminal jobs
     terminal.sort_by_key(|(created_at, _)| *created_at);
-    let to_remove = terminal_count - max_terminal;
+    let to_remove = terminal.len() - max_terminal;
     for (_, id) in terminal.into_iter().take(to_remove) {
         jobs.remove(&id);
     }
@@ -731,22 +713,10 @@ fn prune_terminal_jobs(jobs: &mut HashMap<String, UploadJob>, max_terminal: usiz
 /// adding a new protocol means adding one match arm here plus one new module
 pub fn build_sink_runtime(cfg: &SinkConfig) -> Result<BoxedSink, String> {
     match cfg {
-        SinkConfig::Webdav(w) => {
-            let s = WebdavSink::new(w.clone())?;
-            Ok(Arc::new(s))
-        }
-        SinkConfig::S3(c) => {
-            let s = S3Sink::new(c.clone())?;
-            Ok(Arc::new(s))
-        }
-        SinkConfig::Sftp(c) => {
-            let s = SftpSink::new(c.clone())?;
-            Ok(Arc::new(s))
-        }
-        SinkConfig::Ftp(c) => {
-            let s = FtpSink::new(c.clone())?;
-            Ok(Arc::new(s))
-        }
+        SinkConfig::Webdav(c) => Ok(Arc::new(WebdavSink::new(c.clone())?)),
+        SinkConfig::S3(c) => Ok(Arc::new(S3Sink::new(c.clone())?)),
+        SinkConfig::Sftp(c) => Ok(Arc::new(SftpSink::new(c.clone())?)),
+        SinkConfig::Ftp(c) => Ok(Arc::new(FtpSink::new(c.clone())?)),
     }
 }
 
@@ -1106,13 +1076,10 @@ mod tests {
         let mgr = &ctx.mgr;
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(mgr.set_max_concurrency(0)).unwrap();
-        // list_sinks doesn't expose concurrency; verify via load/save round-trip
-        // by creating a new manager with the same storage
-        // Since we used test_manager() which owns the TempDir, we can't re-open.
-        // Instead we verify the method doesn't error and the semaphore was swapped.
-        // A better approach: check that the store was persisted.
-        // We'll rely on the fact that set_max_concurrency calls save().
-        // No panic = success for this smoke test.
+        // list_sinks doesn't expose concurrency and test_manager() owns the
+        // TempDir, so we can't re-open to read it back. set_max_concurrency
+        // calls save(); just check it doesn't error and swaps the semaphore —
+        // no panic = success for this smoke test
         rt.block_on(mgr.set_max_concurrency(100)).unwrap();
     }
 

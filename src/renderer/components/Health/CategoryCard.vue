@@ -2,11 +2,10 @@
   <section class="health-cat" :class="`health-cat-${category.status}`">
     <header class="health-cat-header" @click="expanded = !expanded">
       <div class="health-cat-icon-wrap" :class="`health-cat-iwrap-${category.status}`">
-        <component :is="statusIcon" :size="16" />
+        <component :is="statusIcon" :size="17" />
       </div>
-      <div class="health-cat-meta">
-        <h5 class="health-cat-title">{{ $t(`health.categories.${category.id}`) }}</h5>
-        <div class="health-cat-counts">
+      <h5 class="health-cat-title">{{ $t(`health.categories.${category.id}`) }}</h5>
+      <div class="health-cat-counts">
           <span v-if="counts.ok > 0" class="health-count health-count-ok" :title="$t('health.statuses.ok')">
             <CheckCircle2 :size="12" />{{ counts.ok }}
           </span>
@@ -19,12 +18,11 @@
           <span v-if="counts.skipped > 0" class="health-count health-count-skipped" :title="$t('health.statuses.skipped')">
             <CircleDashed :size="12" />{{ counts.skipped }}
           </span>
-        </div>
       </div>
       <div class="health-cat-actions" @click.stop>
         <button
           type="button"
-          class="health-cat-icon-btn"
+          class="health-cat-icon-btn health-cat-refresh"
           :disabled="loading"
           :title="$t('health.run-group')"
           @click="$emit('run')"
@@ -43,7 +41,7 @@
     </header>
     <transition name="health-cat-expand">
       <ul v-if="expanded" class="health-cat-checks">
-        <mo-health-check-row
+        <health-check-row
           v-for="check in category.checks"
           :key="check.id"
           :check="check"
@@ -63,23 +61,12 @@ import {
 	RefreshCw,
 	XCircle,
 } from "@lucide/vue";
-import type {
-	HealthCategory,
-	HealthFix,
-	HealthStatus,
-} from "@shared/types/health";
+import type { HealthCategory, HealthFix } from "@shared/types/health";
 import type { PropType } from "vue";
-import HealthCheckRow from "./CheckRow.vue";
-
-const ICON: Record<HealthStatus, unknown> = {
-	ok: CheckCircle2,
-	warn: AlertTriangle,
-	fail: XCircle,
-	skipped: CircleDashed,
-};
+import HealthCheckRow, { STATUS_ICON } from "./CheckRow.vue";
 
 export default {
-	name: "mo-health-category-card",
+	name: "health-category-card",
 	components: {
 		AlertTriangle,
 		CheckCircle2,
@@ -87,7 +74,7 @@ export default {
 		CircleDashed,
 		RefreshCw,
 		XCircle,
-		"mo-health-check-row": HealthCheckRow,
+		"health-check-row": HealthCheckRow,
 	},
 	props: {
 		category: {
@@ -107,7 +94,7 @@ export default {
 	},
 	computed: {
 		statusIcon() {
-			return ICON[this.category.status];
+			return STATUS_ICON[this.category.status];
 		},
 		counts() {
 			const c = { ok: 0, warn: 0, fail: 0, skipped: 0 };
@@ -121,125 +108,107 @@ export default {
 </script>
 
 <style scoped>
-.health-cat {
-	border: 1px solid var(--border);
-	border-radius: var(--radius);
-	background: var(--card, var(--background));
-	overflow: hidden;
-	transition: border-color 150ms ease, box-shadow 150ms ease;
-}
-.health-cat:hover {
-	border-color: color-mix(in srgb, var(--border) 60%, var(--foreground) 10%);
-}
-.health-cat-fail {
-	border-color: color-mix(in srgb, #ef4444 50%, var(--border));
-}
-.health-cat-warn {
-	border-color: color-mix(in srgb, #f59e0b 45%, var(--border));
+.health-cat + .health-cat {
+	border-top: 1px solid var(--border);
 }
 .health-cat-header {
 	display: flex;
 	align-items: center;
-	gap: 12px;
+	gap: 10px;
 	padding: 12px 14px;
 	cursor: pointer;
 	user-select: none;
-	transition: background 120ms ease;
+	transition: background-color 120ms ease;
 }
 .health-cat-header:hover {
-	background: color-mix(in srgb, var(--muted) 35%, transparent);
+	background: color-mix(in srgb, var(--surface-2) 55%, transparent);
 }
 .health-cat-icon-wrap {
-	width: 32px;
-	height: 32px;
-	min-width: 32px;
-	border-radius: calc(var(--radius) - 2px);
 	display: inline-flex;
 	align-items: center;
 	justify-content: center;
-	color: #fff;
 	flex-shrink: 0;
+	line-height: 0;
 }
 .health-cat-iwrap-ok {
-	background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
+	color: var(--success);
 }
 .health-cat-iwrap-warn {
-	background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+	color: var(--warning);
 }
 .health-cat-iwrap-fail {
-	background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+	color: var(--danger);
 }
 .health-cat-iwrap-skipped {
-	background: linear-gradient(135deg, #94a3b8 0%, #64748b 100%);
-}
-.health-cat-meta {
-	flex: 1;
-	min-width: 0;
-	display: flex;
-	flex-direction: column;
-	gap: 4px;
+	color: var(--text-3);
 }
 .health-cat-title {
 	margin: 0;
 	font-size: 13px;
 	font-weight: 600;
-	color: var(--foreground);
+	color: var(--text-1);
 	letter-spacing: -0.01em;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
 }
 .health-cat-counts {
+	margin-left: auto;
 	display: flex;
 	flex-wrap: wrap;
-	gap: 6px;
+	align-items: center;
+	justify-content: flex-end;
+	gap: 10px;
 }
 .health-count {
 	display: inline-flex;
 	align-items: center;
-	gap: 4px;
-	padding: 2px 8px;
-	border-radius: 999px;
-	font-size: 11px;
+	gap: 3px;
+	font-size: 11.5px;
 	font-weight: 500;
 	font-variant-numeric: tabular-nums;
-	line-height: 1.4;
+	line-height: 1;
 }
 .health-count-ok {
-	background: color-mix(in srgb, #22c55e 14%, transparent);
-	color: #15803d;
+	color: var(--text-3);
 }
 .health-count-warn {
-	background: color-mix(in srgb, #f59e0b 18%, transparent);
-	color: #b45309;
+	color: var(--warning);
 }
 .health-count-fail {
-	background: color-mix(in srgb, #ef4444 18%, transparent);
-	color: #b91c1c;
+	color: var(--danger);
 }
 .health-count-skipped {
-	background: color-mix(in srgb, var(--muted) 60%, transparent);
-	color: var(--muted-foreground);
+	color: var(--text-3);
 }
 .health-cat-actions {
 	display: flex;
 	align-items: center;
 	gap: 2px;
+	flex-shrink: 0;
+}
+.health-cat-refresh {
+	opacity: 0;
+	transition: opacity 120ms ease;
+}
+.health-cat-header:hover .health-cat-refresh,
+.health-cat-refresh:focus-visible {
+	opacity: 1;
 }
 .health-cat-icon-btn {
 	background: transparent;
 	border: none;
 	cursor: pointer;
-	padding: 6px;
+	padding: 5px;
 	border-radius: 6px;
-	color: var(--muted-foreground);
+	color: var(--text-3);
 	display: inline-flex;
 	align-items: center;
-	transition: background 120ms ease, color 120ms ease, transform 120ms ease;
+	transition: background-color 120ms ease, color 120ms ease;
 }
 .health-cat-icon-btn:hover:not(:disabled) {
-	background: color-mix(in srgb, var(--muted) 55%, transparent);
-	color: var(--foreground);
-}
-.health-cat-icon-btn:active:not(:disabled) {
-	transform: scale(0.92);
+	background: var(--surface-2);
+	color: var(--text-1);
 }
 .health-cat-icon-btn:disabled {
 	opacity: 0.5;
@@ -252,9 +221,9 @@ export default {
 .health-cat-checks {
 	list-style: none;
 	margin: 0;
-	padding: 0;
+	padding: 2px 0;
 	border-top: 1px solid var(--border);
-	background: color-mix(in srgb, var(--muted) 18%, transparent);
+	background: var(--bg);
 }
 .health-cat-expand-enter-active,
 .health-cat-expand-leave-active {

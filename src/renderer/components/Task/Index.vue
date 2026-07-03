@@ -1,16 +1,13 @@
 <template>
   <div class="main panel panel-layout panel-layout--h">
-    <aside class="subnav hidden-xs-only subnav-pane">
-      <mo-task-subnav :current="status" />
-    </aside>
     <div class="content panel panel-layout panel-layout--v relative">
-      <mo-enter tag="header" preset="fadeInDown" class="panel-header task-page-header">
+      <motion-enter tag="header" preset="fadeInDown" class="panel-header task-page-header">
         <h4 class="task-title hidden-xs-only">{{ title }}</h4>
         <div class="task-mobile-subnav-switcher">
-          <mo-subnav-switcher :title="title" :subnavs="subnavs" />
+          <subnav-switcher :title="title" :subnavs="subnavs" />
         </div>
-        <mo-task-actions />
-      </mo-enter>
+        <task-actions />
+      </motion-enter>
       <div class="task-toolbar">
         <div class="task-toolbar-left">
           <div class="task-filter-input">
@@ -85,10 +82,19 @@
           </Select>
         </div>
       </div>
-      <main class="panel-content">
-        <mo-task-list />
-      </main>
-      <mo-loading-overlay :show="taskActionLoading" :text="taskActionLoadingText" />
+      <div class="task-body">
+        <main class="panel-content">
+          <task-list />
+        </main>
+        <task-detail
+          :visible="taskDetailVisible"
+          :gid="currentTaskGid"
+          :task="currentTaskItem"
+          :files="currentTaskFiles"
+          :peers="currentTaskPeers"
+        />
+      </div>
+      <loading-overlay :show="taskActionLoading" :text="taskActionLoadingText" />
     </div>
   </div>
 </template>
@@ -102,9 +108,9 @@ import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import api from "@/api";
 import { commands } from "@/components/CommandManager/instance";
 import SubnavSwitcher from "@/components/Subnav/SubnavSwitcher.vue";
-import TaskSubnav from "@/components/Subnav/TaskSubnav.vue";
 import TaskActions from "@/components/Task/TaskActions.vue";
 import TaskList from "@/components/Task/TaskList.vue";
+import TaskDetail from "@/components/TaskDetail/Index.vue";
 import { confirm } from "@/components/ui/confirm-dialog";
 import LoadingOverlay from "@/components/ui/LoadingOverlay.vue";
 import {
@@ -121,11 +127,11 @@ import { useTaskStore } from "@/store/task";
 import { moveTaskFilesToTrash, showItemInFolder } from "@/utils/native";
 
 export default {
-	name: "mo-content-task",
+	name: "task-page",
 	components: {
-		[TaskSubnav.name]: TaskSubnav,
 		[TaskActions.name]: TaskActions,
 		[TaskList.name]: TaskList,
+		[TaskDetail.name]: TaskDetail,
 		[SubnavSwitcher.name]: SubnavSwitcher,
 		[LoadingOverlay.name]: LoadingOverlay,
 		Select,
@@ -145,20 +151,26 @@ export default {
 		},
 	},
 	computed: {
-		taskList() {
-			return useTaskStore().taskList;
-		},
-		selectedGidList() {
-			return useTaskStore().selectedGidList;
-		},
 		selectedGidListCount() {
-			// Count is per-row (matches the visual selection count) so the
-			// confirmation dialog and disabled-state logic can't surprise
-			// the user by quietly deduplicating a multi-row selection.
 			return useTaskStore().selectedGidList.length;
 		},
 		selectedTaskRows() {
 			return useTaskStore().selectedTaskRows;
+		},
+		taskDetailVisible() {
+			return useTaskStore().taskDetailVisible;
+		},
+		currentTaskGid() {
+			return useTaskStore().currentTaskGid;
+		},
+		currentTaskItem() {
+			return useTaskStore().currentTaskItem;
+		},
+		currentTaskFiles() {
+			return useTaskStore().currentTaskFiles;
+		},
+		currentTaskPeers() {
+			return useTaskStore().currentTaskPeers;
 		},
 		noConfirmBeforeDelete() {
 			return usePreferenceStore().config.noConfirmBeforeDeleteTask;
@@ -347,9 +359,6 @@ export default {
 		},
 		async deleteTaskFiles(task) {
 			let targetTask = task;
-			// For per-file rows of a multi-file BT torrent, keep the per-file
-			// shape (files: [theFile], bittorrent.info cleared) so only that
-			// single file gets trashed instead of the whole torrent folder
 			if (targetTask?.gid && !targetTask._isFileEntry) {
 				try {
 					const fullTask = await api.fetchTaskItem({
@@ -377,11 +386,6 @@ export default {
 		},
 		async removeTask(task, taskName, isRemoveWithFiles = false) {
 			const loadingText = this.$t("task.loading-delete-task");
-			// File deletion must finish inside the same loading window as the
-			// task removal. Otherwise the user can re-add the same magnet
-			// before the files are trashed; the new torrent then scans the
-			// still-present files, marks every piece local and reports
-			// "seeding" without ever actually downloading
 			return this.withTaskActionLoading(loadingText, async () => {
 				await this.removeTaskItem(task, taskName);
 				if (isRemoveWithFiles) {
@@ -450,25 +454,13 @@ export default {
 		},
 		async removeTasks(taskList, isRemoveWithFiles = false) {
 			const loadingText = this.$t("task.loading-batch-delete-task");
-			// Await file deletion so re-adding any of the same magnet links
-			// can't race the trash operation (see removeTask comment above).
 			return this.withTaskActionLoading(loadingText, async () => {
-				// `taskList` contains per-row entries: a multi-file BT
-				// torrent shows up multiple times when the user selected
-				// several file rows. The torrent-level removal API only
-				// needs each gid once, but the per-file trash step has to
-				// run for every selected file row so each file is moved
-				// to the trash individually.
 				const gids = [...new Set(taskList.map((task) => task.gid))];
 				const fileEntries = taskList.filter((task) => task._isFileEntry);
 				const taskEntries = taskList.filter((task) => !task._isFileEntry);
 				await this.removeTaskItems(gids);
 				if (isRemoveWithFiles) {
 					try {
-						// Trash each individually-selected file row first so
-						// `_isFileEntry` paths are honored, then fall through
-						// to whole-torrent trash for any non-file rows in the
-						// same selection.
 						await this.batchDeleteTaskFiles([...fileEntries, ...taskEntries]);
 					} catch (err) {
 						logger.warn("[Risuko] batch file delete failed:", err);
@@ -628,10 +620,6 @@ export default {
 				return;
 			}
 
-			// Operate on the per-row task shape (`_isFileEntry`,
-			// `files: [theFile]`, etc.) so multi-file BT torrents can
-			// have individual file rows trashed without removing the
-			// whole torrent. Each row carries its own deletion payload.
 			const selectedTaskList = selectedTaskRows;
 
 			if (noConfirmBeforeDelete) {

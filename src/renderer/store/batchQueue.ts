@@ -47,12 +47,10 @@ export interface BatchQueueItem {
 	isMedia?: boolean;
 	forceYtdlp?: boolean;
 	mediaFormatId?: string;
-	mediaFormatLabel?: string;
 	mediaFormats?: MediaFormat[];
 	mediaInfoState?: BatchItemResolveState;
 	mediaInfoError?: string;
 	mediaTitle?: string;
-	mediaThumbnail?: string;
 
 	// shared
 	selectFile: string;
@@ -64,12 +62,6 @@ export interface BatchQueueItem {
 	error?: string;
 }
 
-let counter = 0;
-const createBatchItemId = () => {
-	counter += 1;
-	return `bq-${Date.now().toString(36)}-${counter.toString(36)}`;
-};
-
 export const createTorrentBatchItem = (
 	path: string,
 	name?: string,
@@ -77,7 +69,7 @@ export const createTorrentBatchItem = (
 	const segs = `${path}`.split(/[/\\]/);
 	const fallback = segs[segs.length - 1] || path;
 	return {
-		id: createBatchItemId(),
+		id: crypto.randomUUID(),
 		kind: "torrent",
 		label: name || fallback,
 		path,
@@ -94,7 +86,7 @@ export const createUriBatchItem = (uri: string): BatchQueueItem => {
 	const label = trimmed.length > 80 ? `${trimmed.slice(0, 77)}…` : trimmed;
 	const media = !isMagnet && isMediaUri(trimmed);
 	return {
-		id: createBatchItemId(),
+		id: crypto.randomUUID(),
 		kind: isMagnet ? "magnet" : "uri",
 		label,
 		uri: trimmed,

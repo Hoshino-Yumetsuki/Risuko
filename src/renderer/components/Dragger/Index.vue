@@ -8,7 +8,7 @@ import { useAppStore } from "@/store/app";
 import { createTorrentBatchItem } from "@/store/batchQueue";
 
 export default {
-	name: "mo-dragger",
+	name: "drop-zone",
 	data() {
 		return {
 			unlistenWindowDragDrop: null as null | (() => void),
@@ -94,13 +94,9 @@ export default {
 					.then((unlisten) => {
 						this.unlistenWindowDragDrop = unlisten;
 					})
-					.catch(() => {
-						/* noop */
-					});
+					.catch(() => {});
 			})
-			.catch(() => {
-				/* noop */
-			});
+			.catch(() => {});
 	},
 	beforeUnmount() {
 		document.removeEventListener("dragover", this.preventDefault);

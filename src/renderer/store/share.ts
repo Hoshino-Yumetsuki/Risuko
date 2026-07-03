@@ -9,7 +9,7 @@ const shareAxios = axios.create({ timeout: 15_000 });
 
 export type ShareDirection = "send" | "receive";
 
-export type ShareStatus =
+type ShareStatus =
 	| "preparing"
 	| "waiting"
 	| "connecting"
@@ -127,13 +127,7 @@ export function parseShareInput(raw: string): string {
 	return trimmed.toUpperCase();
 }
 
-function newId(): string {
-	try {
-		return crypto.randomUUID();
-	} catch {
-		return `share-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-	}
-}
+const newId = () => crypto.randomUUID();
 
 export const useShareStore = defineStore("share", {
 	state: (): ShareState => ({
@@ -284,7 +278,7 @@ export const useShareStore = defineStore("share", {
 			} catch (err) {
 				const message = getApiErrorMessage(err, "Share request failed");
 				this.patchTransfer(id, { status: "error", error: message });
-				// Tear down the native side if the rendezvous failed.
+				// tear down the native side if the rendezvous failed
 				await invoke("share_cancel", { id }).catch(() => undefined);
 				throw new Error(message);
 			}

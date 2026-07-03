@@ -25,7 +25,8 @@ pub fn parse_ed2k_link(uri: &str) -> Result<Ed2kFileLink, String> {
         return Err("ed2k link has too few fields".to_string());
     }
 
-    let file_name = urlencoding::decode(parts[0])
+    let file_name = percent_encoding::percent_decode_str(parts[0])
+        .decode_utf8()
         .map(|s| s.into_owned())
         .unwrap_or_else(|_| parts[0].to_string());
 

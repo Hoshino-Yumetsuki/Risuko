@@ -1,7 +1,6 @@
 use std::time::Duration;
 
 use serde::Serialize;
-use serde_json::Value;
 use tauri::{AppHandle, State};
 use tauri_plugin_shell::ShellExt;
 use tokio::time::timeout;
@@ -20,26 +19,26 @@ struct ScriptConfig {
     timeout_ms: u64,
 }
 
-fn read_user_value<'a>(user: &'a serde_json::Map<String, Value>, key: &str) -> Option<&'a Value> {
-    user.get(key)
-}
-
 fn read_script_config(state: &AppState) -> Result<ScriptConfig, String> {
     let cfg = state.config.lock().map_err(|e| e.to_string())?;
     let user = cfg.get_user_config();
 
-    let enabled = read_user_value(user, "completion-script-enabled")
+    let enabled = user
+        .get("completion-script-enabled")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
-    let command = read_user_value(user, "completion-script-command")
+    let command = user
+        .get("completion-script-command")
         .and_then(|v| v.as_str())
         .map(|s| s.trim().to_string())
         .unwrap_or_default();
-    let args_template = read_user_value(user, "completion-script-args")
+    let args_template = user
+        .get("completion-script-args")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string())
         .unwrap_or_default();
-    let timeout_ms = read_user_value(user, "completion-script-timeout-ms")
+    let timeout_ms = user
+        .get("completion-script-timeout-ms")
         .and_then(|v| v.as_u64())
         .unwrap_or(DEFAULT_TIMEOUT_MS)
         .clamp(1_000, MAX_TIMEOUT_MS);
@@ -58,26 +57,12 @@ fn read_script_config(state: &AppState) -> Result<ScriptConfig, String> {
 /// Note: whitespace tokenization collapses consecutive spaces and does not
 /// preserve empty arguments
 fn replace_placeholders(token: &str, path: &str, hash: &str, status: &str) -> String {
-    let mut out = String::with_capacity(token.len());
-    let mut i = 0;
-    while i < token.len() {
-        let rest = &token[i..];
-        if rest.starts_with("{path}") {
-            out.push_str(path);
-            i += "{path}".len();
-        } else if rest.starts_with("{hash}") {
-            out.push_str(hash);
-            i += "{hash}".len();
-        } else if rest.starts_with("{status}") {
-            out.push_str(status);
-            i += "{status}".len();
-        } else {
-            let ch = rest.chars().next().expect("non-empty slice");
-            out.push(ch);
-            i += ch.len_utf8();
-        }
-    }
-    out
+    // Substitute {path} last so placeholder-looking text inside the path
+    // literal is never re-expanded
+    token
+        .replace("{hash}", hash)
+        .replace("{status}", status)
+        .replace("{path}", path)
 }
 
 fn build_args(template: &str, path: &str, hash: &str, status: &str) -> Vec<String> {

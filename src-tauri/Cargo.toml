@@ -47,8 +47,9 @@ split-debuginfo = "unpacked"
 
 [dependencies]
 risuko-engine = { workspace = true }
+risuko-bt = { workspace = true }
 risuko-share = { workspace = true }
-anyhow = { workspace = true }
+risuko-cli = { path = "risuko-cli" }
 tauri = { version = "2", features = [
 	"tray-icon",
 	"image-png",
@@ -56,7 +57,10 @@ tauri = { version = "2", features = [
 ] }
 tauri-plugin-store = "2"
 tauri-plugin-deep-link = "2"
-tauri-plugin-dialog = "2"
+# gtk3 dialog backend deadlocks the app on Wayland, use the portal instead
+tauri-plugin-dialog = { version = "2", default-features = false, features = [
+	"xdg-portal",
+] }
 tauri-plugin-shell = "2"
 clap = { workspace = true }
 serde = { workspace = true }
@@ -68,12 +72,10 @@ tauri-plugin-clipboard-manager = "2.3.2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-appender = "0.2"
-regex = "1.12.4"
 risuko-http = { workspace = true }
 risuko-cookies = { workspace = true }
 base64 = "0.22"
 sha1 = "0.11"
-sha2 = "0.11"
 urlencoding = "2"
 keyring-core = "1"
 fs4 = "1"

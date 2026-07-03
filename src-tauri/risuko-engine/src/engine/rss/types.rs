@@ -26,8 +26,6 @@ pub struct ParsedMeta {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub episode: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub episode_end: Option<u32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub absolute_episode: Option<u32>,
     /// Always serialized (as `[]` when empty) so the renderer can rely on the
     /// key being present in JSON payloads
@@ -43,7 +41,7 @@ pub struct ParsedMeta {
     pub container: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub language: Option<String>,
-    /// Best-effort seeders parsed from title (e.g. `[123S/45L]`).
+    /// Best-effort seeders parsed from title (e.g. `[123S/45L]`)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub seeders: Option<u32>,
 }
@@ -56,6 +54,10 @@ pub struct RssItem {
     pub link: String,
     pub pub_date: Option<u64>,
     pub description: String,
+    /// Full body HTML (content:encoded / atom:content) when the feed provides
+    /// one beyond the short summary. Empty when the feed has no separate body
+    #[serde(default)]
+    pub content: String,
     pub enclosure_url: Option<String>,
     pub enclosure_type: Option<String>,
     pub enclosure_length: Option<u64>,
@@ -264,7 +266,7 @@ pub struct RssStore {
     /// Stored sorted by priority desc
     #[serde(default, deserialize_with = "deserialize_rules_lossy")]
     pub rules: Vec<RssRule>,
-    /// Keyed by `EpisodeKey::to_storage_key`.
+    /// Keyed by `EpisodeKey::to_storage_key`
     #[serde(default)]
     pub episode_history: HashMap<String, EpisodeRecord>,
 }

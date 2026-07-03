@@ -53,9 +53,6 @@ pub fn save_preference(
 
     if let Some(enabled) = open_at_login {
         user.insert("open-at-login".into(), Value::Bool(enabled));
-    }
-
-    if let Some(enabled) = open_at_login {
         if previous_open_at_login != Some(enabled) {
             apply_open_at_login(&handle, enabled)?;
         }

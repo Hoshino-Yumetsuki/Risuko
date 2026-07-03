@@ -10,7 +10,6 @@
 </template>
 
 <script setup lang="ts">
-// biome-ignore lint/correctness/noUnusedImports: used in template
 import { Motion } from "motion-v";
 import { computed } from "vue";
 
@@ -36,8 +35,7 @@ const props = withDefaults(
 	},
 );
 
-const decel = [0.22, 0.61, 0.36, 1] as const;
-const spring = [0.34, 1.56, 0.64, 1] as const;
+const easeOut = [0.25, 1, 0.5, 1] as const;
 
 const presets: Record<
 	Preset,
@@ -49,40 +47,40 @@ const presets: Record<
 	}
 > = {
 	fadeInLeft: {
-		initial: { opacity: 0, x: -8 },
+		initial: { opacity: 0, x: -5 },
 		animate: { opacity: 1, x: 0 },
-		duration: 0.4,
-		ease: decel,
+		duration: 0.18,
+		ease: easeOut,
 	},
 	fadeInRight: {
-		initial: { opacity: 0, x: 8 },
+		initial: { opacity: 0, x: 5 },
 		animate: { opacity: 1, x: 0 },
-		duration: 0.4,
-		ease: decel,
+		duration: 0.18,
+		ease: easeOut,
 	},
 	fadeInUp: {
-		initial: { opacity: 0, y: 12 },
+		initial: { opacity: 0, y: 5 },
 		animate: { opacity: 1, y: 0 },
-		duration: 0.5,
-		ease: decel,
+		duration: 0.2,
+		ease: easeOut,
 	},
 	fadeInDown: {
-		initial: { opacity: 0, y: -10 },
+		initial: { opacity: 0, y: -5 },
 		animate: { opacity: 1, y: 0 },
-		duration: 0.4,
-		ease: decel,
+		duration: 0.18,
+		ease: easeOut,
 	},
 	fade: {
 		initial: { opacity: 0 },
 		animate: { opacity: 1 },
-		duration: 0.3,
-		ease: decel,
+		duration: 0.15,
+		ease: easeOut,
 	},
 	spring: {
-		initial: { opacity: 0, scale: 0.8 },
+		initial: { opacity: 0, scale: 0.97 },
 		animate: { opacity: 1, scale: 1 },
-		duration: 0.5,
-		ease: spring,
+		duration: 0.2,
+		ease: easeOut,
 	},
 };
 

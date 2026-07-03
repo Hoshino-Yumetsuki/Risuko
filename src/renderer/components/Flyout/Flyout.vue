@@ -69,20 +69,25 @@
       :aria-label="activeTabLabel"
       tabindex="0"
     >
-      <template v-if="visibleTasks.length > 0">
-        <mo-flyout-task-item
-          v-for="task in visibleTasks"
-          :key="task._displayKey || task.gid"
-          role="listitem"
-          :task="task"
-        />
-      </template>
-      <div v-else class="flyout-empty">
-        <Inbox :size="34" aria-hidden="true" />
-        <span>{{ search ? $t('app.flyout-no-match') : $t('app.flyout-empty') }}</span>
-      </div>
+      <Transition name="flyout-page" mode="out-in">
+        <div :key="currentList" class="flyout-list-page">
+          <template v-if="visibleTasks.length > 0">
+            <flyout-task-item
+              v-for="task in visibleTasks"
+              :key="task._displayKey || task.gid"
+              role="listitem"
+              :task="task"
+            />
+          </template>
+          <div v-else class="flyout-empty">
+            <Inbox :size="34" aria-hidden="true" />
+            <span>{{ search ? $t('app.flyout-no-match') : $t('app.flyout-empty') }}</span>
+          </div>
+        </div>
+      </Transition>
     </main>
 
+    <Transition name="flyout-drop">
     <section v-if="addOpen" class="flyout-add">
       <input
         ref="addInput"
@@ -106,6 +111,7 @@
         {{ $t('app.add-task') }}
       </button>
     </section>
+    </Transition>
     <p v-if="addError" class="flyout-add-error" role="alert">{{ addError }}</p>
 
     <footer class="flyout-footer" role="toolbar" :aria-label="$t('menu.task')">
@@ -174,7 +180,7 @@ interface FlyoutTab {
 }
 
 export default {
-	name: "mo-flyout",
+	name: "tray-flyout",
 	components: {
 		[FlyoutTaskItem.name as string]: FlyoutTaskItem,
 		ArrowDown,
@@ -317,7 +323,6 @@ export default {
 						await taskStore.addUri({ uris: [uri], outs: [], options: {} });
 					} catch (err: unknown) {
 						errors.push((err as Error)?.message || `${err}`);
-						// Log with redacted URI (prefix only) to avoid exposing sensitive data
 						const uriPrefix = uri.slice(0, 8);
 						logger.warn(
 							"[Risuko] flyout add task failed for uri:",

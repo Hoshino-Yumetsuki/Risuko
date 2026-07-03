@@ -1,6 +1,6 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -21,7 +21,7 @@ const BUF_SIZE: usize = 64 * 1024;
 /// since `into_secure` changes the concrete stream type
 macro_rules! ftp_transfer {
     ($ftp:expr, $parsed:expr, $part_path:expr, $file_size:expr,
-     $total:expr, $completed:expr, $speed:expr, $cancelled:expr,
+     $total:expr, $completed:expr, $speed:expr,
      $connections:expr, $cancel_token:expr, $global_limiter:expr, $task_limiter:expr) => {{
         $ftp.transfer_type(suppaftp::types::FileType::Binary)
             .await
@@ -105,7 +105,7 @@ macro_rules! ftp_transfer {
             let mut ema = SpeedEma::new();
 
             loop {
-                if $cancelled.load(Ordering::Relaxed) || $cancel_token.is_cancelled() {
+                if $cancel_token.is_cancelled() {
                     return Err("Download cancelled".to_string());
                 }
 
@@ -169,7 +169,6 @@ pub async fn run_ftp_ftps_download(
     total: Arc<AtomicU64>,
     completed: Arc<AtomicU64>,
     speed: Arc<AtomicU64>,
-    cancelled: Arc<AtomicBool>,
     connections: Arc<AtomicU32>,
     cancel_token: CancellationToken,
     global_limiter: Arc<SpeedLimiter>,
@@ -253,7 +252,6 @@ pub async fn run_ftp_ftps_download(
             total,
             completed,
             speed,
-            cancelled,
             connections,
             cancel_token,
             global_limiter,
@@ -276,7 +274,6 @@ pub async fn run_ftp_ftps_download(
             total,
             completed,
             speed,
-            cancelled,
             connections,
             cancel_token,
             global_limiter,
@@ -292,7 +289,8 @@ pub async fn run_ftp_ftps_download(
     speed.store(0, Ordering::Relaxed);
     connections.store(0, Ordering::Relaxed);
 
-    let final_path = finalize_download(&part_path, &filename, dir_path)?;
+    let auto_rename = option_bool(options, "auto-file-renaming", true);
+    let final_path = finalize_download(&part_path, &filename, dir_path, auto_rename)?;
     tracing::info!("FTP download complete: {}", final_path.display());
     Ok(final_path)
 }
@@ -301,47 +299,25 @@ pub(super) fn finalize_download(
     part_path: &Path,
     filename: &str,
     dir_path: &Path,
+    auto_rename: bool,
 ) -> Result<PathBuf, String> {
     let final_name = if let Some(stripped) = filename.strip_suffix(PART_SUFFIX) {
         stripped.to_string()
     } else {
         filename.to_string()
     };
-    let final_path = dedup_path(dir_path, &final_name);
+    let final_path = if auto_rename {
+        crate::engine::util::dedup_path(dir_path, &final_name)
+    } else {
+        dir_path.join(&final_name)
+    };
     if part_path != final_path {
         fs::rename(part_path, &final_path).map_err(|e| format!("Failed to rename: {e}"))?;
     }
     Ok(final_path)
 }
 
-/// If `dir/name` already exists, return `dir/stem.1.ext`, `dir/stem.2.ext`, etc.
-pub(super) fn dedup_path(dir: &Path, name: &str) -> PathBuf {
-    let candidate = dir.join(name);
-    if !candidate.exists() {
-        return candidate;
-    }
-
-    let (stem, ext) = match name.rfind('.') {
-        Some(dot) if dot > 0 => (&name[..dot], &name[dot..]), // "file.txt" -> ("file", ".txt")
-        _ => (name, ""),                                      // "noext" -> ("noext", "")
-    };
-
-    for n in 1u32.. {
-        let numbered = if ext.is_empty() {
-            format!("{stem}.{n}")
-        } else {
-            format!("{stem}.{n}{ext}")
-        };
-        let path = dir.join(&numbered);
-        if !path.exists() {
-            return path;
-        }
-    }
-    // Unreachable in practice
-    candidate
-}
-
-fn option_str(options: &Map<String, Value>, key: &str) -> Option<String> {
+pub(super) fn option_str(options: &Map<String, Value>, key: &str) -> Option<String> {
     options
         .get(key)
         .and_then(|v| v.as_str())
@@ -352,7 +328,7 @@ fn option_str(options: &Map<String, Value>, key: &str) -> Option<String> {
 /// Read a boolean option from JSON bools or common string forms
 ///
 /// Returns `default` when absent or unrecognized
-fn option_bool(options: &Map<String, Value>, key: &str, default: bool) -> bool {
+pub(super) fn option_bool(options: &Map<String, Value>, key: &str, default: bool) -> bool {
     match options.get(key) {
         Some(Value::Bool(b)) => *b,
         Some(Value::String(s)) => match s.trim().to_ascii_lowercase().as_str() {
@@ -365,7 +341,7 @@ fn option_bool(options: &Map<String, Value>, key: &str, default: bool) -> bool {
 }
 
 /// Derive a download filename from an already-parsed FTP path
-fn basename_from_ftp_path(path: &str) -> String {
+pub(super) fn basename_from_ftp_path(path: &str) -> String {
     let trimmed = path.trim_end_matches('/');
     match trimmed.rfind('/') {
         Some(idx) if !trimmed[idx + 1..].is_empty() => trimmed[idx + 1..].to_string(),

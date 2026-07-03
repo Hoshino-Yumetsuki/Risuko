@@ -1,30 +1,39 @@
 <template>
   <div class="app-info">
-    <div class="app-version">
-      <mo-logo :width="48" :height="48" style="vertical-align: bottom" />
-      <span>Risuko</span>
-      <span class="app-version-number">v{{ version }}</span>
+    <div class="app-info-logo">
+      <img src="@static/logo.svg" width="40" height="40" alt="Risuko" />
     </div>
-    <div class="engine-info" v-if="!!engine">
-      <h4>{{ $t('about.engine-version') }} {{ engine.version }}</h4>
-      <ul v-if="!isMas()">
-        <li v-for="(feature, index) in engine.enabledFeatures" :key="`feature-${index}`">
-          {{ feature }}
-        </li>
-      </ul>
+    <div class="app-info-name">Risuko</div>
+    <span v-if="version" class="app-info-version">v{{ version }}</span>
+    <div class="app-info-card" v-if="engine?.version">
+      <div class="app-info-row">
+        <span class="app-info-row-label">{{ $t('about.engine-version') }}</span>
+        <span class="app-info-row-value">{{ engine.version }}</span>
+      </div>
+      <div
+        v-if="!isMas() && engine?.enabledFeatures?.length"
+        class="app-info-row app-info-row--stack"
+      >
+        <span class="app-info-row-label">{{ $t('about.features') }}</span>
+        <div class="app-info-features">
+          <span
+            v-for="(feature, index) in engine.enabledFeatures"
+            :key="`feature-${index}`"
+            class="app-info-feature"
+          >
+            {{ feature }}
+          </span>
+        </div>
+      </div>
     </div>
   </div>
 </template>
 
 <script lang="ts">
-import Logo from "@/components/Logo/Logo.vue";
 import is from "@/shims/platform";
 
 export default {
-	name: "mo-app-info",
-	components: {
-		[Logo.name]: Logo,
-	},
+	name: "app-info",
 	props: {
 		version: {
 			type: String,

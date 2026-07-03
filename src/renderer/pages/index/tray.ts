@@ -18,6 +18,21 @@ import "@/styles/flyout.css";
 
 const POLL_INTERVAL = 1000;
 
+// window stays mounted between shows, so CSS mount animations only run once;
+// element.animate replays the popover-in motion on every open
+function playEntrance() {
+	if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+		return;
+	}
+	document.querySelector(".flyout-root")?.animate(
+		[
+			{ opacity: 0, transform: "translateY(-6px) scale(0.98)" },
+			{ opacity: 1, transform: "none" },
+		],
+		{ duration: 180, easing: "cubic-bezier(0.25, 1, 0.5, 1)" },
+	);
+}
+
 function applyTheme() {
 	const pref = usePreferenceStore();
 	const appStore = useAppStore();
@@ -31,18 +46,10 @@ function applyTheme() {
 function startPolling() {
 	const appStore = useAppStore();
 	const taskStore = useTaskStore();
-	let timer: number | null = null;
-	let running = false;
 	let isPolling = false;
 
-	const scheduleNext = () => {
-		if (running) {
-			timer = window.setTimeout(loop, POLL_INTERVAL);
-		}
-	};
-
-	const performPoll = async () => {
-		if (isPolling) {
+	const tick = async () => {
+		if (document.hidden || isPolling) {
 			return;
 		}
 		isPolling = true;
@@ -56,53 +63,10 @@ function startPolling() {
 		}
 	};
 
-	const loop = async () => {
-		if (!running || document.hidden) {
-			scheduleNext();
-			return;
-		}
-		await performPoll();
-		scheduleNext();
-	};
+	void tick();
+	window.setInterval(tick, POLL_INTERVAL);
 
-	const tick = async () => {
-		if (document.hidden) {
-			return;
-		}
-		await performPoll();
-	};
-
-	const start = () => {
-		if (running) {
-			return;
-		}
-		running = true;
-		void tick();
-		timer = window.setTimeout(loop, POLL_INTERVAL);
-	};
-
-	const stop = () => {
-		running = false;
-		if (timer === null) {
-			return;
-		}
-		window.clearTimeout(timer);
-		timer = null;
-	};
-
-	document.addEventListener("visibilitychange", () => {
-		if (document.hidden) {
-			stop();
-		} else {
-			start();
-		}
-	});
-
-	if (!document.hidden) {
-		start();
-	}
-
-	return { tick, start };
+	return tick;
 }
 
 async function init(config: AppConfig) {
@@ -122,7 +86,7 @@ async function init(config: AppConfig) {
 	) => i18n.t(key, value);
 	app.mount("#app");
 
-	const { tick } = startPolling();
+	const tick = startPolling();
 
 	const media = window.matchMedia?.("(prefers-color-scheme: dark)");
 	media?.addEventListener?.("change", () => {
@@ -131,6 +95,7 @@ async function init(config: AppConfig) {
 	});
 
 	await listen("flyout:show", async () => {
+		playEntrance();
 		await usePreferenceStore().fetchPreference();
 		applyTheme();
 		void tick();

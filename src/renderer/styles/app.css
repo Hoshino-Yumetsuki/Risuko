@@ -1,26 +1,14 @@
-/* Risuko – CSS entry point */
-
-/* Foundation: Tailwind, theme variables, shared layout */
 @import "./global.css";
-
-/* Base reset and scrollbar styles */
 @import "./reset.css";
-
-/* Keyframe animations */
 @import "./animations.css";
-
-/* Components */
-@import "./components/titlebar.css";
-@import "./components/aside.css";
-@import "./components/subnav.css";
+@import "./shell.css";
+@import "./components/sidebar.css";
 @import "./components/panel.css";
-@import "./components/logo.css";
 @import "./components/about.css";
 @import "./components/preferences.css";
 @import "./components/task.css";
 @import "./components/task-detail.css";
 @import "./components/add-task.css";
-@import "./components/speedometer.css";
 @import "./components/theme-switcher.css";
 @import "./components/input.css";
 @import "./components/graphic.css";
@@ -29,7 +17,5 @@
 @import "./components/directory.css";
 @import "./components/webview.css";
 @import "./components/compat.css";
-
-/* Responsive */
 @import "./responsive.css";
 @import "./android.css";

@@ -12,14 +12,14 @@ use crate::managers::vault::VaultManager;
 pub struct AppState {
     pub config: Mutex<ConfigManager>,
     pub is_quitting: AtomicBool,
-    pub rss: Mutex<Option<Arc<RssManager>>>,
-    pub upload_sinks: Mutex<Option<Arc<UploadSinkManager>>>,
+    pub rss: Arc<RssManager>,
+    pub upload_sinks: Arc<UploadSinkManager>,
     pub vault: Arc<VaultManager>,
     pub log_dir: PathBuf,
     #[cfg(not(target_os = "android"))]
     pub tray_anchor: Mutex<Option<(f64, f64, f64, f64)>>,
-    /// Keeps the file logger alive; dropped when AppState is dropped.
-    pub _log_guard: Option<tracing_appender::non_blocking::WorkerGuard>,
+    /// Keeps the file logger alive; dropped when AppState is dropped
+    pub _log_guard: tracing_appender::non_blocking::WorkerGuard,
 }
 
 impl AppState {
@@ -41,13 +41,13 @@ impl AppState {
         Ok(Self {
             config: Mutex::new(config),
             is_quitting: AtomicBool::new(false),
-            rss: Mutex::new(Some(Arc::new(rss_manager))),
-            upload_sinks: Mutex::new(Some(Arc::new(upload_manager))),
+            rss: Arc::new(rss_manager),
+            upload_sinks: Arc::new(upload_manager),
             vault: Arc::new(VaultManager::new()),
             log_dir,
             #[cfg(not(target_os = "android"))]
             tray_anchor: Mutex::new(None),
-            _log_guard: Some(log_guard),
+            _log_guard: log_guard,
         })
     }
 }

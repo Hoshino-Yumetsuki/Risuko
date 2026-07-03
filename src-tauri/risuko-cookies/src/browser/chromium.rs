@@ -120,14 +120,10 @@ impl BrowserConfig {
     #[cfg(target_os = "macos")]
     pub fn arc() -> Self {
         Self {
-            cookie_paths: if cfg!(target_os = "macos") {
-                vec![
-                    "~/Library/Application Support/Arc/User Data/*/Cookies",
-                    "~/Library/Application Support/Arc/User Data/*/Network/Cookies",
-                ]
-            } else {
-                vec![]
-            },
+            cookie_paths: vec![
+                "~/Library/Application Support/Arc/User Data/*/Cookies",
+                "~/Library/Application Support/Arc/User Data/*/Network/Cookies",
+            ],
         }
     }
 }

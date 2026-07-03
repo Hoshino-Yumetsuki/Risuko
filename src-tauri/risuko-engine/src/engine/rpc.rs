@@ -51,11 +51,7 @@ impl RpcServer {
         events: EventBroadcaster,
         rpc_shutdown_tx: tokio::sync::mpsc::Sender<()>,
     ) -> Self {
-        let session_id = uuid::Uuid::new_v4()
-            .as_bytes()
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect::<String>();
+        let session_id = uuid::Uuid::new_v4().simple().to_string();
 
         Self {
             host,
@@ -266,37 +262,22 @@ fn json_rpc_response(body: Value) -> Response {
 }
 
 fn maybe_jsonp(body: Value, callback: Option<String>) -> Response {
-    let json_str = serde_json::to_string(&body).unwrap_or_default();
-    match callback {
-        Some(cb) if !cb.is_empty() => {
-            // Sanitize callback name: allow only alphanumerics, underscore, dot
-            let safe_cb: String = cb
-                .chars()
-                .filter(|c| c.is_alphanumeric() || *c == '_' || *c == '.')
-                .collect();
-            if safe_cb.is_empty() {
-                return (
-                    StatusCode::OK,
-                    [(header::CONTENT_TYPE, "application/json-rpc")],
-                    json_str,
-                )
-                    .into_response();
-            }
-            let jsonp = format!("{safe_cb}({json_str});");
-            (
-                StatusCode::OK,
-                [(header::CONTENT_TYPE, "text/javascript")],
-                jsonp,
-            )
-                .into_response()
-        }
-        _ => (
-            StatusCode::OK,
-            [(header::CONTENT_TYPE, "application/json-rpc")],
-            json_str,
-        )
-            .into_response(),
+    // Sanitize callback name: allow only alphanumerics, underscore, dot
+    let safe_cb: String = callback
+        .unwrap_or_default()
+        .chars()
+        .filter(|c| c.is_alphanumeric() || *c == '_' || *c == '.')
+        .collect();
+    if safe_cb.is_empty() {
+        return json_rpc_response(body);
     }
+    let json_str = serde_json::to_string(&body).unwrap_or_default();
+    (
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, "text/javascript")],
+        format!("{safe_cb}({json_str});"),
+    )
+        .into_response()
 }
 
 // WebSocket handler for batch/single/notification push
@@ -402,7 +383,7 @@ async fn process_single_request(state: &RpcState, request: Value) -> Option<Valu
 
     // aria2 special-case: system.multicall does not require outer auth
     // Each nested call is authenticated independently
-    let (authed_params, auth_ok) = if should_skip_outer_auth(method) {
+    let (authed_params, auth_ok) = if method == "system.multicall" {
         (params_vec, true)
     } else {
         check_auth(&state.secret, params_vec)
@@ -481,10 +462,6 @@ fn normalize_method(method: &str) -> String {
     }
 }
 
-fn should_skip_outer_auth(method: &str) -> bool {
-    method == "system.multicall"
-}
-
 /// Extract the nested multicall list from either the standard `[[calls]]`
 /// shape or the legacy `["token:...", [calls]]` shape
 ///
@@ -512,15 +489,10 @@ fn extract_multicall_methods(params: &[Value]) -> Vec<Value> {
         .unwrap_or_default()
 }
 
+#[derive(Debug)]
 struct RpcError {
     code: i64,
     message: String,
-}
-
-impl std::fmt::Debug for RpcError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "RpcError({}: {})", self.code, self.message)
-    }
 }
 
 impl From<String> for RpcError {
@@ -1011,7 +983,7 @@ fn get_gid(params: &[Value]) -> Result<String, RpcError> {
         .ok_or_else(|| RpcError::from("GID required".to_string()))
 }
 
-/// Parse a GID from params and resolve prefix to full GID via the manager.
+/// Parse a GID from params and resolve prefix to full GID via the manager
 async fn resolve_gid(params: &[Value], manager: &TaskManager) -> Result<String, RpcError> {
     let prefix = get_gid(params)?;
     manager.resolve_gid(&prefix).await.map_err(RpcError::from)
@@ -1133,13 +1105,6 @@ mod tests {
     }
 
     // -- multicall helpers --
-
-    #[test]
-    fn skip_outer_auth_only_for_system_multicall() {
-        assert!(should_skip_outer_auth("system.multicall"));
-        assert!(!should_skip_outer_auth("aria2.tellActive"));
-        assert!(!should_skip_outer_auth("risuko.tellActive"));
-    }
 
     #[test]
     fn extract_multicall_methods_standard_shape() {

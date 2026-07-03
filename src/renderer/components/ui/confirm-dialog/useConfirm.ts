@@ -58,6 +58,6 @@ export function confirm(options: ConfirmOptions): Promise<ConfirmResult> {
 			},
 		});
 
-		app.mount(container);
+		setTimeout(() => app.mount(container), 0);
 	});
 }

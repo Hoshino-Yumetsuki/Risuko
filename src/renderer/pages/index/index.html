@@ -16,61 +16,60 @@
     height: 100%;
     overflow: hidden;
     overscroll-behavior: none;
-    background-color: #fff;
+    background-color: #ffffff;
+  }
+
+  #app {
+    height: 100%;
+  }
+
+  .sk-shell {
+    display: flex;
+    height: 100%;
+  }
+
+  .sk-sidebar {
+    width: 240px;
+    flex: 0 0 240px;
+    background-color: #f8f8f9;
+    border-right: 1px solid rgba(0, 0, 0, 0.07);
+  }
+
+  .sk-main {
+    flex: 1;
+    background-color: #ffffff;
   }
 
   @media (prefers-color-scheme: dark) {
 
     html,
     body {
-      background-color: #343434;
+      background-color: #111111;
+    }
+
+    .sk-sidebar {
+      background-color: #161616;
+      border-right-color: rgba(255, 255, 255, 0.08);
+    }
+
+    .sk-main {
+      background-color: #111111;
     }
   }
 
-  .dark html,
-  .dark body,
-  html.dark,
-  body.dark {
-    background-color: #343434;
-  }
-
-  .skeleton-aside {
-    background-color: rgba(0, 0, 0, 0.8);
-    width: 78px;
-  }
-
-  .skeleton-subnav {
-    background-color: #f4f5f7;
-    width: 200px;
-  }
-
-  .skeleton-main {
-    background-color: #fff;
-  }
-
-  @media (prefers-color-scheme: dark) {
-    .skeleton-aside {
-      background-color: rgba(0, 0, 0, 0.9);
-    }
-
-    .skeleton-subnav {
-      background-color: #2d2d2d;
-    }
-
-    .skeleton-main {
-      background-color: #343434;
+  @media (max-width: 768px) {
+    .sk-sidebar {
+      display: none;
     }
   }
 </style>
 
 <body>
   <div id="app">
-    <div class="title-bar"></div>
-    <section class="el-container" id="container">
-      <aside class="el-aside skeleton-aside hidden-sm-and-down"></aside>
-      <aside class="el-aside skeleton-subnav hidden-xs-only"></aside>
-      <section class="el-container skeleton-main"></section>
-    </section>
+    <div class="sk-shell">
+      <aside class="sk-sidebar"></aside>
+      <section class="sk-main"></section>
+    </div>
   </div>
   <script type="module" src="./main.ts"></script>
 </body>

@@ -1,6 +1,6 @@
 use std::net::SocketAddrV4;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::time::{interval, Duration};
@@ -9,15 +9,15 @@ use tokio_util::sync::CancellationToken;
 use super::chunks::ChunkManager;
 use super::peer::{PeerConnection, PeerEvent};
 use super::server::{ServerConnection, ServerEvent};
-use super::server_list::ServerList;
+use super::server_list::server_list;
 use super::types::*;
 
 /// Run an ed2k download to completion or cancellation
 ///
-/// Follows the same contract as `http::run_http_download`
+/// Follows the same contract as `http::run_http_download_multi`
 /// - Updates atomic counters for progress tracking
 /// - Returns Ok(final_path) on success, Err on failure
-/// - Checks `cancel` flag and `cancel_token` for pause/stop
+/// - Checks `cancel_token` for pause/stop
 pub async fn run_ed2k_download(
     file_link: &Ed2kFileLink,
     dir: &str,
@@ -26,7 +26,6 @@ pub async fn run_ed2k_download(
     total: Arc<AtomicU64>,
     completed: Arc<AtomicU64>,
     speed: Arc<AtomicU64>,
-    cancel: Arc<AtomicBool>,
     connections: Arc<AtomicU32>,
     cancel_token: CancellationToken,
 ) -> Result<PathBuf, String> {
@@ -55,8 +54,7 @@ pub async fn run_ed2k_download(
     // Generate a random client hash for this session
     let client_hash: [u8; 16] = rand::random();
 
-    let server_list = ServerList::from_config(&ed2k_servers);
-    let servers = server_list.servers().to_vec();
+    let servers = server_list(&ed2k_servers);
 
     // Add sources from the ed2k link itself
     let link_sources: Vec<(u32, u16)> = file_link
@@ -84,10 +82,8 @@ pub async fn run_ed2k_download(
                 file_hash,
                 chunks.clone(),
                 completed.clone(),
-                cancel.clone(),
                 cancel_token.clone(),
                 peer_count.clone(),
-                connections.clone(),
             );
         }
     }
@@ -99,7 +95,7 @@ pub async fn run_ed2k_download(
     let mut last_error = String::from("No servers available");
 
     for entry in &servers {
-        if cancel.load(Ordering::Relaxed) || cancel_token.is_cancelled() {
+        if cancel_token.is_cancelled() {
             return Err("cancelled".to_string());
         }
 
@@ -145,7 +141,6 @@ pub async fn run_ed2k_download(
             &chunks,
             &completed,
             &speed,
-            &cancel,
             &cancel_token,
             &peer_count,
             &connections,
@@ -168,7 +163,7 @@ pub async fn run_ed2k_download(
     tracing::info!("[ed2k] All servers tried, waiting for active peers to finish");
     let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
     loop {
-        if cancel.load(Ordering::Relaxed) || cancel_token.is_cancelled() {
+        if cancel_token.is_cancelled() {
             return Err("cancelled".to_string());
         }
         {
@@ -194,8 +189,8 @@ pub async fn run_ed2k_download(
     Err(last_error)
 }
 
-/// Run the event loop for a single server connection.
-/// Returns Ok(path) on completion, Err on disconnect or failure.
+/// Run the event loop for a single server connection
+/// Returns Ok(path) on completion, Err on disconnect or failure
 async fn run_server_session(
     server: &ServerConnection,
     mut event_rx: tokio::sync::mpsc::Receiver<ServerEvent>,
@@ -208,7 +203,6 @@ async fn run_server_session(
     chunks: &Arc<Mutex<ChunkManager>>,
     completed: &Arc<AtomicU64>,
     speed: &Arc<AtomicU64>,
-    cancel: &Arc<AtomicBool>,
     cancel_token: &CancellationToken,
     peer_count: &Arc<AtomicU32>,
     connections: &Arc<AtomicU32>,
@@ -221,7 +215,7 @@ async fn run_server_session(
     let mut source_check = interval(Duration::from_secs(30));
 
     loop {
-        if cancel.load(Ordering::Relaxed) || cancel_token.is_cancelled() {
+        if cancel_token.is_cancelled() {
             return Err("cancelled".to_string());
         }
 
@@ -267,10 +261,8 @@ async fn run_server_session(
                                     file_hash,
                                     chunks.clone(),
                                     completed.clone(),
-                                    cancel.clone(),
                                     cancel_token.clone(),
                                     peer_count.clone(),
-                                    connections.clone(),
                                 );
                             }
                         }
@@ -320,10 +312,8 @@ fn spawn_peer_task(
     file_hash: [u8; 16],
     chunks: Arc<Mutex<ChunkManager>>,
     completed: Arc<AtomicU64>,
-    cancel: Arc<AtomicBool>,
     cancel_token: CancellationToken,
     peer_count: Arc<AtomicU32>,
-    _connections: Arc<AtomicU32>,
 ) {
     tokio::spawn(async move {
         peer_count.fetch_add(1, Ordering::Relaxed);
@@ -337,7 +327,6 @@ fn spawn_peer_task(
             &file_hash,
             &chunks,
             &completed,
-            &cancel,
             &cancel_token,
         )
         .await;
@@ -360,7 +349,6 @@ async fn run_peer_download(
     file_hash: &[u8; 16],
     chunks: &Arc<Mutex<ChunkManager>>,
     completed: &Arc<AtomicU64>,
-    cancel: &Arc<AtomicBool>,
     cancel_token: &CancellationToken,
 ) -> Result<(), String> {
     let mut peer = PeerConnection::new(
@@ -377,7 +365,7 @@ async fn run_peer_download(
     let mut got_slot = false;
 
     loop {
-        if cancel.load(Ordering::Relaxed) || cancel_token.is_cancelled() {
+        if cancel_token.is_cancelled() {
             return Err("cancelled".to_string());
         }
 
@@ -395,7 +383,7 @@ async fn run_peer_download(
                 if fh == *file_hash {
                     let needs = {
                         let cm = chunks.lock().await;
-                        cm.next_needed_chunk(&parts).is_some()
+                        cm.next_needed_chunk_excluding(&parts, &[]).is_some()
                     };
                     if needs && got_hello {
                         peer.request_slot(file_hash).await?;
@@ -448,7 +436,7 @@ async fn run_peer_download(
             Some(PeerEvent::SlotTaken) => {
                 got_slot = false;
                 tokio::time::sleep(Duration::from_secs(60)).await;
-                if cancel.load(Ordering::Relaxed) || cancel_token.is_cancelled() {
+                if cancel_token.is_cancelled() {
                     return Err("cancelled".to_string());
                 }
                 peer.request_slot(file_hash).await?;

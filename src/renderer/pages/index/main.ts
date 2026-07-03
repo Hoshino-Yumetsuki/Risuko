@@ -9,13 +9,11 @@ import { commands } from "@/components/CommandManager/instance";
 import { getLocaleManager } from "@/components/Locale";
 import MoEnter from "@/components/Motion/MoEnter.vue";
 import Msg from "@/components/Msg";
-import UiCol from "@/components/ui/Col.vue";
 import UiButton from "@/components/ui/compat/UiButton.vue";
 import UiCheckbox from "@/components/ui/compat/UiCheckbox.vue";
 import UiProgress from "@/components/ui/compat/UiProgress.vue";
 import UiSwitch from "@/components/ui/compat/UiSwitch.vue";
 import UiTooltip from "@/components/ui/compat/UiTooltip.vue";
-import UiRow from "@/components/ui/Row.vue";
 import router from "@/router";
 import store from "@/store";
 import { useAuthStore } from "@/store/auth";
@@ -144,14 +142,12 @@ async function init(config: AppConfig) {
 	app.use(Msg, {
 		showClose: true,
 	});
-	app.component("ui-row", UiRow);
-	app.component("ui-col", UiCol);
 	app.component("ui-progress", UiProgress);
 	app.component("ui-tooltip", UiTooltip);
 	app.component("ui-checkbox", UiCheckbox);
 	app.component("ui-switch", UiSwitch);
 	app.component("ui-button", UiButton);
-	app.component("mo-enter", MoEnter);
+	app.component("motion-enter", MoEnter);
 	app.config.globalProperties.$http = axios;
 	app.config.globalProperties.$t = (
 		key: string,
@@ -163,8 +159,8 @@ async function init(config: AppConfig) {
 		window.__app.commands = commands;
 		window.__app.trayWorker = initTrayWorker();
 
-		// Show the window after mount to avoid a white flash.
-		// Skip showing if launched at login (auto-start).
+		// Show the window after mount to avoid a white flash
+		// Skip showing if launched at login (auto-start)
 		const isOpenedAtLogin = await invoke("is_opened_at_login").catch(
 			() => false,
 		);
@@ -282,21 +278,14 @@ usePreferenceStore()
 	.then((config) => {
 		logger.info("[Risuko] load preference:", config);
 		init(config);
-		// Defer the tracker auto-sync off the startup critical path. The
-		// fetch+parse of multiple tracker source URLs lands ~15–25s after
-		// launch and produces visible CPU spikes; running it during an idle
-		// callback (or after a delay fallback) keeps the launch smooth
+		// Defer tracker auto-sync off the startup critical path. Fetching+parsing
+		// the tracker source URLs lands ~15–25s after launch and spikes CPU;
+		// run it in an idle callback (or delayed fallback) to keep launch smooth
 		const runAutoSyncTracker = () => {
 			usePreferenceStore().autoSyncTracker();
 		};
-		const w = window as Window & {
-			requestIdleCallback?: (
-				cb: () => void,
-				opts?: { timeout: number },
-			) => void;
-		};
-		if (typeof w.requestIdleCallback === "function") {
-			w.requestIdleCallback(runAutoSyncTracker, { timeout: 30_000 });
+		if (typeof window.requestIdleCallback === "function") {
+			window.requestIdleCallback(runAutoSyncTracker, { timeout: 30_000 });
 		} else {
 			setTimeout(runAutoSyncTracker, 30_000);
 		}

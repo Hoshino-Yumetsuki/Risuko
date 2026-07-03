@@ -48,6 +48,7 @@ pub const STARTUP_ONLY_KEYS: &[&str] = &[
     "ed2k-port",
     "bt-max-peers-per-torrent",
     "bt-max-outstanding-per-peer",
+    "bt-upload-rate-limit",
     "bt-enable-upnp",
     "bt-upnp-lease",
     "bt-enable-lsd",
@@ -60,7 +61,7 @@ use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 
 use crate::config::ConfigManager;
-use crate::traits::{EventSink, StorageBackend};
+use crate::traits::EventSink;
 
 use self::events::EventBroadcaster;
 use self::manager::TaskManager;
@@ -98,9 +99,9 @@ pub fn startup_snapshot() -> Option<std::collections::HashMap<String, serde_json
 struct EngineInstance {
     manager: Arc<TaskManager>,
     rpc_server: RpcServer,
-    progress_task: Option<tokio::task::JoinHandle<()>>,
-    auto_save_task: Option<tokio::task::JoinHandle<()>>,
-    event_bridge_task: Option<tokio::task::JoinHandle<()>>,
+    progress_task: tokio::task::JoinHandle<()>,
+    auto_save_task: tokio::task::JoinHandle<()>,
+    event_bridge_task: tokio::task::JoinHandle<()>,
 }
 
 fn parse_config_bool(value: Option<&serde_json::Value>) -> bool {
@@ -127,17 +128,15 @@ pub fn should_start_embedded_engine(config: &ConfigManager) -> bool {
     !external_enabled
 }
 
-/// Start the engine with explicit dependencies (no Tauri required).
+/// Start the engine with explicit dependencies (no Tauri required)
 ///
 /// - `config`: the loaded ConfigManager
 /// - `event_sink`: receives engine events (Tauri emitter, NAPI callback, or no-op)
-/// - `storage`: persistent storage for RSS data etc
 /// - `upload_sinks`: optional cloud-upload manager — when present, completed
 ///   downloads are forwarded to it via the event bridge
 pub async fn start_engine(
     config: &ConfigManager,
     event_sink: Arc<dyn EventSink>,
-    _storage: Arc<dyn StorageBackend>,
     upload_sinks: Option<Arc<UploadSinkManager>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if !should_start_embedded_engine(config) {
@@ -251,7 +250,7 @@ pub async fn start_engine(
                     // Forward completed downloads to the upload pipeline. We
                     // dispatch on `download-complete` only — the BT-specific
                     // event fires before the final move-to-dir step on some
-                    // tasks, so it's the wrong hook for cloud sync.
+                    // tasks, so it's the wrong hook for cloud sync
                     //
                     // Hand off to a detached task so a slow files_for_upload
                     // / enqueue_for_file pair can't stall the broadcast
@@ -299,9 +298,9 @@ pub async fn start_engine(
     let instance = EngineInstance {
         manager,
         rpc_server,
-        progress_task: Some(progress_task),
-        auto_save_task: Some(auto_save_task),
-        event_bridge_task: Some(event_bridge_task),
+        progress_task,
+        auto_save_task,
+        event_bridge_task,
     };
 
     *ENGINE_INSTANCE.lock().await = Some(instance);
@@ -342,15 +341,9 @@ pub async fn stop_engine() -> Result<(), Box<dyn std::error::Error>> {
     let mut guard = ENGINE_INSTANCE.lock().await;
     if let Some(mut instance) = guard.take() {
         // Stop periodic tasks
-        if let Some(task) = instance.progress_task.take() {
-            task.abort();
-        }
-        if let Some(task) = instance.auto_save_task.take() {
-            task.abort();
-        }
-        if let Some(task) = instance.event_bridge_task.take() {
-            task.abort();
-        }
+        instance.progress_task.abort();
+        instance.auto_save_task.abort();
+        instance.event_bridge_task.abort();
 
         // Stop RPC server
         instance.rpc_server.stop();
@@ -371,13 +364,12 @@ pub async fn stop_engine() -> Result<(), Box<dyn std::error::Error>> {
 pub async fn restart_engine(
     config: &ConfigManager,
     event_sink: Arc<dyn EventSink>,
-    storage: Arc<dyn StorageBackend>,
     upload_sinks: Option<Arc<UploadSinkManager>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     stop_engine().await?;
     if should_start_embedded_engine(config) {
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-        start_engine(config, event_sink, storage, upload_sinks).await?;
+        start_engine(config, event_sink, upload_sinks).await?;
     }
     Ok(())
 }

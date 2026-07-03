@@ -1,8 +1,6 @@
 #![allow(clippy::large_enum_variant)]
 
 mod commands;
-mod progress;
-mod rpc_client;
 
 use clap::{Parser, Subcommand};
 

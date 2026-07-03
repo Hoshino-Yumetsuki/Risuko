@@ -22,8 +22,6 @@ const platform = (() => {
 
 const fallback = {
 	renderer: () => isRendererProcess,
-	main: () => false,
-	dev: () => import.meta.env?.DEV ?? false,
 	macOS: () => platform === "macos",
 	windows: () => platform === "windows",
 	linux: () => platform === "linux",

@@ -6,7 +6,7 @@
     <template v-else>
       <div class="rss-item-list">
         <ul :class="['rss-items', densityMode === 'compact' ? 'rss-items--compact' : 'rss-items--comfortable']">
-          <mo-enter
+          <motion-enter
             v-for="(item, index) in items"
             :key="item.id"
             tag="li"
@@ -85,7 +85,7 @@
                 </Button>
               </div>
             </div>
-          </mo-enter>
+          </motion-enter>
         </ul>
       </div>
       <footer class="task-pagination">
@@ -196,6 +196,7 @@
 <script lang="ts">
 import { CheckCircle2, Download, ExternalLink, Eye, Trash2 } from "@lucide/vue";
 import type { RssItem } from "@shared/types/rss";
+import { bytesToSize } from "@shared/utils";
 import { invoke } from "@tauri-apps/api/core";
 import api from "@/api";
 import { Button } from "@/components/ui/button";
@@ -225,7 +226,6 @@ function injectBaseTag(html: string, baseUrl: string, isDark: boolean): string {
 	const border = isDark ? "#555" : "#ddd";
 	const codeBg = isDark ? "#2a2a2a" : "#f5f5f5";
 	const muted = isDark ? "#bbb" : "#555";
-	// Injected at the END of the document so it wins the cascade
 	const readerStyle = `<style data-risuko-reader>
 :root{color-scheme:${isDark ? "dark" : "light"}}
 *:not(img):not(video):not(picture):not(svg):not(canvas){background-color:${bg}!important;color:${fg}!important;border-color:${border}!important}
@@ -247,7 +247,6 @@ hr{border:none!important;border-top:1px solid ${border}!important}
 </style>`;
 	const baseTag = baseUrl ? `<base href="${baseUrl}" target="_blank">` : "";
 
-	// Inject <base> in <head> (needs to be early for relative URLs)
 	let result = html;
 	if (baseTag) {
 		const headIdx = result.indexOf("<head");
@@ -261,7 +260,6 @@ hr{border:none!important;border-top:1px solid ${border}!important}
 		}
 	}
 
-	// Inject reader styles at the very end so they override everything
 	const bodyCloseIdx = result.lastIndexOf("</body>");
 	if (bodyCloseIdx !== -1) {
 		result = `${result.slice(0, bodyCloseIdx)}${readerStyle}${result.slice(bodyCloseIdx)}`;
@@ -357,7 +355,7 @@ function sanitizeHtml(html: string): string {
 }
 
 export default {
-	name: "mo-rss-item-list",
+	name: "rss-item-list",
 	components: {
 		Button,
 		CheckCircle2,
@@ -456,8 +454,6 @@ export default {
 			try {
 				const path = item.download_path ?? "";
 				if (path && !isHtmlPath(path)) {
-					// Binary or non-HTML payload (image, video, torrent, etc.).
-					// Don't try to render — let the user open it externally.
 					this.viewerExternalPath = path;
 					return;
 				}
@@ -499,16 +495,7 @@ export default {
 			});
 		},
 		formatSize(bytes: number): string {
-			if (bytes < 1024) {
-				return `${bytes} B`;
-			}
-			if (bytes < 1024 * 1024) {
-				return `${(bytes / 1024).toFixed(1)} KB`;
-			}
-			if (bytes < 1024 * 1024 * 1024) {
-				return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-			}
-			return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+			return bytesToSize(bytes);
 		},
 		sanitize(html: string): string {
 			return sanitizeHtml(html);
@@ -529,7 +516,7 @@ export default {
   align-items: center;
   justify-content: center;
   height: 100%;
-  color: var(--mo-no-task-color);
+  color: var(--text-3);
   font-size: 14px;
 }
 
@@ -547,7 +534,7 @@ export default {
 }
 
 .rss-item {
-  border-bottom: 1px solid var(--mo-task-item-border-color);
+  border-bottom: 1px solid var(--border);
 }
 
 .rss-item--read {
@@ -555,7 +542,7 @@ export default {
 }
 
 .rss-item--selected {
-  background: color-mix(in srgb, var(--color-primary) 6%, transparent);
+  background: var(--primary-soft);
 }
 
 .rss-item-header {
@@ -568,7 +555,7 @@ export default {
 }
 
 .rss-item-header:hover {
-  background: var(--mo-subnav-active-bg);
+  background: var(--surface-1);
 }
 
 .rss-item-checkbox {
@@ -597,7 +584,7 @@ export default {
   display: flex;
   gap: 8px;
   font-size: 11px;
-  color: var(--mo-task-action-color);
+  color: var(--text-2);
   margin-top: 2px;
 }
 
@@ -621,7 +608,6 @@ export default {
   opacity: 1;
 }
 
-/* Preview dialog */
 .rss-preview-dialog {
   max-width: 90vw;
   width: 860px;
@@ -649,7 +635,7 @@ export default {
   display: flex;
   gap: 8px;
   font-size: 11px;
-  color: var(--mo-task-action-color);
+  color: var(--text-2);
   margin-bottom: 12px;
 }
 
@@ -677,7 +663,7 @@ export default {
   border-left: 3px solid var(--border);
   margin: 8px 0;
   padding: 4px 12px;
-  color: var(--mo-task-action-color);
+  color: var(--text-2);
 }
 
 .rss-preview-content :deep(pre) {
@@ -701,7 +687,6 @@ export default {
   margin-right: auto;
 }
 
-/* Viewer dialog */
 .rss-viewer-dialog {
   max-width: 96vw;
   width: 1400px;
@@ -734,11 +719,11 @@ export default {
   justify-content: center;
   height: 100%;
   font-size: 13px;
-  color: var(--mo-task-action-color);
+  color: var(--text-2);
 }
 
 .rss-viewer-error {
-  color: hsl(var(--destructive));
+  color: var(--danger);
 }
 
 .rss-viewer-external {
@@ -749,7 +734,7 @@ export default {
   gap: 12px;
   height: 100%;
   font-size: 13px;
-  color: var(--mo-task-action-color);
+  color: var(--text-2);
   padding: 24px;
   text-align: center;
 }

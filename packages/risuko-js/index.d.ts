@@ -92,4 +92,4 @@ export type EngineEventName =
 
 export function onEvent(
 	callback: (eventName: EngineEventName, gid: string) => void,
-): void;
+): Promise<void>;

@@ -1,11 +1,11 @@
 <template>
-  <div class="title-bar">
+  <div class="content-topbar">
     <div
-      class="title-bar-dragger"
+      class="content-topbar-dragger"
       data-tauri-drag-region
       @mousedown.left.prevent="handleStartDragging"
     ></div>
-    <ul v-if="showActions" class="window-actions">
+    <ul v-if="showActions" class="window-controls">
       <li @click="handleMinimize">
         <Minus :size="12" />
       </li>
@@ -26,7 +26,7 @@ import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 const appWindow = getCurrentWebviewWindow();
 
 export default {
-	name: "mo-title-bar",
+	name: "title-bar",
 	components: {
 		Minus,
 		Maximize2,
@@ -39,9 +39,7 @@ export default {
 	},
 	methods: {
 		handleStartDragging() {
-			appWindow.startDragging().catch(() => {
-				/* noop */
-			});
+			appWindow.startDragging().catch(() => {});
 		},
 		handleMinimize() {
 			appWindow.minimize();

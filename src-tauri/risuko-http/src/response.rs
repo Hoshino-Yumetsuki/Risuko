@@ -5,7 +5,7 @@ use http_body_util::BodyExt;
 use serde::de::DeserializeOwned;
 use url::Url;
 
-use crate::body::{BodyStream, RespBody};
+use crate::body::RespBody;
 use crate::error::{Error, Result};
 
 pub struct Response {
@@ -37,10 +37,6 @@ impl Response {
         self.status
     }
 
-    pub fn version(&self) -> Version {
-        self.version
-    }
-
     pub fn headers(&self) -> &HeaderMap {
         &self.headers
     }
@@ -64,14 +60,6 @@ impl Response {
         }
     }
 
-    pub fn error_for_status_ref(&self) -> Result<&Self> {
-        if self.status.is_client_error() || self.status.is_server_error() {
-            Err(Error::Status(self.status))
-        } else {
-            Ok(self)
-        }
-    }
-
     pub async fn bytes(mut self) -> Result<Bytes> {
         let body = self
             .body
@@ -86,7 +74,7 @@ impl Response {
 
     pub(crate) async fn drain(mut self) -> Result<()> {
         if let Some(body) = self.body.take() {
-            let mut stream = BodyStream::new(body);
+            let mut stream = body.into_data_stream();
             while let Some(chunk) = stream.next().await {
                 chunk?;
             }
@@ -106,7 +94,7 @@ impl Response {
 
     pub fn bytes_stream(mut self) -> impl Stream<Item = Result<Bytes>> + Send + 'static {
         let body = self.body.take().expect("body already consumed");
-        BodyStream::new(body)
+        body.into_data_stream()
     }
 }
 

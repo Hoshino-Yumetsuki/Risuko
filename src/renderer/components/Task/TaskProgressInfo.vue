@@ -48,7 +48,7 @@ import {
 } from "@shared/utils";
 
 export default {
-	name: "mo-task-progress-info",
+	name: "task-progress-info",
 	components: {
 		ArrowUp,
 		ArrowDown,

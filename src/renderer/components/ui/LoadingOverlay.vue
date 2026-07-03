@@ -1,16 +1,16 @@
 <template>
-  <Transition name="mo-overlay-fade">
+  <Transition name="overlay-fade">
     <div
       v-if="show"
-      class="mo-loading-overlay"
-      :class="{ 'mo-loading-overlay--blocking': block }"
+      class="loading-overlay"
+      :class="{ 'loading-overlay--blocking': block }"
       role="status"
       aria-live="polite"
       aria-busy="true"
     >
-      <div class="mo-loading-overlay-content">
+      <div class="loading-overlay-content">
         <svg
-          class="mo-loading-spinner"
+          class="loading-spinner"
           width="24"
           height="24"
           viewBox="0 0 24 24"
@@ -18,7 +18,7 @@
           xmlns="http://www.w3.org/2000/svg"
         >
           <circle
-            class="mo-loading-spinner-track"
+            class="loading-spinner-track"
             cx="12"
             cy="12"
             r="10"
@@ -26,14 +26,14 @@
             stroke-width="2.5"
           />
           <path
-            class="mo-loading-spinner-arc"
+            class="loading-spinner-arc"
             d="M22 12a10 10 0 0 0-10-10"
             stroke="currentColor"
             stroke-width="2.5"
             stroke-linecap="round"
           />
         </svg>
-        <span v-if="text" class="mo-loading-overlay-text">{{ text }}</span>
+        <span v-if="text" class="loading-overlay-text">{{ text }}</span>
       </div>
     </div>
   </Transition>
@@ -41,7 +41,7 @@
 
 <script lang="ts">
 export default {
-	name: "mo-loading-overlay",
+	name: "loading-overlay",
 	props: {
 		show: {
 			type: Boolean,
@@ -60,7 +60,7 @@ export default {
 </script>
 
 <style scoped>
-.mo-loading-overlay {
+.loading-overlay {
   position: absolute;
   inset: 0;
   z-index: 40;
@@ -71,11 +71,11 @@ export default {
   background: rgba(15, 23, 42, 0.4);
 }
 
-.mo-loading-overlay--blocking {
+.loading-overlay--blocking {
   pointer-events: auto;
 }
 
-.mo-loading-overlay-content {
+.loading-overlay-content {
   display: inline-flex;
   flex-direction: column;
   align-items: center;
@@ -87,38 +87,38 @@ export default {
   text-align: center;
 }
 
-.mo-loading-overlay-text {
+.loading-overlay-text {
   white-space: normal;
   max-width: 220px;
 }
 
-.mo-loading-spinner {
+.loading-spinner {
   color: #f8fafc;
 }
 
-.mo-loading-spinner-track {
+.loading-spinner-track {
   opacity: 0.15;
 }
 
-.mo-loading-spinner-arc {
-  animation: mo-spin 0.75s linear infinite;
+.loading-spinner-arc {
+  animation: spinner-spin 0.75s linear infinite;
   transform-origin: center;
 }
 
-@keyframes mo-spin {
+@keyframes spinner-spin {
   to {
     transform: rotate(360deg);
   }
 }
 
-.mo-overlay-fade-enter-active {
+.overlay-fade-enter-active {
   transition: opacity 0.15s ease-out;
 }
-.mo-overlay-fade-leave-active {
+.overlay-fade-leave-active {
   transition: opacity 0.15s ease-in;
 }
-.mo-overlay-fade-enter-from,
-.mo-overlay-fade-leave-to {
+.overlay-fade-enter-from,
+.overlay-fade-leave-to {
   opacity: 0;
 }
 </style>

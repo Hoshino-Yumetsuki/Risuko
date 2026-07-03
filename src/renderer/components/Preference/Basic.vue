@@ -1,109 +1,7 @@
 <template>
   <div class="content panel panel-layout panel-layout--v">
-    <mo-enter tag="header" preset="fadeInDown" class="panel-header">
-      <h4 class="hidden-xs-only">{{ title }}</h4>
-      <div class="preference-mobile-subnav hidden-sm-and-up">
-        <mo-subnav-switcher :title="title" :subnavs="subnavs" />
-      </div>
-    </mo-enter>
     <main class="panel-content">
       <form class="form-preference" ref="basicForm" @submit.prevent>
-        <!-- Appearance Section -->
-        <div class="settings-section">
-          <div class="settings-section-header">
-            <div class="section-icon"><Palette :size="16" /></div>
-            <div class="section-title">
-              <h3>{{ $t('preferences.appearance') }}</h3>
-            </div>
-          </div>
-          <div class="settings-section-content">
-            <div style="margin-bottom: 16px">
-              <mo-theme-switcher
-                v-model="form.theme"
-                @change="handleThemeChange"
-                ref="themeSwitcher"
-              />
-            </div>
-            <div class="typography-controls">
-              <div v-if="!isAndroid" class="typography-row typography-row--font">
-                <div class="typography-row-main">
-                  <label class="settings-select-item-label">{{ $t('preferences.font-family') }}</label>
-                  <Select v-model="form.fontFamily" class="typography-font-select">
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem v-for="item in fontFamilyOptions" :key="item.value" :value="item.value">
-                        {{ item.label }}
-                      </SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div
-                  class="typography-sample"
-                  :class="`typography-sample--${form.fontFamily}`"
-                >
-                  {{ $t('preferences.font-family-sample') }}
-                </div>
-              </div>
-              <div class="typography-row typography-row--size">
-                <div class="typography-row-main">
-                  <span class="settings-select-item-label">{{ $t('preferences.font-size') }}</span>
-                </div>
-                <div class="font-size-segmented" role="radiogroup" :aria-label="$t('preferences.font-size')">
-                  <button
-                    v-for="item in fontSizeOptions"
-                    :key="item.value"
-                    type="button"
-                    role="radio"
-                    class="font-size-segment"
-                    :class="{ 'font-size-segment--active': form.fontSize === item.value }"
-                    :aria-label="item.label"
-                    :aria-checked="form.fontSize === item.value"
-                    @click="form.fontSize = item.value"
-                  >
-                    {{ item.shortLabel }}
-                  </button>
-                </div>
-              </div>
-            </div>
-            <div v-if="showHideAppMenuOption" class="settings-row">
-              <div class="settings-row-content">
-                <span class="settings-row-title">{{ $t('preferences.hide-app-menu') }}</span>
-              </div>
-              <div class="settings-row-action">
-                <ui-checkbox
-                  :model-value="!!form.hideAppMenu"
-                  @change="(val) => setBasicBoolean('hideAppMenu', val)"
-                />
-              </div>
-            </div>
-            <div class="settings-row">
-              <div class="settings-row-content">
-                <span class="settings-row-title">{{ $t('preferences.auto-hide-window') }}</span>
-              </div>
-              <div class="settings-row-action">
-                <ui-checkbox
-                  :model-value="!!form.autoHideWindow"
-                  @change="(val) => setBasicBoolean('autoHideWindow', val)"
-                />
-              </div>
-            </div>
-            <div v-if="isMac" class="settings-row">
-              <div class="settings-row-content">
-                <span class="settings-row-title">{{ $t('preferences.tray-speedometer') }}</span>
-              </div>
-              <div class="settings-row-action">
-                <ui-checkbox
-                  :model-value="!!form.traySpeedometer"
-                  @change="(val) => setBasicBoolean('traySpeedometer', val)"
-                />
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- Language & Startup Section -->
         <div class="settings-section">
           <div class="settings-section-header">
             <div class="section-icon"><Globe :size="16" /></div>
@@ -190,7 +88,6 @@
           </div>
         </div>
 
-        <!-- Download Location Section -->
         <div class="settings-section">
           <div class="settings-section-header">
             <div class="section-icon"><FolderDown :size="16" /></div>
@@ -199,9 +96,9 @@
             </div>
           </div>
           <div class="settings-section-content">
-            <div class="mo-input-group mo-input-group--bordered">
-              <span class="mo-input-prepend">
-                <mo-history-directory @selected="handleHistoryDirectorySelected" />
+            <div class="input-group input-group--bordered">
+              <span class="input-prepend">
+                <history-directory @selected="handleHistoryDirectorySelected" />
               </span>
               <Input
                 placeholder=""
@@ -209,8 +106,8 @@
                 readonly
                 class="path-indicator-field flex-1 shadow-none rounded-none border-none noinput"
               />
-              <span class="mo-input-append" v-if="isRenderer">
-                <mo-select-directory @selected="handleNativeDirectorySelected" />
+              <span class="input-append" v-if="isRenderer">
+                <select-directory @selected="handleNativeDirectorySelected" />
               </span>
             </div>
             <div class="form-info" v-if="isMas">
@@ -219,7 +116,6 @@
           </div>
         </div>
 
-        <!-- File Category Paths Section -->
         <div class="settings-section">
           <div class="settings-section-header">
             <div class="section-icon"><FolderDown :size="16" /></div>
@@ -240,14 +136,14 @@
               <span class="settings-row-title category-path-label" style="flex: 0 0 80px; min-width: 80px">{{
                 cat.label
               }}</span>
-              <div class="mo-input-group mo-input-group--bordered category-path-group" style="flex: 1; min-width: 0">
+              <div class="input-group input-group--bordered category-path-group" style="flex: 1; min-width: 0">
                 <Input
                   :model-value="categoryDirectoryValue(cat.key)"
                   readonly
                   class="path-indicator-field flex-1 shadow-none rounded-none border-none noinput"
                 />
-                <span class="mo-input-append" v-if="isRenderer">
-                  <mo-select-directory
+                <span class="input-append" v-if="isRenderer">
+                  <select-directory
                     @selected="(dir) => handleCategoryDirectorySelected(cat.key, dir)"
                   />
                 </span>
@@ -256,7 +152,6 @@
           </div>
         </div>
 
-        <!-- Task Routing Rules Section -->
         <div class="settings-section">
           <div class="settings-section-header">
             <div class="section-icon"><FolderDown :size="16" /></div>
@@ -289,17 +184,17 @@
                   class="flex-1 shadow-none border-none"
                   style="min-width: 80px"
                 />
-                <div class="mo-input-group mo-input-group--bordered" style="flex: 1; min-width: 160px">
+                <div class="input-group input-group--bordered" style="flex: 1; min-width: 160px">
                   <Input
                     :placeholder="$t('preferences.task-routing-rule-dir-placeholder')"
                     :model-value="form.taskRoutingRules[index].dir"
                     @update:model-value="(val) => updateRuleField(index, 'dir', val)"
                     class="path-indicator-field flex-1 shadow-none rounded-none border-none"
                   />
-                  <span class="mo-input-append" v-if="isRenderer">
-                    <mo-select-directory
+                  <span class="input-append" v-if="isRenderer">
+                    <select-directory
                       class="routing-rule-dir-picker"
-                      @selected="(dir) => handleRoutingRuleDirectorySelected(index, dir)"
+                      @selected="(dir) => updateRuleField(index, 'dir', dir)"
                     />
                   </span>
                 </div>
@@ -327,7 +222,6 @@
           </div>
         </div>
 
-        <!-- Transfer Speed Section -->
         <div class="settings-section">
           <div class="settings-section-header">
             <div class="section-icon"><Gauge :size="16" /></div>
@@ -336,6 +230,20 @@
             </div>
           </div>
           <div class="settings-section-content">
+            <div class="settings-row">
+              <div class="settings-row-content">
+                <span class="settings-row-title">{{ $t('preferences.speed-limit-enabled') }}</span>
+                <div class="settings-row-description">
+                  {{ $t('preferences.speed-limit-enabled-description') }}
+                </div>
+              </div>
+              <div class="settings-row-action">
+                <ui-switch
+                  :model-value="speedLimitEnabled"
+                  @change="onSpeedLimitToggle"
+                />
+              </div>
+            </div>
             <div class="settings-select-group">
               <div class="settings-select-item">
                 <label class="settings-select-item-label"
@@ -350,7 +258,7 @@
                     :max="65535"
                     :step="1"
                   />
-                  <Select v-model="uploadUnit" @update:model-value="handleUploadChange">
+                  <Select :model-value="uploadUnit" @update:model-value="handleUploadChange">
                     <SelectTrigger>
                       <SelectValue />
                     </SelectTrigger>
@@ -375,7 +283,7 @@
                     :max="65535"
                     :step="1"
                   />
-                  <Select v-model="downloadUnit" @update:model-value="handleDownloadChange">
+                  <Select :model-value="downloadUnit" @update:model-value="handleDownloadChange">
                     <SelectTrigger>
                       <SelectValue />
                     </SelectTrigger>
@@ -391,7 +299,6 @@
           </div>
         </div>
 
-        <!-- BitTorrent Section -->
         <div class="settings-section">
           <div class="settings-section-header">
             <div class="section-icon"><Share2 :size="16" /></div>
@@ -445,7 +352,6 @@
           </div>
         </div>
 
-        <!-- Task Management Section -->
         <div class="settings-section">
           <div class="settings-section-header">
             <div class="section-icon"><ListTodo :size="16" /></div>
@@ -627,10 +533,25 @@
                 />
               </div>
             </div>
+            <div class="settings-row">
+              <div class="settings-row-content">
+                <div class="settings-row-title">
+                  {{ $t('preferences.auto-file-renaming') }}
+                </div>
+                <div class="settings-row-description">
+                  {{ $t('preferences.auto-file-renaming-tips') }}
+                </div>
+              </div>
+              <div class="settings-row-action">
+                <ui-checkbox
+                  :model-value="!!form.autoFileRenaming"
+                  @change="(val) => setBasicBoolean('autoFileRenaming', val)"
+                />
+              </div>
+            </div>
           </div>
         </div>
 
-        <!-- Version Info Section -->
         <div class="settings-section">
           <div class="settings-section-header"></div>
           <div class="settings-section-content version-section">
@@ -665,24 +586,15 @@ import {
 	Gauge,
 	Globe,
 	ListTodo,
-	Palette,
 	Share2,
 } from "@lucide/vue";
 import {
 	APP_RUN_MODE,
-	EMPTY_STRING,
 	ENGINE_MAX_CONCURRENT_DOWNLOADS,
 	ENGINE_RPC_PORT,
 	FILE_CATEGORIES,
 } from "@shared/constants";
 import { availableLanguages } from "@shared/locales";
-import {
-	DEFAULT_FONT_FAMILY,
-	DEFAULT_FONT_SIZE,
-	FONT_FAMILY_OPTIONS,
-	FONT_SIZE_OPTIONS,
-	normalizeConfigOption,
-} from "@shared/types/config";
 import {
 	changedConfig,
 	convertLineToComma,
@@ -692,12 +604,9 @@ import {
 } from "@shared/utils";
 import logger from "@shared/utils/logger";
 import { reduceTrackerString } from "@shared/utils/tracker";
-import { invoke } from "@tauri-apps/api/core";
-import { cloneDeep, extend, isEmpty } from "lodash";
+import { cloneDeep, isEmpty } from "lodash";
 import SelectDirectory from "@/components/Native/SelectDirectory.vue";
 import HistoryDirectory from "@/components/Preference/HistoryDirectory.vue";
-import ThemeSwitcher from "@/components/Preference/ThemeSwitcher.vue";
-import SubnavSwitcher from "@/components/Subnav/SubnavSwitcher.vue";
 import UiButton from "@/components/ui/compat/UiButton.vue";
 import { confirm } from "@/components/ui/confirm-dialog";
 import { Input } from "@/components/ui/input";
@@ -733,19 +642,15 @@ const normalizePositiveInt = (
 const initForm = (config) => {
 	const {
 		autoDetectLowSpeedTasks,
+		autoFileRenaming,
 		autoRetry,
 		autoRetryInterval,
 		autoRetryStrategy,
 		workerMaxRetries,
-		autoHideWindow,
 		btForceEncryption,
 		btSaveMetadata,
 		dir,
 		fileCategoryDirs,
-		fontFamily,
-		fontSize,
-		followTorrent,
-		hideAppMenu,
 		keepSeeding,
 		keepWindowState,
 		locale,
@@ -762,16 +667,14 @@ const initForm = (config) => {
 		runMode,
 		seedRatio,
 		seedTime,
-		showProgressBar,
 		taskNotification,
-		theme,
-		traySpeedometer,
 		useRemoteFileTime,
 		lowSpeedThreshold,
 	} = config;
 
 	const result = {
 		autoDetectLowSpeedTasks: parseBooleanConfig(autoDetectLowSpeedTasks),
+		autoFileRenaming: parseBooleanConfig(autoFileRenaming, true),
 		autoRetry: parseBooleanConfig(autoRetry),
 		autoRetryInterval: normalizePositiveInt(autoRetryInterval, 5, 1, 300),
 		autoRetryStrategy:
@@ -779,10 +682,8 @@ const initForm = (config) => {
 				? RETRY_STRATEGY_EXPONENTIAL
 				: RETRY_STRATEGY_STATIC,
 		workerMaxRetries: normalizePositiveInt(workerMaxRetries, 5, 1, 20),
-		autoHideWindow: parseBooleanConfig(autoHideWindow),
 		btForceEncryption: parseBooleanConfig(btForceEncryption),
 		btSaveMetadata: parseBooleanConfig(btSaveMetadata),
-		continue: parseBooleanConfig(config.continue),
 		dir,
 		fileCategoryDirs: {
 			music: "",
@@ -794,22 +695,10 @@ const initForm = (config) => {
 			rss: "",
 			...(fileCategoryDirs || {}),
 		},
-		fontFamily: normalizeConfigOption(
-			fontFamily,
-			FONT_FAMILY_OPTIONS,
-			DEFAULT_FONT_FAMILY,
-		),
-		fontSize: normalizeConfigOption(
-			fontSize,
-			FONT_SIZE_OPTIONS,
-			DEFAULT_FONT_SIZE,
-		),
 		taskRoutingRules: (config.taskRoutingRules || []).map((rule) => ({
 			...rule,
 			id: rule.id || crypto.randomUUID(),
 		})),
-		followTorrent,
-		hideAppMenu: parseBooleanConfig(hideAppMenu),
 		keepSeeding: parseBooleanConfig(keepSeeding),
 		keepWindowState: parseBooleanConfig(keepWindowState),
 		locale,
@@ -830,22 +719,17 @@ const initForm = (config) => {
 		runMode,
 		seedRatio,
 		seedTime,
-		showProgressBar: parseBooleanConfig(showProgressBar),
 		taskNotification: parseBooleanConfig(taskNotification),
-		theme,
-		traySpeedometer: parseBooleanConfig(traySpeedometer),
 		useRemoteFileTime: parseBooleanConfig(useRemoteFileTime),
 	};
 	return result;
 };
 
 export default {
-	name: "mo-preference-basic",
+	name: "preference-basic",
 	components: {
-		[SubnavSwitcher.name]: SubnavSwitcher,
 		[HistoryDirectory.name]: HistoryDirectory,
 		[SelectDirectory.name]: SelectDirectory,
-		[ThemeSwitcher.name]: ThemeSwitcher,
 		[UiButton.name]: UiButton,
 		NumberInput,
 		Input,
@@ -854,7 +738,6 @@ export default {
 		SelectItem,
 		SelectTrigger,
 		SelectValue,
-		Palette,
 		Globe,
 		FolderDown,
 		Gauge,
@@ -866,8 +749,7 @@ export default {
 	data() {
 		const preferenceStore = usePreferenceStore();
 		const formOriginal = initForm(preferenceStore.config);
-		let form = {};
-		form = initForm(extend(form, formOriginal, changedConfig.basic));
+		const form = initForm({ ...formOriginal, ...changedConfig.basic });
 
 		return {
 			appVersion: "",
@@ -891,8 +773,8 @@ export default {
 		isMac: () => is.macOS(),
 		isMas: () => is.mas(),
 		isAndroid: () => is.android(),
-		title() {
-			return this.$t("preferences.basic");
+		speedLimitEnabled() {
+			return usePreferenceStore().engineMode === "LIMIT";
 		},
 		maxConcurrentDownloads() {
 			return ENGINE_MAX_CONCURRENT_DOWNLOADS;
@@ -921,23 +803,11 @@ export default {
 				this.form.maxOverallUploadLimit = limit;
 			},
 		},
-		downloadUnit: {
-			get() {
-				const { maxOverallDownloadLimit } = this.form;
-				return extractSpeedUnit(maxOverallDownloadLimit);
-			},
-			set(value) {
-				return value;
-			},
+		downloadUnit() {
+			return extractSpeedUnit(this.form.maxOverallDownloadLimit);
 		},
-		uploadUnit: {
-			get() {
-				const { maxOverallUploadLimit } = this.form;
-				return extractSpeedUnit(maxOverallUploadLimit);
-			},
-			set(value) {
-				return value;
-			},
+		uploadUnit() {
+			return extractSpeedUnit(this.form.maxOverallUploadLimit);
 		},
 		runModes() {
 			const result = [
@@ -951,19 +821,6 @@ export default {
 				},
 			];
 			return result;
-		},
-		fontFamilyOptions() {
-			return FONT_FAMILY_OPTIONS.map((value) => ({
-				label: this.$t(`preferences.font-family-${value}`),
-				value,
-			}));
-		},
-		fontSizeOptions() {
-			return FONT_SIZE_OPTIONS.map((value) => ({
-				label: this.$t(`preferences.font-size-${value}`),
-				shortLabel: this.$t(`preferences.font-size-${value}-short`),
-				value,
-			}));
 		},
 		speedUnits() {
 			return [
@@ -989,26 +846,6 @@ export default {
 				},
 			];
 		},
-		subnavs() {
-			return [
-				{
-					key: "basic",
-					title: this.$t("preferences.basic"),
-					route: "/preference/basic",
-				},
-				{
-					key: "advanced",
-					title: this.$t("preferences.advanced"),
-					route: "/preference/advanced",
-				},
-			];
-		},
-		showHideAppMenuOption() {
-			return is.windows() || is.linux();
-		},
-		rpcDefaultPort() {
-			return ENGINE_RPC_PORT;
-		},
 		engineVersion() {
 			const engineVersion = this.engineInfo?.version;
 			return engineVersion ? `${engineVersion}` : "--";
@@ -1029,9 +866,6 @@ export default {
 				...this.form.fileCategoryDirs,
 				[category]: dir,
 			};
-		},
-		handleRoutingRuleDirectorySelected(index, dir) {
-			this.updateRuleField(index, "dir", dir);
 		},
 		addRoutingRule() {
 			const rules = [...(this.form.taskRoutingRules || [])];
@@ -1054,30 +888,25 @@ export default {
 			rules[index] = { ...rules[index], [field]: value };
 			this.form.taskRoutingRules = rules;
 		},
-		handleThemeChange(theme) {
-			this.form.theme = theme;
+		onSpeedLimitToggle(enabled) {
+			usePreferenceStore().setEngineMode(enabled ? "LIMIT" : "MAX");
 		},
 		handleDownloadChange(value) {
 			const speedLimit = parseInt(this.form.maxOverallDownloadLimit, 10);
-			this.downloadUnit = value;
 			const limit = speedLimit > 0 ? `${speedLimit}${value}` : 0;
 			this.form.maxOverallDownloadLimit = limit;
 		},
 		handleUploadChange(value) {
 			const speedLimit = parseInt(this.form.maxOverallUploadLimit, 10);
-			this.uploadUnit = value;
 			const limit = speedLimit > 0 ? `${speedLimit}${value}` : 0;
 			this.form.maxOverallUploadLimit = limit;
 		},
-		onKeepSeedingChange(enable) {
+		onKeepSeedingToggle(enable) {
+			this.form.keepSeeding = !!enable;
 			if (!enable) {
 				this.form.seedRatio = 0;
 			}
 			this.form.seedTime = enable ? 525600 : 0;
-		},
-		onKeepSeedingToggle(enable) {
-			this.form.keepSeeding = !!enable;
-			this.onKeepSeedingChange(this.form.keepSeeding);
 		},
 		handleHistoryDirectorySelected(dir) {
 			this.form.dir = dir;
@@ -1100,10 +929,6 @@ export default {
 				...changedConfig.advanced,
 			};
 			const booleanKeys = [
-				"hideAppMenu",
-				"autoHideWindow",
-				"traySpeedometer",
-				"showProgressBar",
 				"openAtLogin",
 				"keepWindowState",
 				"resumeAllWhenAppLaunched",
@@ -1111,7 +936,6 @@ export default {
 				"btSaveMetadata",
 				"btForceEncryption",
 				"keepSeeding",
-				"continue",
 				"autoRetry",
 				"autoDetectLowSpeedTasks",
 				"newTaskShowDownloading",
@@ -1120,6 +944,7 @@ export default {
 				"taskNotification",
 				"noConfirmBeforeDeleteTask",
 				"useRemoteFileTime",
+				"autoFileRenaming",
 			];
 			for (const key of booleanKeys) {
 				if (key in data) {
@@ -1127,14 +952,14 @@ export default {
 				}
 			}
 
-			const { autoHideWindow, btTracker, rpcListenPort } = data;
+			const { btTracker, rpcListenPort } = data;
 
 			if (btTracker) {
 				data.btTracker = reduceTrackerString(convertLineToComma(btTracker));
 			}
 
-			if (rpcListenPort === EMPTY_STRING) {
-				data.rpcListenPort = this.rpcDefaultPort;
+			if (rpcListenPort === "") {
+				data.rpcListenPort = ENGINE_RPC_PORT;
 			}
 
 			if ("autoRetryInterval" in data) {
@@ -1171,22 +996,6 @@ export default {
 				);
 			}
 
-			if ("fontFamily" in data) {
-				data.fontFamily = normalizeConfigOption(
-					this.form.fontFamily,
-					FONT_FAMILY_OPTIONS,
-					DEFAULT_FONT_FAMILY,
-				);
-			}
-
-			if ("fontSize" in data) {
-				data.fontSize = normalizeConfigOption(
-					this.form.fontSize,
-					FONT_SIZE_OPTIONS,
-					DEFAULT_FONT_SIZE,
-				);
-			}
-
 			logger.log("[Risuko] preference changed data:", data);
 
 			usePreferenceStore()
@@ -1194,22 +1003,6 @@ export default {
 				.then(() => {
 					this.syncFormConfig();
 					this.$msg.success(this.$t("preferences.save-success-message"));
-					if (this.isRenderer) {
-						if ("autoHideWindow" in data) {
-							invoke("auto_hide_window", { enabled: autoHideWindow }).catch(
-								() => {
-									/* noop */
-								},
-							);
-						}
-						if ("hideAppMenu" in data) {
-							invoke("toggle_app_menu", {
-								hidden: !!data.hideAppMenu,
-							}).catch(() => {
-								/* noop */
-							});
-						}
-					}
 					changedConfig.basic = {};
 					changedConfig.advanced = {};
 				})

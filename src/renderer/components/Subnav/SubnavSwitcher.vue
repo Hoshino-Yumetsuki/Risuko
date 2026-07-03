@@ -20,7 +20,7 @@ import {
 } from "@/components/ui/select";
 
 export default {
-	name: "mo-subnav-switcher",
+	name: "subnav-switcher",
 	components: {
 		Select,
 		SelectContent,
@@ -51,9 +51,7 @@ export default {
 				.push({
 					path: route,
 				})
-				.catch(() => {
-					/* noop */
-				});
+				.catch(() => {});
 		},
 	},
 };

@@ -135,6 +135,7 @@ export default {
 	"pause-task-success": '暫停任務 "{{taskName}}" 成功',
 	"pause-task-fail": '暫停任務 "{{taskName}}" 失敗',
 	"resume-task": "繼續任務",
+	"restart-task": "重新下載",
 	"stop-seeding": "停止做種",
 	"open-task": "開啟檔案",
 	"resume-task-success": '繼續任務 "{{taskName}}" 成功',

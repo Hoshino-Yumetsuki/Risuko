@@ -10,7 +10,7 @@
 //! D-Bus Secret Service on other Unix platforms. When the OS backend is
 //! unavailable (headless Linux without D-Bus, sandboxed environments, etc.)
 //! `VaultManager::probe()` reports `enabled = false` and the renderer
-//! transparently falls back to storing secrets inline in `user.json`
+//! falls back to storing secrets inline in `user.json`
 //! (legacy behavior)
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -103,12 +103,11 @@ impl VaultManager {
         }
     }
 
-    /// Non-destructive reachability check. We only need to confirm that the
-    /// keyring backend can be opened and that lookups succeed; a `NoEntry`
-    /// result is a healthy outcome (backend reachable, no probe entry
-    /// stored). This avoids the spurious write-then-delete cycle the
-    /// previous implementation performed on every launch, which could
-    /// trigger OS keychain access prompts and audit-log noise
+    /// Non-destructive reachability check: confirm the keyring backend opens
+    /// and lookups succeed; a `NoEntry` result is healthy (backend reachable,
+    /// no probe entry stored). Avoids the write-then-delete cycle the previous
+    /// implementation ran on every launch, which could trigger OS keychain
+    /// prompts and audit-log noise
     fn probe(&self) {
         let ok = match Entry::new(SERVICE, PROBE_ACCOUNT) {
             Ok(entry) => match entry.get_password() {
@@ -125,7 +124,7 @@ impl VaultManager {
         }
     }
 
-    /// Store the secret JSON object for the given credential id.
+    /// Store the secret JSON object for the given credential id
     pub fn put(&self, id: &str, secrets: &Value) -> Result<(), String> {
         self.put_at(SERVICE, id, secrets)
     }
@@ -197,18 +196,9 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    /// Build a `VaultManager` with a forced `enabled` state, bypassing the
-    /// real probe so unit tests can exercise the disabled code paths
-    /// without depending on the host's OS keychain
-    fn manager_with(enabled: bool) -> VaultManager {
-        VaultManager {
-            enabled: AtomicBool::new(enabled),
-        }
-    }
-
     #[test]
     fn disabled_put_is_err() {
-        let m = manager_with(false);
+        let m = VaultManager::for_test(false);
         assert!(!m.enabled());
         let err = m.put("any-id", &json!({"ftpPasswd": "x"})).unwrap_err();
         assert!(err.contains("not available"), "unexpected error: {err}");
@@ -216,13 +206,13 @@ mod tests {
 
     #[test]
     fn disabled_get_returns_none() {
-        let m = manager_with(false);
+        let m = VaultManager::for_test(false);
         assert_eq!(m.get("any-id").unwrap(), None);
     }
 
     #[test]
     fn disabled_remove_is_ok() {
-        let m = manager_with(false);
+        let m = VaultManager::for_test(false);
         // Should silently succeed so callers can blindly remove on cleanup
         m.remove("any-id").unwrap();
     }

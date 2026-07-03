@@ -28,7 +28,7 @@ export const normalizeConfigOption = <T extends readonly string[]>(
 		: fallback;
 };
 
-export interface TaskRoutingRule {
+interface TaskRoutingRule {
 	id: string;
 	label: string;
 	pattern: string;
@@ -38,7 +38,7 @@ export interface TaskRoutingRule {
 
 /**
  * App configuration — merged from system.json and user.json.
- * Keys here are the camelCase form; the backend stores them in kebab-case.
+ * Keys here are the camelCase form; the backend stores them in kebab-case
  */
 export interface AppConfig {
 	locale: string;
@@ -59,6 +59,9 @@ export interface AppConfig {
 	"sftp-private-key"?: string;
 	"sftp-private-key-passphrase"?: string;
 	traySpeedometer?: boolean | string;
+	engineMode?: "MAX" | "LIMIT";
+	taskListStyle?: "compact" | "card";
+	sidebarCollapsed?: boolean | string;
 	runMode?: number | string;
 	rpcSecret?: string;
 	externalEngineEnabled?: boolean | string;

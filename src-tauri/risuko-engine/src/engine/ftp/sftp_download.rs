@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -14,6 +14,7 @@ use serde_json::{Map, Value};
 use tokio::io::AsyncWriteExt;
 use tokio_util::sync::CancellationToken;
 
+use super::ftp_download::option_str;
 use super::FtpUri;
 use crate::engine::speed_limiter::{SpeedEma, SpeedLimiter};
 use crate::engine::ssh_known_hosts::TofuHandler;
@@ -113,7 +114,6 @@ pub async fn run_sftp_download(
     total: Arc<AtomicU64>,
     completed: Arc<AtomicU64>,
     speed: Arc<AtomicU64>,
-    cancelled: Arc<AtomicBool>,
     connections: Arc<AtomicU32>,
     cancel_token: CancellationToken,
     global_limiter: Arc<SpeedLimiter>,
@@ -129,7 +129,7 @@ pub async fn run_sftp_download(
     fs::create_dir_all(dir_path).map_err(|e| format!("Failed to create dir: {e}"))?;
 
     let filename = if out.is_empty() {
-        super::infer_filename_from_ftp_uri(&format!("sftp://{}{}", parsed.host, parsed.path))
+        super::ftp_download::basename_from_ftp_path(&parsed.path)
     } else {
         out.to_string()
     };
@@ -159,9 +159,7 @@ pub async fn run_sftp_download(
     let key_passphrase = option_str(options, "sftp-private-key-passphrase");
 
     // Connect via SSH
-    let config = Arc::new(client::Config {
-        ..Default::default()
-    });
+    let config = Arc::new(client::Config::default());
 
     let addr = format!("{}:{}", parsed.host, parsed.port);
     let mut session = client::connect(config, &addr, TofuHandler::new(addr.clone()))
@@ -287,7 +285,7 @@ pub async fn run_sftp_download(
     }
 
     while !reads.is_empty() {
-        if cancelled.load(Ordering::Relaxed) || cancel_token.is_cancelled() {
+        if cancel_token.is_cancelled() {
             let _ = sftp.close(handle.clone()).await;
             return Err("Download cancelled".to_string());
         }
@@ -377,7 +375,9 @@ pub async fn run_sftp_download(
     connections.store(0, Ordering::Relaxed);
 
     // Rename .part to final
-    let final_path = super::ftp_download::finalize_download(&part_path, &filename, dir_path)?;
+    let auto_rename = super::ftp_download::option_bool(options, "auto-file-renaming", true);
+    let final_path =
+        super::ftp_download::finalize_download(&part_path, &filename, dir_path, auto_rename)?;
     tracing::info!("SFTP download complete: {}", final_path.display());
     Ok(final_path)
 }
@@ -462,14 +462,6 @@ async fn load_private_key(
 
     russh::keys::decode_secret_key(&pem_content, passphrase)
         .map_err(|e| format!("Failed to decode SSH key: {e}"))
-}
-
-fn option_str(options: &Map<String, Value>, key: &str) -> Option<String> {
-    options
-        .get(key)
-        .and_then(|v| v.as_str())
-        .filter(|s| !s.is_empty())
-        .map(|s| s.to_string())
 }
 
 #[cfg(test)]

@@ -1,5 +1,5 @@
 <template>
-  <div class="mo-task-activity" v-if="task">
+  <div class="task-activity" v-if="task">
     <div class="activity-speed-trend">
       <div class="activity-speed-trend-header">
         <span class="activity-speed-trend-title">
@@ -64,18 +64,15 @@
       </div>
     </div>
 
-    <!-- Piece graphic (BT or split HTTP) -->
     <div class="graphic-box" ref="graphicBox" v-if="isBT || hasChunkProgress">
-      <mo-task-graphic
+      <task-graphic
         :outerWidth="graphicWidth"
-        :bitfield="task.bitfield"
         :cellCount="displayGraphicCellCount"
         :cellPercents="displaySplitPercents"
         v-if="graphicWidth > 0"
       />
     </div>
 
-    <!-- Progress section -->
     <div class="activity-progress">
       <div class="activity-progress-header">
         <span class="activity-progress-percent">{{ percent }}</span>
@@ -87,7 +84,7 @@
           {{ remainingText }}
         </span>
       </div>
-      <mo-task-progress
+      <task-progress
         :completed="Number(task.completedLength)"
         :total="Number(task.totalLength)"
         :status="taskStatus"
@@ -107,9 +104,8 @@
       </div>
     </div>
 
-    <!-- Stats grid -->
     <div class="activity-stats">
-      <div class="activity-stat-item" v-if="showDownloadSpeed">
+      <div class="activity-stat-item" v-if="!isSeeder">
         <span class="activity-stat-label">{{ $t('task.task-download-speed') }}</span>
         <span class="activity-stat-value">{{ formatBytes(displayDownloadSpeed) }}/s</span>
       </div>
@@ -150,7 +146,6 @@ import {
 } from "@shared/utils";
 import TaskProgress from "@/components/Task/TaskProgress.vue";
 import TaskGraphic from "@/components/TaskGraphic/Index.vue";
-import is from "@/shims/platform";
 import { usePreferenceStore } from "@/store/preference";
 import {
 	getSpeedHistory,
@@ -163,7 +158,7 @@ const MAX_SPLIT_SEGMENTS = 128;
 const SPEED_VERTICAL_GRID_COUNT = 6;
 
 export default {
-	name: "mo-task-activity",
+	name: "task-activity",
 	components: {
 		[TaskGraphic.name]: TaskGraphic,
 		[TaskProgress.name]: TaskProgress,
@@ -180,7 +175,6 @@ export default {
 	},
 	computed: {
 		speedHistory() {
-			// Depend on store's reactive rev counter to recompute when samples change
 			void useTaskStore().speedHistoryRev;
 			const gid = this.task?.gid;
 			if (!gid) {
@@ -188,7 +182,6 @@ export default {
 			}
 			return getSpeedHistory(gid);
 		},
-		isRenderer: () => is.renderer(),
 		isBT() {
 			return checkTaskIsBT(this.task);
 		},
@@ -203,9 +196,6 @@ export default {
 				return 0;
 			}
 			return Number(this.task?.downloadSpeed || 0);
-		},
-		showDownloadSpeed() {
-			return !this.isSeeder;
 		},
 		taskStatus() {
 			const { task, isSeeder } = this;
@@ -252,19 +242,10 @@ export default {
 			return ratio;
 		},
 		graphicCellCount() {
-			const task = this.task || {};
-			const preferenceSplit = Number(usePreferenceStore().config?.split || 0);
-			const taskSplit = Number(
-				task.split || task.options?.split || task.option?.split || 0,
-			);
-			const picked =
-				Number.isFinite(preferenceSplit) && preferenceSplit > 0
-					? preferenceSplit
-					: taskSplit;
-			if (Number.isFinite(picked) && picked > 0) {
-				return Math.max(1, Math.min(Math.trunc(picked), MAX_SPLIT_SEGMENTS));
-			}
-			return DEFAULT_SPLIT_SEGMENTS;
+			const split = Number(usePreferenceStore().config?.split || 0);
+			return split > 0
+				? Math.min(Math.trunc(split), MAX_SPLIT_SEGMENTS)
+				: DEFAULT_SPLIT_SEGMENTS;
 		},
 		splitProgressList() {
 			const segmentCount = this.graphicCellCount;
@@ -430,9 +411,7 @@ export default {
 			const paddingRight = parseInt(style.paddingRight, 10);
 			return width - paddingLeft - paddingRight;
 		},
-		formatBytes(value, precision) {
-			return bytesToSize(value, precision);
-		},
+		formatBytes: bytesToSize,
 	},
 };
 </script>

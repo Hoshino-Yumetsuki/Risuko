@@ -1,10 +1,11 @@
 <template>
-  <div class="main panel panel-layout panel-layout--h">
-    <aside class="subnav hidden-xs-only subnav-pane">
-      <mo-rss-feed-list @add-feed="showAddFeedDialog = true" />
-    </aside>
-    <div class="content panel panel-layout panel-layout--v relative">
-      <mo-enter tag="header" preset="fadeInDown" class="panel-header">
+  <div class="main panel panel-layout panel-layout--v">
+    <div class="rss-body">
+      <aside class="rss-feed-column hidden-xs-only">
+        <rss-feed-list @add-feed="showAddFeedDialog = true" />
+      </aside>
+      <div class="content panel panel-layout panel-layout--v relative">
+        <motion-enter tag="header" preset="fadeInDown" class="panel-header">
         <h4 class="task-title rss-title">
           {{ currentFeed ? currentFeed.title : isDownloadedView ? $t('rss.downloaded') : $t('rss.all-items') }}
         </h4>
@@ -40,7 +41,7 @@
             <Plus :size="14" />
           </i>
         </div>
-      </mo-enter>
+      </motion-enter>
       <div v-if="feeds.length > 0" class="task-toolbar">
         <div class="task-toolbar-left">
           <div class="task-filter-input">
@@ -124,8 +125,8 @@
         </div>
       </div>
       <main class="panel-content">
-        <mo-rss-item-list v-if="feeds.length > 0" />
-        <mo-enter v-else preset="fadeInUp" class="no-task">
+        <rss-item-list v-if="feeds.length > 0" />
+        <motion-enter v-else preset="fadeInUp" class="no-task">
           <div class="rss-empty-inner">
             <Rss :size="48" class="rss-empty-icon" />
             <p>{{ $t('rss.no-feeds') }}</p>
@@ -134,14 +135,15 @@
               {{ $t('rss.add-feed') }}
             </Button>
           </div>
-        </mo-enter>
+        </motion-enter>
       </main>
+      </div>
     </div>
-    <mo-rss-add-feed-dialog
+    <rss-add-feed-dialog
       :visible="showAddFeedDialog"
       @close="showAddFeedDialog = false"
     />
-    <mo-rss-feed-settings-dialog
+    <rss-feed-settings-dialog
       :visible="showFeedSettingsDialog"
       :feed-id="editingFeedId"
       @close="showFeedSettingsDialog = false"
@@ -177,7 +179,7 @@ import RssFeedSettingsDialog from "./FeedSettingsDialog.vue";
 import RssItemList from "./ItemList.vue";
 
 export default {
-	name: "mo-rss-index",
+	name: "rss-page",
 	components: {
 		Button,
 		CheckCheck,
@@ -195,10 +197,10 @@ export default {
 		SelectValue,
 		Trash2,
 		X,
-		"mo-rss-feed-list": RssFeedList,
-		"mo-rss-item-list": RssItemList,
-		"mo-rss-add-feed-dialog": RssAddFeedDialog,
-		"mo-rss-feed-settings-dialog": RssFeedSettingsDialog,
+		"rss-feed-list": RssFeedList,
+		"rss-item-list": RssItemList,
+		"rss-add-feed-dialog": RssAddFeedDialog,
+		"rss-feed-settings-dialog": RssFeedSettingsDialog,
 	},
 	data() {
 		return {
@@ -339,7 +341,6 @@ export default {
 			if (store.currentFeedId && store.currentFeedId !== "__downloaded__") {
 				await store.markAllRead(store.currentFeedId);
 			} else {
-				// Virtual/filtered view: mark only visible items in one bulk call
 				await store.markItemsReadBulk(store.currentItems);
 			}
 		},
@@ -348,12 +349,74 @@ export default {
 </script>
 
 <style scoped>
+.rss-body {
+  --rss-footer-height: 48px;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  align-items: stretch;
+  position: relative;
+}
+
+.rss-body::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: var(--rss-footer-height);
+  height: 1px;
+  background: var(--border);
+  pointer-events: none;
+  z-index: 2;
+}
+
+.rss-body > .content {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.rss-body > .content > .panel-content {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: auto;
+  overflow: hidden;
+}
+
+.rss-feed-column {
+  flex: 0 0 220px;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--border);
+}
+
+.rss-feed-column :deep(.rss-feed-footer),
+.rss-body :deep(.task-pagination) {
+  height: var(--rss-footer-height);
+  min-height: var(--rss-footer-height);
+  max-height: var(--rss-footer-height);
+  padding: 0 12px;
+  border-top: none;
+  display: flex;
+  align-items: center;
+  box-sizing: border-box;
+  flex-shrink: 0;
+}
+
+.rss-body :deep(.task-pagination) {
+  justify-content: center;
+}
+
 .rss-empty-inner {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 12px;
-  color: var(--mo-no-task-color);
+  color: var(--text-3);
 }
 
 .rss-empty-icon {
@@ -370,7 +433,7 @@ export default {
 
 .rss-select-label {
   font-size: 0.6875rem;
-  color: var(--mo-task-action-color);
+  color: var(--text-2);
 }
 
 .rss-chip {
@@ -381,22 +444,22 @@ export default {
   margin-left: 4px;
   font-size: 11px;
   border-radius: 999px;
-  border: 1px solid hsl(var(--border));
+  border: 1px solid var(--border);
   background: transparent;
-  color: var(--mo-task-action-color);
+  color: var(--text-2);
   cursor: pointer;
   user-select: none;
   height: 22px;
 }
 
 .rss-chip:hover {
-  background: hsl(var(--muted) / 0.5);
+  background: var(--surface-2);
 }
 
 .rss-chip.active {
-  background: hsl(var(--primary) / 0.15);
-  border-color: hsl(var(--primary) / 0.4);
-  color: hsl(var(--primary));
+  background: var(--primary-soft);
+  border-color: color-mix(in srgb, var(--primary) 40%, transparent);
+  color: var(--primary);
 }
 
 .rss-sort-trigger {

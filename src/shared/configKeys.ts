@@ -16,6 +16,7 @@ const userKeys = [
 	"external-engine-port",
 	"external-engine-secret",
 	"engine-overrides",
+	"engine-mode",
 	"hide-app-menu",
 	"history-directories",
 	"keep-seeding",
@@ -36,6 +37,8 @@ const userKeys = [
 	"run-mode",
 	"show-progress-bar",
 	"task-notification",
+	"task-list-style",
+	"sidebar-collapsed",
 	"theme",
 	"tracker-source",
 	"tray-speedometer",
@@ -133,7 +136,7 @@ const systemKeys = [
 	"user-agent",
 ];
 
-// Keys that require engine restart (cannot be changed at runtime)
+// keys that require engine restart (cannot be changed at runtime)
 const startupOnlyKeys = [
 	"dht-listen-port",
 	"ed2k-port",

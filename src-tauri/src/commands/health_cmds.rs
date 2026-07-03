@@ -89,36 +89,28 @@ pub struct HealthCheck {
     pub id: String,
     pub status: HealthStatus,
     pub message: String,
-    pub hint: Option<String>,
     pub fix: Option<HealthFix>,
     pub details: Option<Value>,
 }
 
 impl HealthCheck {
     fn ok(id: &str, msg: impl Into<String>) -> Self {
-        Self::new(id, HealthStatus::Ok, msg, None, None)
+        Self::new(id, HealthStatus::Ok, msg, None)
     }
     fn warn(id: &str, msg: impl Into<String>, fix: Option<HealthFix>) -> Self {
-        Self::new(id, HealthStatus::Warn, msg, None, fix)
+        Self::new(id, HealthStatus::Warn, msg, fix)
     }
     fn fail(id: &str, msg: impl Into<String>, fix: Option<HealthFix>) -> Self {
-        Self::new(id, HealthStatus::Fail, msg, None, fix)
+        Self::new(id, HealthStatus::Fail, msg, fix)
     }
     fn skipped(id: &str, msg: impl Into<String>) -> Self {
-        Self::new(id, HealthStatus::Skipped, msg, None, None)
+        Self::new(id, HealthStatus::Skipped, msg, None)
     }
-    fn new(
-        id: &str,
-        status: HealthStatus,
-        msg: impl Into<String>,
-        hint: Option<String>,
-        fix: Option<HealthFix>,
-    ) -> Self {
+    fn new(id: &str, status: HealthStatus, msg: impl Into<String>, fix: Option<HealthFix>) -> Self {
         Self {
             id: id.to_string(),
             status,
             message: msg.into(),
-            hint,
             fix,
             details: None,
         }
@@ -489,7 +481,7 @@ async fn check_bittorrent(
         )),
     }
 
-    // LSD, combine config flag with live handle status.
+    // LSD, combine config flag with live handle status
     let lsd_cfg = options.bt_enable_lsd();
     match (lsd_cfg, bt) {
         (false, _) => out.push(HealthCheck::skipped(
@@ -781,7 +773,8 @@ fn probe_dir(id: &str, path: &str) -> HealthCheck {
         );
     }
 
-    let (free, total) = disk_space(p);
+    // `fs4` wraps `statvfs` on unix and `GetDiskFreeSpaceExW` on windows
+    let (free, total) = (fs4::available_space(p).ok(), fs4::total_space(p).ok());
     let mut details = serde_json::json!({ "path": path });
     if let (Some(free_b), Some(total_b)) = (free, total) {
         details["freeBytes"] = serde_json::json!(free_b);
@@ -795,8 +788,8 @@ fn probe_dir(id: &str, path: &str) -> HealthCheck {
         let msg = format!(
             "{} — {} free of {} ({:.1}%)",
             path,
-            human_bytes(free_b),
-            human_bytes(total_b),
+            crate::cli::progress::format_size(free_b),
+            crate::cli::progress::format_size(total_b),
             pct
         );
         if free_b < 1024 * 1024 * 1024 || pct < 5.0 {
@@ -810,31 +803,6 @@ fn probe_dir(id: &str, path: &str) -> HealthCheck {
     }
 
     HealthCheck::ok(id, format!("{} writable (free space unknown)", path)).with_details(details)
-}
-
-fn disk_space(p: &Path) -> (Option<u64>, Option<u64>) {
-    // `fs4` wraps `statvfs` on unix and `GetDiskFreeSpaceExW` on windows
-    let free = fs4::available_space(p).ok();
-    let total = fs4::total_space(p).ok();
-    (free, total)
-}
-
-fn human_bytes(b: u64) -> String {
-    const KB: u64 = 1024;
-    const MB: u64 = KB * 1024;
-    const GB: u64 = MB * 1024;
-    const TB: u64 = GB * 1024;
-    if b >= TB {
-        format!("{:.1} TB", b as f64 / TB as f64)
-    } else if b >= GB {
-        format!("{:.1} GB", b as f64 / GB as f64)
-    } else if b >= MB {
-        format!("{:.1} MB", b as f64 / MB as f64)
-    } else if b >= KB {
-        format!("{:.1} KB", b as f64 / KB as f64)
-    } else {
-        format!("{} B", b)
-    }
 }
 
 // System
@@ -981,7 +949,7 @@ fn check_logs(log_dir: &Path) -> Vec<HealthCheck> {
     let msg = format!(
         "{} — {} (errors: {}, warnings: {})",
         path.file_name().unwrap_or_default().to_string_lossy(),
-        human_bytes(size),
+        crate::cli::progress::format_size(size),
         errs,
         warns
     );
@@ -1076,14 +1044,6 @@ fn tail_count_levels(path: &Path) -> std::io::Result<(usize, usize)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn human_bytes_unit_boundaries() {
-        assert_eq!(human_bytes(0), "0 B");
-        assert_eq!(human_bytes(1024), "1.0 KB");
-        assert_eq!(human_bytes(1024 * 1024), "1.0 MB");
-        assert_eq!(human_bytes(1024 * 1024 * 1024), "1.0 GB");
-    }
 
     #[test]
     fn worst_status_picks_highest_rank() {

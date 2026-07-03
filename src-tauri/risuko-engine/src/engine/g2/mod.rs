@@ -2,7 +2,7 @@
 //! tightly scoped here. URI scheme: `g2://host:port/sha1/<base32>?xl=...&dn=...`
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -12,19 +12,6 @@ use tokio_util::sync::CancellationToken;
 use crate::engine::gnutella::peer::fetch_by_urn;
 use crate::engine::gnutella::types::GnutellaError;
 use crate::engine::options::EngineOptions;
-
-/// Errors emitted by the G2 download pipeline
-#[derive(Debug, thiserror::Error)]
-pub enum G2Error {
-    #[error("invalid URI: {0}")]
-    InvalidUri(String),
-    #[error("io: {0}")]
-    Io(#[from] std::io::Error),
-    #[error("network: {0}")]
-    Network(String),
-    #[error("no source has the requested file")]
-    NoSource,
-}
 
 /// Parsed `g2://` content URI carrying a SHA-1 URN, optional display name and
 /// file size hint
@@ -42,7 +29,7 @@ pub fn is_g2_uri(uri: &str) -> bool {
     lower.starts_with("g2://")
 }
 
-/// Parse a `g2://host[:port]/sha1/<base32>[?xl=&dn=&urn=]` URI.
+/// Parse a `g2://host[:port]/sha1/<base32>[?xl=&dn=&urn=]` URI
 /// Returns `None` for malformed input or non-G2 schemes
 pub fn parse_g2_uri(uri: &str) -> Option<G2Link> {
     let s = uri.trim();
@@ -109,7 +96,7 @@ fn url_decode(s: &str) -> String {
 /// Run a single G2 download to completion. Reuses the Gnutella HTTP
 /// `uri-res/N2R` fetch path since both networks serve content over the same
 /// peer-to-peer HTTP/1.1 endpoint. Returns the absolute output path on
-/// success or a typed `G2Error` describing the failure
+/// success or a typed `GnutellaError` describing the failure
 pub async fn run_g2_download(
     uri: &str,
     dir: &str,
@@ -117,24 +104,24 @@ pub async fn run_g2_download(
     total: Arc<AtomicU64>,
     completed: Arc<AtomicU64>,
     speed: Arc<AtomicU64>,
-    cancel: Arc<AtomicBool>,
     connections: Arc<AtomicU32>,
     cancel_token: CancellationToken,
-) -> Result<PathBuf, G2Error> {
+) -> Result<PathBuf, GnutellaError> {
     if !is_g2_uri(uri) {
-        return Err(G2Error::InvalidUri(format!("not a G2 URI: {uri}")));
+        return Err(GnutellaError::InvalidUri(format!("not a G2 URI: {uri}")));
     }
-    let link = parse_g2_uri(uri).ok_or_else(|| G2Error::InvalidUri("invalid g2 URI".into()))?;
+    let link =
+        parse_g2_uri(uri).ok_or_else(|| GnutellaError::InvalidUri("invalid g2 URI".into()))?;
     let urn = link
         .urn
         .as_deref()
-        .ok_or_else(|| G2Error::InvalidUri("G2 URI missing sha1/urn".into()))?;
+        .ok_or_else(|| GnutellaError::InvalidUri("G2 URI missing sha1/urn".into()))?;
     if link.file_size == 0 {
-        return Err(G2Error::InvalidUri("G2 URI missing xl/size".into()));
+        return Err(GnutellaError::InvalidUri("G2 URI missing xl/size".into()));
     }
     total.store(link.file_size, Ordering::Relaxed);
-    if cancel.load(Ordering::Relaxed) || cancel_token.is_cancelled() {
-        return Err(G2Error::Network("cancelled".into()));
+    if cancel_token.is_cancelled() {
+        return Err(GnutellaError::Network("cancelled".into()));
     }
     connections.store(1, Ordering::Relaxed);
     let sampler_cancel = CancellationToken::new();
@@ -176,13 +163,7 @@ pub async fn run_g2_download(
         completed,
         cancel_token,
     )
-    .await
-    .map_err(|e| match e {
-        GnutellaError::InvalidUri(msg) => G2Error::InvalidUri(msg),
-        GnutellaError::Io(err) => G2Error::Io(err),
-        GnutellaError::Network(msg) => G2Error::Network(msg),
-        GnutellaError::NoSource => G2Error::NoSource,
-    });
+    .await;
     sampler_cancel.cancel();
     connections.store(0, Ordering::Relaxed);
     speed.store(0, Ordering::Relaxed);

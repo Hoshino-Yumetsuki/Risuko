@@ -52,14 +52,11 @@ export interface DownloadTask {
 }
 
 export interface PeerInfo {
-	peerId: string;
 	ip: string;
 	port: string;
-	bitfield: string;
+	percent: number;
 	amChoking: string;
 	peerChoking: string;
-	downloadSpeed: string;
-	uploadSpeed: string;
 	seeder: string;
 }
 

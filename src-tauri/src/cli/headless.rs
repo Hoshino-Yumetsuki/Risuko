@@ -10,7 +10,7 @@ use risuko_engine::engine::options::EngineOptions;
 use risuko_engine::engine::rpc::RpcServer;
 
 /// Start the engine in headless mode (no Tauri, no GUI).
-/// Returns a handle to shut down when done.
+/// Returns a handle to shut down when done
 pub async fn start_headless_engine(
     rpc_port: u16,
 ) -> Result<HeadlessEngine, Box<dyn std::error::Error>> {
@@ -114,12 +114,12 @@ pub struct HeadlessEngine {
 }
 
 impl HeadlessEngine {
-    /// Returns the RPC secret configured for this engine, if any.
+    /// Returns the RPC secret configured for this engine, if any
     pub fn rpc_secret(&self) -> Option<&str> {
         self.rpc_secret.as_deref()
     }
 
-    /// Returns a future that resolves when an RPC shutdown request is received.
+    /// Resolves when an RPC shutdown request is received
     pub fn shutdown_requested(&self) -> impl std::future::Future<Output = ()> + '_ {
         self.shutdown_notify.notified()
     }
@@ -133,13 +133,16 @@ impl HeadlessEngine {
     }
 }
 
-fn get_config_dir() -> PathBuf {
+pub(super) fn get_config_dir() -> PathBuf {
     dirs::config_dir()
         .map(|d| d.join("dev.risuko.app"))
         .unwrap_or_else(|| PathBuf::from("."))
 }
 
-fn load_config(path: &std::path::Path, defaults: Map<String, Value>) -> Map<String, Value> {
+pub(super) fn load_config(
+    path: &std::path::Path,
+    defaults: Map<String, Value>,
+) -> Map<String, Value> {
     if let Ok(data) = std::fs::read_to_string(path) {
         if let Ok(Value::Object(mut map)) = serde_json::from_str(&data) {
             for (k, v) in &defaults {

@@ -51,8 +51,8 @@ fn build_meta(payload: &[u8]) -> TorrentMeta {
         single_file_mode: true,
     };
     // Build a deterministic info-hash by SHA-1ing a concat of name+length+pieces —
-    // the actual value doesn't matter for peer-direct tests as long as both
-    // sessions agree. Handshake compares this byte-for-byte.
+    // the value doesn't matter for peer-direct tests as long as both
+    // sessions agree. Handshake compares this byte-for-byte
     let mut h = Sha1::new();
     h.update(&info.name);
     h.update((info.files[0].length as u64).to_be_bytes());
@@ -97,7 +97,6 @@ async fn leecher_downloads_from_seeder() {
         seed_dir.path().to_path_buf(),
         SessionOptions {
             disable_dht: true,
-            disable_dht_persistence: true,
             listen: Some(risuko_bt::session::ListenerOptions {
                 listen_addr: Some("127.0.0.1:0".parse().unwrap()),
                 enable_upnp_port_forwarding: false,
@@ -113,7 +112,6 @@ async fn leecher_downloads_from_seeder() {
         leech_dir.path().to_path_buf(),
         SessionOptions {
             disable_dht: true,
-            disable_dht_persistence: true,
             listen: Some(risuko_bt::session::ListenerOptions {
                 listen_addr: Some("127.0.0.1:0".parse().unwrap()),
                 enable_upnp_port_forwarding: false,
@@ -125,7 +123,7 @@ async fn leecher_downloads_from_seeder() {
     .await
     .unwrap();
 
-    // Add to seeder.
+    // Add to seeder
     let _seed_handle = match seed
         .add_from_meta(meta.clone(), AddTorrentOptions::default())
         .await
@@ -135,7 +133,7 @@ async fn leecher_downloads_from_seeder() {
         _ => panic!("expected Added"),
     };
 
-    // Add to leecher.
+    // Add to leecher
     let leech_handle = match leech
         .add_from_meta(meta.clone(), AddTorrentOptions::default())
         .await
@@ -145,14 +143,14 @@ async fn leecher_downloads_from_seeder() {
         _ => panic!("expected Added"),
     };
 
-    // Dial seeder from leecher.
+    // Dial seeder from leecher
     let seed_addr: SocketAddr = format!("127.0.0.1:{}", seed.listen_port()).parse().unwrap();
     leech
         .add_peer(meta.info_hash, seed_addr)
         .await
         .expect("add peer");
 
-    // Poll for completion.
+    // Poll for completion
     let deadline = std::time::Instant::now() + Duration::from_secs(30);
     loop {
         let s = leech_handle.stats();
@@ -170,7 +168,7 @@ async fn leecher_downloads_from_seeder() {
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
 
-    // Verify byte equality.
+    // Verify byte equality
     let got = std::fs::read(leech_dir.path().join(&meta.info.name)).unwrap();
     assert_eq!(got.len(), payload.len(), "length mismatch");
     assert_eq!(got, payload, "payload mismatch");
@@ -178,7 +176,7 @@ async fn leecher_downloads_from_seeder() {
 
 #[test]
 fn sanity_bytes_type_exists() {
-    // Exercise the Bytes re-export so unused-import lints don't trip.
+    // Exercise the Bytes re-export so unused-import lints don't trip
     let _ = Bytes::from_static(b"");
     let _ = PathBuf::new();
 }
@@ -289,7 +287,6 @@ mod v2 {
             seed_dir.path().to_path_buf(),
             SessionOptions {
                 disable_dht: true,
-                disable_dht_persistence: true,
                 listen: Some(risuko_bt::session::ListenerOptions {
                     listen_addr: Some("127.0.0.1:0".parse().unwrap()),
                     enable_upnp_port_forwarding: false,
@@ -305,7 +302,6 @@ mod v2 {
             leech_dir.path().to_path_buf(),
             SessionOptions {
                 disable_dht: true,
-                disable_dht_persistence: true,
                 listen: Some(risuko_bt::session::ListenerOptions {
                     listen_addr: Some("127.0.0.1:0".parse().unwrap()),
                     enable_upnp_port_forwarding: false,
@@ -405,7 +401,6 @@ mod v2 {
             seed_dir.path().to_path_buf(),
             SessionOptions {
                 disable_dht: true,
-                disable_dht_persistence: true,
                 listen: Some(risuko_bt::session::ListenerOptions {
                     listen_addr: Some("127.0.0.1:0".parse().unwrap()),
                     enable_upnp_port_forwarding: false,
@@ -459,7 +454,6 @@ mod v2 {
             leech_dir.path().to_path_buf(),
             SessionOptions {
                 disable_dht: true,
-                disable_dht_persistence: true,
                 listen: Some(risuko_bt::session::ListenerOptions {
                     listen_addr: Some("127.0.0.1:0".parse().unwrap()),
                     enable_upnp_port_forwarding: false,

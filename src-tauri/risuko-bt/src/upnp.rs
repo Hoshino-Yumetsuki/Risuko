@@ -1,12 +1,12 @@
-//! SSDP + UPnP IGD WANIPConnection port mapping.
+//! SSDP + UPnP IGD WANIPConnection port mapping
 //!
 //! Discovers an Internet Gateway Device via SSDP M-SEARCH, parses its
 //! description XML, and issues `AddPortMapping` SOAP requests against the
 //! `WANIPConnection:1` (or `WANPPPConnection:1`) service. Leases are renewed
-//! periodically from a long-running background task until cancelled.
+//! periodically from a background task until cancelled.
 //!
 //! Scope: IPv4 only. IPv6 has no UPnP IGD equivalent (PCP/NAT-PMP covers
-//! a subset of routers; left to a follow-up).
+//! a subset of routers; left to a follow-up)
 
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -27,7 +27,7 @@ const ST_WAN_IP: &str = "urn:schemas-upnp-org:service:WANIPConnection:1";
 const ST_WAN_PPP: &str = "urn:schemas-upnp-org:service:WANPPPConnection:1";
 const ST_ROOT: &str = "upnp:rootdevice";
 
-/// Protocol argument of AddPortMapping.
+/// Protocol argument of AddPortMapping
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MapProto {
     Tcp,
@@ -43,45 +43,29 @@ impl MapProto {
     }
 }
 
-/// Options for [`UpnpPortForwarder`]. Defaults mirror common client choices.
-#[derive(Debug, Clone)]
-pub struct UpnpOptions {
-    /// How long a single mapping lease lives on the router. Renewed at
-    /// `lease / 2` so brief network blips don't drop the mapping.
-    pub lease: Duration,
-    /// How often to re-run SSDP to discover new/restarted IGDs.
-    pub discover_interval: Duration,
-    /// How long M-SEARCH responses are collected on each discover pass.
-    pub discover_timeout: Duration,
-    /// Description shown in the router's port-mapping table.
-    pub description: String,
-}
-
-impl Default for UpnpOptions {
-    fn default() -> Self {
-        Self {
-            lease: Duration::from_secs(300),
-            discover_interval: Duration::from_secs(60),
-            discover_timeout: Duration::from_secs(3),
-            description: "risuko".into(),
-        }
-    }
-}
+/// How often to re-run SSDP to discover new/restarted IGDs
+const DISCOVER_INTERVAL: Duration = Duration::from_secs(60);
+/// How long M-SEARCH responses are collected on each discover pass
+const DISCOVER_TIMEOUT: Duration = Duration::from_secs(3);
+/// Description shown in the router's port-mapping table
+const MAPPING_DESCRIPTION: &str = "risuko";
 
 /// Forwarder spec: builds a handle that runs discovery and renewal in the
-/// background.
+/// background
 pub struct UpnpPortForwarder {
     ports: Vec<(u16, MapProto)>,
-    opts: UpnpOptions,
+    /// How long a single mapping lease lives on the router. Renewed at
+    /// `lease / 2` so brief network blips don't drop the mapping
+    lease: Duration,
 }
 
 impl UpnpPortForwarder {
-    pub fn new(ports: Vec<(u16, MapProto)>, opts: UpnpOptions) -> Self {
-        Self { ports, opts }
+    pub fn new(ports: Vec<(u16, MapProto)>, lease: Duration) -> Self {
+        Self { ports, lease }
     }
 
     /// Spawn the forwarder. The returned handle aborts all background tasks
-    /// and best-effort deletes active mappings when dropped.
+    /// and best-effort deletes active mappings when dropped
     pub fn spawn(self) -> UpnpHandle {
         let (shutdown_tx, shutdown_rx) = mpsc::channel::<()>(1);
         let active = Arc::new(Mutex::new(Vec::<ActiveMapping>::new()));
@@ -89,9 +73,16 @@ impl UpnpPortForwarder {
         let active_for_task = active.clone();
         let attempts_for_task = attempts.clone();
         let ports = self.ports.clone();
-        let opts = self.opts.clone();
+        let lease = self.lease;
         let join = tokio::spawn(async move {
-            run_forever(ports, opts, active_for_task, attempts_for_task, shutdown_rx).await;
+            run_forever(
+                ports,
+                lease,
+                active_for_task,
+                attempts_for_task,
+                shutdown_rx,
+            )
+            .await;
         });
         UpnpHandle {
             shutdown: Some(shutdown_tx),
@@ -103,7 +94,7 @@ impl UpnpPortForwarder {
 }
 
 /// Handle to a running forwarder. Dropping it stops the forwarder and issues
-/// a best-effort `DeletePortMapping` for any still-active mappings.
+/// a best-effort `DeletePortMapping` for any still-active mappings
 pub struct UpnpHandle {
     shutdown: Option<mpsc::Sender<()>>,
     join: Option<JoinHandle<()>>,
@@ -132,7 +123,7 @@ impl Drop for UpnpHandle {
             let _ = tx.try_send(());
         }
         // Let run_forever finish its cleanup (DeletePortMapping) instead of
-        // aborting immediately. A timeout wrapper ensures we don't hang.
+        // aborting immediately. A timeout wrapper caps how long we wait
         if let Some(h) = self.join.take() {
             tokio::spawn(async move {
                 let _ = tokio::time::timeout(Duration::from_secs(3), h).await;
@@ -155,23 +146,22 @@ struct ActiveMapping {
 
 async fn run_forever(
     ports: Vec<(u16, MapProto)>,
-    opts: UpnpOptions,
+    lease: Duration,
     active: Arc<Mutex<Vec<ActiveMapping>>>,
     attempts: Arc<AtomicUsize>,
     mut shutdown: mpsc::Receiver<()>,
 ) {
-    // Re-map at lease/2 so a single missed pass doesn't expire the mapping.
-    let renewal = opts
-        .lease
+    // Re-map at lease/2 so a single missed pass doesn't expire the mapping
+    let renewal = lease
         .checked_div(2)
-        .unwrap_or(opts.discover_interval)
+        .unwrap_or(DISCOVER_INTERVAL)
         .max(Duration::from_secs(30));
-    let mut tick = tokio::time::interval(renewal.min(opts.discover_interval));
+    let mut tick = tokio::time::interval(renewal.min(DISCOVER_INTERVAL));
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     loop {
         tokio::select! {
             _ = tick.tick() => {
-                if let Err(e) = discover_and_map(&ports, &opts, &active).await {
+                if let Err(e) = discover_and_map(&ports, lease, &active).await {
                     tracing::debug!("upnp discover/map pass failed: {e}");
                 }
                 attempts.fetch_add(1, Ordering::Relaxed);
@@ -181,7 +171,7 @@ async fn run_forever(
             }
         }
     }
-    // Best-effort cleanup; capped in time so shutdown stays responsive.
+    // Best-effort cleanup; capped in time so shutdown stays responsive
     let snapshot: Vec<ActiveMapping> = active.lock().drain(..).collect();
     for m in snapshot {
         let _ = tokio::time::timeout(
@@ -194,10 +184,10 @@ async fn run_forever(
 
 async fn discover_and_map(
     ports: &[(u16, MapProto)],
-    opts: &UpnpOptions,
+    lease: Duration,
     active: &Arc<Mutex<Vec<ActiveMapping>>>,
 ) -> std::io::Result<()> {
-    let endpoints = ssdp_discover(opts.discover_timeout).await?;
+    let endpoints = ssdp_discover(DISCOVER_TIMEOUT).await?;
     let ifaces = NetworkInterface::show().unwrap_or_default();
     for ep in endpoints {
         let root = match fetch_root_desc(&ep.location).await {
@@ -221,8 +211,8 @@ async fn discover_and_map(
                 &local_ip,
                 port,
                 proto,
-                opts.lease,
-                &opts.description,
+                lease,
+                MAPPING_DESCRIPTION,
             )
             .await
             {
@@ -390,11 +380,11 @@ struct ServiceXml {
     control_url: String,
 }
 
-/// Shared HTTP client for UPnP description fetches and SOAP calls. Reusing a
-/// single client lets connection pools, TLS context and timeouts be shared
-/// across `discover_and_map` invocations instead of rebuilt per call. Returns
-/// an `io::Error` rather than panicking when client init fails so callers
-/// can surface it through their normal `io::Result` plumbing
+/// Shared HTTP client for UPnP description fetches and SOAP calls, so
+/// connection pools, TLS context and timeouts are reused across
+/// `discover_and_map` calls instead of rebuilt per call. Returns an
+/// `io::Error` instead of panicking when client init fails, so callers
+/// surface it through their `io::Result` plumbing
 fn upnp_http_client() -> std::io::Result<&'static risuko_http::Client> {
     static CLIENT: std::sync::OnceLock<risuko_http::Client> = std::sync::OnceLock::new();
     if let Some(c) = CLIENT.get() {
@@ -432,7 +422,7 @@ fn find_wan_service(root: &RootDesc, base: &Url) -> Option<(Url, String)> {
     }
     let mut all = Vec::new();
     walk(&root.device, &mut all);
-    // Prefer WANIPConnection; fall back to WANPPPConnection.
+    // Prefer WANIPConnection; fall back to WANPPPConnection
     for target in [ST_WAN_IP, ST_WAN_PPP] {
         for s in &all {
             if s.service_type == target {
@@ -454,8 +444,8 @@ fn pick_local_ipv4(ifaces: &[NetworkInterface], gateway: Ipv4Addr) -> Option<Ipv
                 if ip.is_loopback() {
                     continue;
                 }
-                // Same /24 heuristic: good enough on home LANs and robust to
-                // platforms that don't expose netmasks via network-interface.
+                // Same /24 heuristic: good enough on home LANs, and works on
+                // platforms that don't expose netmasks via network-interface
                 let ip_bits = u32::from_be_bytes(ip.octets());
                 if (ip_bits & 0xffff_ff00) == (gw_bits & 0xffff_ff00) {
                     return Some(ip);

@@ -1,13 +1,9 @@
 // Safari cookie extraction
 
-#[cfg(target_os = "macos")]
 use crate::browser::chromium::Cookie;
-#[cfg(target_os = "macos")]
 use crate::utils::{paths, time};
-#[cfg(target_os = "macos")]
 use eyre::{bail, Result};
 
-#[cfg(target_os = "macos")]
 pub fn extract_cookies(host: Option<&str>) -> Result<Vec<Cookie>> {
     let cookie_db = paths::find_first_existing(&[
         "~/Library/Cookies/Cookies.binarycookies",
@@ -55,7 +51,6 @@ pub fn extract_cookies(host: Option<&str>) -> Result<Vec<Cookie>> {
     Ok(cookies)
 }
 
-#[cfg(target_os = "macos")]
 struct RawSafariCookie {
     name: String,
     value: String,
@@ -66,7 +61,6 @@ struct RawSafariCookie {
     expires: Option<u64>,
 }
 
-#[cfg(target_os = "macos")]
 fn parse_binary_cookies(data: &[u8]) -> Result<Vec<RawSafariCookie>> {
     if data.len() < 8 {
         bail!("binary cookies file too short");
@@ -99,7 +93,6 @@ fn parse_binary_cookies(data: &[u8]) -> Result<Vec<RawSafariCookie>> {
     Ok(cookies)
 }
 
-#[cfg(target_os = "macos")]
 fn parse_page(page: &[u8], cookies: &mut Vec<RawSafariCookie>) -> Result<()> {
     if page.len() < 8 {
         bail!("page too short");
@@ -127,7 +120,6 @@ fn parse_page(page: &[u8], cookies: &mut Vec<RawSafariCookie>) -> Result<()> {
     Ok(())
 }
 
-#[cfg(target_os = "macos")]
 fn parse_cookie(cookie: &[u8], cookies: &mut Vec<RawSafariCookie>) -> Result<()> {
     if cookie.len() < 44 {
         bail!("cookie record too short");
@@ -160,7 +152,6 @@ fn parse_cookie(cookie: &[u8], cookies: &mut Vec<RawSafariCookie>) -> Result<()>
     Ok(())
 }
 
-#[cfg(target_os = "macos")]
 fn read_cstr(data: &[u8], offset: usize) -> Result<String> {
     if offset >= data.len() {
         bail!("string offset out of bounds");
@@ -172,7 +163,6 @@ fn read_cstr(data: &[u8], offset: usize) -> Result<String> {
     Ok(String::from_utf8_lossy(&data[offset..offset + end]).to_string())
 }
 
-#[cfg(target_os = "macos")]
 fn cookie_covers_host(request_host: &str, cookie_domain: &str) -> bool {
     let r = request_host.to_lowercase();
     let c = cookie_domain.to_lowercase();
@@ -186,18 +176,11 @@ fn cookie_covers_host(request_host: &str, cookie_domain: &str) -> bool {
     }
 }
 
-#[cfg(not(target_os = "macos"))]
-pub fn extract_cookies(_host: Option<&str>) -> eyre::Result<Vec<crate::browser::chromium::Cookie>> {
-    eyre::bail!("safari only available on macos")
-}
-
 #[cfg(test)]
 mod tests {
-    #[cfg(target_os = "macos")]
     use super::cookie_covers_host;
 
     #[test]
-    #[cfg(target_os = "macos")]
     fn domain_cookie_covers_subdomain() {
         assert!(cookie_covers_host("www.spigotmc.org", "spigotmc.org"));
         assert!(cookie_covers_host("dl.spigotmc.org", "spigotmc.org"));
@@ -205,13 +188,11 @@ mod tests {
     }
 
     #[test]
-    #[cfg(target_os = "macos")]
     fn old_domain_cookie_with_dot() {
         assert!(cookie_covers_host("www.spigotmc.org", ".spigotmc.org"));
     }
 
     #[test]
-    #[cfg(target_os = "macos")]
     fn no_false_match() {
         assert!(!cookie_covers_host("notspigotmc.org", "spigotmc.org"));
         assert!(!cookie_covers_host("www.spigotmc.org", "example.com"));

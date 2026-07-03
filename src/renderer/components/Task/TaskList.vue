@@ -4,17 +4,17 @@
       v-if="useVirtualList"
       class="task-list task-list-virtual"
       :items="paginatedTaskList"
-      :item-size="112"
+      :item-size="virtualItemSize"
       key-field="_displayKey"
     >
       <template #default="{ item }">
         <div :attr="item._displayKey" @click="handleItemClick(item, $event)">
-          <mo-task-item :task="item" :selected="isItemSelected(item)" />
+          <task-item :task="item" :selected="isItemSelected(item)" />
         </div>
       </template>
     </recycle-scroller>
-    <mo-drag-select v-else class="task-list" attribute="attr" @change="handleDragSelectChange">
-      <mo-enter
+    <drag-select v-else class="task-list" attribute="attr" @change="handleDragSelectChange">
+      <motion-enter
         v-for="(item, index) in paginatedTaskList"
         :key="item._displayKey"
         preset="fadeInUp"
@@ -23,9 +23,9 @@
         :attr="item._displayKey"
         @click="handleItemClick(item, $event)"
       >
-        <mo-task-item :task="item" :selected="isItemSelected(item)" />
-      </mo-enter>
-    </mo-drag-select>
+        <task-item :task="item" :selected="isItemSelected(item)" />
+      </motion-enter>
+    </drag-select>
     <footer class="task-pagination">
       <button
         class="task-pagination-btn"
@@ -46,32 +46,45 @@
       </button>
     </footer>
   </div>
-  <mo-enter v-else preset="fadeInUp" class="no-task">
+  <motion-enter v-else preset="fade" class="no-task">
     <div class="no-task-inner">
-      {{ $t('task.no-task') }}
+      <span class="no-task-icon">
+        <Inbox :size="22" />
+      </span>
+      <p>{{ $t('task.no-task') }}</p>
+      <Button size="sm" variant="outline" @click="showAddTask">
+        <Plus :size="14" />
+        {{ $t('app.add-task') }}
+      </Button>
     </div>
-  </mo-enter>
+  </motion-enter>
 </template>
 
 <script lang="ts">
+import { Inbox, Plus } from "@lucide/vue";
+import { ADD_TASK_TYPE } from "@shared/constants";
 import { checkTaskIsBT } from "@shared/utils";
-import { cloneDeep } from "lodash";
 import DragSelect from "@/components/DragSelect/Index.vue";
+import { Button } from "@/components/ui/button";
 import is from "@/shims/platform";
+import { useAppStore } from "@/store/app";
+import { usePreferenceStore } from "@/store/preference";
 import { useTaskStore } from "@/store/task";
 import TaskItem from "./TaskItem.vue";
 
 const VIRTUAL_LIST_THRESHOLD = 120;
 
 export default {
-	name: "mo-task-list",
+	name: "task-list",
 	components: {
 		[DragSelect.name]: DragSelect,
 		[TaskItem.name]: TaskItem,
+		Button,
+		Inbox,
+		Plus,
 	},
 	data() {
-		// Mirror the store's row keys so selection state survives page changes and remounts
-		const selectedList = cloneDeep(useTaskStore().selectedGidList) || [];
+		const selectedList = [...(useTaskStore().selectedGidList || [])];
 		return {
 			selectedList,
 			lastClickedKey: null as string | null,
@@ -93,13 +106,16 @@ export default {
 		totalPages() {
 			return useTaskStore().totalPages;
 		},
+		virtualItemSize() {
+			if (usePreferenceStore().taskListStyle === "card") {
+				return is.android() ? 136 : 90;
+			}
+			return is.android() ? 88 : 64;
+		},
 		useVirtualList() {
 			if (this.taskList.length < VIRTUAL_LIST_THRESHOLD) {
 				return false;
 			}
-			// Grouped multi-file BT cards render a variable-height per-file
-			// list, which breaks the recycler's fixed `item-size`. Fall back
-			// to the flexible renderer whenever a visible card is multi-file.
 			return !this.paginatedTaskList.some((task) => {
 				const files = Array.isArray(task.files) ? task.files : [];
 				return checkTaskIsBT(task) && files.length > 1;
@@ -114,6 +130,9 @@ export default {
 		window.removeEventListener("keydown", this._onKeyDown);
 	},
 	methods: {
+		showAddTask() {
+			useAppStore().showAddTaskDialog(ADD_TASK_TYPE.URI);
+		},
 		getStaggerDelay(index: number): number {
 			const MAX_DELAY = 0.6;
 			return Math.min((index + 1) * 0.03, MAX_DELAY);
@@ -132,7 +151,6 @@ export default {
 		},
 		onKeyDown(event: KeyboardEvent) {
 			if ((event.metaKey || event.ctrlKey) && event.key === "a") {
-				// Ignore shortcuts while the user is typing
 				const tag = (event.target as HTMLElement)?.tagName;
 				if (tag === "INPUT" || tag === "TEXTAREA") {
 					return;
@@ -140,13 +158,11 @@ export default {
 				event.preventDefault();
 				const allKeys = this.paginatedTaskList.map((t) => t._displayKey);
 				this.selectedList = allKeys;
-				useTaskStore().selectTasks(cloneDeep(allKeys));
+				useTaskStore().selectTasks([...allKeys]);
 			}
 		},
 		handleItemClick(item, event) {
 			const key: string = item._displayKey;
-			// Android has no modifier keys, so a tap toggles this row like Cmd/Ctrl-click
-			// Keep the rest selected unless the user uses desktop-style single select
 			const isMulti = event.metaKey || event.ctrlKey || is.android();
 			const isShift = event.shiftKey;
 			let newList: string[];
@@ -160,14 +176,12 @@ export default {
 					const end = Math.max(anchorIdx, currentIdx);
 					const rangeKeys = keys.slice(start, end + 1);
 					if (isMulti) {
-						// Shift+Cmd adds the range to the current selection
 						const set = new Set<string>(this.selectedList);
 						for (const k of rangeKeys) {
 							set.add(k);
 						}
 						newList = [...set];
 					} else {
-						// Shift alone replaces the selection with the range
 						newList = rangeKeys;
 					}
 				} else {
@@ -191,12 +205,11 @@ export default {
 			}
 
 			this.selectedList = newList;
-			useTaskStore().selectTasks(cloneDeep(newList));
+			useTaskStore().selectTasks([...newList]);
 		},
 		handleDragSelectChange(selectedList) {
-			// DragSelect gives us the row key from `attr`
 			this.selectedList = selectedList;
-			useTaskStore().selectTasks(cloneDeep(selectedList));
+			useTaskStore().selectTasks([...selectedList]);
 		},
 		isItemSelected(item): boolean {
 			const key = item._displayKey;
@@ -205,7 +218,6 @@ export default {
 	},
 	watch: {
 		selectedGidList(newVal: string[]) {
-			// The store already tracks row keys, so the component just mirrors them
 			this.selectedList = newVal;
 		},
 	},

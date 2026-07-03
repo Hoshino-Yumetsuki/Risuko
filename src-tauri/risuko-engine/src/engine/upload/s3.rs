@@ -546,36 +546,15 @@ impl UploadSink for S3Sink {
         };
 
         let now = chrono_now_utc();
-        let amz_date = now.0;
-        let datestamp = now.1;
-        let region = if self.cfg.region.trim().is_empty() {
-            "us-east-1"
-        } else {
-            self.cfg.region.trim()
-        };
         let host = self.canonical_host();
-        let canonical_uri = canonical_uri(url.path());
-        let canonical_headers =
-            format!("host:{host}\nx-amz-content-sha256:{UNSIGNED}\nx-amz-date:{amz_date}\n");
-        let signed_headers = "host;x-amz-content-sha256;x-amz-date";
-        let canonical_request =
-            format!("HEAD\n{canonical_uri}\n\n{canonical_headers}\n{signed_headers}\n{UNSIGNED}");
-        let hashed_request = hex::encode(Sha256::digest(canonical_request.as_bytes()));
-        let scope = format!("{datestamp}/{region}/s3/aws4_request");
-        let string_to_sign = format!("AWS4-HMAC-SHA256\n{amz_date}\n{scope}\n{hashed_request}");
-        let signing_key = derive_signing_key(&self.cfg.secret_access_key, &datestamp, region, "s3");
-        let signature = hex::encode(hmac_sha256(&signing_key, string_to_sign.as_bytes()));
-        let auth = format!(
-            "AWS4-HMAC-SHA256 Credential={}/{scope},SignedHeaders={signed_headers},Signature={signature}",
-            self.cfg.access_key_id
-        );
+        let auth = self.sign_request("HEAD", &url, "", UNSIGNED, &now.0, &now.1);
 
         let resp = self
             .client
             .request(risuko_http::Method::HEAD, url.as_str())
             .header("host", host)
             .header("x-amz-content-sha256", UNSIGNED)
-            .header("x-amz-date", amz_date)
+            .header("x-amz-date", now.0)
             .header("authorization", auth)
             .timeout(Duration::from_secs(15))
             .send()

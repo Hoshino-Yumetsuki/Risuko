@@ -17,12 +17,7 @@ use super::core::{generate_peer_id, Id20, Lengths};
 use super::peer::{KnownInfoHash, PeerCommand, PeerEvent};
 use super::torrent::{spawn as spawn_torrent, ManagedTorrent, TorrentCommand, TorrentInit};
 
-#[derive(Clone, Debug)]
-pub enum SessionPersistenceConfig {
-    Json { folder: Option<PathBuf> },
-}
-
-/// Read-only snapshot of the UPnP forwarder state for diagnostics.
+/// Read-only snapshot of the UPnP forwarder state for diagnostics
 #[derive(Debug, Clone, Copy)]
 pub struct UpnpStatus {
     /// True if the forwarder was started (config enabled) at session
@@ -43,42 +38,38 @@ pub struct ListenerOptions {
     pub listen_addr: Option<SocketAddr>,
     pub enable_upnp_port_forwarding: bool,
     /// Optional override for UPnP mapping lease (default 300s when UPnP is
-    /// enabled). Only consulted if `enable_upnp_port_forwarding` is true.
+    /// enabled). Only consulted if `enable_upnp_port_forwarding` is true
     pub upnp_lease: Option<std::time::Duration>,
     /// Also bind an IPv6 TCP listener on the same port. Opt-in because many
     /// hosts lack global v6 connectivity; a failed v6 bind is logged and
-    /// ignored rather than aborting session startup.
+    /// ignored rather than aborting session startup
     pub listen_ipv6: bool,
 }
 
 #[derive(Clone, Debug, Default)]
 pub struct SessionOptions {
     pub disable_dht: bool,
-    pub disable_dht_persistence: bool,
-    pub dht_config: Option<super::dht::DhtConfig>,
     pub listen: Option<ListenerOptions>,
-    pub fastresume: bool,
-    pub persistence: Option<SessionPersistenceConfig>,
     /// Maximum concurrent chunk requests per peer. Higher values improve
     /// throughput on high-latency links at the cost of more memory per peer
-    /// `None` uses the crate default (128).
+    /// `None` uses the crate default (128)
     pub max_outstanding_requests_per_peer: Option<usize>,
     /// Maximum simultaneous peer connections per torrent
     /// `None` uses the crate default (100)
     pub max_peers_per_torrent: Option<usize>,
+    pub upload_rate_limit: Option<u64>,
     /// Disable BEP-14 Local Service Discovery. Defaults to enabled; some
     /// hosts (CI runners, strict corporate networks) cannot bind the
-    /// multicast group and will warn-and-continue regardless.
+    /// multicast group and will warn-and-continue regardless
     pub disable_local_service_discovery: bool,
     /// BEP-8 Message Stream Encryption (MSE/PE) policy for peer connections.
-    /// Defaults to `Prefer`, which tries MSE first with plaintext fallback.
+    /// Defaults to `Prefer`, which tries MSE first with plaintext fallback
     pub encryption: super::peer::EncryptionPolicy,
 }
 
 #[derive(Clone, Debug)]
 pub struct AddTorrentOptions {
     pub output_folder: Option<String>,
-    pub overwrite: bool,
     pub trackers: Option<Vec<String>>,
     pub only_files: Option<Vec<usize>>,
     pub list_only: bool,
@@ -93,7 +84,6 @@ impl Default for AddTorrentOptions {
     fn default() -> Self {
         Self {
             output_folder: None,
-            overwrite: false,
             trackers: None,
             only_files: None,
             list_only: false,
@@ -127,6 +117,7 @@ pub struct Session {
     /// listener. Threaded into every torrent so outbound dials can retry over
     /// µTP when TCP fails. `None` when µTP could not bind (TCP-only fallback).
     utp: Option<Arc<super::utp::UtpSocket>>,
+    upload_limiter: Option<Arc<super::limiter::UploadLimiter>>,
     inner: Mutex<SessionInner>,
     accept_handle: Mutex<Option<tokio::task::JoinHandle<()>>>,
     accept6_handle: Mutex<Option<tokio::task::JoinHandle<()>>>,
@@ -158,7 +149,7 @@ impl Drop for Session {
         if let Some(utp) = self.utp.take() {
             utp.shutdown();
         }
-        // Dropping the UpnpHandle / LSD service / DHT triggers their cleanup.
+        // Dropping the UpnpHandle / LSD service / DHT triggers their cleanup
         let _ = self.upnp_handle.lock().take();
         let _ = self.lsd.lock().take();
         let _ = self.dht.lock().take();
@@ -202,10 +193,7 @@ impl Session {
                 .unwrap_or(std::time::Duration::from_secs(300));
             let fwd = super::upnp::UpnpPortForwarder::new(
                 vec![(local_port, super::upnp::MapProto::Tcp)],
-                super::upnp::UpnpOptions {
-                    lease,
-                    ..Default::default()
-                },
+                lease,
             );
             upnp_handle = Some(fwd.spawn());
         }
@@ -235,12 +223,17 @@ impl Session {
                 }
             };
 
+        let upload_limiter = opts
+            .upload_rate_limit
+            .map(|r| Arc::new(super::limiter::UploadLimiter::new(r)));
+
         let session = Arc::new(Self {
             output_dir,
             opts,
             peer_id,
             listen_port: local_port,
             utp,
+            upload_limiter,
             inner: Mutex::new(SessionInner {
                 torrents: HashMap::new(),
                 by_hash: HashMap::new(),
@@ -295,7 +288,7 @@ impl Session {
         // Inbound µTP (BEP-29) accept loop. Only spawned when µTP bound. This
         // drains the µTP socket's accept queue so inbound SYNs become real
         // peers instead of leaking queued streams + driver tasks, and gives us
-        // inbound µTP connectivity on par with the TCP listener.
+        // inbound µTP connectivity on par with the TCP listener
         if let Some(utp) = session.utp.clone() {
             let weak_utp = Arc::downgrade(&session);
             let h = tokio::spawn(run_utp_accept_loop(utp, weak_utp));
@@ -303,7 +296,7 @@ impl Session {
         }
 
         // Optional v6 listener on the same port. Failure to bind is not
-        // fatal: we simply log and continue with v4 only.
+        // fatal: log and continue with v4 only
         let listen_v6 = session
             .opts
             .listen
@@ -333,14 +326,19 @@ impl Session {
         self: &Arc<Self>,
         addr: SocketAddr,
         cmd_tx: mpsc::Sender<PeerCommand>,
-        event_rx: mpsc::Receiver<PeerEvent>,
+        mut event_rx: mpsc::Receiver<PeerEvent>,
     ) {
-        let mut event_rx = event_rx;
+        // Consuming the Handshook event here is fine: adopting a peer does
+        // not depend on it being re-delivered to the torrent loop
         let Some(first) = event_rx.recv().await else {
             return;
         };
-        let info_hash = match &first {
-            PeerEvent::Handshook { info_hash, .. } => *info_hash,
+        let (info_hash, reserved) = match &first {
+            PeerEvent::Handshook {
+                info_hash,
+                reserved,
+                ..
+            } => (*info_hash, *reserved),
             _ => return,
         };
         let target = {
@@ -355,21 +353,13 @@ impl Session {
             let _ = cmd_tx.send(PeerCommand::Disconnect).await;
             return;
         };
-        let (fwd_tx, fwd_rx) = mpsc::channel(64);
-        let _ = fwd_tx.send(first).await;
-        tokio::spawn(async move {
-            while let Some(ev) = event_rx.recv().await {
-                if fwd_tx.send(ev).await.is_err() {
-                    break;
-                }
-            }
-        });
         let _ = t
             .cmd_tx()
             .send(TorrentCommand::AddInboundPeer {
                 addr,
                 cmd_tx,
-                event_rx: fwd_rx,
+                event_rx,
+                reserved,
             })
             .await;
     }
@@ -475,7 +465,7 @@ impl Session {
         // For multi-file torrents, files are laid out under <output>/<name>/
         // when `create_subfolder` is set (default). When unset, files are
         // placed directly under <output>/. Single-file torrents always
-        // store the file directly under <output>/.
+        // store the file directly under <output>/
         let create_subfolder = opts.create_subfolder;
         let root_dir = if info.single_file_mode || !create_subfolder {
             root_dir
@@ -491,7 +481,7 @@ impl Session {
         }
         // Reserve an id and claim the info-hash atomically so a concurrent
         // add_from_meta cannot race past the duplicate check above. If spawn
-        // fails we roll the reservation back.
+        // fails we roll the reservation back
         let id = {
             let mut inner = self.inner.lock();
             if let Some(&existing) = inner.by_hash.get(&meta.info_hash) {
@@ -533,11 +523,17 @@ impl Session {
             verifier,
             create_subfolder,
             utp: self.utp.clone(),
+            upload_limiter: self.upload_limiter.clone(),
+            dht: if info.private {
+                None
+            } else {
+                self.dht.lock().clone()
+            },
         };
         let handle = match spawn_torrent(id, init, self.peer_id, self.listen_port).await {
             Ok(h) => h,
             Err(e) => {
-                // Roll back the reservation so a retry can succeed.
+                // Roll back the reservation so a retry can succeed
                 let mut inner = self.inner.lock();
                 if inner.by_hash.get(&meta.info_hash) == Some(&id) {
                     inner.by_hash.remove(&meta.info_hash);
@@ -571,10 +567,10 @@ impl Session {
                         drop(t);
                         // get_peers to find seeders AND announce_peer so other clients
                         // searching this info-hash can find and dial us
-                        let mut rx = dht.announce_and_get_peers_stream(
+                        let mut rx = dht.get_peers_stream(
                             info_hash,
                             std::time::Duration::from_secs(60),
-                            listen_port,
+                            Some(listen_port),
                         );
                         while let Some(addr) = rx.recv().await {
                             if cmd_tx.send(TorrentCommand::AddPeer(addr)).await.is_err() {
@@ -642,14 +638,14 @@ impl Session {
     pub async fn delete(&self, which: TorrentIdOrHash, with_files: bool) -> Result<(), String> {
         let handle = self.get(which).ok_or_else(|| "not found".to_string())?;
         // Capture file paths for optional deletion before stopping the torrent
-        // (the torrent loop owns storage and will drop it on Stop).
+        // (the torrent loop owns storage and will drop it on Stop)
         let file_paths: Option<Vec<(PathBuf, bool)>> = if with_files {
             let create_subfolder = handle.create_subfolder;
             // Use the torrent's resolved root_dir (which honors a per-torrent
             // `opts.output_folder` override) rather than the session-wide
             // `output_dir`. For grouped multi-file layouts this root already
             // points at `<output>/<name>/`; for flat / single-file it points
-            // at the parent directory.
+            // at the parent directory
             let root = handle.root_dir.clone();
             handle
                 .with_metadata(|meta| {
@@ -659,12 +655,12 @@ impl Session {
                         vec![(root.join(&meta.info.name), false)]
                     } else if !meta.info.single_file_mode && create_subfolder && !name_empty {
                         // Multi-file grouped: root_dir IS the torrent folder,
-                        // safe to remove wholesale.
+                        // safe to remove wholesale
                         vec![(root, true)]
                     } else {
                         // Flat layout, or any case with an empty torrent
                         // name (defensive): enumerate per-file paths under
-                        // root so we never `remove_dir_all` the parent.
+                        // root so we never `remove_dir_all` the parent
                         meta.info
                             .iter_file_details()
                             .map(|f| {
@@ -726,14 +722,14 @@ impl Session {
 }
 
 /// Bind a TCP listener on an IPv6 address with `IPV6_V6ONLY` set to avoid
-/// dual-stack conflicts when an IPv4 listener already bound the same port.
+/// dual-stack conflicts when an IPv4 listener already bound the same port
 fn bind_v6_listener(addr: SocketAddr) -> std::io::Result<std::net::TcpListener> {
     use socket2::{Domain, Protocol, Socket, Type};
     let sock = Socket::new(Domain::IPV6, Type::STREAM, Some(Protocol::TCP))?;
     sock.set_only_v6(true)?;
     // On Unix, SO_REUSEADDR allows rebinding a port in TIME_WAIT which is
     // desirable. On Windows it has different semantics — it permits multiple
-    // processes to bind the same port, enabling hijacking — so skip it there.
+    // processes to bind the same port, enabling hijacking — so skip it there
     #[cfg(not(target_os = "windows"))]
     sock.set_reuse_address(true)?;
     sock.set_nonblocking(true)?;
@@ -742,29 +738,35 @@ fn bind_v6_listener(addr: SocketAddr) -> std::io::Result<std::net::TcpListener> 
     Ok(sock.into())
 }
 
+/// Snapshot of every managed torrent's info-hash + v2 flag + ext-handshake
+/// builder, handed to the connection layer as the inbound allow-list
+fn known_infohashes(s: &Session) -> Vec<KnownInfoHash> {
+    s.inner
+        .lock()
+        .torrents
+        .values()
+        .map(|handle| KnownInfoHash {
+            info_hash: handle.info_hash,
+            advertise_v2: handle.advertise_v2.load(Ordering::Relaxed),
+            ext_handshake_builder: Some(handle.ext_handshake_builder.clone()),
+        })
+        .collect()
+}
+
 /// Shared inbound accept loop. Parameterised on a `Weak<Session>` so the
-/// task does not keep the session alive; the session's Drop aborts it.
+/// task does not keep the session alive; the session's Drop aborts it
 async fn run_accept_loop(listener: TcpListener, weak: std::sync::Weak<Session>) {
     loop {
         match listener.accept().await {
             Ok((stream, addr)) => {
+                let _ = stream.set_nodelay(true);
                 let Some(s) = weak.upgrade() else {
                     return;
                 };
                 tokio::spawn(async move {
-                    let allowed: Vec<KnownInfoHash> = s
-                        .inner
-                        .lock()
-                        .torrents
-                        .values()
-                        .map(|handle| KnownInfoHash {
-                            info_hash: handle.info_hash,
-                            advertise_v2: handle.advertise_v2.load(Ordering::Relaxed),
-                            ext_handshake_builder: Some(handle.ext_handshake_builder.clone()),
-                        })
-                        .collect();
+                    let allowed = known_infohashes(&s);
                     let policy = s.opts.encryption;
-                    let res = super::peer::accept_with_policy_and_capabilities(
+                    let res = super::peer::accept(
                         stream,
                         s.peer_id,
                         allowed,
@@ -807,17 +809,7 @@ async fn run_utp_accept_loop(utp: Arc<super::utp::UtpSocket>, weak: std::sync::W
         };
         let addr = stream.peer_addr();
         tokio::spawn(async move {
-            let allowed: Vec<KnownInfoHash> = s
-                .inner
-                .lock()
-                .torrents
-                .values()
-                .map(|handle| KnownInfoHash {
-                    info_hash: handle.info_hash,
-                    advertise_v2: handle.advertise_v2.load(Ordering::Relaxed),
-                    ext_handshake_builder: Some(handle.ext_handshake_builder.clone()),
-                })
-                .collect();
+            let allowed = known_infohashes(&s);
             // No managed torrents—nothing this peer could be after, so drop the stream
             // (its driver tears the connection down)
             if allowed.is_empty() {

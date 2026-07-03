@@ -1,4 +1,3 @@
-/* Theme switcher component */
 @layer components {
 	.theme-switcher {
 		display: flex;
@@ -11,11 +10,10 @@
 	}
 	.theme-option:hover .theme-preview {
 		border-color: color-mix(in srgb, var(--primary) 50%, transparent);
-		transform: translateY(-1px);
 	}
 	.theme-option.active .theme-preview {
 		border-color: var(--primary);
-		box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 15%, transparent);
+		box-shadow: 0 0 0 3px var(--primary-soft);
 	}
 	.theme-option.active .theme-label {
 		color: var(--primary);
@@ -25,116 +23,100 @@
 		width: 88px;
 		height: 56px;
 		border-radius: calc(var(--radius) - 2px);
-		border: 2px solid #d1d5db;
+		border: 2px solid var(--border-strong);
 		overflow: hidden;
 		display: flex;
-		flex-direction: row;
-		transition: all 0.2s ease;
-		background: #f3f4f6;
+		transition:
+			border-color var(--dur-2) var(--ease-out),
+			box-shadow var(--dur-2) var(--ease-out);
 	}
-	.preview-body {
+
+	.preview-shell {
 		flex: 1;
-		padding: 6px;
+		min-width: 0;
 		display: flex;
-		flex-direction: column;
-		gap: 4px;
 	}
-	.preview-line {
-		height: 5px;
-		border-radius: calc(var(--radius) - 2px);
-	}
-	.preview-line.short {
-		width: 55%;
-	}
-	.preview-sidebar--light {
-		width: 20px;
+	.preview-side {
+		width: 22%;
 		flex-shrink: 0;
-		background: #e5e7eb;
-	}
-	.preview-content--light {
-		flex: 1;
 		display: flex;
 		flex-direction: column;
-		background: #fff;
+		gap: 3px;
+		padding: 5px 3px;
 	}
-	.preview-header--light {
+	.preview-side i {
+		display: block;
+		height: 3px;
+		border-radius: 2px;
+	}
+	.preview-side i:first-child {
+		width: 100%;
+	}
+	.preview-side i:nth-child(2) {
+		width: 75%;
+	}
+	.preview-side i:nth-child(3) {
+		width: 85%;
+	}
+	.preview-main {
+		flex: 1;
+		min-width: 0;
+		display: flex;
+		flex-direction: column;
+		padding: 6px 5px 0;
+		gap: 0;
+	}
+	.preview-row {
+		position: relative;
 		height: 12px;
-		background: #f3f4f6;
-		border-bottom: 1px solid #e5e7eb;
 	}
-	.preview-line--light {
-		background: #d1d5db;
+	.preview-row--accent::after {
+		content: "";
+		position: absolute;
+		left: 0;
+		bottom: 0;
+		width: 62%;
+		height: 2px;
+		border-radius: 1px;
+		background: #619eff;
 	}
-	.preview-sidebar--dark {
-		width: 20px;
-		flex-shrink: 0;
-		background: #000000;
+	.preview-shell--light {
+		background: #ffffff;
 	}
-	.preview-content--dark {
-		flex: 1;
-		display: flex;
-		flex-direction: column;
+	.preview-shell--light .preview-side {
+		background: #f8f8f9;
+		border-right: 1px solid rgba(0, 0, 0, 0.07);
+	}
+	.preview-shell--light .preview-side i {
+		background: #dcdce1;
+	}
+	.preview-shell--light .preview-row {
+		border-bottom: 1px solid rgba(0, 0, 0, 0.07);
+	}
+	.preview-shell--dark {
 		background: #111111;
 	}
-	.preview-header--dark {
-		height: 12px;
+	.preview-shell--dark .preview-side {
 		background: #161616;
-		border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+		border-right: 1px solid rgba(255, 255, 255, 0.08);
 	}
-	.preview-line--dark {
-		background: #1a1a1a;
+	.preview-shell--dark .preview-side i {
+		background: #2e2e2e;
+	}
+	.preview-shell--dark .preview-row {
+		border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 	}
 	.preview-split {
 		display: flex;
 		width: 100%;
 		height: 100%;
 	}
-	.preview-half {
-		flex: 1;
-		display: flex;
-		flex-direction: column;
-	}
-	.preview-half .mini-sidebar {
-		width: 100%;
-		height: 14px;
-	}
-	.preview-half .mini-content {
-		flex: 1;
-	}
-	.preview-half--light .mini-sidebar {
-		background: #e5e7eb;
-	}
-	.preview-half--light .mini-content {
-		background: #fff;
-	}
-	.preview-half--dark .mini-sidebar {
-		background: #000000;
-	}
-	.preview-half--dark .mini-content {
-		background: #111111;
-	}
 	.theme-label {
 		display: block;
 		margin-top: 8px;
 		font-size: 12px;
 		font-weight: 500;
-		color: #6b7280;
-		transition: color 0.15s ease;
-	}
-	.dark .theme-preview {
-		border-color: #4b5563;
-	}
-	.dark .theme-option:hover .theme-preview {
-		border-color: rgba(97, 158, 255, 0.5);
-	}
-	.dark .theme-option.active .theme-preview {
-		border-color: #619eff;
-		box-shadow: 0 0 0 3px rgba(97, 158, 255, 0.2);
-	}
-	.dark .theme-option.active .theme-label {
-		color: #8cc0ff;
-	}
-	.dark .theme-label {
-		color: #818181;
+		color: var(--text-2);
+		transition: color var(--dur-2) var(--ease-out);
 	}
 }

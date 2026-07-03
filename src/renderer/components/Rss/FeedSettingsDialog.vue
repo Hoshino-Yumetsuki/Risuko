@@ -58,7 +58,7 @@ import { Switch } from "@/components/ui/switch";
 import { useRssStore } from "@/store/rss";
 
 export default {
-	name: "mo-rss-feed-settings-dialog",
+	name: "rss-feed-settings-dialog",
 	components: {
 		Button,
 		Dialog,

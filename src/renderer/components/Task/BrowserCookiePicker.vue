@@ -63,7 +63,7 @@ import {
 } from "@/components/ui/popover";
 
 export default {
-	name: "mo-browser-cookie-picker",
+	name: "browser-cookie-picker",
 	components: {
 		Popover,
 		PopoverContent,

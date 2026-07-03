@@ -16,7 +16,7 @@ use std::convert::Infallible;
 use std::io::Write;
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 
 use http_body_util::Full;
@@ -33,10 +33,9 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio_util::sync::CancellationToken;
 
-// Sized to span four full pieces plus a short tail so the test exercises
-// piece-boundary edges (last piece short, multiple worker hand-offs). Derived
-// from `PIECE_SIZE` so a future change to the engine's piece granularity
-// keeps the test meaningful instead of silently degenerating
+// Four full pieces plus a short tail, so the test hits piece-boundary edges
+// (last piece short, multiple worker hand-offs). Derived from `PIECE_SIZE` so
+// a change to piece granularity keeps the test meaningful
 const PAYLOAD_LEN: usize = (PIECE_SIZE as usize) * 4 + 17;
 
 fn make_payload() -> Vec<u8> {
@@ -156,7 +155,6 @@ fn dummy_state() -> (
     Arc<AtomicU64>,
     Arc<AtomicU64>,
     Arc<AtomicU64>,
-    Arc<AtomicBool>,
     Arc<AtomicU32>,
     CancellationToken,
     Arc<SpeedLimiter>,
@@ -167,7 +165,6 @@ fn dummy_state() -> (
         Arc::new(AtomicU64::new(0)),
         Arc::new(AtomicU64::new(0)),
         Arc::new(AtomicU64::new(0)),
-        Arc::new(AtomicBool::new(false)),
         Arc::new(AtomicU32::new(0)),
         CancellationToken::new(),
         Arc::new(SpeedLimiter::new(0)),
@@ -195,7 +192,7 @@ async fn mirror_failover_with_checksum_verify() {
 
     let options = options_with(vec![("checksum", json!(format!("sha-256={expected}")))]);
 
-    let (total, completed, speed, cancelled, conns, ct, gl, tl, cc) = dummy_state();
+    let (total, completed, speed, conns, ct, gl, tl, cc) = dummy_state();
 
     let result = run_http_download_multi(
         &uris,
@@ -205,7 +202,6 @@ async fn mirror_failover_with_checksum_verify() {
         total,
         completed.clone(),
         speed,
-        cancelled,
         conns,
         ct,
         gl,
@@ -241,7 +237,7 @@ async fn checksum_mismatch_deletes_file() {
     // Deliberately wrong checksum
     let bogus = "0".repeat(64);
     let options = options_with(vec![("checksum", json!(format!("sha-256={bogus}")))]);
-    let (total, completed, speed, cancelled, conns, ct, gl, tl, cc) = dummy_state();
+    let (total, completed, speed, conns, ct, gl, tl, cc) = dummy_state();
 
     let err = run_http_download_multi(
         &uris,
@@ -251,7 +247,6 @@ async fn checksum_mismatch_deletes_file() {
         total,
         completed,
         speed,
-        cancelled,
         conns,
         ct,
         gl,
@@ -278,8 +273,8 @@ async fn checksum_mismatch_deletes_file() {
 
 #[tokio::test]
 async fn cookie_jar_loaded_from_netscape_file() {
-    // We test the jar mechanism in isolation here — full request integration
-    // is exercised by the other tests. This guards the load-cookies path
+    // Jar mechanism in isolation — full request integration is covered by the
+    // other tests. Guards the load-cookies path
     let tmp = tempfile::tempdir().unwrap();
     let cookies_path = tmp.path().join("cookies.txt");
     let mut f = std::fs::File::create(&cookies_path).unwrap();
@@ -290,8 +285,8 @@ async fn cookie_jar_loaded_from_netscape_file() {
     .unwrap();
     drop(f);
 
-    // Just verify the engine builder accepts the option without panicking;
-    // the actual jar parsing is covered by the unit test in risuko-http
+    // Verify the engine builder accepts the option without panicking;
+    // jar parsing itself is covered by the unit test in risuko-http
     let opts = options_with(vec![(
         "load-cookies",
         json!(cookies_path.to_string_lossy()),
@@ -419,7 +414,7 @@ async fn run_mirrors(
     dir: &str,
     options: &Map<String, Value>,
 ) -> Result<PathBuf, String> {
-    let (total, completed, speed, cancelled, conns, ct, gl, tl, cc) = dummy_state();
+    let (total, completed, speed, conns, ct, gl, tl, cc) = dummy_state();
     run_http_download_multi(
         uris,
         dir,
@@ -428,7 +423,6 @@ async fn run_mirrors(
         total,
         completed,
         speed,
-        cancelled,
         conns,
         ct,
         gl,
@@ -467,8 +461,8 @@ async fn concurrent_multi_source_distributes_pieces() {
         expected,
         "content must be correct"
     );
-    // The headline property: BOTH mirrors actually served data — pieces were
-    // pulled in parallel, not failover (which would leave the 2nd mirror idle)
+    // Both mirrors actually served data — pieces pulled in parallel, not
+    // failover (which would leave the 2nd mirror idle)
     assert!(a.hits() > 0, "mirror A should have served pieces");
     assert!(
         b.hits() > 0,
@@ -640,7 +634,7 @@ async fn adopts_filename_from_content_disposition() {
     let dir = tmp.path().to_string_lossy().to_string();
     let uris = vec![format!("http://{}/resources/foo/download?version=42", addr)];
     let options = options_with(vec![]);
-    let (total, completed, speed, cancelled, conns, ct, gl, tl, cc) = dummy_state();
+    let (total, completed, speed, conns, ct, gl, tl, cc) = dummy_state();
     let adopted = std::sync::Arc::new(parking_lot::Mutex::new(None));
 
     // out is empty so the engine starts from URL inference ("download"),
@@ -653,7 +647,6 @@ async fn adopts_filename_from_content_disposition() {
         total,
         completed,
         speed,
-        cancelled,
         conns,
         ct,
         gl,
@@ -692,7 +685,7 @@ async fn keeps_user_supplied_filename_over_content_disposition() {
     let dir = tmp.path().to_string_lossy().to_string();
     let uris = vec![format!("http://{}/foo", addr)];
     let options = options_with(vec![]);
-    let (total, completed, speed, cancelled, conns, ct, gl, tl, cc) = dummy_state();
+    let (total, completed, speed, conns, ct, gl, tl, cc) = dummy_state();
     let adopted = std::sync::Arc::new(parking_lot::Mutex::new(None));
 
     let result = run_http_download_multi(
@@ -703,7 +696,6 @@ async fn keeps_user_supplied_filename_over_content_disposition() {
         total,
         completed,
         speed,
-        cancelled,
         conns,
         ct,
         gl,
@@ -788,7 +780,7 @@ async fn adopts_filename_when_server_doesnt_support_ranges() {
     let dir = tmp.path().to_string_lossy().to_string();
     let uris = vec![format!("http://{}/resources/foo/download?version=1", addr)];
     let options = options_with(vec![]);
-    let (total, completed, speed, cancelled, conns, ct, gl, tl, cc) = dummy_state();
+    let (total, completed, speed, conns, ct, gl, tl, cc) = dummy_state();
     let adopted = std::sync::Arc::new(parking_lot::Mutex::new(None));
 
     let result = run_http_download_multi(
@@ -799,7 +791,6 @@ async fn adopts_filename_when_server_doesnt_support_ranges() {
         total,
         completed,
         speed,
-        cancelled,
         conns,
         ct,
         gl,
@@ -827,7 +818,7 @@ async fn adopts_filename_when_server_doesnt_support_ranges() {
 }
 
 // A small, deterministic payload below the multi-chunk threshold so the
-// engine falls back to the single-connection path.
+// engine falls back to the single-connection path
 fn small_payload(n: usize) -> Vec<u8> {
     (0..n).map(|i| (i % 251) as u8).collect()
 }
@@ -835,7 +826,7 @@ fn small_payload(n: usize) -> Vec<u8> {
 /// Quark-style signed-URL CDN: serves Range requests (206) but rejects a
 /// plain full GET with `412 Precondition Failed`. The Range probe succeeds,
 /// so the small-file single-connection fallback must reuse the Range request
-/// shape rather than issuing a plain GET.
+/// shape rather than issuing a plain GET
 async fn handle_quark(
     req: Request<Incoming>,
     payload: Arc<Vec<u8>>,
@@ -898,7 +889,7 @@ async fn spawn_quark_server(payload: Arc<Vec<u8>>) -> SocketAddr {
 async fn small_file_reuses_probe_range_shape_on_412_cdn() {
     // Regression for the Quark `412` failure: probe (Range) succeeds, but the
     // single-connection fallback used to issue a plain full GET, which the CDN
-    // rejected with 412. The fallback must now reuse the Range request shape.
+    // rejected with 412. The fallback must now reuse the Range request shape
     let payload = Arc::new(small_payload(5000));
     let addr = spawn_quark_server(payload.clone()).await;
     tokio::task::yield_now().await;
@@ -907,9 +898,9 @@ async fn small_file_reuses_probe_range_shape_on_412_cdn() {
     let dir = tmp.path().to_string_lossy().to_string();
     let uris = vec![format!("http://{addr}/file.bin")];
     // split=4 (from options_with) with min-split-size=1M => 5000 bytes is
-    // "too small for multi-chunk", forcing the single-connection path.
+    // "too small for multi-chunk", forcing the single-connection path
     let options = options_with(vec![]);
-    let (total, completed, speed, cancelled, conns, ct, gl, tl, cc) = dummy_state();
+    let (total, completed, speed, conns, ct, gl, tl, cc) = dummy_state();
 
     let result = run_http_download_multi(
         &uris,
@@ -919,7 +910,6 @@ async fn small_file_reuses_probe_range_shape_on_412_cdn() {
         total,
         completed,
         speed,
-        cancelled,
         conns,
         ct,
         gl,
@@ -937,7 +927,7 @@ async fn small_file_reuses_probe_range_shape_on_412_cdn() {
 /// Flaky raw-TCP server: the first response claims the full `Content-Length`
 /// but sends only half the body before closing the socket, simulating an
 /// `ECONNRESET` mid-stream. Subsequent requests honor `Range` and serve the
-/// remainder, letting the single-connection auto-retry resume in place.
+/// remainder, letting the single-connection auto-retry resume in place
 async fn spawn_flaky_server(payload: Arc<Vec<u8>>) -> SocketAddr {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -951,7 +941,7 @@ async fn spawn_flaky_server(payload: Arc<Vec<u8>>) -> SocketAddr {
             let payload = payload.clone();
             let attempt = attempt.clone();
             tokio::spawn(async move {
-                // Read request headers up to the blank line.
+                // Read request headers up to the blank line
                 let mut buf = Vec::new();
                 let mut tmp = [0u8; 1024];
                 loop {
@@ -976,14 +966,14 @@ async fn spawn_flaky_server(payload: Arc<Vec<u8>>) -> SocketAddr {
                 let n = attempt.fetch_add(1, Ordering::SeqCst);
                 if n == 0 {
                     // First attempt: promise the full body, deliver half, then
-                    // drop the connection to trigger a body-read error.
+                    // drop the connection to trigger a body-read error
                     let head = format!(
                         "HTTP/1.1 200 OK\r\nContent-Length: {len}\r\nAccept-Ranges: bytes\r\n\r\n"
                     );
                     let _ = stream.write_all(head.as_bytes()).await;
                     let _ = stream.write_all(&payload[..len / 2]).await;
                     let _ = stream.flush().await;
-                    // Drop `stream` -> connection closes before Content-Length.
+                    // Drop `stream` -> connection closes before Content-Length
                 } else {
                     // Require Range header on retry to prove resume behavior
                     let start = match start {
@@ -1023,7 +1013,7 @@ async fn spawn_flaky_server(payload: Arc<Vec<u8>>) -> SocketAddr {
 }
 
 /// Server that ignores `Range` entirely and always replies `200 OK` with the
-/// full body — the behavior of many naive app servers.
+/// full body — the behavior of many naive app servers
 async fn handle_range_ignoring(
     _req: Request<Incoming>,
     payload: Arc<Vec<u8>>,
@@ -1064,7 +1054,7 @@ async fn restarts_from_scratch_when_server_ignores_range_resume() {
     // Regression: with a stale `.part` on disk the engine sends
     // `Range: bytes=N-`. A server that ignores Range replies 200 with the
     // FULL body; writing that at offset N would duplicate the first N bytes
-    // and corrupt the file. The engine must detect the 200 and restart from 0.
+    // and corrupt the file. The engine must detect the 200 and restart from 0
     let payload = Arc::new(small_payload(4000));
     let addr = spawn_range_ignoring_server(payload.clone()).await;
     tokio::task::yield_now().await;
@@ -1075,7 +1065,7 @@ async fn restarts_from_scratch_when_server_ignores_range_resume() {
 
     let uris = vec![format!("http://{addr}/stream")];
     let options = options_with(vec![("split", json!("1"))]);
-    let (total, completed, speed, cancelled, conns, ct, gl, tl, cc) = dummy_state();
+    let (total, completed, speed, conns, ct, gl, tl, cc) = dummy_state();
 
     let result = run_http_download_multi(
         &uris,
@@ -1085,7 +1075,6 @@ async fn restarts_from_scratch_when_server_ignores_range_resume() {
         total,
         completed,
         speed,
-        cancelled,
         conns,
         ct,
         gl,
@@ -1107,7 +1096,7 @@ async fn restarts_from_scratch_when_server_ignores_range_resume() {
 async fn single_connection_auto_retries_and_resumes_on_reset() {
     // Regression for "requires manual resume": a single-connection download
     // that hits a mid-stream connection reset must auto-retry and resume in
-    // place instead of dropping the task to Error.
+    // place instead of dropping the task to Error
     let payload = Arc::new(small_payload(4000));
     let addr = spawn_flaky_server(payload.clone()).await;
     tokio::task::yield_now().await;
@@ -1115,10 +1104,10 @@ async fn single_connection_auto_retries_and_resumes_on_reset() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path().to_string_lossy().to_string();
     // split=1 + a URL path that differs from `out` skips the Range probe, so
-    // the first request the server sees is the download itself.
+    // the first request the server sees is the download itself
     let uris = vec![format!("http://{addr}/stream")];
     let options = options_with(vec![("split", json!("1"))]);
-    let (total, completed, speed, cancelled, conns, ct, gl, tl, cc) = dummy_state();
+    let (total, completed, speed, conns, ct, gl, tl, cc) = dummy_state();
 
     let result = run_http_download_multi(
         &uris,
@@ -1128,7 +1117,6 @@ async fn single_connection_auto_retries_and_resumes_on_reset() {
         total,
         completed,
         speed,
-        cancelled,
         conns,
         ct,
         gl,

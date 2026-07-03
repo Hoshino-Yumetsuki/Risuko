@@ -1,6 +1,44 @@
 <template>
-  <div class="mo-task-files" v-if="files">
-    <div class="mo-table-wrapper">
+  <div class="task-files" :class="{ 'task-files--detail': mode === 'DETAIL' }" v-if="files">
+    <template v-if="mode === 'DETAIL'">
+      <div class="task-files-grid-row task-files-grid-head">
+        <span>
+          <Checkbox :model-value="allSelected" @update:model-value="toggleAll" />
+        </span>
+        <span>{{ $t('task.file-name') }}</span>
+        <span>{{ $t('task.file-extension') }}</span>
+        <span class="task-files-num">%</span>
+        <span class="task-files-num">{{ $t('task.file-completed-size') }}</span>
+        <span class="task-files-num">{{ $t('task.file-size') }}</span>
+      </div>
+      <recycle-scroller
+        class="task-files-scroller"
+        :items="files"
+        :item-size="36"
+        key-field="idx"
+      >
+        <template #default="{ item }">
+          <div
+            class="task-files-grid-row"
+            :class="{ selected: isSelected(item) }"
+            @dblclick="toggleRow(item, !isSelected(item))"
+          >
+            <span>
+              <Checkbox
+                :model-value="isSelected(item)"
+                @update:model-value="(val) => toggleRow(item, val)"
+              />
+            </span>
+            <span class="task-files-name" :title="item.path || item.name">{{ item.name }}</span>
+            <span>{{ formatExtension(item.extension) }}</span>
+            <span class="task-files-num">{{ calcProgress(item.length, item.completedLength, 1) }}</span>
+            <span class="task-files-num">{{ formatBytes(item.completedLength) }}</span>
+            <span class="task-files-num">{{ formatBytes(item.length) }}</span>
+          </div>
+        </template>
+      </recycle-scroller>
+    </template>
+    <div v-else class="table-wrapper">
       <Table>
         <TableHeader>
           <TableRow>
@@ -9,10 +47,6 @@
             </TableHead>
             <TableHead class="min-w-50">{{ $t('task.file-name') }}</TableHead>
             <TableHead class="w-20">{{ $t('task.file-extension') }}</TableHead>
-            <TableHead v-if="mode === 'DETAIL'" class="w-12.5 text-right">%</TableHead>
-            <TableHead v-if="mode === 'DETAIL'" class="w-21.25 text-right">{{
-              $t('task.file-completed-size')
-            }}</TableHead>
             <TableHead class="w-21.25 text-right">{{ $t('task.file-size') }}</TableHead>
           </TableRow>
         </TableHeader>
@@ -20,7 +54,7 @@
           <TableRow
             v-for="row in files"
             :key="row.idx"
-            @dblclick="handleRowDbClick(row)"
+            @dblclick="toggleRow(row, !isSelected(row))"
             :class="{ 'bg-muted/50': isSelected(row) }"
           >
             <TableCell>
@@ -33,12 +67,6 @@
               {{ row.name }}
             </TableCell>
             <TableCell>{{ formatExtension(row.extension) }}</TableCell>
-            <TableCell v-if="mode === 'DETAIL'" class="text-right">{{
-              calcProgress(row.length, row.completedLength, 1)
-            }}</TableCell>
-            <TableCell v-if="mode === 'DETAIL'" class="text-right">{{
-              formatBytes(row.completedLength)
-            }}</TableCell>
             <TableCell class="text-right">{{ formatBytes(row.length) }}</TableCell>
           </TableRow>
         </TableBody>
@@ -72,14 +100,19 @@
 </template>
 <script lang="ts">
 import { FileText, Headphones, Image, Video } from "@lucide/vue";
-import { NONE_SELECTED_FILES, SELECTED_ALL_FILES } from "@shared/constants";
+import {
+	AUDIO_SUFFIXES,
+	DOCUMENT_SUFFIXES,
+	IMAGE_SUFFIXES,
+	NONE_SELECTED_FILES,
+	SELECTED_ALL_FILES,
+	SUB_SUFFIXES,
+	VIDEO_SUFFIXES,
+} from "@shared/constants";
 import {
 	bytesToSize,
 	calcProgress,
-	filterAudioFiles,
-	filterDocumentFiles,
-	filterImageFiles,
-	filterVideoFiles,
+	filterFilesBySuffix,
 	removeExtensionDot,
 } from "@shared/utils";
 import { isEmpty } from "lodash";
@@ -105,7 +138,7 @@ interface TaskFileRow {
 }
 
 export default {
-	name: "mo-task-files",
+	name: "task-files",
 	components: {
 		[UiButton.name]: UiButton,
 		Checkbox,
@@ -126,7 +159,6 @@ export default {
 			default: "ADD",
 			validator: (value: string) => ["ADD", "DETAIL"].includes(value),
 		},
-		height: { type: [Number, String] },
 		files: { type: Array, default: () => [] },
 	},
 	data() {
@@ -175,12 +207,8 @@ export default {
 	},
 	methods: {
 		calcProgress,
-		formatBytes(value: string | number) {
-			return bytesToSize(value);
-		},
-		formatExtension(value: string) {
-			return removeExtensionDot(value);
-		},
+		formatBytes: bytesToSize,
+		formatExtension: removeExtensionDot,
 		isSelected(row: TaskFileRow) {
 			return this.selectedIndices.has(row.idx);
 		},
@@ -207,40 +235,24 @@ export default {
 		clearSelection() {
 			this.selectedIndices = new Set();
 		},
-		toggleRowSelection(row: TaskFileRow, selected?: boolean) {
-			const next = new Set(this.selectedIndices);
-			if (selected === undefined) {
-				if (next.has(row.idx)) {
-					next.delete(row.idx);
-				} else {
-					next.add(row.idx);
-				}
-			} else if (selected) {
-				next.add(row.idx);
-			} else {
-				next.delete(row.idx);
-			}
-			this.selectedIndices = next;
-		},
 		toggleSelection(rows: TaskFileRow[]) {
 			this.selectedIndices = isEmpty(rows)
 				? new Set()
 				: new Set(rows.map((r) => r.idx));
 		},
 		toggleVideoSelection() {
-			this.toggleSelection(filterVideoFiles(this.files));
+			this.toggleSelection(
+				filterFilesBySuffix(this.files, [...VIDEO_SUFFIXES, ...SUB_SUFFIXES]),
+			);
 		},
 		toggleAudioSelection() {
-			this.toggleSelection(filterAudioFiles(this.files));
+			this.toggleSelection(filterFilesBySuffix(this.files, AUDIO_SUFFIXES));
 		},
 		toggleImageSelection() {
-			this.toggleSelection(filterImageFiles(this.files));
+			this.toggleSelection(filterFilesBySuffix(this.files, IMAGE_SUFFIXES));
 		},
 		toggleDocumentSelection() {
-			this.toggleSelection(filterDocumentFiles(this.files));
-		},
-		handleRowDbClick(row: TaskFileRow) {
-			this.toggleRowSelection(row);
+			this.toggleSelection(filterFilesBySuffix(this.files, DOCUMENT_SUFFIXES));
 		},
 	},
 };

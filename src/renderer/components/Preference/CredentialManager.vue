@@ -62,7 +62,7 @@ import type { SavedCredential } from "@shared/types/credential";
 import { usePreferenceStore } from "@/store/preference";
 
 export default {
-	name: "mo-credential-manager",
+	name: "credential-manager",
 	components: { ShieldCheck, ShieldOff, Trash2 },
 	computed: {
 		credentials(): SavedCredential[] {

@@ -87,6 +87,9 @@ export default {
 		"Automatically show downloading after adding task",
 	"no-confirm-before-delete-task":
 		"No confirmation is required before deleting task",
+	"auto-file-renaming": "Auto rename duplicate files",
+	"auto-file-renaming-tips":
+		'When a file with the same name already exists, save as "file.1.ext" instead of overwriting it',
 	"use-remote-file-time": "Use remote file modified time when saving",
 	"use-remote-file-time-tips":
 		"Set the file modification time to the timestamp from the remote server",
@@ -336,4 +339,17 @@ export default {
 	"credential-encrypted-badge": "Stored in OS keychain",
 	"credential-vault-unavailable":
 		"OS keychain not reachable; new credentials will be saved in plaintext",
+	"speed-limit-enabled": "Enable speed limits",
+	"speed-limit-enabled-description":
+		"Apply the limits below. When off, downloads run at full speed; the values are kept.",
+	"appearance-theme": "Theme",
+	"appearance-typography": "Typography",
+	"appearance-window": "Window",
+	"task-list-style": "Task list",
+	"task-list-style-description":
+		"How downloads are displayed in the task list.",
+	"task-list-style-compact": "Compact",
+	"task-list-style-card": "Cards",
+	"sidebar-collapsed": "Collapse sidebar",
+	"sidebar-collapsed-description": "Show icons only in the sidebar.",
 };

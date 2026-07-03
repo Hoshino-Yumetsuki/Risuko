@@ -1,7 +1,9 @@
 pub mod commands;
 pub mod headless;
-pub mod progress;
-pub mod rpc_client;
+
+// Shared with the standalone risuko-cli binary; the app crate reuses its
+// progress rendering and JSON-RPC client instead of keeping drifted copies
+pub use risuko_cli::{progress, rpc_client};
 
 use clap::{Parser, Subcommand};
 
@@ -37,9 +39,8 @@ pub enum Command {
     /// Start headless engine (RPC server only, no GUI)
     Serve(ServeArgs),
 
-    /// Internal: extract browser cookies and print them as JSON. Used by the
-    /// Windows elevated helper to decrypt app-bound (Chrome v20) cookies.
-    /// Hidden from `--help`.
+    /// Internal: extract browser cookies as JSON. Used by the Windows elevated
+    /// helper to decrypt app-bound (Chrome v20) cookies. Hidden from `--help`
     #[command(hide = true)]
     ExtractCookies(ExtractCookiesArgs),
 }
@@ -200,7 +201,7 @@ pub struct ExtractCookiesArgs {
     pub url: String,
 
     /// Write the resulting HostCookies JSON to this file instead of stdout.
-    /// The GUI passes a temp path here when relaunching elevated.
+    /// The GUI passes a temp path here when relaunching elevated
     #[arg(long)]
     pub out: Option<String>,
 }
