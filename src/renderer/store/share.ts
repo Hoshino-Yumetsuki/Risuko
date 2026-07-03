@@ -127,7 +127,13 @@ export function parseShareInput(raw: string): string {
 	return trimmed.toUpperCase();
 }
 
-const newId = () => crypto.randomUUID();
+function newId(): string {
+	try {
+		return crypto.randomUUID();
+	} catch {
+		return `share-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+	}
+}
 
 export const useShareStore = defineStore("share", {
 	state: (): ShareState => ({
@@ -356,7 +362,14 @@ export const useShareStore = defineStore("share", {
 			}
 			await this.ensureListener();
 
-			const { ticket, files } = session;
+			let ticket = session.ticket;
+			let files = session.files;
+
+			if (!ticket) {
+				const resolved = await this.waitForTicket(session.shareId);
+				ticket = resolved.ticket;
+				files = resolved.files;
+			}
 			if (!ticket) {
 				throw new Error("Sender has not shared any files yet");
 			}
@@ -391,6 +404,20 @@ export const useShareStore = defineStore("share", {
 				throw new Error(message);
 			}
 			return id;
+		},
+
+		async waitForTicket(
+			shareId: string,
+			attempts = 60,
+		): Promise<ResolvedSession> {
+			for (let i = 0; i < attempts; i += 1) {
+				const session = await this.resolveById(shareId);
+				if (session.ticket) {
+					return session;
+				}
+				await new Promise((resolve) => setTimeout(resolve, 2000));
+			}
+			throw new Error("Timed out waiting for the sender");
 		},
 
 		async cancel(id: string): Promise<void> {

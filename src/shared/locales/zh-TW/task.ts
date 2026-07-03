@@ -274,4 +274,9 @@ export default {
 	"mirror-remove": "移除鏡像",
 	"mirror-placeholder": "鏡像網址（同一檔案的其他伺服器）",
 	"mirror-hint": "新增指向同一檔案的鏡像網址，從多個來源並行下載。",
+	"detail-tab-general": "一般",
+	"detail-tab-activity": "活動",
+	"detail-tab-trackers": "Tracker",
+	"detail-tab-peers": "節點",
+	"detail-tab-files": "檔案",
 };

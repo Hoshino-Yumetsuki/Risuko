@@ -123,7 +123,7 @@ fn chunk_progress(chunks: &[Arc<AtomicU64>], total: u64) -> Vec<ChunkProgress> {
 /// `on_err` classifies the error (http also evicts stale cookies)
 #[allow(clippy::too_many_arguments)]
 async fn finish_task(
-    tasks: &Arc<RwLock<Vec<DownloadTask>>>,
+    tasks: &Arc<RevLock>,
     active: &Arc<RwLock<HashMap<String, ActiveDownload>>>,
     events: &EventBroadcaster,
     gid: &str,
@@ -204,8 +204,62 @@ async fn finish_task(
     }
 }
 
+struct RevLock {
+    inner: RwLock<Vec<DownloadTask>>,
+    rev: AtomicU64,
+}
+
+impl RevLock {
+    fn new(tasks: Vec<DownloadTask>) -> Self {
+        Self {
+            inner: RwLock::new(tasks),
+            rev: AtomicU64::new(0),
+        }
+    }
+
+    fn rev(&self) -> u64 {
+        self.rev.load(Ordering::Relaxed)
+    }
+
+    async fn read(&self) -> tokio::sync::RwLockReadGuard<'_, Vec<DownloadTask>> {
+        self.inner.read().await
+    }
+
+    async fn write(&self) -> RevWriteGuard<'_> {
+        RevWriteGuard {
+            guard: self.inner.write().await,
+            rev: &self.rev,
+        }
+    }
+}
+
+struct RevWriteGuard<'a> {
+    guard: tokio::sync::RwLockWriteGuard<'a, Vec<DownloadTask>>,
+    rev: &'a AtomicU64,
+}
+
+impl std::ops::Deref for RevWriteGuard<'_> {
+    type Target = Vec<DownloadTask>;
+    fn deref(&self) -> &Self::Target {
+        &self.guard
+    }
+}
+
+impl std::ops::DerefMut for RevWriteGuard<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.guard
+    }
+}
+
+impl Drop for RevWriteGuard<'_> {
+    fn drop(&mut self) {
+        self.rev.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
 pub struct TaskManager {
-    tasks: Arc<RwLock<Vec<DownloadTask>>>,
+    tasks: Arc<RevLock>,
+    saved_rev: AtomicU64,
     active_downloads: Arc<RwLock<HashMap<String, ActiveDownload>>>,
     torrent_ids: Arc<RwLock<HashMap<String, usize>>>,
     pending_magnets: Arc<RwLock<HashSet<String>>>,
@@ -341,7 +395,9 @@ impl TaskManager {
         super::dns::apply_from_options(&options.global);
 
         let manager = Self {
-            tasks: Arc::new(RwLock::new(saved_tasks)),
+            tasks: Arc::new(RevLock::new(saved_tasks)),
+            // MAX so the first auto-save always runs once (rev starts at 0)
+            saved_rev: AtomicU64::new(u64::MAX),
             active_downloads: Arc::new(RwLock::new(HashMap::new())),
             torrent_ids: Arc::new(RwLock::new(HashMap::new())),
             pending_magnets: Arc::new(RwLock::new(HashSet::new())),
@@ -2620,8 +2676,15 @@ impl TaskManager {
     }
 
     pub async fn save_session(&self) -> Result<(), String> {
+        let rev = self.tasks.rev();
+        if self.saved_rev.load(Ordering::Relaxed) == rev {
+            return Ok(());
+        }
         let tasks = self.tasks.read().await;
-        self.session.save(&tasks)
+        let rev = self.tasks.rev();
+        self.session.save(&tasks)?;
+        self.saved_rev.store(rev, Ordering::Relaxed);
+        Ok(())
     }
 
     /// Hard cap for retained finished/failed/removed task records
@@ -3159,7 +3222,8 @@ mod tests {
         let cookie_store = Arc::new(CookieStore::new(dir.path()));
 
         TaskManager {
-            tasks: Arc::new(RwLock::new(tasks)),
+            tasks: Arc::new(RevLock::new(tasks)),
+            saved_rev: AtomicU64::new(u64::MAX),
             active_downloads: Arc::new(RwLock::new(HashMap::new())),
             torrent_ids: Arc::new(RwLock::new(HashMap::new())),
             pending_magnets: Arc::new(RwLock::new(HashSet::new())),
@@ -3171,6 +3235,26 @@ mod tests {
             global_speed_limiter,
             cookie_store,
         }
+    }
+
+    #[tokio::test]
+    async fn save_session_skips_until_a_write_bumps_rev() {
+        let mgr = make_test_manager(vec![make_task("g1", TaskStatus::Complete)]);
+
+        mgr.save_session().await.unwrap();
+        let rev = mgr.tasks.rev();
+        assert_eq!(mgr.saved_rev.load(Ordering::Relaxed), rev);
+
+        mgr.save_session().await.unwrap();
+        assert_eq!(mgr.tasks.rev(), rev, "no write must not bump rev");
+
+        mgr.tasks
+            .write()
+            .await
+            .push(make_task("g2", TaskStatus::Complete));
+        assert!(mgr.tasks.rev() > rev, "write must bump rev");
+        mgr.save_session().await.unwrap();
+        assert_eq!(mgr.saved_rev.load(Ordering::Relaxed), mgr.tasks.rev());
     }
 
     fn make_task(gid: &str, status: TaskStatus) -> DownloadTask {

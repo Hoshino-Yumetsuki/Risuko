@@ -264,12 +264,17 @@ impl RssManager {
                 return Vec::new();
             };
             for item in items.iter_mut() {
-                if item.is_downloaded
-                    && item
-                        .download_path
-                        .as_deref()
-                        .is_some_and(|p| !std::path::Path::new(p).exists())
-                {
+                if !item.is_downloaded {
+                    continue;
+                }
+                let Some(path) = item.download_path.as_deref() else {
+                    continue;
+                };
+                let path = std::path::Path::new(path);
+                if path.exists() {
+                    continue;
+                }
+                if path.parent().is_some_and(|parent| parent.exists()) {
                     item.is_downloaded = false;
                     item.download_path = None;
                     changed = true;
