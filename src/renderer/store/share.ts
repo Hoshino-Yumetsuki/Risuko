@@ -135,6 +135,14 @@ function newId(): string {
 	}
 }
 
+function isTerminalShareResolveError(err: unknown): boolean {
+	if (!axios.isAxiosError(err)) {
+		return false;
+	}
+	const status = err.response?.status;
+	return status === 401 || status === 403 || status === 404;
+}
+
 export const useShareStore = defineStore("share", {
 	state: (): ShareState => ({
 		role: "send",
@@ -370,6 +378,12 @@ export const useShareStore = defineStore("share", {
 				ticket = resolved.ticket;
 				files = resolved.files;
 			}
+			if (
+				!this.pendingIncoming ||
+				this.pendingIncoming.shareId !== session.shareId
+			) {
+				throw new Error("Receive cancelled");
+			}
 			if (!ticket) {
 				throw new Error("Sender has not shared any files yet");
 			}
@@ -411,9 +425,19 @@ export const useShareStore = defineStore("share", {
 			attempts = 60,
 		): Promise<ResolvedSession> {
 			for (let i = 0; i < attempts; i += 1) {
-				const session = await this.resolveById(shareId);
-				if (session.ticket) {
-					return session;
+				if (this.pendingIncoming?.shareId !== shareId) {
+					throw new Error("Receive cancelled");
+				}
+				try {
+					const session = await this.resolveById(shareId);
+					if (session.ticket) {
+						return session;
+					}
+				} catch (err) {
+					if (isTerminalShareResolveError(err)) {
+						throw err;
+					}
+					logger.warn("[Risuko] share ticket poll failed, retrying:", err);
 				}
 				await new Promise((resolve) => setTimeout(resolve, 2000));
 			}
