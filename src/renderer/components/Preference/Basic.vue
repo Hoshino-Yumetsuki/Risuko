@@ -472,6 +472,40 @@
                 />
               </div>
             </div>
+            <div v-if="!isAndroid" class="settings-row">
+              <div class="settings-row-content">
+                <div class="settings-row-title">
+                  {{ $t('preferences.clipboard-watch') }}
+                </div>
+                <div class="settings-row-description">
+                  {{ $t('preferences.clipboard-watch-tips') }}
+                </div>
+              </div>
+              <div class="settings-row-action">
+                <ui-checkbox
+                  :model-value="!!form.clipboardWatch"
+                  @change="(val) => setBasicBoolean('clipboardWatch', val)"
+                />
+              </div>
+            </div>
+            <div v-if="!isAndroid && form.clipboardWatch" class="settings-row">
+              <div class="settings-row-content">
+                <div class="settings-row-title">
+                  {{ $t('preferences.clipboard-watch-ext') }}
+                </div>
+                <div class="settings-row-description">
+                  {{ $t('preferences.clipboard-watch-ext-tips') }}
+                </div>
+                <Textarea
+                  :rows="3"
+                  autocomplete="off"
+                  spellcheck="false"
+                  :placeholder="$t('preferences.clipboard-watch-ext-placeholder')"
+                  v-model="form.clipboardWatchExtensions"
+                  style="margin-top: 8px; max-height: 5lh"
+                />
+              </div>
+            </div>
             <div class="settings-row">
               <div class="settings-row-content">
                 <div class="settings-row-title">
@@ -590,6 +624,7 @@ import {
 } from "@lucide/vue";
 import {
 	APP_RUN_MODE,
+	DEFAULT_CLIPBOARD_WATCH_EXTENSIONS,
 	ENGINE_MAX_CONCURRENT_DOWNLOADS,
 	ENGINE_RPC_PORT,
 	FILE_CATEGORIES,
@@ -604,6 +639,7 @@ import {
 } from "@shared/utils";
 import logger from "@shared/utils/logger";
 import { reduceTrackerString } from "@shared/utils/tracker";
+import { invoke } from "@tauri-apps/api/core";
 import { cloneDeep, isEmpty } from "lodash";
 import SelectDirectory from "@/components/Native/SelectDirectory.vue";
 import HistoryDirectory from "@/components/Preference/HistoryDirectory.vue";
@@ -618,6 +654,7 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
 import is from "@/shims/platform";
 import { useAppStore } from "@/store/app";
 import { usePreferenceStore } from "@/store/preference";
@@ -639,6 +676,15 @@ const normalizePositiveInt = (
 	return Math.min(Math.max(Math.floor(parsed), min), max);
 };
 
+const parseExtList = (text) => [
+	...new Set(
+		String(text || "")
+			.split(/[\s,]+/)
+			.map((s) => s.trim().replace(/^\.+/, "").toLowerCase())
+			.filter(Boolean),
+	),
+];
+
 const initForm = (config) => {
 	const {
 		autoDetectLowSpeedTasks,
@@ -649,6 +695,8 @@ const initForm = (config) => {
 		workerMaxRetries,
 		btForceEncryption,
 		btSaveMetadata,
+		clipboardWatch,
+		clipboardWatchExtensions,
 		dir,
 		fileCategoryDirs,
 		keepSeeding,
@@ -684,6 +732,11 @@ const initForm = (config) => {
 		workerMaxRetries: normalizePositiveInt(workerMaxRetries, 5, 1, 20),
 		btForceEncryption: parseBooleanConfig(btForceEncryption),
 		btSaveMetadata: parseBooleanConfig(btSaveMetadata),
+		clipboardWatch: parseBooleanConfig(clipboardWatch, true),
+		clipboardWatchExtensions: (Array.isArray(clipboardWatchExtensions)
+			? clipboardWatchExtensions
+			: DEFAULT_CLIPBOARD_WATCH_EXTENSIONS
+		).join(" "),
 		dir,
 		fileCategoryDirs: {
 			music: "",
@@ -738,6 +791,7 @@ export default {
 		SelectItem,
 		SelectTrigger,
 		SelectValue,
+		Textarea,
 		Globe,
 		FolderDown,
 		Gauge,
@@ -935,6 +989,7 @@ export default {
 				"purgeRecordOnStart",
 				"btSaveMetadata",
 				"btForceEncryption",
+				"clipboardWatch",
 				"keepSeeding",
 				"autoRetry",
 				"autoDetectLowSpeedTasks",
@@ -956,6 +1011,12 @@ export default {
 
 			if (btTracker) {
 				data.btTracker = reduceTrackerString(convertLineToComma(btTracker));
+			}
+
+			if ("clipboardWatchExtensions" in data) {
+				data.clipboardWatchExtensions = parseExtList(
+					this.form.clipboardWatchExtensions,
+				);
 			}
 
 			if (rpcListenPort === "") {
@@ -1001,6 +1062,13 @@ export default {
 			usePreferenceStore()
 				.save(data)
 				.then(() => {
+					if ("clipboardWatch" in data) {
+						invoke(
+							data.clipboardWatch
+								? "start_clipboard_watch"
+								: "stop_clipboard_watch",
+						).catch(() => {});
+					}
 					this.syncFormConfig();
 					this.$msg.success(this.$t("preferences.save-success-message"));
 					changedConfig.basic = {};

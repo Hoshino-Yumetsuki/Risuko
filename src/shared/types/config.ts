@@ -108,6 +108,12 @@ export interface AppConfig {
 	completionScriptArgs?: string;
 	completionScriptTimeoutMs?: number;
 	shutdownWhenComplete?: boolean;
+	// Clipboard Watcher — offer to download magnet/file links copied anywhere
+	clipboardWatch?: boolean;
+	clipboardWatchExtensions?: string[];
+	clipboardWatchNoticeSeen?: boolean;
+	// First-launch legal acceptance gate
+	legalAccepted?: boolean;
 	// DNS over HTTPS
 	dohEnable?: boolean;
 	dohUrl?: string;

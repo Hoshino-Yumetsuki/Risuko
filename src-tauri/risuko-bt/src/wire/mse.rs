@@ -1,51 +1,23 @@
 //! Message Stream Encryption (MSE) / Protocol Encryption (PE)
-//!
-//! BitTorrent MSE/PE handshake (BEP 8, Vuze spec). Sits under the BEP-3
-//! peer handshake and encrypts the whole TCP stream with RC4 after a
-//! Diffie-Hellman exchange
-//!
-//! The handshake proceeds, in abbreviated form:
-//!
-//! ```text
-//! A -> B: Ya || PadA
-//! B -> A: Yb || PadB
-//! A -> B: HASH('req1', S) || HASH('req2', SKEY) XOR HASH('req3', S)
-//!          || ENCRYPT(VC || crypto_provide || len(PadC) || PadC || len(IA) || IA)
-//! B -> A: ENCRYPT(VC || crypto_select || len(PadD) || PadD)
-//! ```
-//!
-//! Where `S` is the DH shared secret, `SKEY` is the torrent info-hash, `VC`
-//! is the 8-byte verification constant (all zeros), and the RC4 stream keys
-//! are derived from `HASH('keyA', S, SKEY)` for A->B and
-//! `HASH('keyB', S, SKEY)` for B->A. Both RC4 instances discard the first
-//! 1024 bytes of keystream per spec
-//!
-//! Only crypto primitives and byte-level handshake encode/decode here; the
-//! async wire upgrade lives in `peer/connection.rs`
 
 use std::io;
 
 use num_bigint::BigUint;
 use rand::{Rng, RngExt};
-use rc4::{KeyInit, Rc4, StreamCipher};
 use sha1::{Digest, Sha1};
 
-/// BEP-8 MSE prime P (768-bit Diffie-Hellman modulus, hex-encoded in spec)
+use super::rc4::Rc4;
+
 const P_HEX: &str = concat!(
     "FFFFFFFFFFFFFFFFC90FDAA22168C234C4C6628B80DC1CD1",
     "29024E088A67CC74020BBEA63B139B22514A08798E3404DD",
     "EF9519B3CD3A431B302B0A6DF25F14374FE1356D6D51C245",
     "E485B576625E7EC6F44C42E9A63A3620FFFFFFFFFFFFFFFF"
 );
-/// BEP-8 generator
 const G: u64 = 2;
-/// Length in bytes of Y_a / Y_b / S (96 bytes == 768 bits)
 pub const DH_LEN: usize = 96;
-/// Verification constant (8 zero bytes)
 pub const VC: [u8; 8] = [0u8; 8];
 
-/// Crypto selection bitfield. Peers advertise which they support; selection
-/// picks exactly one
 pub mod crypto {
     pub const PLAINTEXT: u32 = 0x01;
     pub const RC4: u32 = 0x02;
@@ -152,14 +124,10 @@ pub fn rc4_key(tag: &[u8; 4], s: &[u8; DH_LEN], skey: &[u8; 20]) -> [u8; 20] {
     sha1_many(&[tag, s, skey])
 }
 
-/// RC4 instance used by MSE. rc4 0.2 accepts variable-length keys via
-/// `new_from_slice`, which we use with the 20-byte SHA1 output from BEP 8
 pub type MseRc4 = Rc4;
 
-/// Initialise an RC4 stream with the given 20-byte key, and discard the
-/// first 1024 bytes of keystream per spec
 pub fn init_rc4(key: &[u8; 20]) -> MseRc4 {
-    let mut c = MseRc4::new_from_slice(key).expect("20-byte key is valid for RC4");
+    let mut c = Rc4::new(key);
     let mut sink = [0u8; 1024];
     c.apply_keystream(&mut sink);
     c

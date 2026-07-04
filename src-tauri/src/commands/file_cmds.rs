@@ -918,7 +918,16 @@ fn extract_btih_token(input: &str) -> Option<String> {
 }
 
 pub(crate) fn percent_decode_lossy(input: &str) -> String {
-    String::from_utf8_lossy(&urlencoding::decode_binary(input.as_bytes())).to_string()
+    percent_encoding::percent_decode(input.as_bytes())
+        .decode_utf8_lossy()
+        .into_owned()
+}
+
+pub(crate) fn percent_decode_strict(input: &str) -> String {
+    percent_encoding::percent_decode(input.as_bytes())
+        .decode_utf8()
+        .map(|s| s.into_owned())
+        .unwrap_or_default()
 }
 
 fn valid_normalized_info_hash(raw: &str) -> Option<String> {
@@ -1258,6 +1267,14 @@ mod tests {
     #[test]
     fn decode_passthrough() {
         assert_eq!(percent_decode_lossy("hello"), "hello");
+    }
+
+    #[test]
+    fn decode_strict_rejects_invalid_utf8() {
+        // %FF%FE is not valid UTF-8 -> strict decode yields "" (old
+        // urlencoding::decode(..).unwrap_or_default() behaviour)
+        assert_eq!(percent_decode_strict("%FF%FE"), "");
+        assert_eq!(percent_decode_strict("%E4%B8%AD"), "中");
     }
 
     // -- inspect_torrent_metadata --

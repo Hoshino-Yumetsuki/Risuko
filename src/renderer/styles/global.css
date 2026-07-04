@@ -1,6 +1,5 @@
 @import "tailwindcss";
 @import "tw-animate-css";
-@import "normalize.css/normalize.css";
 @source "../../renderer/**/*.{vue,ts,tsx,js,jsx}";
 
 @custom-variant dark (&:where(.dark, .dark *));

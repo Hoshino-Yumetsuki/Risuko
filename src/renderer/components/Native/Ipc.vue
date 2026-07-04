@@ -36,15 +36,25 @@ export default {
 				}
 			});
 
+			// Clipboard Watcher
+			const unlistenClip = await listen("clipboard-download", (event) => {
+				const uri = event.payload as string;
+				if (uri) {
+					commands.execute("application:new-task", { uri });
+				}
+			});
+
 			if (token !== this.bindToken) {
 				unlisten();
 				unlistenFile();
+				unlistenClip();
 				return;
 			}
 
 			this.unlisten = () => {
 				unlisten();
 				unlistenFile();
+				unlistenClip();
 			};
 		},
 		unbindIpcEvents() {

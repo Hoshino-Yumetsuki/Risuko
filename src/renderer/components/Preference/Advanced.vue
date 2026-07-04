@@ -1281,7 +1281,6 @@ import {
 	reduceTrackerString,
 } from "@shared/utils/tracker";
 import { invoke } from "@tauri-apps/api/core";
-import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { cloneDeep, isEmpty } from "lodash";
 import api, { type CookieEntryView } from "@/api";
 import SelectDirectory from "@/components/Native/SelectDirectory.vue";
@@ -1308,6 +1307,7 @@ import { Textarea } from "@/components/ui/textarea";
 import is from "@/shims/platform";
 import { usePreferenceStore } from "@/store/preference";
 import { useTaskStore } from "@/store/task";
+import { copyText } from "@/utils/clipboard";
 
 const resolveDohProvider = (storedProvider, storedUrl) => {
 	const url = `${storedUrl || ""}`.trim();
@@ -1610,7 +1610,7 @@ export default {
 			this.form.logDirOverride = `${dir || ""}`.trim();
 		},
 		copyRpcUrlToClipboard() {
-			writeText(this.currentRpcUrl).catch(() => {});
+			copyText(this.currentRpcUrl).catch(() => {});
 		},
 		onExternalEngineHostBlur() {
 			const host = `${this.form.externalEngineHost || ""}`.trim();

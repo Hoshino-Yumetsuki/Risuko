@@ -186,6 +186,7 @@ export default {
 	"no-task": "当前没有下载任务",
 	"copy-link": "拷贝链接",
 	"copy-link-success": "拷贝链接成功",
+	"copy-link-failed": "拷贝链接失败",
 	"remove-record": "移除下载记录",
 	"remove-record-confirm": '你确定要移除 "{{taskName}}" 下载记录吗?',
 	"remove-record-label": "同时删除文件",
@@ -274,4 +275,7 @@ export default {
 	"mirror-remove": "移除镜像",
 	"mirror-placeholder": "镜像地址（同一文件的其他服务器）",
 	"mirror-hint": "添加指向同一文件的镜像地址，从多个源并行下载。",
+	"clipboard-download-prompt": "下载此链接？",
+	"clipboard-download-accept": "下载",
+	"clipboard-download-ignore": "忽略",
 };

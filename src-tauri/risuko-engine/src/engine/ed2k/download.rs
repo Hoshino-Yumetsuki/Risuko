@@ -30,10 +30,9 @@ pub async fn run_ed2k_download(
     cancel_token: CancellationToken,
 ) -> Result<PathBuf, String> {
     let file_hash = file_link.file_hash_bytes;
-    let file_path = PathBuf::from(dir).join(&file_link.file_name);
+    let safe = crate::engine::util::safe_filename(&file_link.file_name, "ed2k-download");
+    let file_path = PathBuf::from(dir).join(safe);
 
-    // Part request/answer opcodes use 32-bit offsets
-    // Reject files over 4 GiB until the eMule 64-bit extension is implemented
     if file_link.file_size > u32::MAX as u64 {
         return Err(format!(
             "ed2k file too large ({} bytes): files over 4 GiB require the 64-bit \
@@ -47,11 +46,9 @@ pub async fn run_ed2k_download(
     let chunks = ChunkManager::new(file_path.clone(), file_link.file_size);
     chunks.init_file().await?;
 
-    // Shared mutable state for the download
     let chunks = Arc::new(Mutex::new(chunks));
     let peer_count = Arc::new(AtomicU32::new(0));
 
-    // Generate a random client hash for this session
     let client_hash: [u8; 16] = rand::random();
 
     let servers = server_list(&ed2k_servers);

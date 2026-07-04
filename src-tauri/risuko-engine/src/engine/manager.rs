@@ -3809,16 +3809,12 @@ mod tests {
 
     #[tokio::test]
     async fn metalink_all_cancelled_does_not_complete() {
-        // every in-flight file cancelled (pause/stop) must not be reported as done
         let mut task = DownloadTask::new_metalink(
             "gm".into(),
             "/dl".into(),
             None,
             Map::new(),
-            vec![
-                mk_metalink_file("1", 100, 0),
-                mk_metalink_file("2", 100, 0),
-            ],
+            vec![mk_metalink_file("1", 100, 0), mk_metalink_file("2", 100, 0)],
         );
         task.status = TaskStatus::Active;
         let mgr = make_test_manager(vec![task]);

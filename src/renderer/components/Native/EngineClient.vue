@@ -14,6 +14,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { toast } from "vue-sonner";
 import api from "@/api";
+import is from "@/shims/platform";
 import { useAppStore } from "@/store/app";
 import { usePreferenceStore } from "@/store/preference";
 import { useTaskStore } from "@/store/task";
@@ -50,6 +51,9 @@ export default {
 			initTimer: null,
 			isPolling: false,
 			isDestroyed: false,
+			notifyActionUnlisten: null as Promise<{
+				unregister: () => Promise<void>;
+			}> | null,
 			noSleepDesired: false,
 			noSleepApplied: false,
 			noSleepSyncing: false,
@@ -746,14 +750,73 @@ export default {
 				? this.$t("task.bt-download-complete-notify")
 				: this.$t("task.download-complete-notify");
 
-			const notify = new Notification(notifyMessage, {
-				body: `${taskName}${tips}`,
-			});
-			notify.onclick = () => {
-				showItemInFolder(path, {
-					errorMsg: this.$t("task.file-not-exist"),
+			if (document.hidden && !is.android()) {
+				this.sendOsNotification(notifyMessage, `${taskName}${tips}`, path);
+			} else {
+				const notify = new Notification(notifyMessage, {
+					body: `${taskName}${tips}`,
 				});
-			};
+				notify.onclick = () => {
+					showItemInFolder(path, {
+						errorMsg: this.$t("task.file-not-exist"),
+					});
+				};
+			}
+		},
+		async sendOsNotification(title: string, body: string, path?: string) {
+			try {
+				const {
+					isPermissionGranted,
+					requestPermission,
+					sendNotification,
+					onAction,
+				} = await import("@tauri-apps/plugin-notification");
+				let granted = await isPermissionGranted();
+				if (!granted) {
+					granted = (await requestPermission()) === "granted";
+				}
+				if (!granted) {
+					return;
+				}
+				if (!this.notifyActionUnlisten) {
+					this.notifyActionUnlisten = onAction((n) => {
+						const folder = n?.extra?.folderPath as string | undefined;
+						if (folder) {
+							showItemInFolder(folder, {
+								errorMsg: this.$t("task.file-not-exist"),
+							});
+						}
+					});
+					this.notifyActionUnlisten.catch(() => {
+						this.notifyActionUnlisten = null;
+					});
+				}
+				sendNotification({
+					title,
+					body,
+					extra: path ? { folderPath: path } : undefined,
+				});
+			} catch (err) {
+				logger.warn(
+					"[Risuko] OS notification failed:",
+					(err as Error)?.message || err,
+				);
+			}
+		},
+		maybeShowClipboardNotice() {
+			if (is.android()) {
+				return;
+			}
+			const config = usePreferenceStore().config;
+			if (config?.clipboardWatch && !config?.clipboardWatchNoticeSeen) {
+				this.$msg.info({
+					message: this.$t("preferences.clipboard-watch-notice"),
+					duration: 8000,
+				});
+				usePreferenceStore()
+					.save({ clipboardWatchNoticeSeen: true })
+					.catch(() => {});
+			}
 		},
 		async bindEngineEvents() {
 			const handlers: [string, (payload: { gid: string }) => void][] = [
@@ -991,6 +1054,7 @@ export default {
 			usePreferenceStore().applyEngineMode();
 			this.autoResumeUnfinishedTasksOnLaunch();
 			this.syncTraySpeedTooltip();
+			this.maybeShowClipboardNotice();
 
 			this.startPolling();
 		}, 100);
@@ -1001,6 +1065,8 @@ export default {
 		clearTimeout(this.initTimer);
 		this.initTimer = null;
 
+		this.notifyActionUnlisten?.then((u) => u.unregister()).catch(() => {});
+		this.notifyActionUnlisten = null;
 		this.unbindEngineEvents();
 		this.stopPolling();
 		this.clearAllAutoRetryTimers();

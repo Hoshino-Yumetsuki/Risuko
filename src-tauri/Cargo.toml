@@ -32,6 +32,9 @@ edition.workspace = true
 name = "risuko_lib"
 crate-type = ["lib", "cdylib", "staticlib"]
 
+[lints.rust]
+linker_messages = "allow"
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
@@ -75,14 +78,17 @@ tracing-appender = "0.2"
 risuko-http = { workspace = true }
 risuko-cookies = { workspace = true }
 base64 = "0.22"
+percent-encoding = "2"
 sha1 = "0.11"
-urlencoding = "2"
 keyring-core = "1"
 fs4 = "1"
 tempfile = "3"
 
 [target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
 apple-native-keyring-store = { version = "1", features = ["keychain"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-app-kit = { version = "0.3", features = ["NSWorkspace", "NSRunningApplication", "libc"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-native-keyring-store = "1"
@@ -100,6 +106,8 @@ dbus-secret-service-keyring-store = { version = "1", features = ["crypto-rust"] 
 trash = "5"
 tauri-plugin-autostart = "2"
 tauri-plugin-single-instance = "2"
+tauri-plugin-clipboard = "2.1.11"
+tauri-plugin-notification = "2"
 
 [target.'cfg(target_os = "android")'.dependencies]
 jni = "0.22"

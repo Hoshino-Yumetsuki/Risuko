@@ -1,3 +1,4 @@
+pub mod clip_prompt;
 pub mod flyout;
 pub mod menu;
 pub mod tray;

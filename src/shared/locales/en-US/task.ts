@@ -211,6 +211,7 @@ export default {
 	"no-task": "There are no current tasks",
 	"copy-link": "Copy Link",
 	"copy-link-success": "Successfully copied link",
+	"copy-link-failed": "Failed to copy link",
 	"remove-record": "Remove Task Record",
 	"remove-record-confirm":
 		'Are you sure you want to remove download record for "{{taskName}}"?',
@@ -311,4 +312,7 @@ export default {
 	"detail-tab-trackers": "Trackers",
 	"detail-tab-peers": "Peers",
 	"detail-tab-files": "Files",
+	"clipboard-download-prompt": "Download this link?",
+	"clipboard-download-accept": "Download",
+	"clipboard-download-ignore": "Ignore",
 };

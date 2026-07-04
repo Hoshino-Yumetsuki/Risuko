@@ -30,7 +30,6 @@ httparse = "1"
 network-interface = "2"
 serde = { version = "1", features = ["derive"] }
 num-bigint = "0.4"
-rc4 = "0.2"
 
 [dev-dependencies]
 tempfile = "3"

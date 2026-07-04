@@ -62,6 +62,7 @@ export default defineConfig({
 			input: {
 				index: path.resolve(rootDir, "index.html"),
 				tray: path.resolve(rootDir, "tray.html"),
+				"clip-prompt": path.resolve(rootDir, "clip-prompt.html"),
 			},
 		},
 	},

@@ -1,9 +1,25 @@
+import { userKeys } from "./configKeys";
+
 export interface SyncCategory {
 	id: string;
 	keys: string[];
 }
 
-export const syncCategories: SyncCategory[] = [
+export const MISC_CATEGORY = "misc";
+
+const DEVICE_LOCAL_KEYS = new Set<string>([
+	"cloud-sync-enabled",
+	"cloud-sync-auto",
+	"cloud-sync-categories",
+	"cloud-sync-token",
+	"cloud-sync-last-at",
+	"cloud-sync-server-url",
+	"cloud-sync-category-timestamps",
+	"legal-accepted",
+	"clipboard-watch-notice-seen",
+]);
+
+const namedCategories: SyncCategory[] = [
 	{
 		id: "appearance",
 		keys: [
@@ -206,6 +222,15 @@ export const syncCategories: SyncCategory[] = [
 		],
 	},
 ];
+
+const categorizedKeys = new Set(namedCategories.flatMap((c) => c.keys));
+const miscKeys = userKeys.filter(
+	(k) => !categorizedKeys.has(k) && !DEVICE_LOCAL_KEYS.has(k),
+);
+
+export const syncCategories: SyncCategory[] = miscKeys.length
+	? [...namedCategories, { id: MISC_CATEGORY, keys: miscKeys }]
+	: namedCategories;
 
 export const syncCategoryIds = syncCategories.map((c) => c.id);
 
