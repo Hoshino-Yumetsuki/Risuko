@@ -5,7 +5,7 @@
 <script lang="ts">
 import { ADD_TASK_TYPE } from "@shared/constants";
 import { useAppStore } from "@/store/app";
-import { createTorrentBatchItem } from "@/store/batchQueue";
+import { batchItemForFilePath } from "@/store/batchQueue";
 
 export default {
 	name: "drop-zone",
@@ -18,27 +18,24 @@ export default {
 	mounted() {
 		this.preventDefault = (ev) => ev.preventDefault();
 		this.injectTorrentPaths = async (paths: string[] = []) => {
-			const torrentPaths = paths.filter((path) => /\.torrent$/i.test(path));
-			if (!torrentPaths.length) {
+			const items = paths
+				.map((path) => {
+					const segs = `${path}`.split(/[/\\]/);
+					return batchItemForFilePath(path, segs[segs.length - 1] || undefined);
+				})
+				.filter(Boolean);
+			if (!items.length) {
 				this.$msg.error(this.$t("task.select-torrent"));
 				return;
 			}
-
-			const items = torrentPaths.map((path) => {
-				const segs = `${path}`.split(/[/\\]/);
-				const name = segs[segs.length - 1] || "task.torrent";
-				return createTorrentBatchItem(path, name);
-			});
 
 			useAppStore().showAddTaskDialog(ADD_TASK_TYPE.TORRENT);
 			useAppStore().enqueueBatchItems(items);
 		};
 		this.handleFileList = (files) => {
 			const items = (files || [])
-				.filter((item) => /\.torrent$/i.test(item.name))
-				.map((item) =>
-					createTorrentBatchItem(item.path ?? item.name, item.name),
-				);
+				.map((item) => batchItemForFilePath(item.path ?? item.name, item.name))
+				.filter(Boolean);
 			if (!items.length) {
 				this.$msg.error(this.$t("task.select-torrent"));
 				return;

@@ -2,7 +2,7 @@ import { SELECTED_ALL_FILES } from "@shared/constants";
 import type { MediaFormat } from "@shared/types/task";
 import { isMediaUri } from "@shared/utils";
 
-type BatchItemKind = "torrent" | "uri" | "magnet";
+type BatchItemKind = "torrent" | "uri" | "magnet" | "metalink";
 
 type BatchItemStatus = "queued" | "submitting" | "success" | "failed";
 
@@ -78,6 +78,39 @@ export const createTorrentBatchItem = (
 		selectFile: SELECTED_ALL_FILES,
 		status: "queued",
 	};
+};
+
+export const createMetalinkBatchItem = (
+	path: string,
+	name?: string,
+): BatchQueueItem => {
+	const segs = `${path}`.split(/[/\\]/);
+	const fallback = segs[segs.length - 1] || path;
+	return {
+		id: crypto.randomUUID(),
+		kind: "metalink",
+		label: name || fallback,
+		path,
+		displayName: name || fallback,
+		resolveState: "preview-disabled",
+		selectFile: SELECTED_ALL_FILES,
+		status: "queued",
+	};
+};
+
+export const TASK_FILE_RE = /\.(torrent|meta4|metalink)$/i;
+
+export const batchItemForFilePath = (
+	path: string,
+	name?: string,
+): BatchQueueItem | null => {
+	if (/\.torrent$/i.test(path)) {
+		return createTorrentBatchItem(path, name);
+	}
+	if (/\.(meta4|metalink)$/i.test(path)) {
+		return createMetalinkBatchItem(path, name);
+	}
+	return null;
 };
 
 export const createUriBatchItem = (uri: string): BatchQueueItem => {

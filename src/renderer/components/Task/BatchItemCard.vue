@@ -10,7 +10,7 @@
         >
           <div class="flex items-center gap-2 min-w-0 flex-1">
             <component :is="kindIcon" :size="14" class="shrink-0 text-muted-foreground" />
-            <span class="truncate text-sm" :title="item.label">{{ item.label }}</span>
+            <span class="min-w-0 flex-1 truncate text-sm" :title="item.label">{{ item.label }}</span>
             <span
               v-if="statusChip"
               class="ml-auto shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium"
@@ -115,6 +115,9 @@
               {{ $t('task.media-format-hint') }}
             </div>
           </div>
+        </div>
+        <div v-else-if="item.kind === 'metalink'" class="rounded-md border border-dashed border-border/60 px-3 py-4 text-xs text-muted-foreground">
+          <div class="break-all font-mono">{{ item.path }}</div>
         </div>
         <div v-else class="rounded-md border border-dashed border-border/60 px-3 py-4 text-xs text-muted-foreground">
           <div class="break-all font-mono">{{ item.uri }}</div>
@@ -241,7 +244,7 @@ export default {
 	},
 	computed: {
 		kindIcon() {
-			if (this.item.kind === "torrent") {
+			if (this.item.kind === "torrent" || this.item.kind === "metalink") {
 				return FileArchive;
 			}
 			if (this.item.kind === "magnet") {

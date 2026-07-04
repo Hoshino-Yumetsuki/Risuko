@@ -4,6 +4,7 @@
 
 <script lang="ts">
 import { commands } from "@/components/CommandManager/instance";
+import { TASK_FILE_RE } from "@/store/batchQueue";
 
 export default {
 	name: "ipc-bridge",
@@ -30,7 +31,7 @@ export default {
 
 			const unlistenFile = await listen("open-file", (event) => {
 				const path = event.payload as string;
-				if (path?.endsWith(".torrent")) {
+				if (path && TASK_FILE_RE.test(path)) {
 					commands.execute("application:new-bt-task-with-file", { path });
 				}
 			});

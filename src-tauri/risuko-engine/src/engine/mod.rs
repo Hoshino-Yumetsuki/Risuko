@@ -10,6 +10,7 @@ pub mod http;
 pub mod m3u8;
 pub mod manager;
 pub mod media;
+pub mod metalink;
 pub mod netrc;
 pub mod options;
 pub mod routing;

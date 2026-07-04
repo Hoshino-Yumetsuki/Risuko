@@ -7,7 +7,7 @@ import { getLocaleManager } from "@/components/Locale";
 import { confirm } from "@/components/ui/confirm-dialog";
 import router from "@/router";
 import { useAppStore, usePreferenceStore, useTaskStore } from "@/store";
-import { createTorrentBatchItem } from "@/store/batchQueue";
+import { batchItemForFilePath } from "@/store/batchQueue";
 import {
 	buildTorrentPayload,
 	buildUriPayload,
@@ -108,7 +108,10 @@ const showAddBtTaskWithFile = (payload: { path?: string } = {}) => {
 
 	const segs = `${path}`.split(/[/\\]/);
 	const name = segs[segs.length - 1] || "task.torrent";
-	const item = createTorrentBatchItem(path, name);
+	const item = batchItemForFilePath(path, name);
+	if (!item) {
+		return;
+	}
 
 	getAppStore().showAddTaskDialog(ADD_TASK_TYPE.TORRENT);
 	getAppStore().enqueueBatchItems([item]);

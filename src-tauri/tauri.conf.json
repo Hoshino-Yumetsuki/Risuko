@@ -45,6 +45,11 @@
 				"ext": ["torrent"],
 				"mimeType": "application/x-bittorrent",
 				"description": "BitTorrent file"
+			},
+			{
+				"ext": ["meta4", "metalink"],
+				"mimeType": "application/metalink4+xml",
+				"description": "Metalink file"
 			}
 		],
 		"macOS": {
