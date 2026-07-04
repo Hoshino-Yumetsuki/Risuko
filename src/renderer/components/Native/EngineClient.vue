@@ -14,6 +14,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { toast } from "vue-sonner";
 import api from "@/api";
+import is from "@/shims/platform";
 import { useAppStore } from "@/store/app";
 import { usePreferenceStore } from "@/store/preference";
 import { useTaskStore } from "@/store/task";
@@ -746,14 +747,51 @@ export default {
 				? this.$t("task.bt-download-complete-notify")
 				: this.$t("task.download-complete-notify");
 
-			const notify = new Notification(notifyMessage, {
-				body: `${taskName}${tips}`,
-			});
-			notify.onclick = () => {
-				showItemInFolder(path, {
-					errorMsg: this.$t("task.file-not-exist"),
+			if (document.hidden && !is.android()) {
+				this.sendOsNotification(notifyMessage, `${taskName}${tips}`);
+			} else {
+				const notify = new Notification(notifyMessage, {
+					body: `${taskName}${tips}`,
 				});
-			};
+				notify.onclick = () => {
+					showItemInFolder(path, {
+						errorMsg: this.$t("task.file-not-exist"),
+					});
+				};
+			}
+		},
+		async sendOsNotification(title: string, body: string) {
+			try {
+				const { isPermissionGranted, requestPermission, sendNotification } =
+					await import("@tauri-apps/plugin-notification");
+				let granted = await isPermissionGranted();
+				if (!granted) {
+					granted = (await requestPermission()) === "granted";
+				}
+				if (granted) {
+					sendNotification({ title, body });
+				}
+			} catch (err) {
+				logger.warn(
+					"[Risuko] OS notification failed:",
+					(err as Error)?.message || err,
+				);
+			}
+		},
+		maybeShowClipboardNotice() {
+			if (is.android()) {
+				return;
+			}
+			const config = usePreferenceStore().config;
+			if (config?.clipboardWatch && !config?.clipboardWatchNoticeSeen) {
+				this.$msg.info({
+					message: this.$t("preferences.clipboard-watch-notice"),
+					duration: 8000,
+				});
+				usePreferenceStore()
+					.save({ clipboardWatchNoticeSeen: true })
+					.catch(() => {});
+			}
 		},
 		async bindEngineEvents() {
 			const handlers: [string, (payload: { gid: string }) => void][] = [
@@ -991,6 +1029,7 @@ export default {
 			usePreferenceStore().applyEngineMode();
 			this.autoResumeUnfinishedTasksOnLaunch();
 			this.syncTraySpeedTooltip();
+			this.maybeShowClipboardNotice();
 
 			this.startPolling();
 		}, 100);

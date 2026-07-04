@@ -51,4 +51,11 @@ export default {
 	hour: "h",
 	minute: "m",
 	second: "s",
+	"legal-title": "Welcome to Risuko",
+	"legal-body":
+		"Before you get started, please review our Terms of Service and Privacy Policy.",
+	"legal-terms": "Terms of Service",
+	"legal-privacy": "Privacy Policy",
+	"legal-agree": "I Agree & Continue",
+	"legal-agree-note": "By continuing, you agree to both.",
 };

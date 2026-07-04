@@ -5,6 +5,7 @@
     <ipc-bridge v-if="isRenderer" />
     <dynamic-tray v-if="enableDynamicTray" :show-speed="traySpeedometer" />
     <cloudflare-dialog />
+    <legal-gate v-if="isRenderer" />
     <Teleport to="body">
       <Toaster
         position="top-center"
@@ -27,6 +28,7 @@ import {
 } from "@shared/types/config";
 import { parseBooleanConfig } from "@shared/utils";
 import { invoke } from "@tauri-apps/api/core";
+import LegalGate from "@/components/Legal/LegalGate.vue";
 import { getLocaleManager } from "@/components/Locale";
 import DynamicTray from "@/components/Native/DynamicTray.vue";
 import EngineClient from "@/components/Native/EngineClient.vue";
@@ -40,6 +42,7 @@ import { usePreferenceStore } from "@/store/preference";
 export default {
 	name: "risuko-app",
 	components: {
+		[LegalGate.name]: LegalGate,
 		[DynamicTray.name]: DynamicTray,
 		[EngineClient.name]: EngineClient,
 		[Ipc.name]: Ipc,

@@ -658,18 +658,11 @@ export default defineComponent({
 				return;
 			}
 			try {
-				const { writeText } = await import(
-					"@tauri-apps/plugin-clipboard-manager"
-				);
-				await writeText(text);
+				const { copyText } = await import("@/utils/clipboard");
+				await copyText(text);
 				this.$msg.success(this.$t("share.copied"));
-			} catch {
-				try {
-					await navigator.clipboard.writeText(text);
-					this.$msg.success(this.$t("share.copied"));
-				} catch (err) {
-					this.$msg.error(`${err}`);
-				}
+			} catch (err) {
+				this.$msg.error(`${err}`);
 			}
 		},
 		onTransferAction(t: ShareTransfer) {

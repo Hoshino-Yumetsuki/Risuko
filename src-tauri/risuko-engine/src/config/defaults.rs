@@ -165,6 +165,22 @@ pub fn user_defaults() -> Map<String, Value> {
     m.insert("run-mode".into(), json!(1));
     m.insert("show-progress-bar".into(), json!(true));
     m.insert("task-notification".into(), json!(true));
+    m.insert("legal-accepted".into(), json!(false));
+    #[cfg(not(target_os = "android"))]
+    {
+        m.insert("clipboard-watch".into(), json!(true));
+        m.insert("clipboard-watch-notice-seen".into(), json!(false));
+        m.insert(
+            "clipboard-watch-extensions".into(),
+            json!([
+                "zip", "7z", "rar", "tar", "gz", "tgz", "bz2", "xz", "zst", "iso", "img", "dmg",
+                "pkg", "exe", "msi", "apk", "apks", "xapk", "deb", "rpm", "appimage", "bin", "mp4",
+                "mkv", "avi", "mov", "webm", "flv", "wmv", "m4v", "mp3", "flac", "wav", "m4a",
+                "aac", "ogg", "opus", "pdf", "epub", "mobi", "azw3", "docx", "xlsx", "pptx", "odt",
+                "jar", "torrent", "meta4", "metalink"
+            ]),
+        );
+    }
     m.insert("theme".into(), json!("auto"));
     m.insert(
         "tracker-source".into(),

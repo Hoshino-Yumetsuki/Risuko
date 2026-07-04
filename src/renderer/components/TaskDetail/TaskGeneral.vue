@@ -107,12 +107,12 @@ import {
 	timeFormat,
 	timeRemaining,
 } from "@shared/utils";
-import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import ShowInFolder from "@/components/Native/ShowInFolder.vue";
 import TaskStatus from "@/components/Task/TaskStatus.vue";
 import is from "@/shims/platform";
 import { useAppStore } from "@/store/app";
 import { usePreferenceStore } from "@/store/preference";
+import { copyText } from "@/utils/clipboard";
 import { getTaskRevealDir, getTaskRevealPath } from "@/utils/native";
 
 export default {
@@ -197,7 +197,7 @@ export default {
 		formatBytes: bytesToSize,
 		handleCopyClick() {
 			const uri = getTaskUri(this.task);
-			writeText(uri).then(() => {
+			copyText(uri).then(() => {
 				this.$msg.success(this.$t("task.copy-link-success"));
 			});
 		},

@@ -5,16 +5,15 @@ mod managers;
 mod state;
 mod utils;
 
-// Re-export risuko_engine modules for use by commands and other app code
 pub use risuko_engine::config;
 pub use risuko_engine::engine;
 
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
-#[cfg(not(target_os = "android"))]
-use tauri::Emitter;
 use tauri::Manager;
+#[cfg(not(target_os = "android"))]
+use tauri::{Emitter, Listener};
 
 #[cfg(not(target_os = "android"))]
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
@@ -41,6 +40,8 @@ fn with_desktop_plugins<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri:
                 }
             }
         }))
+        .plugin(tauri_plugin_clipboard::init())
+        .plugin(tauri_plugin_notification::init())
 }
 
 #[cfg(target_os = "android")]
@@ -334,10 +335,28 @@ pub fn run() {
 
         managers::flyout::setup_flyout(app)?;
 
-        // Start RSS background polling
+        managers::clip_prompt::setup_clip_prompt(app)?;
+
+        #[cfg(not(target_os = "android"))]
+        {
+            let watch_handle = app.handle().clone();
+            app.listen_any(
+                "plugin:clipboard://clipboard-monitor/update",
+                move |_event| {
+                    commands::clipboard_cmds::on_clipboard_update(&watch_handle);
+                },
+            );
+            let state = app.state::<state::AppState>();
+            if commands::clipboard_cmds::watch_enabled(&state) {
+                use tauri_plugin_clipboard::Clipboard;
+                let clipboard = app.state::<Clipboard>();
+                if let Err(e) = clipboard.start_monitor(app.handle().clone()) {
+                    tracing::warn!("[Risuko] failed to start clipboard monitor: {}", e);
+                }
+            }
+        }
+
         let rss = app.state::<state::AppState>().rss.clone();
-        // Must spawn into Tauri's async runtime so the tokio reactor is
-        // available for the inner tokio::spawn call
         tauri::async_runtime::spawn(async move {
             std::mem::drop(RssManager::start_polling(rss));
         });
@@ -376,12 +395,23 @@ pub fn run() {
                 managers::flyout::demote_if_ui_hidden(window.app_handle());
                 let _ = window.hide();
             }
+
+            #[cfg(not(target_os = "android"))]
+            if window.label() == managers::clip_prompt::CLIP_PROMPT_LABEL {
+                managers::clip_prompt::hide_clip_prompt(window.app_handle());
+            }
         }
     })
     .invoke_handler(tauri::generate_handler![
         commands::config_cmds::get_app_config,
         commands::config_cmds::save_preference,
         commands::config_cmds::prepare_preference_patch,
+        commands::clipboard_cmds::mark_clipboard_self_write,
+        commands::clipboard_cmds::start_clipboard_watch,
+        commands::clipboard_cmds::stop_clipboard_watch,
+        commands::clipboard_cmds::get_clip_prompt_uri,
+        commands::clipboard_cmds::clip_prompt_accept,
+        commands::clipboard_cmds::clip_prompt_dismiss,
         commands::app_cmds::relaunch_app,
         commands::app_cmds::quit_app,
         commands::app_cmds::show_window,

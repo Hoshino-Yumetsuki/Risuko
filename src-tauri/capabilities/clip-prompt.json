@@ -1,0 +1,12 @@
+{
+	"identifier": "clip-prompt",
+	"description": "Minimal capabilities for the clipboard-watcher prompt window.",
+	"windows": ["clip-prompt"],
+	"permissions": [
+		"core:default",
+		"core:window:allow-show",
+		"core:window:allow-hide",
+		"core:window:allow-set-focus",
+		"core:window:allow-start-dragging"
+	]
+}

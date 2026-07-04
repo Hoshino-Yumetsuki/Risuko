@@ -95,6 +95,15 @@ export default {
 		"Set the file modification time to the timestamp from the remote server",
 	continue: "Continue",
 	"task-completed-notify": "Notify after download is complete",
+	"clipboard-watch": "Watch clipboard for download links",
+	"clipboard-watch-tips":
+		"When you copy a magnet or file link anywhere, risuko offers to download it.",
+	"clipboard-watch-ext": "Watched file extensions",
+	"clipboard-watch-ext-tips":
+		"Only http(s) links ending in these extensions trigger the prompt. Magnet, ed2k and torrent links always do. Separate with spaces or commas.",
+	"clipboard-watch-ext-placeholder": "zip  iso  mp4  pdf",
+	"clipboard-watch-notice":
+		"risuko now watches your clipboard for download links. Turn it off in Settings → Basic.",
 	"prevent-sleep-while-downloading": "Prevent system sleep while downloading",
 	"prevent-sleep-while-downloading-tips":
 		"Keep the computer awake whenever an active task is in progress",

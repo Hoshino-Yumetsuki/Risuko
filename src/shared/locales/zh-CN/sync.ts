@@ -51,6 +51,7 @@ export default {
 	"category-ports": "端口",
 	"category-ftp": "FTP / SFTP",
 	"category-g2-gnutella": "G2 / Gnutella",
+	"category-misc": "其他",
 	login: "登录",
 	logout: "退出登录",
 	"login-title": "登录 Risuko 同步",

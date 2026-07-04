@@ -79,6 +79,14 @@ export default {
 	"use-remote-file-time-tips": "將檔案修改時間設為遠端伺服器的時間戳記",
 	continue: "斷點續傳",
 	"task-completed-notify": "下載完成後通知",
+	"clipboard-watch": "監視剪貼簿中的下載連結",
+	"clipboard-watch-tips": "複製磁力或檔案連結時，Risuko 會提示是否下載。",
+	"clipboard-watch-ext": "監視的副檔名",
+	"clipboard-watch-ext-tips":
+		"僅當 http(s) 連結以這些副檔名結尾時才提示下載；磁力、ed2k、種子連結一律提示。以空格或逗號分隔。",
+	"clipboard-watch-ext-placeholder": "zip  iso  mp4  pdf",
+	"clipboard-watch-notice":
+		"Risuko 現在會監視剪貼簿中的下載連結。可在「設定 → 基本」中關閉。",
 	"prevent-sleep-while-downloading": "下載時阻止系統睡眠",
 	"prevent-sleep-while-downloading-tips": "存在活動任務時保持電腦喚醒",
 	"shutdown-when-complete": "所有任務完成後關機",

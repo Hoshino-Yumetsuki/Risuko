@@ -279,4 +279,7 @@ export default {
 	"detail-tab-trackers": "Tracker",
 	"detail-tab-peers": "節點",
 	"detail-tab-files": "檔案",
+	"clipboard-download-prompt": "下載此連結？",
+	"clipboard-download-accept": "下載",
+	"clipboard-download-ignore": "忽略",
 };

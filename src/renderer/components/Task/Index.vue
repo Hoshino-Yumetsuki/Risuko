@@ -104,7 +104,6 @@ import { ArrowDownNarrowWide, ArrowUpNarrowWide, Search, X } from "@lucide/vue";
 import { ADD_TASK_TYPE } from "@shared/constants";
 import { bytesToSize, getTaskUri, parseHeader } from "@shared/utils";
 import logger from "@shared/utils/logger";
-import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import api from "@/api";
 import { commands } from "@/components/CommandManager/instance";
 import SubnavSwitcher from "@/components/Subnav/SubnavSwitcher.vue";
@@ -124,6 +123,7 @@ import is from "@/shims/platform";
 import { useAppStore } from "@/store/app";
 import { usePreferenceStore } from "@/store/preference";
 import { useTaskStore } from "@/store/task";
+import { copyText } from "@/utils/clipboard";
 import { moveTaskFilesToTrash, showItemInFolder } from "@/utils/native";
 
 export default {
@@ -644,7 +644,7 @@ export default {
 		handleCopyTaskLink(payload) {
 			const { task } = payload;
 			const uri = getTaskUri(task);
-			writeText(uri).then(() => {
+			copyText(uri).then(() => {
 				this.$msg.success(this.$t("task.copy-link-success"));
 			});
 		},

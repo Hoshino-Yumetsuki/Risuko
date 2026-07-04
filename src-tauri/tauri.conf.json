@@ -33,6 +33,7 @@
 	},
 	"bundle": {
 		"active": true,
+		"createUpdaterArtifacts": false,
 		"icon": [
 			"icons/32x32.png",
 			"icons/128x128.png",
@@ -77,7 +78,7 @@
 		},
 		"updater": {
 			"endpoints": [
-				"https://risuko.vercel.app/api/update/{{target}}/{{arch}}/{{current_version}}"
+				"https://risuko.app/api/update/{{target}}/{{arch}}/{{current_version}}"
 			],
 			"pubkey": ""
 		},

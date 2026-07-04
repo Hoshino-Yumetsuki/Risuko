@@ -16,9 +16,11 @@ pub struct AppState {
     pub upload_sinks: Arc<UploadSinkManager>,
     pub vault: Arc<VaultManager>,
     pub log_dir: PathBuf,
+    pub last_clipboard_self_write: Mutex<Option<String>>,
+    pub last_clipboard_seen: Mutex<Option<String>>,
+    pub pending_clip_uri: Mutex<Option<String>>,
     #[cfg(not(target_os = "android"))]
     pub tray_anchor: Mutex<Option<(f64, f64, f64, f64)>>,
-    /// Keeps the file logger alive; dropped when AppState is dropped
     pub _log_guard: tracing_appender::non_blocking::WorkerGuard,
 }
 
@@ -45,6 +47,9 @@ impl AppState {
             upload_sinks: Arc::new(upload_manager),
             vault: Arc::new(VaultManager::new()),
             log_dir,
+            last_clipboard_self_write: Mutex::new(None),
+            last_clipboard_seen: Mutex::new(None),
+            pending_clip_uri: Mutex::new(None),
             #[cfg(not(target_os = "android"))]
             tray_anchor: Mutex::new(None),
             _log_guard: log_guard,

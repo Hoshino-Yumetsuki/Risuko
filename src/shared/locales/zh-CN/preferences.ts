@@ -91,6 +91,14 @@ export default {
 		"将文件修改时间设置为远程服务器的时间戳，而非下载完成时间。",
 	continue: "断点续传",
 	"task-completed-notify": "下载完成后通知",
+	"clipboard-watch": "监视剪贴板中的下载链接",
+	"clipboard-watch-tips": "复制磁力或文件链接时，Risuko 会提示是否下载。",
+	"clipboard-watch-ext": "监视的文件扩展名",
+	"clipboard-watch-ext-tips":
+		"仅当 http(s) 链接以这些扩展名结尾时才提示下载；磁力、ed2k、种子链接始终提示。用空格或逗号分隔。",
+	"clipboard-watch-ext-placeholder": "zip  iso  mp4  pdf",
+	"clipboard-watch-notice":
+		"Risuko 现在会监视剪贴板中的下载链接。可在「设置 → 基本」中关闭。",
 	"prevent-sleep-while-downloading": "下载时阻止系统休眠",
 	"prevent-sleep-while-downloading-tips": "存在活动任务时保持电脑唤醒",
 	"shutdown-when-complete": "所有任务完成后关机",

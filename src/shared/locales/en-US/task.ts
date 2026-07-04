@@ -311,4 +311,7 @@ export default {
 	"detail-tab-trackers": "Trackers",
 	"detail-tab-peers": "Peers",
 	"detail-tab-files": "Files",
+	"clipboard-download-prompt": "Download this link?",
+	"clipboard-download-accept": "Download",
+	"clipboard-download-ignore": "Ignore",
 };

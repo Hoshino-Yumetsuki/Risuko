@@ -56,6 +56,7 @@ export default {
 	"category-ports": "Ports",
 	"category-ftp": "FTP / SFTP",
 	"category-g2-gnutella": "G2 / Gnutella",
+	"category-misc": "Other",
 	login: "Login",
 	logout: "Logout",
 	"login-title": "Log in to Risuko Sync",

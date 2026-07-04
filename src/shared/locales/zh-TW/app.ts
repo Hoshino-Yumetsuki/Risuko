@@ -49,4 +49,10 @@ export default {
 	hour: "時",
 	minute: "分",
 	second: "秒",
+	"legal-title": "歡迎使用 Risuko",
+	"legal-body": "開始使用前，請閱讀我們的服務條款與隱私政策。",
+	"legal-terms": "服務條款",
+	"legal-privacy": "隱私政策",
+	"legal-agree": "同意並繼續",
+	"legal-agree-note": "繼續即表示您同意上述條款。",
 };
