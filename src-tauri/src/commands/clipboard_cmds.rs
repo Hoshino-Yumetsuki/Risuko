@@ -9,6 +9,7 @@ pub fn is_download_candidate(uri: &str, exts: &[String]) -> bool {
     if uri.is_empty() {
         return false;
     }
+    let lower = uri.to_ascii_lowercase();
     if engine::torrent::is_magnet_uri(uri)
         || engine::ed2k::is_ed2k_uri(uri)
         || engine::ftp::is_ftp_uri(uri)
@@ -17,11 +18,11 @@ pub fn is_download_candidate(uri: &str, exts: &[String]) -> bool {
         || engine::g2::is_g2_uri(uri)
         || engine::gift::is_gift_uri(uri)
         || engine::m3u8::is_m3u8_uri(uri)
-        || uri.starts_with("thunder://")
+        || lower.starts_with("thunder://")
     {
         return true;
     }
-    if uri.starts_with("http://") || uri.starts_with("https://") {
+    if lower.starts_with("http://") || lower.starts_with("https://") {
         if engine::media::is_media_uri(uri) {
             return false;
         }
@@ -159,6 +160,8 @@ pub fn clip_prompt_accept(app: AppHandle, state: State<'_, AppState>) -> Result<
         .lock()
         .ok()
         .and_then(|mut g| g.take());
+    #[cfg(not(target_os = "android"))]
+    crate::managers::clip_prompt::hide_clip_prompt(&app);
     if let Some(uri) = uri {
         crate::commands::app_cmds::show_main_window(&app)?;
         if let Some(main) = tauri::Manager::get_webview_window(&app, "main") {
@@ -166,8 +169,6 @@ pub fn clip_prompt_accept(app: AppHandle, state: State<'_, AppState>) -> Result<
             let _ = main.emit("clipboard-download", uri);
         }
     }
-    #[cfg(not(target_os = "android"))]
-    crate::managers::clip_prompt::hide_clip_prompt(&app);
     Ok(())
 }
 

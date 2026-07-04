@@ -54,6 +54,9 @@ export default {
 			if (e.key === "Escape") {
 				this.ignore();
 			} else if (e.key === "Enter") {
+				if (document.activeElement?.tagName === "BUTTON") {
+					return;
+				}
 				this.download();
 			}
 		},

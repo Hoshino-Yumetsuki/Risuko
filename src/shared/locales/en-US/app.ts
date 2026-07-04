@@ -58,4 +58,5 @@ export default {
 	"legal-privacy": "Privacy Policy",
 	"legal-agree": "I Agree & Continue",
 	"legal-agree-note": "By continuing, you agree to both.",
+	"legal-save-failed": "Could not save your choice. Please try again.",
 };

@@ -55,4 +55,5 @@ export default {
 	"legal-privacy": "隱私政策",
 	"legal-agree": "同意並繼續",
 	"legal-agree-note": "繼續即表示您同意上述條款。",
+	"legal-save-failed": "無法儲存您的選擇，請重試。",
 };

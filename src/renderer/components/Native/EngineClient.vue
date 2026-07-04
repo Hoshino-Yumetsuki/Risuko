@@ -51,6 +51,7 @@ export default {
 			initTimer: null,
 			isPolling: false,
 			isDestroyed: false,
+			notifyActionUnlisten: null,
 			noSleepDesired: false,
 			noSleepApplied: false,
 			noSleepSyncing: false,
@@ -748,7 +749,7 @@ export default {
 				: this.$t("task.download-complete-notify");
 
 			if (document.hidden && !is.android()) {
-				this.sendOsNotification(notifyMessage, `${taskName}${tips}`);
+				this.sendOsNotification(notifyMessage, `${taskName}${tips}`, path);
 			} else {
 				const notify = new Notification(notifyMessage, {
 					body: `${taskName}${tips}`,
@@ -760,17 +761,32 @@ export default {
 				};
 			}
 		},
-		async sendOsNotification(title: string, body: string) {
+		async sendOsNotification(title: string, body: string, path?: string) {
 			try {
-				const { isPermissionGranted, requestPermission, sendNotification } =
-					await import("@tauri-apps/plugin-notification");
+				const {
+					isPermissionGranted,
+					requestPermission,
+					sendNotification,
+					onAction,
+				} = await import("@tauri-apps/plugin-notification");
 				let granted = await isPermissionGranted();
 				if (!granted) {
 					granted = (await requestPermission()) === "granted";
 				}
-				if (granted) {
-					sendNotification({ title, body });
+				if (!granted) {
+					return;
 				}
+				if (!this.notifyActionUnlisten) {
+					this.notifyActionUnlisten = await onAction((n) => {
+						const folder = n?.extra?.folderPath as string | undefined;
+						if (folder) {
+							showItemInFolder(folder, {
+								errorMsg: this.$t("task.file-not-exist"),
+							});
+						}
+					});
+				}
+				sendNotification({ title, body, extra: path ? { folderPath: path } : undefined });
 			} catch (err) {
 				logger.warn(
 					"[Risuko] OS notification failed:",
@@ -1040,6 +1056,8 @@ export default {
 		clearTimeout(this.initTimer);
 		this.initTimer = null;
 
+		this.notifyActionUnlisten?.unregister();
+		this.notifyActionUnlisten = null;
 		this.unbindEngineEvents();
 		this.stopPolling();
 		this.clearAllAutoRetryTimers();

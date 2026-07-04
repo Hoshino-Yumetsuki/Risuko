@@ -50,9 +50,16 @@ pub fn setup_clip_prompt(_app: &tauri::App) -> Result<(), Box<dyn std::error::Er
 
 #[cfg(not(target_os = "android"))]
 pub fn show_clip_prompt(app: &tauri::AppHandle, uri: &str) {
-    // Capture who's in front before we steal focus, so dismiss can hand it back
     #[cfg(target_os = "macos")]
-    prev_focus::remember();
+    {
+        let already_open = app
+            .get_webview_window(CLIP_PROMPT_LABEL)
+            .and_then(|w| w.is_visible().ok())
+            .unwrap_or(false);
+        if !already_open {
+            prev_focus::remember();
+        }
+    }
     if let Some(state) = app.try_state::<crate::state::AppState>() {
         if let Ok(mut pending) = state.pending_clip_uri.lock() {
             *pending = Some(uri.to_string());

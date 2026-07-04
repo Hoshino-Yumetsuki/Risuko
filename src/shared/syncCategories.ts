@@ -15,6 +15,8 @@ const DEVICE_LOCAL_KEYS = new Set<string>([
 	"cloud-sync-last-at",
 	"cloud-sync-server-url",
 	"cloud-sync-category-timestamps",
+	"legal-accepted",
+	"clipboard-watch-notice-seen",
 ]);
 
 const namedCategories: SyncCategory[] = [

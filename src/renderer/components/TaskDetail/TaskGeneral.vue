@@ -197,9 +197,13 @@ export default {
 		formatBytes: bytesToSize,
 		handleCopyClick() {
 			const uri = getTaskUri(this.task);
-			copyText(uri).then(() => {
-				this.$msg.success(this.$t("task.copy-link-success"));
-			});
+			copyText(uri)
+				.then(() => {
+					this.$msg.success(this.$t("task.copy-link-success"));
+				})
+				.catch(() => {
+					this.$msg.error(this.$t("task.copy-link-failed"));
+				});
 		},
 	},
 };

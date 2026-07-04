@@ -1,9 +1,16 @@
 <template>
   <Teleport to="body">
-    <div v-if="showGate" class="legal-gate">
-      <div class="legal-gate-card">
-        <div class="legal-gate-title">{{ $t('app.legal-title') }}</div>
-        <p class="legal-gate-body">{{ $t('app.legal-body') }}</p>
+    <div v-if="showGate" class="legal-gate" @keydown="onKey">
+      <div
+        ref="card"
+        class="legal-gate-card"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="legal-gate-title"
+        aria-describedby="legal-gate-body"
+      >
+        <div id="legal-gate-title" class="legal-gate-title">{{ $t('app.legal-title') }}</div>
+        <p id="legal-gate-body" class="legal-gate-body">{{ $t('app.legal-body') }}</p>
         <div class="legal-gate-links">
           <button type="button" class="legal-link" @click="openUrl('https://risuko.app/legal/terms')">
             {{ $t('app.legal-terms') }}
@@ -14,7 +21,7 @@
             <ExternalLink :size="13" />
           </button>
         </div>
-        <button type="button" class="legal-gate-agree" @click="accept">
+        <button ref="agree" type="button" class="legal-gate-agree" @click="accept">
           {{ $t('app.legal-agree') }}
         </button>
         <p class="legal-gate-note">{{ $t('app.legal-agree-note') }}</p>
@@ -34,17 +41,56 @@ export default {
 	computed: {
 		showGate() {
 			const config = usePreferenceStore().config;
-			return !!config && "legalAccepted" in config && !config.legalAccepted;
+			// treat anything but an explicit true as "not accepted" so a missing
+			// key on first launch still shows the gate
+			return !!config && config.legalAccepted !== true;
 		},
+	},
+	watch: {
+		showGate(open) {
+			if (open) {
+				this.$nextTick(() => this.$refs.agree?.focus());
+			}
+		},
+	},
+	mounted() {
+		if (this.showGate) {
+			this.$nextTick(() => this.$refs.agree?.focus());
+		}
 	},
 	methods: {
 		openUrl(url) {
 			invoke("plugin:shell|open", { path: url }).catch(() => {});
 		},
+		onKey(e) {
+			// gate is a hard block — Escape must not dismiss it; trap Tab inside
+			if (e.key === "Escape") {
+				e.preventDefault();
+				return;
+			}
+			if (e.key !== "Tab") {
+				return;
+			}
+			const focusable = this.$refs.card?.querySelectorAll("button");
+			if (!focusable?.length) {
+				return;
+			}
+			const first = focusable[0];
+			const last = focusable[focusable.length - 1];
+			if (e.shiftKey && document.activeElement === first) {
+				e.preventDefault();
+				last.focus();
+			} else if (!e.shiftKey && document.activeElement === last) {
+				e.preventDefault();
+				first.focus();
+			}
+		},
 		accept() {
 			usePreferenceStore()
 				.save({ legalAccepted: true })
-				.catch(() => {});
+				.catch(() => {
+					this.$msg.error(this.$t("app.legal-save-failed"));
+				});
 		},
 	},
 };

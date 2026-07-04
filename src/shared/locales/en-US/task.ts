@@ -211,6 +211,7 @@ export default {
 	"no-task": "There are no current tasks",
 	"copy-link": "Copy Link",
 	"copy-link-success": "Successfully copied link",
+	"copy-link-failed": "Failed to copy link",
 	"remove-record": "Remove Task Record",
 	"remove-record-confirm":
 		'Are you sure you want to remove download record for "{{taskName}}"?',

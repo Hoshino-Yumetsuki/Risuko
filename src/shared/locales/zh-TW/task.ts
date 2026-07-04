@@ -186,6 +186,7 @@ export default {
 	"no-task": "目前没有下載任務",
 	"copy-link": "複製連結",
 	"copy-link-success": "複製連結成功",
+	"copy-link-failed": "複製連結失敗",
 	"remove-record": "移除下載紀錄",
 	"remove-record-confirm": '確定要移除 "{{taskName}}" 下載紀錄嗎？',
 	"remove-record-label": "同時刪除檔案",
