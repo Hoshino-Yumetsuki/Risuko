@@ -150,18 +150,27 @@ export default {
 			return this.task ? checkTaskIsBT(this.task) : false;
 		},
 		fileList() {
-			const { files } = this;
+			const { files, task } = this;
+			const parkedFailed = !!(
+				task &&
+				task.status === "paused" &&
+				task.errorCode
+			);
 			const result = files.map((item) => {
 				const name = getFileName(item.path);
 				const extension = getFileExtension(name);
+				const length = parseInt(item.length, 10);
+				const selected = item.selected === "true";
 				return {
 					idx: Number(item.index),
-					selected: item.selected === "true",
+					selected,
 					path: item.path,
 					name,
 					extension: `.${extension}`,
-					length: parseInt(item.length, 10),
+					length,
 					completedLength: item.completedLength,
+					failed:
+						parkedFailed && selected && Number(item.completedLength) < length,
 				};
 			});
 			return result;

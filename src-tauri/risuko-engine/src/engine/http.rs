@@ -17,29 +17,14 @@ use tokio_util::sync::CancellationToken;
 use super::speed_limiter::{parse_speed_limit, SpeedEma, SpeedLimiter};
 
 const PART_SUFFIX: &str = ".part";
-/// Default minimum segment size when `min-split-size` is not set: 1 MiB
-/// Don't split below this — small files get a single connection
 const DEFAULT_MIN_SPLIT_SIZE: u64 = 1024 * 1024;
-/// Max retries per piece on transient errors
 const CHUNK_MAX_RETRIES: u32 = 5;
-/// Resume granularity: every multi-chunk download is divided into 1 MiB pieces.
-/// Workers pull pieces off a shared queue (work-stealing for free) and resume
-/// preserves per-piece byte progress so a SIGKILL never loses more than the
-/// in-flight bytes of one piece per worker
-///
-/// Public so integration tests can size payloads in piece-boundary terms
-/// instead of hard-coding 1 MiB
 pub const PIECE_SIZE: u64 = 1024 * 1024;
-/// Sidecar format version, bump when the on-disk schema changes
 const META_VERSION: u32 = 2;
-/// How often the periodic save task snapshots piece progress to disk
 const META_SAVE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2);
-/// Error substring returned when a stale .part was removed
 const STALE_PART_REMOVED: &str = "stale partial file removed";
-/// Suffix for per-chunk resume metadata file
 use super::CHUNK_META_SUFFIX;
 
-/// Inclusive byte range [start, end]
 #[derive(Clone, Copy)]
 struct ChunkRange {
     start: u64,
@@ -460,6 +445,48 @@ async fn verify_output(
         }
     }
     Ok(())
+}
+
+pub async fn fetch_for_metalink_probe(
+    uri: &str,
+    options: &Map<String, Value>,
+) -> Result<Vec<u8>, String> {
+    const CAP: u64 = 4 * 1024 * 1024;
+    const PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+    let client = build_client(options, true, None)?;
+    let fetch = async {
+        let resp = client
+            .get(uri)
+            .send()
+            .await
+            .map_err(|e| format!("metalink probe request failed: {e}"))?;
+        if !resp.status().is_success() {
+            return Err(format!("metalink probe HTTP {}", resp.status()));
+        }
+        if let Some(len) = resp
+            .headers()
+            .get("content-length")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| s.parse::<u64>().ok())
+        {
+            if len > CAP {
+                return Err("resource too large to be a metalink".to_string());
+            }
+        }
+        let mut buf: Vec<u8> = Vec::new();
+        let mut stream = resp.bytes_stream();
+        while let Some(item) = stream.next().await {
+            let chunk = item.map_err(|e| format!("metalink probe read failed: {e}"))?;
+            if buf.len() as u64 + chunk.len() as u64 > CAP {
+                return Err("resource too large to be a metalink".to_string());
+            }
+            buf.extend_from_slice(&chunk);
+        }
+        Ok(buf)
+    };
+    tokio::time::timeout(PROBE_TIMEOUT, fetch)
+        .await
+        .map_err(|_| "metalink probe timed out".to_string())?
 }
 
 /// Build a HTTP Client with common settings applied from options

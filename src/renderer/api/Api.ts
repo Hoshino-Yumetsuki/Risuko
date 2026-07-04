@@ -315,6 +315,21 @@ export default class Api {
 		);
 	}
 
+	addMetalinksByPaths(params: {
+		paths: string[];
+		options?: Record<string, unknown>;
+	}) {
+		const { paths, options } = params;
+		const engineOptions = formatOptionsForEngine(options);
+		return invoke<{ path: string; gid: string | null; error: string | null }[]>(
+			"add_metalinks_by_paths",
+			{
+				paths,
+				options: engineOptions,
+			},
+		);
+	}
+
 	fetchWaitingTaskList(
 		params: { offset?: number; num?: number; keys?: string[] } = {},
 	) {

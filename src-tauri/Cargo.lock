@@ -6542,6 +6542,7 @@ dependencies = [
  "nix",
  "parking_lot",
  "percent-encoding",
+ "quick-xml 0.40.1",
  "rand 0.10.2",
  "regex",
  "risuko-bt",

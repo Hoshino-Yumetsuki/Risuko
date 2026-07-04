@@ -603,6 +603,30 @@ fn dispatch_method<'a>(
                 Ok(Value::String(gid))
             }
 
+            "risuko.addMetalink" => {
+                let metalink_b64 = params
+                    .first()
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| RpcError::from("Metalink data required".to_string()))?;
+
+                let metalink_data = base64::engine::general_purpose::STANDARD
+                    .decode(metalink_b64)
+                    .map_err(|e| RpcError::from(format!("Invalid base64: {e}")))?;
+
+                let options = params
+                    .get(1)
+                    .and_then(|v| v.as_object())
+                    .cloned()
+                    .unwrap_or_default();
+
+                let gid = state
+                    .manager
+                    .add_metalink_task(metalink_data, options)
+                    .await
+                    .map_err(RpcError::from)?;
+                Ok(Value::String(gid))
+            }
+
             "risuko.addEd2k" => {
                 let uri = params
                     .first()

@@ -47,13 +47,10 @@ pub enum TaskKind {
     Ed2k,
     M3u8,
     Ftp,
-    /// ADC / Direct Connect (NMDC + ADC dialects)
+    Metalink,
     Adc,
-    /// Gnutella 0.6
     Gnutella,
-    /// Gnutella2
     G2,
-    /// giFT IPC client (delegates to a local giFT daemon)
     Gift,
 }
 
@@ -270,6 +267,25 @@ impl DownloadTask {
             kind: TaskKind::Torrent,
             dir,
             out,
+            options,
+            tag,
+            created_at: now_ms(),
+            ..Default::default()
+        }
+    }
+
+    pub fn new_metalink(
+        gid: String,
+        dir: String,
+        tag: Option<String>,
+        options: Map<String, Value>,
+        files: Vec<DownloadFile>,
+    ) -> Self {
+        Self {
+            gid,
+            kind: TaskKind::Metalink,
+            dir,
+            files,
             options,
             tag,
             created_at: now_ms(),

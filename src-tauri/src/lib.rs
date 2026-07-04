@@ -411,6 +411,7 @@ pub fn run() {
         commands::engine_cmds::get_media_info,
         commands::engine_cmds::add_torrent_by_path,
         commands::engine_cmds::add_torrents_by_paths,
+        commands::engine_cmds::add_metalinks_by_paths,
         commands::engine_cmds::resolve_magnet,
         commands::engine_cmds::evaluate_low_speed_tasks,
         commands::engine_cmds::plan_auto_retry,

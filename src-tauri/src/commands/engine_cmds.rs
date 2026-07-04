@@ -511,6 +511,66 @@ pub async fn add_torrents_by_paths(
     Ok(results)
 }
 
+async fn add_metalink_by_path_inner(path: &str, options: Option<Value>) -> Result<String, String> {
+    let path = path.trim();
+    let fs_path = Path::new(path);
+    let is_metalink = fs_path
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(|ext| ext.eq_ignore_ascii_case("meta4") || ext.eq_ignore_ascii_case("metalink"))
+        == Some(true);
+    if path.is_empty() || !is_metalink {
+        return Err("Metalink file (.meta4 or .metalink) required".to_string());
+    }
+    const MAX_METALINK_BYTES: u64 = 4 * 1024 * 1024;
+    let meta = tokio::fs::metadata(fs_path)
+        .await
+        .map_err(|e| e.to_string())?;
+    if meta.len() > MAX_METALINK_BYTES {
+        return Err("Metalink file too large".to_string());
+    }
+    let bytes = tokio::fs::read(fs_path).await.map_err(|e| e.to_string())?;
+    if bytes.is_empty() {
+        return Err("Metalink payload is empty".to_string());
+    }
+    let mut options = match options.unwrap_or(Value::Object(Map::new())) {
+        Value::Object(map) => map,
+        _ => Map::new(),
+    };
+    options.remove("out");
+
+    let manager = engine::get_manager().await.ok_or("Engine not running")?;
+    manager.add_metalink_task(bytes, options).await
+}
+
+#[tauri::command]
+pub async fn add_metalinks_by_paths(
+    _handle: AppHandle,
+    _state: tauri::State<'_, crate::state::AppState>,
+    paths: Vec<String>,
+    options: Option<Value>,
+) -> Result<Vec<BatchAddResult>, String> {
+    if paths.is_empty() {
+        return Err("Metalink file (.meta4) required".to_string());
+    }
+    let mut results = Vec::with_capacity(paths.len());
+    for path in paths.iter() {
+        match add_metalink_by_path_inner(path, options.clone()).await {
+            Ok(gid) => results.push(BatchAddResult {
+                path: path.clone(),
+                gid: Some(gid),
+                error: None,
+            }),
+            Err(err) => results.push(BatchAddResult {
+                path: path.clone(),
+                gid: None,
+                error: Some(err),
+            }),
+        }
+    }
+    Ok(results)
+}
+
 fn is_plain_http_mirror_uri(uri: &str, options: &Map<String, Value>) -> bool {
     let is_http = uri.starts_with("http://") || uri.starts_with("https://");
     if !is_http {

@@ -331,7 +331,7 @@ import is from "@/shims/platform";
 import { useAppStore } from "@/store/app";
 import {
 	type BatchQueueItem,
-	createTorrentBatchItem,
+	batchItemForFilePath,
 	createUriBatchItem,
 } from "@/store/batchQueue";
 import { usePreferenceStore } from "@/store/preference";
@@ -514,8 +514,8 @@ export default {
 			const seeded = useAppStore().addTaskTorrents;
 			if (seeded.length > 0) {
 				const items = seeded
-					.filter((s) => /\.torrent$/i.test(`${s.path || ""}`))
-					.map((s) => createTorrentBatchItem(s.path, s.name));
+					.map((s) => batchItemForFilePath(`${s.path || ""}`, s.name))
+					.filter(Boolean);
 				if (items.length > 0) {
 					useAppStore().enqueueBatchItems(items);
 				}
@@ -683,20 +683,20 @@ export default {
 			const items: BatchQueueItem[] = [];
 			for (const f of files) {
 				const path = `${f.path || ""}`.trim();
-				if (!path || !/\.torrent$/i.test(path)) {
-					continue;
+				const item = path ? batchItemForFilePath(path, f.name) : null;
+				if (item) {
+					items.push(item);
 				}
-				items.push(createTorrentBatchItem(path, f.name));
 			}
 			if (items.length === 0) {
-				toast.error(this.$t("task.new-task-torrent-required"));
+				toast.error(this.$t("task.new-task-file-required"));
 				return;
 			}
 			useAppStore().enqueueBatchItems(items);
 			toast.info(
 				items.length === 1
-					? this.$t("task.bittorrent-detected")
-					: this.$t("task.bittorrent-detected-multi", {
+					? this.$t("task.download-file-detected")
+					: this.$t("task.download-file-detected-multi", {
 							count: items.length,
 						}),
 			);
@@ -705,7 +705,12 @@ export default {
 			try {
 				const selected = await tauriOpen({
 					multiple: true,
-					filters: [{ name: "Torrent", extensions: ["torrent"] }],
+					filters: [
+						{
+							name: "Torrent / Metalink",
+							extensions: ["torrent", "meta4", "metalink"],
+						},
+					],
 				});
 				if (!selected) {
 					return;
@@ -716,8 +721,10 @@ export default {
 					if (typeof path !== "string" || !path) {
 						continue;
 					}
-					const name = segmentName(path);
-					items.push(createTorrentBatchItem(path, name));
+					const item = batchItemForFilePath(path, segmentName(path));
+					if (item) {
+						items.push(item);
+					}
 				}
 				if (items.length > 0) {
 					useAppStore().enqueueBatchItems(items);
@@ -770,6 +777,48 @@ export default {
 			}
 			return this.$t("task.batch-all-failed");
 		},
+		async submitPathBatch(
+			items: BatchQueueItem[],
+			submit: () => Promise<
+				{ path: string; gid: string | null; error: string | null }[]
+			>,
+		): Promise<{ ok: number; fail: number }> {
+			const appStore = useAppStore();
+			let ok = 0;
+			let fail = 0;
+			try {
+				const results = await submit();
+				for (const res of results) {
+					const item = items.find((it) => it.path === res.path);
+					if (!item) {
+						continue;
+					}
+					if (res.gid) {
+						ok += 1;
+						appStore.updateBatchItem(item.id, {
+							status: "success",
+							gid: res.gid,
+						});
+					} else {
+						fail += 1;
+						appStore.updateBatchItem(item.id, {
+							status: "failed",
+							error: res.error || this.$t("task.batch-all-failed"),
+						});
+					}
+				}
+			} catch (err: unknown) {
+				fail += items.length;
+				const msg = this.normalizeAddTaskError(err);
+				for (const it of items) {
+					appStore.updateBatchItem(it.id, {
+						status: "failed",
+						error: msg,
+					});
+				}
+			}
+			return { ok, fail };
+		},
 		async submitForm() {
 			if (this.submitting) {
 				return;
@@ -789,6 +838,9 @@ export default {
 			);
 			const invalidTorrentItems = items.filter(
 				(it) => it.kind === "torrent" && !it.path,
+			);
+			const metalinkItems = items.filter(
+				(it) => it.kind === "metalink" && it.path,
 			);
 			const uriItems = items.filter(
 				(it) => it.kind === "uri" || it.kind === "magnet",
@@ -814,41 +866,25 @@ export default {
 			}
 
 			if (torrentItems.length > 0) {
-				try {
-					const sharedOpts = this.buildSharedOptions();
-					const results = await taskStore.addTorrents({
+				const r = await this.submitPathBatch(torrentItems, () =>
+					taskStore.addTorrents({
 						paths: torrentItems.map((it) => it.path as string),
-						options: sharedOpts,
-					});
-					for (const res of results) {
-						const item = torrentItems.find((it) => it.path === res.path);
-						if (!item) {
-							continue;
-						}
-						if (res.gid) {
-							okCount += 1;
-							appStore.updateBatchItem(item.id, {
-								status: "success",
-								gid: res.gid,
-							});
-						} else {
-							failCount += 1;
-							appStore.updateBatchItem(item.id, {
-								status: "failed",
-								error: res.error || this.$t("task.batch-all-failed"),
-							});
-						}
-					}
-				} catch (err: unknown) {
-					failCount += torrentItems.length;
-					const msg = this.normalizeAddTaskError(err);
-					for (const it of torrentItems) {
-						appStore.updateBatchItem(it.id, {
-							status: "failed",
-							error: msg,
-						});
-					}
-				}
+						options: this.buildSharedOptions(),
+					}),
+				);
+				okCount += r.ok;
+				failCount += r.fail;
+			}
+
+			if (metalinkItems.length > 0) {
+				const r = await this.submitPathBatch(metalinkItems, () =>
+					taskStore.addMetalinks({
+						paths: metalinkItems.map((it) => it.path as string),
+						options: this.buildSharedOptions(),
+					}),
+				);
+				okCount += r.ok;
+				failCount += r.fail;
 			}
 
 			for (const it of uriItems) {

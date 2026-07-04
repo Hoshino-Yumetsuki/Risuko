@@ -34,6 +34,13 @@
             <span class="task-files-num">{{ calcProgress(item.length, item.completedLength, 1) }}</span>
             <span class="task-files-num">{{ formatBytes(item.completedLength) }}</span>
             <span class="task-files-num">{{ formatBytes(item.length) }}</span>
+            <div class="task-files-bar">
+              <div
+                class="task-files-bar-fill"
+                :class="{ 'task-files-bar-fill--failed': item.failed }"
+                :style="{ width: `${calcProgress(item.length, item.completedLength)}%` }"
+              ></div>
+            </div>
           </div>
         </template>
       </recycle-scroller>
@@ -135,6 +142,7 @@ interface TaskFileRow {
 	length: number;
 	completedLength: string;
 	selected: boolean;
+	failed?: boolean;
 }
 
 export default {

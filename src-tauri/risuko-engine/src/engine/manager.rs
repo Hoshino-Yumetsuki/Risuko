@@ -40,12 +40,9 @@ struct ActiveDownload {
     completed: Arc<AtomicU64>,
     speed: Arc<AtomicU64>,
     connections: Arc<AtomicU32>,
-    /// Split chunk completed bytes for multi-thread HTTP downloads
     chunk_completed: Vec<Arc<AtomicU64>>,
-    /// Filename adopted from Content-Disposition once the engine sees the
-    /// first response. Empty until adoption fires; the progress tick reads
-    /// it and updates `task.out` so the UI shows the real filename mid-download
     adopted_filename: Arc<parking_lot::Mutex<Option<String>>>,
+    metalink_files: Vec<(usize, Counters)>,
 }
 
 /// Shared per-worker atomics plus cancellation hooks, cloned into both the
@@ -85,6 +82,7 @@ impl Counters {
             connections: self.connections.clone(),
             chunk_completed,
             adopted_filename,
+            metalink_files: Vec::new(),
         }
     }
 }
@@ -201,6 +199,132 @@ async fn finish_task(
     let mut active_guard = active.write().await;
     if active_guard.get(gid).map(|ad| ad.epoch) == Some(worker_epoch) {
         active_guard.remove(gid);
+    }
+}
+
+async fn metalink_finish(
+    tasks: &Arc<RevLock>,
+    active: &Arc<RwLock<HashMap<String, ActiveDownload>>>,
+    events: &EventBroadcaster,
+    gid: &str,
+    worker_epoch: u64,
+    file_counters: Vec<(usize, Counters)>,
+    results: Vec<(usize, String, Result<std::path::PathBuf, String>)>,
+) {
+    let mut tasks_guard = tasks.write().await;
+    let is_current = active.read().await.get(gid).map(|ad| ad.epoch) == Some(worker_epoch);
+    if let Some(task) = tasks_guard
+        .iter_mut()
+        .find(|t| t.gid == gid)
+        .filter(|_| is_current)
+    {
+        for (idx, c) in &file_counters {
+            if let Some(f) = task.files.get_mut(*idx) {
+                f.completed_length = c.completed.load(Ordering::Relaxed).to_string();
+                let t = c.total.load(Ordering::Relaxed);
+                if t > 0 {
+                    f.length = t.to_string();
+                }
+            }
+        }
+        for (idx, _, r) in &results {
+            if let (Ok(path), Some(f)) = (r, task.files.get_mut(*idx)) {
+                f.path = path.to_string_lossy().to_string();
+            }
+        }
+        metalink_rollup_totals(task);
+
+        if task.status == TaskStatus::Active {
+            let failures: Vec<(&str, &String)> = results
+                .iter()
+                .filter_map(|(_, name, r)| match r {
+                    Err(e) if !e.contains("cancelled") => Some((name.as_str(), e)),
+                    _ => None,
+                })
+                .collect();
+            task.download_speed = 0;
+            let completed_any = results.iter().any(|(_, _, r)| r.is_ok());
+            if failures.is_empty() && completed_any {
+                task.status = TaskStatus::Complete;
+                events.send(EngineEvent::DownloadComplete {
+                    gid: gid.to_string(),
+                });
+            } else if failures.is_empty() {
+                // every in-flight file was cancelled (pause/stop), none finished —
+                // not a completion, leave the batch paused so it can resume
+                task.status = TaskStatus::Paused;
+            } else {
+                let names: Vec<&str> = failures.iter().map(|(n, _)| *n).collect();
+                let first_err = failures[0].1.clone();
+                task.status = TaskStatus::Paused;
+                task.error_code = Some(classify_error(&first_err, "http").to_string());
+                task.error_message = Some(format!(
+                    "{} file(s) failed: {} — {}",
+                    failures.len(),
+                    names.join(", "),
+                    first_err
+                ));
+                events.send(EngineEvent::DownloadError {
+                    gid: gid.to_string(),
+                });
+            }
+        }
+    }
+    drop(tasks_guard);
+
+    let mut active_guard = active.write().await;
+    if active_guard.get(gid).map(|ad| ad.epoch) == Some(worker_epoch) {
+        active_guard.remove(gid);
+    }
+}
+
+/// Sum the selected files' byte totals into the aggregate task fields.
+fn metalink_rollup_totals(task: &mut DownloadTask) {
+    let mut total = 0u64;
+    let mut completed = 0u64;
+    for f in task.files.iter() {
+        if f.selected == "false" {
+            continue;
+        }
+        total += f.length.parse::<u64>().unwrap_or(0);
+        completed += f.completed_length.parse::<u64>().unwrap_or(0);
+    }
+    task.total_length = total;
+    task.completed_length = completed;
+}
+
+fn metalink_checksums(options: &Map<String, Value>) -> Vec<String> {
+    options
+        .get("metalink-checksums")
+        .and_then(|v| v.as_array())
+        .map(|a| {
+            a.iter()
+                .map(|v| v.as_str().unwrap_or("").to_string())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn apply_select_file(files: &mut [DownloadFile], options: &Map<String, Value>) {
+    let raw = options
+        .get("select-file")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .unwrap_or("");
+    if raw.is_empty() {
+        for f in files.iter_mut() {
+            f.selected = "true".to_string();
+        }
+        return;
+    }
+    let wanted: std::collections::HashSet<usize> = raw
+        .split(',')
+        .filter_map(|s| s.trim().parse::<usize>().ok())
+        .filter(|i| *i >= 1)
+        .map(|i| i - 1)
+        .collect();
+    for (i, f) in files.iter_mut().enumerate() {
+        f.selected = if wanted.contains(&i) { "true" } else { "false" }.to_string();
     }
 }
 
@@ -555,6 +679,27 @@ impl TaskManager {
             return self.add_magnet_task(magnet, options).await;
         }
 
+        if uris.len() == 1 && super::metalink::url_hints_metalink(&uris[0]) {
+            let merged = self.options.read().await.merge_task_options(&options);
+            if let Ok(bytes) = http::fetch_for_metalink_probe(&uris[0], &merged).await {
+                // strict UTF-8 to match add_metalink_task's own check, so a
+                // non-UTF-8 body is never classified as metalink and rejected later
+                if std::str::from_utf8(&bytes)
+                    .ok()
+                    .is_some_and(|text| super::metalink::parse(text).is_ok())
+                {
+                    tracing::info!("[metalink] following metalink URL: {}", uris[0]);
+                    match self.add_metalink_task(bytes, options.clone()).await {
+                        Ok(gid) => return Ok(gid),
+                        Err(e) => tracing::warn!(
+                            "[metalink] {} parsed but task creation failed, falling back to HTTP: {e}",
+                            uris[0]
+                        ),
+                    }
+                }
+            }
+        }
+
         let gid = generate_gid();
         tracing::info!("[task:{}] Adding HTTP task, uris={:?}", gid, uris);
         let out = options
@@ -678,6 +823,65 @@ impl TaskManager {
             .send(EngineEvent::DownloadStart { gid: gid.clone() });
 
         Ok(gid)
+    }
+
+    pub async fn add_metalink_task(
+        &self,
+        meta4: Vec<u8>,
+        options: Map<String, Value>,
+    ) -> Result<String, String> {
+        let xml = String::from_utf8(meta4).map_err(|e| format!("metalink is not UTF-8: {e}"))?;
+        let files = super::metalink::parse(&xml)?;
+
+        let gid = generate_gid();
+        let filename_hint = files.first().map(|f| f.name.clone()).unwrap_or_default();
+        let (dir, tag) = self
+            .resolve_routing_for_task(&options, &filename_hint)
+            .await;
+
+        let mut download_files = Vec::with_capacity(files.len());
+        let mut checksums = Vec::with_capacity(files.len());
+        for (i, f) in files.iter().enumerate() {
+            download_files.push(DownloadFile {
+                index: (i + 1).to_string(),
+                path: format!("{}/{}", dir, f.name),
+                length: "0".to_string(),
+                completed_length: "0".to_string(),
+                selected: "true".to_string(),
+                uris: f
+                    .uris
+                    .iter()
+                    .map(|u| FileUri {
+                        uri: u.clone(),
+                        status: "waiting".to_string(),
+                    })
+                    .collect(),
+            });
+            checksums.push(Value::String(
+                f.checksum
+                    .as_ref()
+                    .map(|c| format!("{}:{}", c.algo.name(), c.hex))
+                    .unwrap_or_default(),
+            ));
+        }
+
+        let mut options = options;
+        apply_select_file(&mut download_files, &options);
+        options.insert("metalink-checksums".to_string(), Value::Array(checksums));
+
+        tracing::info!(
+            "[task:{}] Adding Metalink task, {} file(s)",
+            gid,
+            download_files.len()
+        );
+        self.enqueue(DownloadTask::new_metalink(
+            gid,
+            dir,
+            tag,
+            options,
+            download_files,
+        ))
+        .await
     }
 
     pub async fn add_magnet_task(
@@ -1223,6 +1427,12 @@ impl TaskManager {
                 let merged = options_snapshot.merge_task_options(&task.options);
                 self.spawn_ftp_download(task, merged);
                 started += 1;
+            } else if task.kind == TaskKind::Metalink && !task.files.is_empty() {
+                task.status = TaskStatus::Active;
+                let merged = options_snapshot.merge_task_options(&task.options);
+                apply_select_file(&mut task.files, &task.options);
+                self.spawn_metalink_download(task, merged);
+                started += 1;
             } else if matches!(
                 task.kind,
                 TaskKind::Adc | TaskKind::Gnutella | TaskKind::G2 | TaskKind::Gift
@@ -1417,6 +1627,135 @@ impl TaskManager {
                     }
                     code
                 },
+            )
+            .await;
+        });
+    }
+
+    fn spawn_metalink_download(&self, task: &DownloadTask, merged_options: Map<String, Value>) {
+        let gid = task.gid.clone();
+        let dir = task.dir.clone();
+        let events = self.events.clone();
+        let tasks = self.tasks.clone();
+        let active = self.active_downloads.clone();
+        let global_limiter = self.global_speed_limiter.clone();
+
+        let split: u32 = merged_options
+            .get("split")
+            .and_then(|v| {
+                v.as_u64()
+                    .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+            })
+            .unwrap_or(1)
+            .max(1) as u32;
+        let per_task_limit = merged_options
+            .get("max-download-limit")
+            .map(parse_speed_limit)
+            .unwrap_or(0);
+        let task_speed_limiter = Arc::new(SpeedLimiter::new(per_task_limit));
+
+        let checksums = metalink_checksums(&task.options);
+        let parent = CancellationToken::new();
+
+        struct Spec {
+            idx: usize,
+            out: String,
+            uris: Vec<String>,
+            options: Map<String, Value>,
+            counters: Counters,
+            chunk: Vec<Arc<AtomicU64>>,
+            adopted: Arc<parking_lot::Mutex<Option<String>>>,
+        }
+        let mut specs: Vec<Spec> = Vec::new();
+        let mut file_counters: Vec<(usize, Counters)> = Vec::new();
+        for (i, f) in task.files.iter().enumerate() {
+            if f.selected == "false" {
+                continue;
+            }
+            let len: u64 = f.length.parse().unwrap_or(0);
+            let done: u64 = f.completed_length.parse().unwrap_or(0);
+            if len > 0 && done >= len {
+                continue;
+            }
+            let file_uris: Vec<String> = f.uris.iter().map(|u| u.uri.clone()).collect();
+            let out = Path::new(&f.path)
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default();
+            let mut opts = merged_options.clone();
+            // mirror the HTTP/media path: fill absent cookies/UA from the store per mirror host
+            self.apply_stored_cookies(&file_uris, &mut opts);
+            opts.insert("out".to_string(), Value::String(out.clone()));
+            if let Some(cs) = checksums.get(i) {
+                if !cs.is_empty() {
+                    opts.insert("checksum".to_string(), Value::String(cs.clone()));
+                }
+            }
+            let mut counters = Counters::new(0, split);
+            // child token, not the parent clone: parent pause/stop still cascades to
+            // every file, but one file's stall watchdog only cancels itself
+            counters.cancel_token = parent.child_token();
+            let chunk: Vec<Arc<AtomicU64>> =
+                (0..split).map(|_| Arc::new(AtomicU64::new(0))).collect();
+            file_counters.push((i, counters.clone()));
+            specs.push(Spec {
+                idx: i,
+                uris: file_uris,
+                out,
+                options: opts,
+                counters,
+                chunk,
+                adopted: Arc::new(parking_lot::Mutex::new(None)),
+            });
+        }
+
+        let agg = Counters::new(0, 0);
+        let worker_epoch = next_worker_epoch();
+        tokio::spawn(async move {
+            let mut ad = agg.to_active(
+                worker_epoch,
+                Vec::new(),
+                Arc::new(parking_lot::Mutex::new(None)),
+            );
+            ad.cancel_token = parent;
+            ad.metalink_files = file_counters.clone();
+            active.write().await.insert(gid.clone(), ad);
+
+            let futs = specs.into_iter().map(|spec| {
+                let gl = global_limiter.clone();
+                let tl = task_speed_limiter.clone();
+                let dir = dir.clone();
+                async move {
+                    let c = spec.counters;
+                    let r = http::run_http_download_multi(
+                        &spec.uris,
+                        &dir,
+                        &spec.out,
+                        &spec.options,
+                        c.total,
+                        c.completed,
+                        c.speed,
+                        c.connections,
+                        c.cancel_token,
+                        gl,
+                        tl,
+                        spec.chunk,
+                        spec.adopted,
+                    )
+                    .await;
+                    (spec.idx, spec.out, r)
+                }
+            });
+            let results = futures_util::future::join_all(futs).await;
+
+            metalink_finish(
+                &tasks,
+                &active,
+                &events,
+                &gid,
+                worker_epoch,
+                file_counters,
+                results,
             )
             .await;
         });
@@ -1751,6 +2090,30 @@ impl TaskManager {
                         active_torrent_gids.push(task.gid.clone());
                     }
                     if let Some(ad) = active.get(&task.gid) {
+                        if task.kind == TaskKind::Metalink {
+                            for (idx, c) in &ad.metalink_files {
+                                if let Some(f) = task.files.get_mut(*idx) {
+                                    f.completed_length =
+                                        c.completed.load(Ordering::Relaxed).to_string();
+                                    let t = c.total.load(Ordering::Relaxed);
+                                    if t > 0 {
+                                        f.length = t.to_string();
+                                    }
+                                }
+                            }
+                            task.download_speed = ad
+                                .metalink_files
+                                .iter()
+                                .map(|(_, c)| c.speed.load(Ordering::Relaxed))
+                                .sum();
+                            task.connections = ad
+                                .metalink_files
+                                .iter()
+                                .map(|(_, c)| c.connections.load(Ordering::Relaxed))
+                                .sum();
+                            metalink_rollup_totals(task);
+                            continue;
+                        }
                         task.total_length = ad.total.load(Ordering::Relaxed);
                         task.completed_length = ad.completed.load(Ordering::Relaxed);
                         task.download_speed = ad.speed.load(Ordering::Relaxed);
@@ -2102,11 +2465,8 @@ impl TaskManager {
             if task.status != TaskStatus::Paused && task.status != TaskStatus::Error {
                 return Err(format!("Task {} not found or not paused", gid));
             }
-            // Clear stale error state so the task re-enters the queue cleanly
-            if task.status == TaskStatus::Error {
-                task.error_code = None;
-                task.error_message = None;
-            }
+            task.error_code = None;
+            task.error_message = None;
             is_torrent = task.kind == TaskKind::Torrent;
             if is_torrent {
                 task.status = TaskStatus::Active;
@@ -3329,12 +3689,155 @@ mod tests {
                 connections: Arc::new(AtomicU32::new(0)),
                 chunk_completed: Vec::new(),
                 adopted_filename: Arc::new(parking_lot::Mutex::new(None)),
+                metalink_files: Vec::new(),
             },
         );
 
         mgr.shutdown().await;
 
         assert!(cancel_token.is_cancelled());
+    }
+
+    fn mk_metalink_file(index: &str, len: u64, done: u64) -> DownloadFile {
+        DownloadFile {
+            index: index.to_string(),
+            path: format!("/dl/{index}.bin"),
+            length: len.to_string(),
+            completed_length: done.to_string(),
+            selected: "true".to_string(),
+            uris: vec![FileUri {
+                uri: "http://mirror/".into(),
+                status: "waiting".into(),
+            }],
+        }
+    }
+
+    async fn run_metalink_finish(
+        mgr: &TaskManager,
+        gid: &str,
+        results: Vec<(usize, String, Result<std::path::PathBuf, String>)>,
+    ) {
+        let epoch = next_worker_epoch();
+        let fc: Vec<(usize, Counters)> = results
+            .iter()
+            .map(|(i, _, _)| (*i, Counters::new(0, 1)))
+            .collect();
+        let mut ad = Counters::new(0, 0).to_active(
+            epoch,
+            Vec::new(),
+            Arc::new(parking_lot::Mutex::new(None)),
+        );
+        ad.metalink_files = fc.clone();
+        mgr.active_downloads
+            .write()
+            .await
+            .insert(gid.to_string(), ad);
+        metalink_finish(
+            &mgr.tasks,
+            &mgr.active_downloads,
+            &mgr.events,
+            gid,
+            epoch,
+            fc,
+            results,
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn metalink_parks_paused_when_a_file_fails() {
+        let mut task = DownloadTask::new_metalink(
+            "gm".into(),
+            "/dl".into(),
+            None,
+            Map::new(),
+            vec![
+                mk_metalink_file("1", 100, 100),
+                mk_metalink_file("2", 100, 0),
+            ],
+        );
+        task.status = TaskStatus::Active;
+        let mgr = make_test_manager(vec![task]);
+
+        run_metalink_finish(
+            &mgr,
+            "gm",
+            vec![
+                (0, "a".into(), Ok(std::path::PathBuf::from("/dl/a"))),
+                (1, "b".into(), Err("all mirrors failed".into())),
+            ],
+        )
+        .await;
+
+        let tasks = mgr.tasks.read().await;
+        let t = tasks.iter().find(|t| t.gid == "gm").unwrap();
+        assert_eq!(t.status, TaskStatus::Paused);
+        assert_ne!(t.status, TaskStatus::Complete);
+        assert!(t.error_code.is_some());
+    }
+
+    #[tokio::test]
+    async fn metalink_completes_when_all_files_ok() {
+        let mut task = DownloadTask::new_metalink(
+            "gm".into(),
+            "/dl".into(),
+            None,
+            Map::new(),
+            vec![
+                mk_metalink_file("1", 100, 100),
+                mk_metalink_file("2", 100, 100),
+            ],
+        );
+        task.status = TaskStatus::Active;
+        let mgr = make_test_manager(vec![task]);
+
+        run_metalink_finish(
+            &mgr,
+            "gm",
+            vec![
+                (0, "a".into(), Ok(std::path::PathBuf::from("/dl/a"))),
+                (1, "b".into(), Ok(std::path::PathBuf::from("/dl/b"))),
+            ],
+        )
+        .await;
+
+        let tasks = mgr.tasks.read().await;
+        let t = tasks.iter().find(|t| t.gid == "gm").unwrap();
+        assert_eq!(t.status, TaskStatus::Complete);
+        assert!(t.error_code.is_none());
+    }
+
+    #[tokio::test]
+    async fn metalink_all_cancelled_does_not_complete() {
+        // every in-flight file cancelled (pause/stop) must not be reported as done
+        let mut task = DownloadTask::new_metalink(
+            "gm".into(),
+            "/dl".into(),
+            None,
+            Map::new(),
+            vec![
+                mk_metalink_file("1", 100, 0),
+                mk_metalink_file("2", 100, 0),
+            ],
+        );
+        task.status = TaskStatus::Active;
+        let mgr = make_test_manager(vec![task]);
+
+        run_metalink_finish(
+            &mgr,
+            "gm",
+            vec![
+                (0, "a".into(), Err("download cancelled".into())),
+                (1, "b".into(), Err("download cancelled".into())),
+            ],
+        )
+        .await;
+
+        let tasks = mgr.tasks.read().await;
+        let t = tasks.iter().find(|t| t.gid == "gm").unwrap();
+        assert_ne!(t.status, TaskStatus::Complete);
+        assert_eq!(t.status, TaskStatus::Paused);
+        assert!(t.error_code.is_none());
     }
 
     #[tokio::test]
