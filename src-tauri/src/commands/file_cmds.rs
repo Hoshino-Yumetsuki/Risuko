@@ -918,36 +918,16 @@ fn extract_btih_token(input: &str) -> Option<String> {
 }
 
 pub(crate) fn percent_decode_lossy(input: &str) -> String {
-    String::from_utf8_lossy(&percent_decode_bytes(input.as_bytes())).to_string()
+    percent_encoding::percent_decode(input.as_bytes())
+        .decode_utf8_lossy()
+        .into_owned()
 }
 
 pub(crate) fn percent_decode_strict(input: &str) -> String {
-    String::from_utf8(percent_decode_bytes(input.as_bytes())).unwrap_or_default()
-}
-
-fn percent_decode_bytes(input: &[u8]) -> Vec<u8> {
-    fn hex(b: u8) -> Option<u8> {
-        match b {
-            b'0'..=b'9' => Some(b - b'0'),
-            b'a'..=b'f' => Some(b - b'a' + 10),
-            b'A'..=b'F' => Some(b - b'A' + 10),
-            _ => None,
-        }
-    }
-    let mut out = Vec::with_capacity(input.len());
-    let mut i = 0;
-    while i < input.len() {
-        if input[i] == b'%' && i + 2 < input.len() {
-            if let (Some(h), Some(l)) = (hex(input[i + 1]), hex(input[i + 2])) {
-                out.push((h << 4) | l);
-                i += 3;
-                continue;
-            }
-        }
-        out.push(input[i]);
-        i += 1;
-    }
-    out
+    percent_encoding::percent_decode(input.as_bytes())
+        .decode_utf8()
+        .map(|s| s.into_owned())
+        .unwrap_or_default()
 }
 
 fn valid_normalized_info_hash(raw: &str) -> Option<String> {
