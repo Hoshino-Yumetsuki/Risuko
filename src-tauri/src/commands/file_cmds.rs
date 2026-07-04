@@ -918,7 +918,36 @@ fn extract_btih_token(input: &str) -> Option<String> {
 }
 
 pub(crate) fn percent_decode_lossy(input: &str) -> String {
-    String::from_utf8_lossy(&urlencoding::decode_binary(input.as_bytes())).to_string()
+    String::from_utf8_lossy(&percent_decode_bytes(input.as_bytes())).to_string()
+}
+
+pub(crate) fn percent_decode_strict(input: &str) -> String {
+    String::from_utf8(percent_decode_bytes(input.as_bytes())).unwrap_or_default()
+}
+
+fn percent_decode_bytes(input: &[u8]) -> Vec<u8> {
+    fn hex(b: u8) -> Option<u8> {
+        match b {
+            b'0'..=b'9' => Some(b - b'0'),
+            b'a'..=b'f' => Some(b - b'a' + 10),
+            b'A'..=b'F' => Some(b - b'A' + 10),
+            _ => None,
+        }
+    }
+    let mut out = Vec::with_capacity(input.len());
+    let mut i = 0;
+    while i < input.len() {
+        if input[i] == b'%' && i + 2 < input.len() {
+            if let (Some(h), Some(l)) = (hex(input[i + 1]), hex(input[i + 2])) {
+                out.push((h << 4) | l);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(input[i]);
+        i += 1;
+    }
+    out
 }
 
 fn valid_normalized_info_hash(raw: &str) -> Option<String> {
@@ -1258,6 +1287,14 @@ mod tests {
     #[test]
     fn decode_passthrough() {
         assert_eq!(percent_decode_lossy("hello"), "hello");
+    }
+
+    #[test]
+    fn decode_strict_rejects_invalid_utf8() {
+        // %FF%FE is not valid UTF-8 -> strict decode yields "" (old
+        // urlencoding::decode(..).unwrap_or_default() behaviour)
+        assert_eq!(percent_decode_strict("%FF%FE"), "");
+        assert_eq!(percent_decode_strict("%E4%B8%AD"), "中");
     }
 
     // -- inspect_torrent_metadata --

@@ -15,39 +15,28 @@ use tokio::time::timeout;
 use super::super::core::Id20;
 use super::super::wire::mse::{self, DhKeys, MseRc4, DH_LEN};
 use super::super::wire::{Handshake, Message, MessageDecoder, MessageEncoder, HANDSHAKE_LEN};
-use rc4::StreamCipher;
 
 /// Encryption behaviour for a single peer connection
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum EncryptionPolicy {
-    /// Only plaintext BEP-3 handshakes. Reject MSE
     PlaintextOnly,
-    /// Try plaintext first; if the remote rejects it, fall back to MSE
-    /// For inbound: accept either (auto-detect by first byte)
     #[default]
     Prefer,
-    /// Only accept/initiate encrypted connections
     RequireEncryption,
 }
 
-/// Events emitted by the peer task toward the torrent
 #[derive(Debug)]
 pub enum PeerEvent {
-    /// Handshake finished successfully
     Handshook {
         peer_id: Id20,
         reserved: [u8; 8],
-        /// Info hash negotiated during the handshake. For outbound
-        /// connections this matches the requested hash; for inbound ones it
-        /// identifies which torrent the peer wants
         info_hash: Id20,
-        /// `true` if the wire is encrypted under MSE/PE
         encrypted: bool,
     },
-    /// Decoded peer message
     Message(Message),
-    /// Connection ended (clean EOF or error)
-    Disconnected { reason: String },
+    Disconnected {
+        reason: String,
+    },
 }
 
 /// Commands sent from the torrent to the peer writer task

@@ -51,7 +51,9 @@ export default {
 			initTimer: null,
 			isPolling: false,
 			isDestroyed: false,
-			notifyActionUnlisten: null,
+			notifyActionUnlisten: null as Promise<{
+				unregister: () => Promise<void>;
+			}> | null,
 			noSleepDesired: false,
 			noSleepApplied: false,
 			noSleepSyncing: false,
@@ -777,7 +779,7 @@ export default {
 					return;
 				}
 				if (!this.notifyActionUnlisten) {
-					this.notifyActionUnlisten = await onAction((n) => {
+					this.notifyActionUnlisten = onAction((n) => {
 						const folder = n?.extra?.folderPath as string | undefined;
 						if (folder) {
 							showItemInFolder(folder, {
@@ -785,8 +787,15 @@ export default {
 							});
 						}
 					});
+					this.notifyActionUnlisten.catch(() => {
+						this.notifyActionUnlisten = null;
+					});
 				}
-				sendNotification({ title, body, extra: path ? { folderPath: path } : undefined });
+				sendNotification({
+					title,
+					body,
+					extra: path ? { folderPath: path } : undefined,
+				});
 			} catch (err) {
 				logger.warn(
 					"[Risuko] OS notification failed:",
@@ -1056,7 +1065,7 @@ export default {
 		clearTimeout(this.initTimer);
 		this.initTimer = null;
 
-		this.notifyActionUnlisten?.unregister();
+		this.notifyActionUnlisten?.then((u) => u.unregister()).catch(() => {});
 		this.notifyActionUnlisten = null;
 		this.unbindEngineEvents();
 		this.stopPolling();

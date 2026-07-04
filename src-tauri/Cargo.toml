@@ -32,6 +32,9 @@ edition.workspace = true
 name = "risuko_lib"
 crate-type = ["lib", "cdylib", "staticlib"]
 
+[lints.rust]
+linker_messages = "allow"
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
@@ -76,7 +79,6 @@ risuko-http = { workspace = true }
 risuko-cookies = { workspace = true }
 base64 = "0.22"
 sha1 = "0.11"
-urlencoding = "2"
 keyring-core = "1"
 fs4 = "1"
 tempfile = "3"

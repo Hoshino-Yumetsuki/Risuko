@@ -164,7 +164,6 @@ fn infer_out_from_uri_inner(uri: &str) -> String {
         return format!("{}.ts", stem);
     }
 
-    // ED2K links: parse filename from ed2k://|file|<name>|<size>|<hash>|/
     if lower.starts_with("ed2k://") {
         let body = raw
             .trim_start_matches("ed2k://|file|")
@@ -172,7 +171,7 @@ fn infer_out_from_uri_inner(uri: &str) -> String {
             .trim_end_matches("|/");
         let parts: Vec<&str> = body.split('|').collect();
         if !parts.is_empty() {
-            let decoded = urlencoding::decode(parts[0]).unwrap_or_default();
+            let decoded = crate::commands::file_cmds::percent_decode_strict(parts[0]);
             let name = decoded.replace('_', " ");
             if !name.is_empty() {
                 return name;

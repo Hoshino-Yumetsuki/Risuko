@@ -9,6 +9,11 @@ license = "MIT"
 [lib]
 name = "risuko_engine"
 
+# md-5's lib name is `md5`, so cargo-machete's name scan false-flags it as
+# unused; it IS used in engine/hasher.rs for checksum verification
+[package.metadata.cargo-machete]
+ignored = ["md-5"]
+
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -33,7 +38,6 @@ futures-util = "0.3"
 rand = "0.10"
 tower-http = { version = "0.7", features = ["cors"] }
 risuko-http = { workspace = true }
-risuko-cookies = { workspace = true }
 tokio-util = { version = "0.7", features = ["io"] }
 async-trait = "0.1"
 bytes = "1"
