@@ -11,6 +11,7 @@ const statusTypeMap = {
 	[TASK_STATUS.ACTIVE]: "success",
 	[TASK_STATUS.WAITING]: "info",
 	[TASK_STATUS.PAUSED]: "info",
+	[TASK_STATUS.SCHEDULED]: "scheduled",
 	[TASK_STATUS.ERROR]: "danger",
 	[TASK_STATUS.COMPLETE]: "success",
 	[TASK_STATUS.REMOVED]: "info",

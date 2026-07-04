@@ -9,7 +9,6 @@ import type {
 	LowSpeedEvaluationResult,
 	MediaInfo,
 	PeerInfo,
-	SyncOrderResult,
 } from "@shared/types/task";
 import type {
 	UploadJob,
@@ -242,14 +241,16 @@ export default class Api {
 		});
 	}
 
-	syncSelectedTaskOrder(
-		params: { direction?: string; selectedTasks?: DownloadTask[] } = {},
-	) {
-		const { direction = "up", selectedTasks = [] } = params;
-		return invoke<SyncOrderResult>("sync_selected_task_order", {
-			direction,
-			selectedTasks,
-		});
+	reorderTasks(params: { gids: string[]; targetGid: string; after: boolean }) {
+		return invoke("reorder_tasks", params);
+	}
+
+	setTaskSchedule(params: { gid: string; startAt: number }) {
+		return invoke("set_task_schedule", params);
+	}
+
+	startTaskNow(params: { gid: string }) {
+		return invoke("start_task_now", params);
 	}
 
 	addUri(params: {
@@ -352,6 +353,17 @@ export default class Api {
 		});
 	}
 
+	fetchScheduledTaskList(
+		params: { offset?: number; num?: number; keys?: string[] } = {},
+	) {
+		const { offset = 0, num = TASK_LIST_FETCH_SIZE, keys } = params;
+		return invoke<DownloadTask[]>("tell_scheduled", {
+			offset,
+			num,
+			keys,
+		});
+	}
+
 	async fetchActiveTaskList(
 		params: { offset?: number; num?: number; keys?: string[] } = {},
 	) {
@@ -376,6 +388,8 @@ export default class Api {
 				return this.fetchWaitingTaskList(params);
 			case "stopped":
 				return this.fetchStoppedTaskList(params);
+			case "scheduled":
+				return this.fetchScheduledTaskList(params);
 			default:
 				return this.fetchActiveTaskList(params);
 		}
@@ -385,15 +399,17 @@ export default class Api {
 		params: { offset?: number; num?: number; keys?: string[] } = {},
 	) {
 		const { offset = 0, num = TASK_LIST_FETCH_SIZE, keys } = params;
-		const [active, waiting, stopped] = await Promise.all([
+		const [active, waiting, scheduled, stopped] = await Promise.all([
 			invoke<DownloadTask[]>("tell_active", { keys }),
 			invoke<DownloadTask[]>("tell_waiting", { offset, num, keys }),
+			invoke<DownloadTask[]>("tell_scheduled", { offset, num, keys }),
 			invoke<DownloadTask[]>("tell_stopped", { offset, num, keys }),
 		]);
 		const activeArr = Array.isArray(active) ? active : [];
 		const waitingArr = Array.isArray(waiting) ? waiting : [];
+		const scheduledArr = Array.isArray(scheduled) ? scheduled : [];
 		const stoppedArr = Array.isArray(stopped) ? stopped : [];
-		return [...activeArr, ...waitingArr, ...stoppedArr];
+		return [...activeArr, ...waitingArr, ...scheduledArr, ...stoppedArr];
 	}
 
 	fetchTaskItem(params: { gid: string }) {

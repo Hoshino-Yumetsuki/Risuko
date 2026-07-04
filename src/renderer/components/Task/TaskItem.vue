@@ -2,11 +2,22 @@
   <div
     :key="task._displayKey || task.gid"
     class="task-item"
-    :class="{ 'is-active': shouldPulse, 'is-complete': isComplete, selected: selected, 'has-files': isMultiFileBT, 'task-item--card': isCardView }"
+    :class="{ 'is-active': shouldPulse, 'is-complete': isComplete, selected: selected, 'has-files': isMultiFileBT, 'task-item--card': isCardView, 'has-drag-handle': showDragHandle }"
     v-on:dblclick="onDbClick"
   >
     <div class="task-item-main">
       <div class="task-item-row">
+        <span
+          v-if="showDragHandle"
+          class="task-drag-handle"
+          @pointerdown.stop="onHandleDown"
+          @mousedown.stop
+          @touchstart.stop
+          @click.stop
+          @dblclick.stop
+        >
+          <GripVertical :size="14" />
+        </span>
         <span class="task-status-dot" :class="`status-${taskStatus}`"></span>
         <div class="task-name" :title="taskFullName">
           <span class="task-name-text">{{ taskFullName }}</span>
@@ -68,7 +79,7 @@
 </template>
 
 <script lang="ts">
-import { ChevronDown, ChevronRight } from "@lucide/vue";
+import { ChevronDown, ChevronRight, GripVertical } from "@lucide/vue";
 import { TASK_STATUS } from "@shared/constants";
 import {
 	bytesToSize,
@@ -94,6 +105,7 @@ export default {
 		[TaskProgressInfo.name]: TaskProgressInfo,
 		ChevronDown,
 		ChevronRight,
+		GripVertical,
 	},
 	props: {
 		task: {
@@ -103,7 +115,12 @@ export default {
 			type: Boolean,
 			default: false,
 		},
+		showDragHandle: {
+			type: Boolean,
+			default: false,
+		},
 	},
+	emits: ["handle-down"],
 	data() {
 		return {
 			filesExpanded: true,
@@ -200,6 +217,9 @@ export default {
 		},
 	},
 	methods: {
+		onHandleDown(event) {
+			this.$emit("handle-down", { task: this.task, event });
+		},
 		onDbClick() {
 			const { status } = this.task;
 			const { COMPLETE, WAITING, PAUSED } = TASK_STATUS;

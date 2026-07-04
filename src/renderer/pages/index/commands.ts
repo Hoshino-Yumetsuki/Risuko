@@ -145,46 +145,6 @@ const deleteTask = () => {
 	});
 };
 
-const moveTaskUp = () => {
-	getTaskStore()
-		.moveSelectedTasks("up", {
-			onSyncError: () => {
-				toast.error("Syncing priority failed", {
-					duration: 1800,
-				});
-			},
-		})
-		.then((movedCount) => {
-			if (movedCount === 0) {
-				return;
-			}
-			toast.success(i18n.t("task.move-task-up"));
-		})
-		.catch(() => {
-			toast.error(i18n.t("task.move-task-up"));
-		});
-};
-
-const moveTaskDown = () => {
-	getTaskStore()
-		.moveSelectedTasks("down", {
-			onSyncError: () => {
-				toast.error("Syncing priority failed", {
-					duration: 1800,
-				});
-			},
-		})
-		.then((movedCount) => {
-			if (movedCount === 0) {
-				return;
-			}
-			toast.success(i18n.t("task.move-task-down"));
-		})
-		.catch(() => {
-			toast.error(i18n.t("task.move-task-down"));
-		});
-};
-
 const pauseAllTask = () => {
 	getTaskStore().pauseAllTask();
 };
@@ -219,8 +179,6 @@ commands.register("application:new-bt-task-with-file", showAddBtTaskWithFile);
 commands.register("application:pause-task", pauseTask);
 commands.register("application:resume-task", resumeTask);
 commands.register("application:delete-task", deleteTask);
-commands.register("application:move-task-up", moveTaskUp);
-commands.register("application:move-task-down", moveTaskDown);
 commands.register("application:pause-all-task", pauseAllTask);
 commands.register("application:resume-all-task", resumeAllTask);
 commands.register("application:select-all-task", selectAllTask);

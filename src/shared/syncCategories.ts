@@ -5,7 +5,7 @@ export interface SyncCategory {
 	keys: string[];
 }
 
-export const MISC_CATEGORY = "misc";
+const MISC_CATEGORY = "misc";
 
 const DEVICE_LOCAL_KEYS = new Set<string>([
 	"cloud-sync-enabled",

@@ -204,6 +204,15 @@
                 {{ $t('task.navigate-to-downloading') }}
               </ui-checkbox>
             </div>
+            <div v-if="type !== 'torrent'" class="col-span-2">
+              <label class="mb-1 block text-[11px] text-muted-foreground">{{
+                $t('task.schedule-start-at')
+              }}</label>
+              <DateTimePicker
+                v-model="form.startAt"
+                :placeholder="$t('task.schedule-start-at-placeholder')"
+              />
+            </div>
             <div class="col-span-2">
               <ui-checkbox
                 :model-value="!!form.completionScriptOverride"
@@ -316,6 +325,7 @@ import BatchItemCard from "@/components/Task/BatchItemCard.vue";
 import BrowserCookiePicker from "@/components/Task/BrowserCookiePicker.vue";
 import { Accordion } from "@/components/ui/accordion";
 import UiButton from "@/components/ui/compat/UiButton.vue";
+import { DateTimePicker } from "@/components/ui/date-time-picker";
 import {
 	Dialog,
 	DialogContent,
@@ -353,6 +363,7 @@ export default {
 		BrowserCookiePicker,
 		UiButton,
 		NumberInput,
+		DateTimePicker,
 		Dialog,
 		DialogContent,
 		DialogHeader,

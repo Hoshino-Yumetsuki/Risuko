@@ -262,7 +262,26 @@ jobs:
             version=$(grep -m1 '^version' src-tauri/Cargo.toml | sed 's/.*"\(.*\)"/\1/')
           fi
           bundle_dir="src-tauri/target/${{ matrix.target }}/release/bundle"
-          if [[ "$os" == "darwin" ]]; then
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            # Serve tauri's exact updater artifact so its minisign .sig stays valid.
+            # Renaming is fine — minisign signs file *contents*, not the filename.
+            sig=$(find "$bundle_dir" -name '*.sig' -type f | head -1)
+            if [[ -z "$sig" ]]; then
+              echo "::error::No updater .sig under $bundle_dir. Is TAURI_SIGNING_PRIVATE_KEY set?"
+              find "$bundle_dir" -maxdepth 3 -type f | sed 's/^/found: /' || true
+              exit 1
+            fi
+            signed="${sig%.sig}"
+            case "$(basename "$signed")" in
+              *.app.tar.gz) ext="app.tar.gz" ;;
+              *.AppImage)   ext="AppImage" ;;
+              *)            ext="${signed##*.}" ;;
+            esac
+            asset="Risuko_${version}_${os}_${arch}.${ext}"
+            cp "$signed" "$asset"
+            cp "$sig" "$asset.sig"
+            echo "UPDATER_SIG_FILE=$asset.sig" >> "$GITHUB_ENV"
+          elif [[ "$os" == "darwin" ]]; then
             asset="Risuko_${version}_${os}_${arch}.app.tar.gz"
             tar czf "$asset" -C "$bundle_dir/macos" "Risuko.app"
           else
@@ -285,9 +304,23 @@ jobs:
             $cargo = Get-Content "src-tauri/Cargo.toml" -Raw
             $version = [regex]::Match($cargo, '^version\s*=\s*"([^"]+)"', [System.Text.RegularExpressions.RegexOptions]::Multiline).Groups[1].Value
           }
-          $setup = Get-ChildItem "src-tauri/target/${{ matrix.target }}/release/bundle/nsis" -Filter "*-setup.exe" | Select-Object -First 1
+          $nsis = "src-tauri/target/${{ matrix.target }}/release/bundle/nsis"
           $asset = "Risuko_${version}_${os}_${arch}.setup.exe"
-          Copy-Item $setup.FullName $asset
+          if ("${{ github.ref }}" -match "^refs/tags/") {
+            # Serve tauri's exact signed installer so its minisign .sig stays valid.
+            $sig = Get-ChildItem $nsis -Filter "*-setup.exe.sig" | Select-Object -First 1
+            if (-not $sig) {
+              Write-Error "No updater .sig under $nsis (is TAURI_SIGNING_PRIVATE_KEY set?)"
+              exit 1
+            }
+            $signed = $sig.FullName -replace '\.sig$', ''
+            Copy-Item $signed $asset
+            Copy-Item $sig.FullName "$asset.sig"
+            "UPDATER_SIG_FILE=$asset.sig" | Out-File -Append -FilePath $env:GITHUB_ENV -Encoding utf8
+          } else {
+            $setup = Get-ChildItem $nsis -Filter "*-setup.exe" | Select-Object -First 1
+            Copy-Item $setup.FullName $asset
+          }
           "APP_ASSET=$asset" | Out-File -Append -FilePath $env:GITHUB_ENV -Encoding utf8
           "APP_PLATFORM_LABEL=${os}-${arch}" | Out-File -Append -FilePath $env:GITHUB_ENV -Encoding utf8
 
@@ -297,6 +330,34 @@ jobs:
           set -euo pipefail
           node scripts/write-sha256-sidecar.mjs "$APP_ASSET"
 
+      # Record this platform's updater entry (key + asset + signature) for the
+      # aggregation job that assembles latest.json across all matrix jobs.
+      - name: Emit updater manifest fragment
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          set -euo pipefail
+          triple="${{ matrix.target }}"
+          arch="${triple%%-*}"   # x86_64 | aarch64 | i686
+          case "$triple" in
+            *apple-darwin) tos=darwin ;;
+            *windows*)     tos=windows ;;
+            *linux*)       tos=linux ;;
+            *) echo "::error::unknown target triple $triple"; exit 1 ;;
+          esac
+          key="${tos}-${arch}"
+          signature=$(tr -d '\n' < "$UPDATER_SIG_FILE")
+          mkdir -p fragments
+          printf '{"key":"%s","asset":"%s","signature":"%s"}' "$key" "$APP_ASSET" "$signature" > "fragments/$key.json"
+          echo "fragment: fragments/${key}.json -> $APP_ASSET"
+
+      - name: Upload updater fragment
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: actions/upload-artifact@v4
+        with:
+          name: updater-fragment-${{ matrix.target }}
+          path: fragments/*.json
+
       - name: Upload standardized app bundle to GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
@@ -305,6 +366,7 @@ jobs:
           files: |
             ${{ env.APP_ASSET }}
             ${{ env.APP_ASSET }}.sha256
+            ${{ env.APP_ASSET }}.sig
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -440,3 +502,41 @@ jobs:
           else
             echo "DMG directory not found: $dmg_dir"
           fi
+
+  updater-manifest:
+    name: Build updater latest.json
+    needs: release
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out Git repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Download updater fragments
+        uses: actions/download-artifact@v4
+        with:
+          path: fragments
+          pattern: updater-fragment-*
+          merge-multiple: true
+
+      - name: Build latest.json
+        shell: bash
+        run: node scripts/build-updater-manifest.mjs fragments latest.json
+        env:
+          VERSION: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+
+      - name: Upload latest.json to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: latest.json
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

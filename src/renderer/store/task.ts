@@ -1,10 +1,5 @@
 import { TASK_STATUS } from "@shared/constants";
-import type {
-	DownloadFile,
-	DownloadTask,
-	PeerInfo,
-	SyncOrderResult,
-} from "@shared/types/task";
+import type { DownloadFile, DownloadTask, PeerInfo } from "@shared/types/task";
 import { calcProgress, checkTaskIsBT, getTaskName } from "@shared/utils";
 import logger from "@shared/utils/logger";
 import { defineStore } from "pinia";
@@ -139,6 +134,7 @@ export const useTaskStore = defineStore("task", {
 			all: [] as string[],
 			active: [] as string[],
 			waiting: [] as string[],
+			scheduled: [] as string[],
 			completed: [] as string[],
 			stopped: [] as string[],
 		},
@@ -146,6 +142,7 @@ export const useTaskStore = defineStore("task", {
 			all: 0,
 			active: 0,
 			waiting: 0,
+			scheduled: 0,
 			completed: 0,
 			stopped: 0,
 		} as Record<string, number>,
@@ -158,6 +155,7 @@ export const useTaskStore = defineStore("task", {
 			all: 1,
 			active: 1,
 			waiting: 1,
+			scheduled: 1,
 			completed: 1,
 			stopped: 1,
 		},
@@ -413,37 +411,31 @@ export const useTaskStore = defineStore("task", {
 
 			let activeCount = numActive;
 			let waitingCount = numWaiting;
+			let scheduledCount = this.taskCountMap.scheduled || 0;
 			let completedCount = this.taskCountMap.completed || 0;
 			let stoppedCount = this.taskCountMap.stopped || 0;
 			let allCount = numActive + numWaiting + numStoppedTotal;
 
-			// Fetch small projections so sidebar counts match visible rows
-			// Skip the fetch when aria2 says there is nothing to count
 			const needFetch = numActive + numWaiting + numStoppedTotal > 0;
 			if (needFetch) {
 				try {
-					const [activeData, waitingData, stoppedData] = await Promise.all([
-						numActive > 0
-							? (api.fetchTaskList({
-									type: "active",
-									keys: ["gid", "status", "files", "bittorrent"],
-								}) as Promise<DownloadTask[]>)
-							: Promise.resolve([] as DownloadTask[]),
-						numWaiting > 0
-							? (api.fetchTaskList({
-									type: "waiting",
-									keys: ["gid", "status", "files", "bittorrent"],
-								}) as Promise<DownloadTask[]>)
-							: Promise.resolve([] as DownloadTask[]),
-						numStoppedTotal > 0
-							? (api.fetchTaskList({
-									type: "stopped",
-									keys: ["gid", "status", "files", "bittorrent"],
-								}) as Promise<DownloadTask[]>)
-							: Promise.resolve([] as DownloadTask[]),
-					]);
+					const keys = ["gid", "status", "files", "bittorrent"];
+					const empty = Promise.resolve([] as DownloadTask[]);
+					const fetchSmall = (
+						type: "active" | "waiting" | "scheduled" | "stopped",
+					) => api.fetchTaskList({ type, keys }) as Promise<DownloadTask[]>;
+					const [activeData, waitingData, scheduledData, stoppedData] =
+						await Promise.all([
+							numActive > 0 ? fetchSmall("active") : empty,
+							numWaiting > 0 ? fetchSmall("waiting") : empty,
+							numWaiting > 0 ? fetchSmall("scheduled") : empty,
+							numStoppedTotal > 0 ? fetchSmall("stopped") : empty,
+						]);
 					const activeArr = Array.isArray(activeData) ? activeData : [];
 					const waitingArr = Array.isArray(waitingData) ? waitingData : [];
+					const scheduledArr = Array.isArray(scheduledData)
+						? scheduledData
+						: [];
 					const stoppedArr = Array.isArray(stoppedData) ? stoppedData : [];
 					const completedArr = stoppedArr.filter(
 						(t) => t.status === TASK_STATUS.COMPLETE,
@@ -453,18 +445,26 @@ export const useTaskStore = defineStore("task", {
 					);
 					activeCount = activeArr.length;
 					waitingCount = waitingArr.length;
+					scheduledCount = scheduledArr.length;
 					completedCount = completedArr.length;
 					stoppedCount = stoppedOnlyArr.length;
-					allCount = activeCount + waitingCount + completedCount + stoppedCount;
+					allCount =
+						activeCount +
+						waitingCount +
+						scheduledCount +
+						completedCount +
+						stoppedCount;
 				} catch {
 					// Keep previous counts on failure
 					activeCount = this.taskCountMap.active || 0;
 					waitingCount = this.taskCountMap.waiting || 0;
+					scheduledCount = this.taskCountMap.scheduled || 0;
 					completedCount = this.taskCountMap.completed || 0;
 					stoppedCount = this.taskCountMap.stopped || 0;
 					allCount = this.taskCountMap.all || 0;
 				}
 			} else {
+				scheduledCount = 0;
 				completedCount = 0;
 				stoppedCount = 0;
 			}
@@ -473,6 +473,7 @@ export const useTaskStore = defineStore("task", {
 				all: allCount,
 				active: activeCount,
 				waiting: waitingCount,
+				scheduled: scheduledCount,
 				completed: completedCount,
 				stopped: stoppedCount,
 			};
@@ -589,6 +590,11 @@ export const useTaskStore = defineStore("task", {
 		},
 		updateCurrentTaskGid(gid: string) {
 			this.currentTaskGid = gid;
+		},
+		updateCurrentTaskDetail() {
+			return this.currentTaskGid
+				? this.fetchItemWithPeers(this.currentTaskGid)
+				: null;
 		},
 		addUri(data: {
 			uris: string[];
@@ -811,109 +817,45 @@ export const useTaskStore = defineStore("task", {
 					this.saveSession();
 				});
 		},
-		async syncSelectedTaskOrder(
-			direction: "up" | "down",
-			selectedGids: string[],
-		) {
-			const selectedGidSet = new Set(selectedGids);
-			const selectedTasks = this.taskList.filter((task) =>
-				selectedGidSet.has(task.gid),
-			);
-			const selectedTaskPayload = selectedTasks.map((task) => ({
-				gid: task.gid,
-				status: task.status,
-			}));
-			try {
-				const result = (await api.syncSelectedTaskOrder({
-					direction,
-					selectedTasks: selectedTaskPayload,
-				})) as SyncOrderResult;
-				const movedValue = Number(result?.moved);
-				const moved = Number.isFinite(movedValue) ? movedValue : 0;
-				const partialError = !!result?.partialError;
-
-				await this.fetchList();
-				this.saveSession();
-
-				if (partialError) {
-					const err = Object.assign(new Error("priority-sync-failed"), {
-						reconciled: true,
-					});
-					throw err;
-				}
-
-				return moved;
-			} catch (err: unknown) {
-				if (!(err as { reconciled?: boolean })?.reconciled) {
-					await this.fetchList();
-					this.saveSession();
-				}
-
-				throw err;
+		async reorderTasks(gids: string[], targetGid: string, after: boolean) {
+			if (gids.length === 0 || !targetGid || gids.includes(targetGid)) {
+				return;
 			}
-		},
-		async moveSelectedTasks(
-			direction: "up" | "down",
-			options: { onSyncError?: (error: unknown) => void } = {},
-		) {
-			const { onSyncError } = options;
-			const selectedGids = this.selectedGids;
-			if (selectedGids.length === 0) {
-				return 0;
-			}
-
-			const selectedSet = new Set(selectedGids);
-			const nextList = [...this.taskList];
-			let moved = 0;
-
-			if (direction === "up") {
-				for (let i = 1; i < nextList.length; i += 1) {
-					const curr = nextList[i];
-					const prev = nextList[i - 1];
-					if (!selectedSet.has(curr.gid) || selectedSet.has(prev.gid)) {
-						continue;
-					}
-					nextList[i - 1] = curr;
-					nextList[i] = prev;
-					moved += 1;
-				}
-			} else {
-				for (let i = nextList.length - 2; i >= 0; i -= 1) {
-					const curr = nextList[i];
-					const next = nextList[i + 1];
-					if (!selectedSet.has(curr.gid) || selectedSet.has(next.gid)) {
-						continue;
-					}
-					nextList[i + 1] = curr;
-					nextList[i] = next;
-					moved += 1;
-				}
-			}
-
-			if (moved === 0) {
-				return 0;
-			}
-
+			const moveSet = new Set(gids);
+			const moved = this.taskList.filter((task) => moveSet.has(task.gid));
+			const remaining = this.taskList.filter((task) => !moveSet.has(task.gid));
+			const targetIdx = remaining.findIndex((task) => task.gid === targetGid);
+			const insertAt =
+				targetIdx < 0 ? remaining.length : after ? targetIdx + 1 : targetIdx;
+			const nextList = [
+				...remaining.slice(0, insertAt),
+				...moved,
+				...remaining.slice(insertAt),
+			];
 			this.taskList = nextList;
 			this.updateTaskOrder(
 				this.currentList,
 				nextList.map((task) => task.gid),
 			);
+
+			try {
+				await api.reorderTasks({ gids, targetGid, after });
+				await this.fetchList();
+				this.saveSession();
+			} catch (err: unknown) {
+				logger.warn("[Risuko] reorderTasks failed:", (err as Error).message);
+				await this.fetchList();
+			}
+		},
+		async setSchedule(gid: string, startAt: number) {
+			await api.setTaskSchedule({ gid, startAt });
+			await this.fetchList();
 			this.saveSession();
-
-			this.syncSelectedTaskOrder(direction, selectedGids).catch(
-				(err: unknown) => {
-					logger.warn(
-						"[Risuko] syncSelectedTaskOrder failed:",
-						(err as Error).message,
-					);
-					if (typeof onSyncError === "function") {
-						onSyncError(err);
-					}
-				},
-			);
-
-			return moved;
+		},
+		async startNow(gid: string) {
+			await api.startTaskNow({ gid });
+			await this.fetchList();
+			this.saveSession();
 		},
 	},
 });

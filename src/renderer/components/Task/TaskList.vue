@@ -8,8 +8,17 @@
       key-field="_displayKey"
     >
       <template #default="{ item }">
-        <div :attr="item._displayKey" @click="handleItemClick(item, $event)">
-          <task-item :task="item" :selected="isItemSelected(item)" />
+        <div
+          :attr="item._displayKey"
+          :class="dropClass(item._displayKey)"
+          @click="handleItemClick(item, $event)"
+        >
+          <task-item
+            :task="item"
+            :selected="isItemSelected(item)"
+            :show-drag-handle="canDrag"
+            @handle-down="onHandleDown"
+          />
         </div>
       </template>
     </recycle-scroller>
@@ -21,9 +30,15 @@
         :duration="0.4"
         :delay="getStaggerDelay(index)"
         :attr="item._displayKey"
+        :class="dropClass(item._displayKey)"
         @click="handleItemClick(item, $event)"
       >
-        <task-item :task="item" :selected="isItemSelected(item)" />
+        <task-item
+          :task="item"
+          :selected="isItemSelected(item)"
+          :show-drag-handle="canDrag"
+          @handle-down="onHandleDown"
+        />
       </motion-enter>
     </drag-select>
     <footer class="task-pagination">
@@ -88,6 +103,9 @@ export default {
 		return {
 			selectedList,
 			lastClickedKey: null as string | null,
+			draggingKeys: [] as string[],
+			dropTargetKey: null as string | null,
+			dropAfter: false,
 		};
 	},
 	computed: {
@@ -110,7 +128,7 @@ export default {
 			if (usePreferenceStore().taskListStyle === "card") {
 				return is.android() ? 136 : 90;
 			}
-			return is.android() ? 88 : 64;
+			return is.android() ? 98 : 74;
 		},
 		useVirtualList() {
 			if (this.taskList.length < VIRTUAL_LIST_THRESHOLD) {
@@ -121,6 +139,18 @@ export default {
 				return checkTaskIsBT(task) && files.length > 1;
 			});
 		},
+		canDrag() {
+			const store = useTaskStore();
+			const listOk = ["all", "active", "waiting", "scheduled"].includes(
+				store.currentList,
+			);
+			return (
+				listOk &&
+				store.sortBy === "default" &&
+				!store.filterText &&
+				!store.filterTag
+			);
+		},
 	},
 	mounted() {
 		this._onKeyDown = this.onKeyDown.bind(this);
@@ -128,6 +158,12 @@ export default {
 	},
 	beforeUnmount() {
 		window.removeEventListener("keydown", this._onKeyDown);
+		if (this._onDragMove) {
+			window.removeEventListener("pointermove", this._onDragMove);
+		}
+		if (this._onDragUp) {
+			window.removeEventListener("pointerup", this._onDragUp);
+		}
 	},
 	methods: {
 		showAddTask() {
@@ -214,6 +250,75 @@ export default {
 		isItemSelected(item): boolean {
 			const key = item._displayKey;
 			return this.selectedList.includes(key);
+		},
+		onHandleDown({ task, event }) {
+			if (!this.canDrag) {
+				return;
+			}
+			event.preventDefault?.();
+			const key = task._displayKey || task.gid;
+			const selected = new Set(this.selectedList);
+			const keys = this.paginatedTaskList.map((t) => t._displayKey);
+			this.draggingKeys = selected.has(key)
+				? keys.filter((k) => selected.has(k))
+				: [key];
+			this._onDragMove = this.onDragMove.bind(this);
+			this._onDragUp = this.onDragUp.bind(this);
+			window.addEventListener("pointermove", this._onDragMove);
+			window.addEventListener("pointerup", this._onDragUp, { once: true });
+			document.body.classList.add("task-dragging");
+		},
+		onDragMove(event: PointerEvent) {
+			if (this.draggingKeys.length === 0) {
+				return;
+			}
+			const scroller = this.$el?.querySelector?.(
+				".task-list",
+			) as HTMLElement | null;
+			if (scroller) {
+				const r = scroller.getBoundingClientRect();
+				const EDGE = 44;
+				if (event.clientY < r.top + EDGE) {
+					scroller.scrollTop -= 14;
+				} else if (event.clientY > r.bottom - EDGE) {
+					scroller.scrollTop += 14;
+				}
+			}
+			const el = document.elementFromPoint(
+				event.clientX,
+				event.clientY,
+			) as HTMLElement | null;
+			const rowEl = el?.closest?.("[attr]") as HTMLElement | null;
+			if (!rowEl) {
+				return;
+			}
+			const targetKey = rowEl.getAttribute("attr");
+			if (!targetKey || this.draggingKeys.includes(targetKey)) {
+				this.dropTargetKey = null;
+				return;
+			}
+			const rect = rowEl.getBoundingClientRect();
+			this.dropAfter = event.clientY > rect.top + rect.height / 2;
+			this.dropTargetKey = targetKey;
+		},
+		async onDragUp() {
+			window.removeEventListener("pointermove", this._onDragMove);
+			document.body.classList.remove("task-dragging");
+			const targetKey = this.dropTargetKey;
+			const after = this.dropAfter;
+			const gids = [...this.draggingKeys];
+			this.draggingKeys = [];
+			this.dropTargetKey = null;
+			if (!targetKey || gids.length === 0) {
+				return;
+			}
+			await useTaskStore().reorderTasks(gids, targetKey, after);
+		},
+		dropClass(key: string) {
+			if (this.dropTargetKey !== key) {
+				return "";
+			}
+			return this.dropAfter ? "drop-after" : "drop-before";
 		},
 	},
 	watch: {

@@ -1,7 +1,7 @@
 # Risuko
 
 <p>
-  <a href="https://risuko.vercel.app">
+  <a href="https://risuko.app">
     <img src="./static/logo.svg" width="256" alt="Risuko App Icon" />
   </a>
 </p>
@@ -17,7 +17,7 @@
 
 Risuko 是一款全能的下载工具，支持下载 HTTP、FTP、BT、磁力链等资源。它的界面简洁易用，希望大家喜欢 👻。
 
-✈️ 去 [官网](https://risuko.vercel.app) 逛逛
+✈️ 去 [官网](https://risuko.app) 逛逛
 
 ## 💽 安装
 

@@ -3,7 +3,7 @@
     <a
       target="_blank"
       rel="noopener noreferrer"
-      href="https://risuko.vercel.app"
+      href="https://risuko.app"
       class="copyright-brand"
     >
       &copy;{{ year }} Risuko

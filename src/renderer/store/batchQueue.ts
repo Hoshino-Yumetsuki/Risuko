@@ -82,15 +82,10 @@ const createFileBatchItem = (
 	};
 };
 
-export const createTorrentBatchItem = (
-	path: string,
-	name?: string,
-): BatchQueueItem => createFileBatchItem("torrent", "idle", path, name);
+const createTorrentBatchItem = (path: string, name?: string): BatchQueueItem =>
+	createFileBatchItem("torrent", "idle", path, name);
 
-export const createMetalinkBatchItem = (
-	path: string,
-	name?: string,
-): BatchQueueItem =>
+const createMetalinkBatchItem = (path: string, name?: string): BatchQueueItem =>
 	createFileBatchItem("metalink", "preview-disabled", path, name);
 
 const TORRENT_EXTS = ["torrent"];

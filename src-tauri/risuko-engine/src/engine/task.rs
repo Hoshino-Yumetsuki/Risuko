@@ -8,6 +8,7 @@ pub enum TaskStatus {
     #[default]
     Waiting,
     Paused,
+    Scheduled,
     Complete,
     Error,
     Removed,
@@ -19,6 +20,7 @@ impl TaskStatus {
             Self::Active => "active",
             Self::Waiting => "waiting",
             Self::Paused => "paused",
+            Self::Scheduled => "scheduled",
             Self::Complete => "complete",
             Self::Error => "error",
             Self::Removed => "removed",
@@ -114,37 +116,31 @@ pub struct DownloadTask {
     pub tag: Option<String>,
     // BitTorrent
     pub info_hash: Option<String>,
-    /// BEP-52 v2 (SHA-256) info-hash. Set for hybrid and pure-v2 torrents
     #[serde(default)]
     pub info_hash_v2: Option<String>,
-    /// BEP-52 metadata version: "v1", "v2", or "hybrid"
     #[serde(default)]
     pub meta_version: Option<String>,
     pub bt_name: Option<String>,
     pub seeder: bool,
     pub num_seeders: u32,
     pub peers: Vec<PeerInfo>,
-    /// Piece length in bytes (BT only). Populated once metadata is received
     #[serde(default)]
     pub piece_length: u32,
-    /// Total number of pieces (BT only)
     #[serde(default)]
     pub num_pieces: u32,
-    /// Free-form torrent comment from the .torrent file
     #[serde(default)]
     pub bt_comment: Option<String>,
-    /// Unix epoch seconds for torrent creation, when present
     #[serde(default)]
     pub bt_creation_date: Option<i64>,
-    /// BEP-12 announce-list, tier first then trackers within tier
     #[serde(default)]
     pub bt_announce_list: Vec<Vec<String>>,
-    // Internal tracking
     pub created_at: u64,
-    /// Timestamp (ms) when seeding started, 0 if not seeding
     #[serde(default)]
     pub seeding_since: u64,
-    /// split progress for multi-thread HTTP downloads (transient)
+    #[serde(default)]
+    pub start_at: Option<u64>,
+    #[serde(default)]
+    pub schedule_missed: bool,
     #[serde(skip, default)]
     pub chunk_progress: Vec<ChunkProgress>,
 }
@@ -576,6 +572,13 @@ impl DownloadTask {
             "createdAt".into(),
             Value::String(self.created_at.to_string()),
         );
+
+        if let Some(ts) = self.start_at {
+            m.insert("startAt".into(), Value::String(ts.to_string()));
+        }
+        if self.schedule_missed {
+            m.insert("scheduleMissed".into(), Value::Bool(true));
+        }
 
         // BitTorrent fields
         if self.kind == TaskKind::Torrent {

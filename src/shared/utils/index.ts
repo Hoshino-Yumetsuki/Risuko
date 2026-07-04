@@ -620,12 +620,8 @@ const isFtpsLink = (uri: string): boolean => {
 	return uri.trim().toLowerCase().startsWith("ftps://");
 };
 
-export const isSftpLink = (uri: string): boolean => {
+const isSftpLink = (uri: string): boolean => {
 	return uri.trim().toLowerCase().startsWith("sftp://");
-};
-
-export const isFtpFamily = (uri: string): boolean => {
-	return isFtpLink(uri) || isFtpsLink(uri) || isSftpLink(uri);
 };
 
 export const getLangDirection = (locale = "en-US") => {

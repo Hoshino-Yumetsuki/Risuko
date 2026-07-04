@@ -1,7 +1,7 @@
 # Risuko
 
 <p>
-  <a href="https://risuko.vercel.app">
+  <a href="https://risuko.app">
     <img src="./static/logo.svg" width="256" alt="Risuko App Icon" />
   </a>
 </p>
@@ -19,7 +19,7 @@ Risuko is a full-featured download manager that supports downloading HTTP, FTP, 
 
 Risuko has a clean and easy to use interface. I hope you will like it 👻.
 
-✈️ [Official Website](https://risuko.vercel.app)
+✈️ [Official Website](https://risuko.app)
 
 ## 💽 Installation
 
