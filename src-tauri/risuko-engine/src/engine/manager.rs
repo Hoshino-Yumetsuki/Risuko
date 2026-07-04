@@ -243,11 +243,16 @@ async fn metalink_finish(
                 })
                 .collect();
             task.download_speed = 0;
-            if failures.is_empty() {
+            let completed_any = results.iter().any(|(_, _, r)| r.is_ok());
+            if failures.is_empty() && completed_any {
                 task.status = TaskStatus::Complete;
                 events.send(EngineEvent::DownloadComplete {
                     gid: gid.to_string(),
                 });
+            } else if failures.is_empty() {
+                // every in-flight file was cancelled (pause/stop), none finished —
+                // not a completion, leave the batch paused so it can resume
+                task.status = TaskStatus::Paused;
             } else {
                 let names: Vec<&str> = failures.iter().map(|(n, _)| *n).collect();
                 let first_err = failures[0].1.clone();
@@ -677,9 +682,20 @@ impl TaskManager {
         if uris.len() == 1 && super::metalink::url_hints_metalink(&uris[0]) {
             let merged = self.options.read().await.merge_task_options(&options);
             if let Ok(bytes) = http::fetch_for_metalink_probe(&uris[0], &merged).await {
-                if super::metalink::parse(&String::from_utf8_lossy(&bytes)).is_ok() {
+                // strict UTF-8 to match add_metalink_task's own check, so a
+                // non-UTF-8 body is never classified as metalink and rejected later
+                if std::str::from_utf8(&bytes)
+                    .ok()
+                    .is_some_and(|text| super::metalink::parse(text).is_ok())
+                {
                     tracing::info!("[metalink] following metalink URL: {}", uris[0]);
-                    return self.add_metalink_task(bytes, options).await;
+                    match self.add_metalink_task(bytes, options.clone()).await {
+                        Ok(gid) => return Ok(gid),
+                        Err(e) => tracing::warn!(
+                            "[metalink] {} parsed but task creation failed, falling back to HTTP: {e}",
+                            uris[0]
+                        ),
+                    }
                 }
             }
         }
@@ -1661,11 +1677,14 @@ impl TaskManager {
             if len > 0 && done >= len {
                 continue;
             }
+            let file_uris: Vec<String> = f.uris.iter().map(|u| u.uri.clone()).collect();
             let out = Path::new(&f.path)
                 .file_name()
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_default();
             let mut opts = merged_options.clone();
+            // mirror the HTTP/media path: fill absent cookies/UA from the store per mirror host
+            self.apply_stored_cookies(&file_uris, &mut opts);
             opts.insert("out".to_string(), Value::String(out.clone()));
             if let Some(cs) = checksums.get(i) {
                 if !cs.is_empty() {
@@ -1673,13 +1692,15 @@ impl TaskManager {
                 }
             }
             let mut counters = Counters::new(0, split);
-            counters.cancel_token = parent.clone();
+            // child token, not the parent clone: parent pause/stop still cascades to
+            // every file, but one file's stall watchdog only cancels itself
+            counters.cancel_token = parent.child_token();
             let chunk: Vec<Arc<AtomicU64>> =
                 (0..split).map(|_| Arc::new(AtomicU64::new(0))).collect();
             file_counters.push((i, counters.clone()));
             specs.push(Spec {
                 idx: i,
-                uris: f.uris.iter().map(|u| u.uri.clone()).collect(),
+                uris: file_uris,
                 out,
                 options: opts,
                 counters,
@@ -3783,6 +3804,39 @@ mod tests {
         let tasks = mgr.tasks.read().await;
         let t = tasks.iter().find(|t| t.gid == "gm").unwrap();
         assert_eq!(t.status, TaskStatus::Complete);
+        assert!(t.error_code.is_none());
+    }
+
+    #[tokio::test]
+    async fn metalink_all_cancelled_does_not_complete() {
+        // every in-flight file cancelled (pause/stop) must not be reported as done
+        let mut task = DownloadTask::new_metalink(
+            "gm".into(),
+            "/dl".into(),
+            None,
+            Map::new(),
+            vec![
+                mk_metalink_file("1", 100, 0),
+                mk_metalink_file("2", 100, 0),
+            ],
+        );
+        task.status = TaskStatus::Active;
+        let mgr = make_test_manager(vec![task]);
+
+        run_metalink_finish(
+            &mgr,
+            "gm",
+            vec![
+                (0, "a".into(), Err("download cancelled".into())),
+                (1, "b".into(), Err("download cancelled".into())),
+            ],
+        )
+        .await;
+
+        let tasks = mgr.tasks.read().await;
+        let t = tasks.iter().find(|t| t.gid == "gm").unwrap();
+        assert_ne!(t.status, TaskStatus::Complete);
+        assert_eq!(t.status, TaskStatus::Paused);
         assert!(t.error_code.is_none());
     }
 

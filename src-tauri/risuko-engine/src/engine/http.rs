@@ -452,33 +452,41 @@ pub async fn fetch_for_metalink_probe(
     options: &Map<String, Value>,
 ) -> Result<Vec<u8>, String> {
     const CAP: u64 = 4 * 1024 * 1024;
+    const PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
     let client = build_client(options, true, None)?;
-    let resp = client
-        .get(uri)
-        .send()
-        .await
-        .map_err(|e| format!("metalink probe request failed: {e}"))?;
-    if !resp.status().is_success() {
-        return Err(format!("metalink probe HTTP {}", resp.status()));
-    }
-    if let Some(len) = resp
-        .headers()
-        .get("content-length")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.parse::<u64>().ok())
-    {
-        if len > CAP {
-            return Err("resource too large to be a metalink".to_string());
+    let fetch = async {
+        let resp = client
+            .get(uri)
+            .send()
+            .await
+            .map_err(|e| format!("metalink probe request failed: {e}"))?;
+        if !resp.status().is_success() {
+            return Err(format!("metalink probe HTTP {}", resp.status()));
         }
-    }
-    let bytes = resp
-        .bytes()
+        if let Some(len) = resp
+            .headers()
+            .get("content-length")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| s.parse::<u64>().ok())
+        {
+            if len > CAP {
+                return Err("resource too large to be a metalink".to_string());
+            }
+        }
+        let mut buf: Vec<u8> = Vec::new();
+        let mut stream = resp.bytes_stream();
+        while let Some(item) = stream.next().await {
+            let chunk = item.map_err(|e| format!("metalink probe read failed: {e}"))?;
+            if buf.len() as u64 + chunk.len() as u64 > CAP {
+                return Err("resource too large to be a metalink".to_string());
+            }
+            buf.extend_from_slice(&chunk);
+        }
+        Ok(buf)
+    };
+    tokio::time::timeout(PROBE_TIMEOUT, fetch)
         .await
-        .map_err(|e| format!("metalink probe read failed: {e}"))?;
-    if bytes.len() as u64 > CAP {
-        return Err("resource too large to be a metalink".to_string());
-    }
-    Ok(bytes.to_vec())
+        .map_err(|_| "metalink probe timed out".to_string())?
 }
 
 /// Build a HTTP Client with common settings applied from options

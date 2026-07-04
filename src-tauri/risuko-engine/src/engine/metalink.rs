@@ -113,9 +113,10 @@ fn parse_v4(xml: &str) -> Result<Vec<MetalinkFile>, String> {
                 checksum: pick_strongest(&f.hashes),
             }
         })
+        .filter(|f| !f.uris.is_empty())
         .collect();
 
-    if files.iter().all(|f| f.uris.is_empty()) {
+    if files.is_empty() {
         return Err("metalink has no downloadable <url> entries".into());
     }
     Ok(files)
@@ -148,9 +149,11 @@ fn parse_v3(xml: &str) -> Result<Vec<MetalinkFile>, String> {
                 checksum: pick_strongest(&f.verification.map(|v| v.hash).unwrap_or_default()),
             }
         })
+        // drop files with no usable <url> so they aren't scheduled with zero candidates
+        .filter(|f| !f.uris.is_empty())
         .collect();
 
-    if files.iter().all(|f| f.uris.is_empty()) {
+    if files.is_empty() {
         return Err("metalink v3 has no downloadable <url> entries".into());
     }
     Ok(files)
@@ -163,15 +166,13 @@ pub fn url_hints_metalink(uri: &str) -> bool {
 }
 
 fn sanitize_name(name: &str) -> String {
+    // strip any directory components, then run through the shared filename
+    // guard so OS-reserved names / invalid chars can't break file creation
     let base = Path::new(name)
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_default();
-    if base.is_empty() || base == "." || base == ".." {
-        "download".to_string()
-    } else {
-        base
-    }
+    crate::engine::util::safe_filename(&base, "download")
 }
 
 fn pick_strongest(hashes: &[RawHash]) -> Option<WholeChecksum> {

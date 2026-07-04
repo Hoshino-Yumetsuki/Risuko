@@ -62,7 +62,9 @@ export interface BatchQueueItem {
 	error?: string;
 }
 
-export const createTorrentBatchItem = (
+const createFileBatchItem = (
+	kind: Extract<BatchItemKind, "torrent" | "metalink">,
+	resolveState: BatchItemResolveState,
 	path: string,
 	name?: string,
 ): BatchQueueItem => {
@@ -70,44 +72,42 @@ export const createTorrentBatchItem = (
 	const fallback = segs[segs.length - 1] || path;
 	return {
 		id: crypto.randomUUID(),
-		kind: "torrent",
+		kind,
 		label: name || fallback,
 		path,
 		displayName: name || fallback,
-		resolveState: "idle",
+		resolveState,
 		selectFile: SELECTED_ALL_FILES,
 		status: "queued",
 	};
 };
+
+export const createTorrentBatchItem = (
+	path: string,
+	name?: string,
+): BatchQueueItem => createFileBatchItem("torrent", "idle", path, name);
 
 export const createMetalinkBatchItem = (
 	path: string,
 	name?: string,
-): BatchQueueItem => {
-	const segs = `${path}`.split(/[/\\]/);
-	const fallback = segs[segs.length - 1] || path;
-	return {
-		id: crypto.randomUUID(),
-		kind: "metalink",
-		label: name || fallback,
-		path,
-		displayName: name || fallback,
-		resolveState: "preview-disabled",
-		selectFile: SELECTED_ALL_FILES,
-		status: "queued",
-	};
-};
+): BatchQueueItem =>
+	createFileBatchItem("metalink", "preview-disabled", path, name);
 
-export const TASK_FILE_RE = /\.(torrent|meta4|metalink)$/i;
+const TORRENT_EXTS = ["torrent"];
+const METALINK_EXTS = ["meta4", "metalink"];
+const extRe = (exts: string[]) => new RegExp(`\\.(${exts.join("|")})$`, "i");
+const TORRENT_RE = extRe(TORRENT_EXTS);
+const METALINK_RE = extRe(METALINK_EXTS);
+export const TASK_FILE_RE = extRe([...TORRENT_EXTS, ...METALINK_EXTS]);
 
 export const batchItemForFilePath = (
 	path: string,
 	name?: string,
 ): BatchQueueItem | null => {
-	if (/\.torrent$/i.test(path)) {
+	if (TORRENT_RE.test(path)) {
 		return createTorrentBatchItem(path, name);
 	}
-	if (/\.(meta4|metalink)$/i.test(path)) {
+	if (METALINK_RE.test(path)) {
 		return createMetalinkBatchItem(path, name);
 	}
 	return null;

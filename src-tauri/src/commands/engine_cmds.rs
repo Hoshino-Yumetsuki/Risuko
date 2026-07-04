@@ -520,9 +520,16 @@ async fn add_metalink_by_path_inner(path: &str, options: Option<Value>) -> Resul
         .map(|ext| ext.eq_ignore_ascii_case("meta4") || ext.eq_ignore_ascii_case("metalink"))
         == Some(true);
     if path.is_empty() || !is_metalink {
-        return Err("Metalink file (.meta4) required".to_string());
+        return Err("Metalink file (.meta4 or .metalink) required".to_string());
     }
-    let bytes = std::fs::read(fs_path).map_err(|e| e.to_string())?;
+    const MAX_METALINK_BYTES: u64 = 4 * 1024 * 1024;
+    let meta = tokio::fs::metadata(fs_path)
+        .await
+        .map_err(|e| e.to_string())?;
+    if meta.len() > MAX_METALINK_BYTES {
+        return Err("Metalink file too large".to_string());
+    }
+    let bytes = tokio::fs::read(fs_path).await.map_err(|e| e.to_string())?;
     if bytes.is_empty() {
         return Err("Metalink payload is empty".to_string());
     }

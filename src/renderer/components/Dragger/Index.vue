@@ -25,7 +25,7 @@ export default {
 				})
 				.filter(Boolean);
 			if (!items.length) {
-				this.$msg.error(this.$t("task.select-torrent"));
+				this.$msg.error(this.$t("task.new-task-file-required"));
 				return;
 			}
 
@@ -37,7 +37,7 @@ export default {
 				.map((item) => batchItemForFilePath(item.path ?? item.name, item.name))
 				.filter(Boolean);
 			if (!items.length) {
-				this.$msg.error(this.$t("task.select-torrent"));
+				this.$msg.error(this.$t("task.new-task-file-required"));
 				return;
 			}
 			useAppStore().showAddTaskDialog(ADD_TASK_TYPE.TORRENT);

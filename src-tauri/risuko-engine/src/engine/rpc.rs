@@ -614,7 +614,7 @@ fn dispatch_method<'a>(
                     .map_err(|e| RpcError::from(format!("Invalid base64: {e}")))?;
 
                 let options = params
-                    .get(2)
+                    .get(1)
                     .and_then(|v| v.as_object())
                     .cloned()
                     .unwrap_or_default();
