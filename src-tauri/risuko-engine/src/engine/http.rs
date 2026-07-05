@@ -1292,8 +1292,8 @@ fn effective_cookies_have_name(
     uri: &str,
     name: &str,
 ) -> bool {
-    if headers_have_cookie_name(headers, name) {
-        return true;
+    if headers.contains_key(risuko_http::header::COOKIE) {
+        return headers_have_cookie_name(headers, name);
     }
     url::Url::parse(uri)
         .ok()
@@ -3149,6 +3149,22 @@ mod tests {
         assert!(effective_cookies_have_name(
             &client,
             &HeaderMap::new(),
+            url.as_str(),
+            "cf_clearance",
+        ));
+    }
+
+    #[test]
+    fn effective_cookies_have_name_treats_manual_cookie_as_authoritative() {
+        let url = url::Url::parse("https://example.com/file.bin").unwrap();
+        let jar = Arc::new(risuko_http::Jar::new());
+        jar.add_cookie_str("cf_clearance=abc; Path=/; Domain=example.com", &url);
+        let client = Client::builder().cookie_provider(jar).build().unwrap();
+        let headers = h(&[("cookie", "session=manual")]);
+
+        assert!(!effective_cookies_have_name(
+            &client,
+            &headers,
             url.as_str(),
             "cf_clearance",
         ));

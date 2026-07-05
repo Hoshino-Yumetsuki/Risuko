@@ -71,7 +71,7 @@ export default {
 			return this.task ? getTaskName(this.task) : "";
 		},
 		canConfirm(): boolean {
-			return Number(this.startAt) > Date.now() / 1000;
+			return this.isFutureStartAt();
 		},
 	},
 	watch: {
@@ -102,6 +102,9 @@ export default {
 					? existing
 					: this.nextTwoAm();
 		},
+		isFutureStartAt(): boolean {
+			return Number(this.startAt) > Date.now() / 1000;
+		},
 		onOpenChange(open: boolean) {
 			if (!open) {
 				this.close();
@@ -111,7 +114,7 @@ export default {
 			this.$emit("update:visible", false);
 		},
 		async confirm() {
-			if (!this.task || !this.canConfirm) {
+			if (!this.task || !this.isFutureStartAt()) {
 				return;
 			}
 			try {

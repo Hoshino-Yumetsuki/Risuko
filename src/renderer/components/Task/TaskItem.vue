@@ -238,12 +238,18 @@ export default {
 			this.$emit("handle-down", { task: this.task, event });
 		},
 		onHandleKeydown(event: KeyboardEvent) {
-			if (event.key === "ArrowUp") {
+			const keyDirections: Record<string, string> = {
+				ArrowUp: "up",
+				ArrowLeft: "up",
+				ArrowDown: "down",
+				ArrowRight: "down",
+				Home: "first",
+				End: "last",
+			};
+			const direction = keyDirections[event.key];
+			if (direction) {
 				event.preventDefault();
-				this.$emit("keyboard-reorder", { task: this.task, direction: "up" });
-			} else if (event.key === "ArrowDown") {
-				event.preventDefault();
-				this.$emit("keyboard-reorder", { task: this.task, direction: "down" });
+				this.$emit("keyboard-reorder", { task: this.task, direction });
 			}
 		},
 		onDbClick() {

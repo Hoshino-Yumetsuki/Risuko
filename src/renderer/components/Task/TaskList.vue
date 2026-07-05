@@ -362,16 +362,20 @@ export default {
 			if (idx < 0) {
 				return;
 			}
-			const targetIdx = direction === "up" ? idx - 1 : idx + 1;
-			if (targetIdx < 0 || targetIdx >= list.length) {
+			let targetIdx = direction === "up" ? idx - 1 : idx + 1;
+			let after = direction === "down";
+			if (direction === "first") {
+				targetIdx = 0;
+				after = false;
+			} else if (direction === "last") {
+				targetIdx = list.length - 1;
+				after = true;
+			}
+			if (targetIdx < 0 || targetIdx >= list.length || targetIdx === idx) {
 				return;
 			}
 			const targetTask = list[targetIdx];
-			await useTaskStore().reorderTasks(
-				[task.gid],
-				targetTask.gid,
-				direction === "down",
-			);
+			await useTaskStore().reorderTasks([task.gid], targetTask.gid, after);
 			this.reorderAnnouncement = `${this.$t("task.reorder-handle")}: ${
 				targetIdx + 1
 			} / ${list.length}`;

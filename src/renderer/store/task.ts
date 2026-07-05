@@ -408,13 +408,14 @@ export const useTaskStore = defineStore("task", {
 			const numActive = stat.numActive || 0;
 			const numWaiting = stat.numWaiting || 0;
 			const numStoppedTotal = stat.numStoppedTotal || 0;
+			const statTotal = numActive + numWaiting + numStoppedTotal;
 
 			let activeCount = numActive;
 			let waitingCount = numWaiting;
 			let scheduledCount = this.taskCountMap.scheduled || 0;
 			let completedCount = this.taskCountMap.completed || 0;
 			let stoppedCount = this.taskCountMap.stopped || 0;
-			let allCount = numActive + numWaiting + numStoppedTotal;
+			let allCount = statTotal;
 
 			try {
 				const keys = ["gid", "status", "files", "bittorrent"];
@@ -451,12 +452,21 @@ export const useTaskStore = defineStore("task", {
 					completedCount +
 					stoppedCount;
 			} catch {
-				activeCount = this.taskCountMap.active || 0;
-				waitingCount = this.taskCountMap.waiting || 0;
-				scheduledCount = this.taskCountMap.scheduled || 0;
-				completedCount = this.taskCountMap.completed || 0;
-				stoppedCount = this.taskCountMap.stopped || 0;
-				allCount = this.taskCountMap.all || 0;
+				if (statTotal === 0) {
+					activeCount = 0;
+					waitingCount = 0;
+					scheduledCount = 0;
+					completedCount = 0;
+					stoppedCount = 0;
+					allCount = 0;
+				} else {
+					activeCount = this.taskCountMap.active || 0;
+					waitingCount = this.taskCountMap.waiting || 0;
+					scheduledCount = this.taskCountMap.scheduled || 0;
+					completedCount = this.taskCountMap.completed || 0;
+					stoppedCount = this.taskCountMap.stopped || 0;
+					allCount = this.taskCountMap.all || 0;
+				}
 			}
 
 			this.taskCountMap = {

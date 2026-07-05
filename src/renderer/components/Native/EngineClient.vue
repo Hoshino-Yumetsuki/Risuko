@@ -1054,7 +1054,7 @@ export default {
 					const tasks = await api.fetchScheduledTaskList({
 						offset,
 						num,
-						keys: ["gid", "scheduleMissed"],
+						keys: ["gid", "scheduleMissed", "startAt", "files", "bittorrent"],
 					});
 					const page = Array.isArray(tasks) ? tasks : [];
 					missed.push(...page.filter((t) => t.scheduleMissed));
