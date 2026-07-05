@@ -11,5 +11,6 @@ pub mod file_cmds;
 pub mod health_cmds;
 pub mod rss_cmds;
 pub mod share_cmds;
+pub mod stats_cmds;
 pub mod upload_cmds;
 pub mod vault_cmds;

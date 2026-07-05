@@ -7,6 +7,7 @@ export default {
 	"nav-health": "Health",
 	"nav-settings": "Settings",
 	"nav-share": "Share",
+	"nav-stats": "Stats",
 	"nav-account": "Account",
 	"android-back-again-to-quit": "Swipe back again to quit Risuko",
 	"android-storage-access-required":

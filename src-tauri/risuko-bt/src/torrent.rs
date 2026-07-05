@@ -333,13 +333,15 @@ async fn torrent_loop(
         init.max_outstanding_per_peer, pipeline_floor, pipeline_cap, max_peers
     );
     let storage = Arc::new(FilesystemStorage::new(&info, &init.root_dir));
-    if let Err(e) = storage.preallocate().await {
-        tracing::warn!("preallocate failed for {info_hash}: {e}");
-    }
     let mut piece_tracker = PieceTracker::new(lengths);
     let mut chunk_tracker = ChunkTracker::new(lengths);
     let mut piece_assemblies: HashMap<u32, PieceAssembly> = HashMap::new();
-    scan_existing_pieces(&verifier, &storage, &lengths, &mut piece_tracker).await;
+    if storage.has_existing_payload_files().await {
+        scan_existing_pieces(&verifier, &storage, &lengths, &mut piece_tracker).await;
+    }
+    if let Err(e) = storage.preallocate().await {
+        tracing::warn!("preallocate failed for {info_hash}: {e}");
+    }
     {
         let mut s = stats.lock();
         s.file_progress = compute_file_progress(&piece_tracker, &lengths, storage.layout());
@@ -1168,8 +1170,18 @@ async fn process_peer_event(
                     begin,
                     length,
                 } => {
-                    peer.outstanding
-                        .retain(|&(p, b, l)| !(p == index && b == begin && l == length));
+                    if let Some(req_idx) = peer
+                        .outstanding
+                        .iter()
+                        .position(|&(p, b, l)| p == index && b == begin && l == length)
+                    {
+                        peer.outstanding.swap_remove(req_idx);
+                        if let Ok(vpi) = lengths.validate_piece(index) {
+                            chunk_tracker.reject_chunk(vpi, begin / super::core::CHUNK_SIZE, pid);
+                            piece_tracker.clear_in_flight(vpi);
+                            kick = true;
+                        }
+                    }
                 }
                 Message::Request {
                     index,

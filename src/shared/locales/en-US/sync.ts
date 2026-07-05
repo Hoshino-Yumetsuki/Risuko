@@ -43,6 +43,7 @@ export default {
 	"category-download": "Download Behavior",
 	"category-media": "Media Format",
 	"category-rss": "RSS",
+	"category-stats": "Stats",
 	"category-task-routing": "Task Routing",
 	"category-notifications": "Notifications",
 	"category-low-speed": "Low Speed Detection",

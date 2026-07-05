@@ -50,9 +50,23 @@ impl FilesystemStorage {
         &self.layout
     }
 
-    /// Zero-copy write of an owned buffer. `Bytes::slice` produces shareable
-    /// non-copy views per span, so a single 4 MiB piece is shipped to the
-    /// blocking pool without an intermediate memcpy. Spans run in parallel
+    pub async fn has_existing_payload_files(&self) -> bool {
+        let paths: Vec<_> = self
+            .layout
+            .files()
+            .iter()
+            .filter(|f| f.length > 0)
+            .map(|f| f.path.clone())
+            .collect();
+        task::spawn_blocking(move || {
+            paths
+                .iter()
+                .any(|p| std::fs::metadata(p).is_ok_and(|m| m.len() > 0))
+        })
+        .await
+        .unwrap_or(false)
+    }
+    
     pub async fn write_at_owned(&self, offset: u64, buf: bytes::Bytes) -> Result<(), StorageError> {
         let total = self.layout.total_length();
         let end = offset
@@ -380,5 +394,25 @@ mod tests {
         let storage = FilesystemStorage::new(&meta.info, &tmp.path().join("root"));
         let err = storage.write_at(25, &[0u8; 10]).await.unwrap_err();
         assert!(matches!(err, StorageError::OutOfRange { .. }));
+    }
+
+    #[tokio::test]
+    async fn existing_payload_detection_ignores_missing_and_empty_files() {
+        let bytes = build_multi_file_torrent();
+        let meta = parse_torrent(&bytes).unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("root");
+        let storage = FilesystemStorage::new(&meta.info, &root);
+
+        assert!(!storage.has_existing_payload_files().await);
+
+        tokio::fs::create_dir_all(root.join("sub")).await.unwrap();
+        tokio::fs::File::create(root.join("a.txt")).await.unwrap();
+        assert!(!storage.has_existing_payload_files().await);
+
+        tokio::fs::write(root.join("sub").join("b.bin"), b"x")
+            .await
+            .unwrap();
+        assert!(storage.has_existing_payload_files().await);
     }
 }

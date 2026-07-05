@@ -188,11 +188,16 @@ impl ChunkTracker {
         }
     }
 
-    /// Number of chunks that are not yet `Received` across pieces we've
-    /// touched. Used to decide whether to enable endgame mode (where
-    /// outstanding chunks are duplicated to multiple peers to drain the
-    /// last few stragglers). Cheap because we only look at pieces with at
-    /// least one chunk requested
+    pub fn reject_chunk(&mut self, piece: ValidPieceIndex, chunk_index: u32, peer: u32) {
+        if let Some(states) = self.pieces.get_mut(&piece.get()) {
+            if let Some(s) = states.get_mut(chunk_index as usize) {
+                if matches!(*s, ChunkState::Requested { peer: p, .. } if p == peer) {
+                    *s = ChunkState::Missing;
+                }
+            }
+        }
+    }
+
     pub fn pending_chunks(&self) -> usize {
         self.pieces
             .values()
@@ -303,6 +308,32 @@ mod tests {
         t.release_peer(1);
         let again = t.next_chunk(p, 2).unwrap();
         assert_eq!(again.info.chunk_index, 0);
+    }
+
+    #[test]
+    fn reject_frees_request_immediately() {
+        let l = Lengths::new(64 * 1024, 32 * 1024).unwrap();
+        let mut t = ChunkTracker::new(l);
+        let p = l.validate_piece(0).unwrap();
+        let r = t.next_chunk(p, 1).unwrap();
+
+        t.reject_chunk(p, r.info.chunk_index, 1);
+
+        let again = t.next_chunk(p, 2).unwrap();
+        assert_eq!(again.info.chunk_index, r.info.chunk_index);
+    }
+
+    #[test]
+    fn reject_does_not_clear_other_peer_request() {
+        let l = Lengths::new(64 * 1024, 32 * 1024).unwrap();
+        let mut t = ChunkTracker::new(l);
+        let p = l.validate_piece(0).unwrap();
+        let r0 = t.next_chunk(p, 1).unwrap();
+
+        t.reject_chunk(p, r0.info.chunk_index, 2);
+
+        let r1 = t.next_chunk(p, 2).unwrap();
+        assert_ne!(r1.info.chunk_index, r0.info.chunk_index);
     }
 
     #[test]

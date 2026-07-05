@@ -1,4 +1,5 @@
 import { TASK_STATUS } from "@shared/constants";
+import type { DownloadStatsMinuteInput } from "@shared/types/stats";
 import type { DownloadFile, DownloadTask, PeerInfo } from "@shared/types/task";
 import { calcProgress, checkTaskIsBT, getTaskName } from "@shared/utils";
 import logger from "@shared/utils/logger";
@@ -23,12 +24,115 @@ type SpeedSample = { download: number; upload: number };
 /** Module cache: gid -> speed samples */
 // please work please work please work
 const speedHistoryCache = new Map<string, SpeedSample[]>();
+type StatsTaskAccumulator = {
+	gid: string;
+	kind: string;
+	firstCompletedLength: number;
+	completedLength: number;
+	downloadSpeedSum: number;
+	uploadSpeedSum: number;
+	samples: number;
+};
+const statsAccumulator = new Map<string, StatsTaskAccumulator>();
+let statsMinute: number | null = null;
+let statsMonth = "";
 
 export function getSpeedHistory(gid: string): SpeedSample[] {
 	return speedHistoryCache.get(gid) || [];
 }
 
+function minuteStartSeconds(ms = Date.now()): number {
+	return Math.floor(ms / 60000) * 60;
+}
+
+function monthLabel(ms = Date.now()): string {
+	const date = new Date(ms);
+	const month = `${date.getMonth() + 1}`.padStart(2, "0");
+	return `${date.getFullYear()}-${month}`;
+}
+
+function nonNegativeNumber(value: unknown): number {
+	const parsed = Number(value || 0);
+	return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : 0;
+}
+
+function flushStatsMinute(): Promise<void> {
+	if (statsMinute === null || statsAccumulator.size === 0) {
+		statsAccumulator.clear();
+		return Promise.resolve();
+	}
+
+	const input: DownloadStatsMinuteInput = {
+		minute: statsMinute,
+		month: statsMonth,
+		tasks: [...statsAccumulator.values()],
+	};
+	statsAccumulator.clear();
+
+	return api
+		.recordDownloadStatsMinute(input)
+		.then(() =>
+			import("@/store/sync").then(({ useSyncStore }) => {
+				useSyncStore().markCategoryChanged("stats");
+			}),
+		)
+		.catch((err) => {
+			logger.warn(
+				"[Risuko] recordDownloadStatsMinute failed:",
+				(err as Error).message,
+			);
+		});
+}
+
+export function flushDownloadStatsMinute(): Promise<void> {
+	return flushStatsMinute();
+}
+
+function ensureStatsMinute(nowMs = Date.now()) {
+	const minute = minuteStartSeconds(nowMs);
+	if (statsMinute !== null && minute !== statsMinute) {
+		flushStatsMinute();
+	}
+	if (statsMinute === null || minute !== statsMinute) {
+		statsMinute = minute;
+		statsMonth = monthLabel(nowMs);
+	}
+}
+
+function collectStatsSample(
+	task: DownloadTask,
+	download: number,
+	upload: number,
+) {
+	if (!task.gid) {
+		return;
+	}
+	ensureStatsMinute();
+	const kind = (task.kind || (checkTaskIsBT(task) ? "torrent" : "unknown"))
+		.trim()
+		.toLowerCase();
+	const current = statsAccumulator.get(task.gid) || {
+		gid: task.gid,
+		kind: kind || "unknown",
+		firstCompletedLength: nonNegativeNumber(task.completedLength),
+		completedLength: 0,
+		downloadSpeedSum: 0,
+		uploadSpeedSum: 0,
+		samples: 0,
+	};
+	current.kind = kind || current.kind;
+	current.completedLength = Math.max(
+		current.completedLength,
+		nonNegativeNumber(task.completedLength),
+	);
+	current.downloadSpeedSum += download;
+	current.uploadSpeedSum += upload;
+	current.samples += 1;
+	statsAccumulator.set(task.gid, current);
+}
+
 function sampleSpeedsFromTasks(tasks: DownloadTask[]): boolean {
+	ensureStatsMinute();
 	let changed = false;
 	for (const task of tasks) {
 		const status = task.status;
@@ -43,6 +147,7 @@ function sampleSpeedsFromTasks(tasks: DownloadTask[]): boolean {
 			? 0
 			: Math.max(0, Number(task.downloadSpeed || 0));
 		const upload = isBT ? Math.max(0, Number(task.uploadSpeed || 0)) : 0;
+		collectStatsSample(task, download, upload);
 		const sample: SpeedSample = { download, upload };
 		const prev = speedHistoryCache.get(task.gid) || [];
 		const next = [...prev, sample].slice(-SPEED_HISTORY_LIMIT);
@@ -497,7 +602,9 @@ export const useTaskStore = defineStore("task", {
 					type: "active",
 					keys: [
 						"gid",
+						"kind",
 						"status",
+						"completedLength",
 						"downloadSpeed",
 						"uploadSpeed",
 						"seeder",
