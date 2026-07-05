@@ -66,6 +66,8 @@ export const useAppStore = defineStore("app", {
 			numStopped: 0,
 		},
 		addTaskVisible: false,
+		missedScheduledVisible: false,
+		missedScheduledTasks: [] as DownloadTask[],
 		addTaskType: ADD_TASK_TYPE.URI,
 		addTaskUrl: "",
 		addTaskTorrents: [] as { name: string; path: string }[],
@@ -158,6 +160,14 @@ export const useAppStore = defineStore("app", {
 			this.addTaskUrl = "";
 			this.addTaskTorrents = [];
 			this.addTaskQueue = [];
+		},
+		showMissedScheduled(tasks: DownloadTask[]) {
+			this.missedScheduledTasks = tasks;
+			this.missedScheduledVisible = true;
+		},
+		hideMissedScheduled() {
+			this.missedScheduledVisible = false;
+			this.missedScheduledTasks = [];
 		},
 		showCloudflareDialog(payload: {
 			gid: string;

@@ -1,5 +1,6 @@
 <template>
   <div class="task-list-wrapper" v-if="taskList.length > 0">
+    <p class="sr-only" aria-live="polite" aria-atomic="true">{{ reorderAnnouncement }}</p>
     <recycle-scroller
       v-if="useVirtualList"
       class="task-list task-list-virtual"
@@ -7,23 +8,49 @@
       :item-size="virtualItemSize"
       key-field="_displayKey"
     >
-      <template #default="{ item }">
-        <div :attr="item._displayKey" @click="handleItemClick(item, $event)">
-          <task-item :task="item" :selected="isItemSelected(item)" />
+      <template #default="{ item, index }">
+        <div
+          :data-task-key="item._displayKey"
+          :class="dropClass(item._displayKey)"
+          @click="handleItemClick(item, $event)"
+        >
+          <task-item
+            :task="item"
+            :selected="isItemSelected(item)"
+            :show-drag-handle="canDrag"
+            :position="index + 1"
+            :position-count="paginatedTaskList.length"
+            @handle-down="onHandleDown"
+            @keyboard-reorder="onKeyboardReorder"
+          />
         </div>
       </template>
     </recycle-scroller>
-    <drag-select v-else class="task-list" attribute="attr" @change="handleDragSelectChange">
+    <drag-select
+      v-else
+      class="task-list"
+      attribute="data-task-key"
+      @change="handleDragSelectChange"
+    >
       <motion-enter
         v-for="(item, index) in paginatedTaskList"
         :key="item._displayKey"
         preset="fadeInUp"
         :duration="0.4"
         :delay="getStaggerDelay(index)"
-        :attr="item._displayKey"
+        :data-task-key="item._displayKey"
+        :class="dropClass(item._displayKey)"
         @click="handleItemClick(item, $event)"
       >
-        <task-item :task="item" :selected="isItemSelected(item)" />
+        <task-item
+          :task="item"
+          :selected="isItemSelected(item)"
+          :show-drag-handle="canDrag"
+          :position="index + 1"
+          :position-count="paginatedTaskList.length"
+          @handle-down="onHandleDown"
+          @keyboard-reorder="onKeyboardReorder"
+        />
       </motion-enter>
     </drag-select>
     <footer class="task-pagination">
@@ -88,6 +115,12 @@ export default {
 		return {
 			selectedList,
 			lastClickedKey: null as string | null,
+			draggingKeys: [] as string[],
+			dropTargetKey: null as string | null,
+			dropAfter: false,
+			dragScroller: null as HTMLElement | null,
+			dragScrollerRect: null as DOMRect | null,
+			reorderAnnouncement: "",
 		};
 	},
 	computed: {
@@ -110,7 +143,7 @@ export default {
 			if (usePreferenceStore().taskListStyle === "card") {
 				return is.android() ? 136 : 90;
 			}
-			return is.android() ? 88 : 64;
+			return is.android() ? 98 : 74;
 		},
 		useVirtualList() {
 			if (this.taskList.length < VIRTUAL_LIST_THRESHOLD) {
@@ -121,6 +154,18 @@ export default {
 				return checkTaskIsBT(task) && files.length > 1;
 			});
 		},
+		canDrag() {
+			const store = useTaskStore();
+			const listOk = ["all", "active", "waiting", "scheduled"].includes(
+				store.currentList,
+			);
+			return (
+				listOk &&
+				store.sortBy === "default" &&
+				!store.filterText &&
+				!store.filterTag
+			);
+		},
 	},
 	mounted() {
 		this._onKeyDown = this.onKeyDown.bind(this);
@@ -128,8 +173,28 @@ export default {
 	},
 	beforeUnmount() {
 		window.removeEventListener("keydown", this._onKeyDown);
+		this.clearDragState();
 	},
 	methods: {
+		clearDragState() {
+			if (this._onDragMove) {
+				window.removeEventListener("pointermove", this._onDragMove);
+			}
+			if (this._onDragUp) {
+				window.removeEventListener("pointerup", this._onDragUp);
+			}
+			if (this._onDragCancel) {
+				window.removeEventListener("pointercancel", this._onDragCancel);
+			}
+			document.body.classList.remove("task-dragging");
+			this.draggingKeys = [];
+			this.dropTargetKey = null;
+			this.dragScroller = null;
+			this.dragScrollerRect = null;
+			this._onDragMove = null;
+			this._onDragUp = null;
+			this._onDragCancel = null;
+		},
 		showAddTask() {
 			useAppStore().showAddTaskDialog(ADD_TASK_TYPE.URI);
 		},
@@ -214,6 +279,112 @@ export default {
 		isItemSelected(item): boolean {
 			const key = item._displayKey;
 			return this.selectedList.includes(key);
+		},
+		onHandleDown({ task, event }) {
+			if (!this.canDrag) {
+				return;
+			}
+			event.preventDefault?.();
+			this.clearDragState();
+			const key = task._displayKey || task.gid;
+			const selected = new Set(this.selectedList);
+			const keys = this.paginatedTaskList.map((t) => t._displayKey);
+			this.draggingKeys = selected.has(key)
+				? keys.filter((k) => selected.has(k))
+				: [key];
+			this.dragScroller = this.$el?.querySelector?.(
+				".task-list",
+			) as HTMLElement | null;
+			this.dragScrollerRect =
+				this.dragScroller?.getBoundingClientRect() ?? null;
+			this._onDragMove = this.onDragMove.bind(this);
+			this._onDragUp = this.onDragUp.bind(this);
+			this._onDragCancel = this.onDragCancel.bind(this);
+			window.addEventListener("pointermove", this._onDragMove);
+			window.addEventListener("pointerup", this._onDragUp, { once: true });
+			window.addEventListener("pointercancel", this._onDragCancel, {
+				once: true,
+			});
+			document.body.classList.add("task-dragging");
+		},
+		onDragCancel() {
+			this.clearDragState();
+		},
+		onDragMove(event: PointerEvent) {
+			if (this.draggingKeys.length === 0) {
+				return;
+			}
+			const scroller = this.dragScroller;
+			const r = this.dragScrollerRect;
+			if (scroller && r) {
+				const EDGE = 44;
+				if (event.clientY < r.top + EDGE) {
+					scroller.scrollTop -= 14;
+				} else if (event.clientY > r.bottom - EDGE) {
+					scroller.scrollTop += 14;
+				}
+			}
+			const el = document.elementFromPoint(
+				event.clientX,
+				event.clientY,
+			) as HTMLElement | null;
+			const rowEl = el?.closest?.("[data-task-key]") as HTMLElement | null;
+			if (!rowEl) {
+				this.dropTargetKey = null;
+				return;
+			}
+			const targetKey = rowEl.getAttribute("data-task-key");
+			if (!targetKey || this.draggingKeys.includes(targetKey)) {
+				this.dropTargetKey = null;
+				return;
+			}
+			const rect = rowEl.getBoundingClientRect();
+			this.dropAfter = event.clientY > rect.top + rect.height / 2;
+			this.dropTargetKey = targetKey;
+		},
+		async onDragUp() {
+			const targetKey = this.dropTargetKey;
+			const after = this.dropAfter;
+			const gids = [...this.draggingKeys];
+			this.clearDragState();
+			if (!targetKey || gids.length === 0) {
+				return;
+			}
+			await useTaskStore().reorderTasks(gids, targetKey, after);
+		},
+		async onKeyboardReorder({ task, direction }) {
+			if (!this.canDrag) {
+				return;
+			}
+			const list = this.paginatedTaskList;
+			const key = task._displayKey || task.gid;
+			const idx = list.findIndex((t) => (t._displayKey || t.gid) === key);
+			if (idx < 0) {
+				return;
+			}
+			let targetIdx = direction === "up" ? idx - 1 : idx + 1;
+			let after = direction === "down";
+			if (direction === "first") {
+				targetIdx = 0;
+				after = false;
+			} else if (direction === "last") {
+				targetIdx = list.length - 1;
+				after = true;
+			}
+			if (targetIdx < 0 || targetIdx >= list.length || targetIdx === idx) {
+				return;
+			}
+			const targetTask = list[targetIdx];
+			await useTaskStore().reorderTasks([task.gid], targetTask.gid, after);
+			this.reorderAnnouncement = `${this.$t("task.reorder-handle")}: ${
+				targetIdx + 1
+			} / ${list.length}`;
+		},
+		dropClass(key: string) {
+			if (this.dropTargetKey !== key) {
+				return "";
+			}
+			return this.dropAfter ? "drop-after" : "drop-before";
 		},
 	},
 	watch: {

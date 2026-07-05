@@ -2,11 +2,31 @@
   <div
     :key="task._displayKey || task.gid"
     class="task-item"
-    :class="{ 'is-active': shouldPulse, 'is-complete': isComplete, selected: selected, 'has-files': isMultiFileBT, 'task-item--card': isCardView }"
+    :class="{ 'is-active': shouldPulse, 'is-complete': isComplete, selected: selected, 'has-files': isMultiFileBT, 'task-item--card': isCardView, 'has-drag-handle': showDragHandle }"
     v-on:dblclick="onDbClick"
   >
     <div class="task-item-main">
       <div class="task-item-row">
+        <span
+          v-if="showDragHandle"
+          class="task-drag-handle"
+          tabindex="0"
+          role="slider"
+          aria-orientation="vertical"
+          :aria-valuemin="1"
+          :aria-valuemax="positionCount"
+          :aria-valuenow="position"
+          :aria-valuetext="`${position} / ${positionCount}`"
+          :aria-label="$t('task.reorder-handle')"
+          @pointerdown.stop="onHandleDown"
+          @keydown="onHandleKeydown"
+          @mousedown.stop
+          @touchstart.stop
+          @click.stop
+          @dblclick.stop
+        >
+          <GripVertical :size="14" />
+        </span>
         <span class="task-status-dot" :class="`status-${taskStatus}`"></span>
         <div class="task-name" :title="taskFullName">
           <span class="task-name-text">{{ taskFullName }}</span>
@@ -68,7 +88,7 @@
 </template>
 
 <script lang="ts">
-import { ChevronDown, ChevronRight } from "@lucide/vue";
+import { ChevronDown, ChevronRight, GripVertical } from "@lucide/vue";
 import { TASK_STATUS } from "@shared/constants";
 import {
 	bytesToSize,
@@ -94,6 +114,7 @@ export default {
 		[TaskProgressInfo.name]: TaskProgressInfo,
 		ChevronDown,
 		ChevronRight,
+		GripVertical,
 	},
 	props: {
 		task: {
@@ -103,7 +124,20 @@ export default {
 			type: Boolean,
 			default: false,
 		},
+		showDragHandle: {
+			type: Boolean,
+			default: false,
+		},
+		position: {
+			type: Number,
+			default: 1,
+		},
+		positionCount: {
+			type: Number,
+			default: 1,
+		},
 	},
+	emits: ["handle-down", "keyboard-reorder"],
 	data() {
 		return {
 			filesExpanded: true,
@@ -200,6 +234,24 @@ export default {
 		},
 	},
 	methods: {
+		onHandleDown(event) {
+			this.$emit("handle-down", { task: this.task, event });
+		},
+		onHandleKeydown(event: KeyboardEvent) {
+			const keyDirections: Record<string, string> = {
+				ArrowUp: "up",
+				ArrowLeft: "up",
+				ArrowDown: "down",
+				ArrowRight: "down",
+				Home: "first",
+				End: "last",
+			};
+			const direction = keyDirections[event.key];
+			if (direction) {
+				event.preventDefault();
+				this.$emit("keyboard-reorder", { task: this.task, direction });
+			}
+		},
 		onDbClick() {
 			const { status } = this.task;
 			const { COMPLETE, WAITING, PAUSED } = TASK_STATUS;

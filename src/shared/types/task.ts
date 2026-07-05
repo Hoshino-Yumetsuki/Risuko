@@ -35,6 +35,8 @@ export interface DownloadTask {
 	errorCode?: string;
 	errorMessage?: string;
 	createdAt?: string;
+	startAt?: string;
+	scheduleMissed?: boolean;
 	infoHash?: string;
 	infoHashV2?: string;
 	metaVersion?: "v1" | "v2" | "hybrid";
@@ -84,11 +86,6 @@ export interface AutoRetryPlanResult {
 	attemptMap: Record<string, number>;
 	nextAttempt: number;
 	delayMs: number;
-}
-
-export interface SyncOrderResult {
-	moved: number;
-	partialError: boolean;
 }
 
 export interface MediaFormat {

@@ -124,6 +124,7 @@ import {
 	ArrowDown,
 	ArrowUp,
 	CircleCheck,
+	Clock,
 	Info,
 	LayoutList,
 	Pause,
@@ -218,6 +219,13 @@ export default {
 					label: "task.stopped",
 					route: "/task/stopped",
 					count: "stopped",
+				},
+				{
+					key: "task:scheduled",
+					icon: Clock,
+					label: "task.scheduled",
+					route: "/task/scheduled",
+					count: "scheduled",
 				},
 			];
 		},

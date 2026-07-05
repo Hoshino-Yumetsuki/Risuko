@@ -647,10 +647,13 @@ impl TaskManager {
         (decision.dir, decision.tag)
     }
 
-    /// Common tail for the queue-based protocols: honor a per-task `pause`
-    /// option (explicitly set, not from global defaults), enqueue the task,
-    /// kick the scheduler, and emit DownloadStart
-    async fn enqueue(&self, task: DownloadTask) -> Result<String, String> {
+    fn send_download_start(&self, gid: &str) {
+        self.events.send(EngineEvent::DownloadStart {
+            gid: gid.to_string(),
+        });
+    }
+
+    async fn enqueue(&self, mut task: DownloadTask) -> Result<String, String> {
         let gid = task.gid.clone();
         let pause = task
             .options
@@ -658,14 +661,32 @@ impl TaskManager {
             .and_then(|v| v.as_bool().or_else(|| v.as_str().map(|s| s == "true")))
             .unwrap_or(false);
 
-        self.tasks.write().await.push(task);
-
-        if !pause {
-            self.try_start_next().await;
+        // Scheduled start
+        let now = crate::engine::util::now_secs();
+        let scheduled = task
+            .options
+            .get("risuko-start-at")
+            .and_then(|v| {
+                v.as_u64()
+                    .or_else(|| v.as_str().and_then(|s| s.parse::<u64>().ok()))
+            })
+            .filter(|&ts| ts > now);
+        if let Some(ts) = scheduled {
+            task.start_at = Some(ts);
+            task.status = TaskStatus::Scheduled;
         }
 
-        self.events
-            .send(EngineEvent::DownloadStart { gid: gid.clone() });
+        self.tasks.write().await.push(task);
+
+        if scheduled.is_none() && !pause {
+            self.try_start_next().await;
+        } else if scheduled.is_some() {
+            tracing::info!(
+                "[task:{}] Queued as scheduled (start_at={:?})",
+                gid,
+                scheduled
+            );
+        }
 
         Ok(gid)
     }
@@ -819,8 +840,7 @@ impl TaskManager {
         drop(te_guard);
 
         self.tasks.write().await.push(task);
-        self.events
-            .send(EngineEvent::DownloadStart { gid: gid.clone() });
+        self.send_download_start(&gid);
 
         Ok(gid)
     }
@@ -944,8 +964,7 @@ impl TaskManager {
             )
             .await;
         }
-        self.events
-            .send(EngineEvent::DownloadStart { gid: gid.clone() });
+        self.send_download_start(&gid);
 
         Ok(gid)
     }
@@ -1406,32 +1425,38 @@ impl TaskManager {
                 let mut merged = options_snapshot.merge_task_options(&task.options);
                 self.apply_stored_cookies(&task.uris, &mut merged);
                 self.spawn_http_download(task, merged);
+                self.send_download_start(&task.gid);
                 started += 1;
             } else if task.kind == TaskKind::Media && !task.uris.is_empty() {
                 task.status = TaskStatus::Active;
                 let mut merged = options_snapshot.merge_task_options(&task.options);
                 self.apply_stored_cookies(&task.uris, &mut merged);
                 self.spawn_media_download(task, merged);
+                self.send_download_start(&task.gid);
                 started += 1;
             } else if task.kind == TaskKind::M3u8 && !task.uris.is_empty() {
                 task.status = TaskStatus::Active;
                 let merged = options_snapshot.merge_task_options(&task.options);
                 self.spawn_m3u8_download(task, merged);
+                self.send_download_start(&task.gid);
                 started += 1;
             } else if task.kind == TaskKind::Ed2k && !task.uris.is_empty() {
                 task.status = TaskStatus::Active;
                 self.spawn_ed2k_download(task);
+                self.send_download_start(&task.gid);
                 started += 1;
             } else if task.kind == TaskKind::Ftp && !task.uris.is_empty() {
                 task.status = TaskStatus::Active;
                 let merged = options_snapshot.merge_task_options(&task.options);
                 self.spawn_ftp_download(task, merged);
+                self.send_download_start(&task.gid);
                 started += 1;
             } else if task.kind == TaskKind::Metalink && !task.files.is_empty() {
                 task.status = TaskStatus::Active;
                 let merged = options_snapshot.merge_task_options(&task.options);
                 apply_select_file(&mut task.files, &task.options);
                 self.spawn_metalink_download(task, merged);
+                self.send_download_start(&task.gid);
                 started += 1;
             } else if matches!(
                 task.kind,
@@ -1440,7 +1465,69 @@ impl TaskManager {
             {
                 task.status = TaskStatus::Active;
                 self.spawn_legacy_p2p_download(task);
+                self.send_download_start(&task.gid);
                 started += 1;
+            }
+        }
+    }
+
+    /// Enforce the strict-priority download queue
+    async fn reconcile_active_set(&self) {
+        let max_concurrent = self.options.read().await.max_concurrent_downloads();
+        let to_preempt: Vec<String> = {
+            let tasks = self.tasks.read().await;
+            let mut rank = 0usize;
+            let mut preempt = Vec::new();
+            for task in tasks.iter() {
+                if task.kind == TaskKind::Torrent {
+                    continue;
+                }
+                match task.status {
+                    TaskStatus::Active | TaskStatus::Waiting => {
+                        rank += 1;
+                        if rank > max_concurrent && task.status == TaskStatus::Active {
+                            preempt.push(task.gid.clone());
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            preempt
+        };
+        for gid in &to_preempt {
+            self.preempt(gid).await;
+        }
+        self.try_start_next().await;
+    }
+
+    /// Pause an active download back to Waiting (not Paused) to yield its slot to
+    /// a higher-priority task. Unlike `pause`, the task stays runnable, so the next
+    /// reconcile restarts it once it re-enters the top-N.
+    ///
+    /// Set the status to Waiting BEFORE cancelling: the download's cancellation
+    /// handler only pauses a task that is still marked Active, so demoting first
+    /// keeps a preempted task runnable instead of racing it into a stuck Paused
+    async fn preempt(&self, gid: &str) {
+        let should_cancel = {
+            let mut tasks = self.tasks.write().await;
+            match tasks.iter_mut().find(|t| t.gid == gid) {
+                Some(task) if task.status == TaskStatus::Active => {
+                    tracing::info!("[task:{}] Preempted, yielding download slot", gid);
+                    task.status = TaskStatus::Waiting;
+                    task.download_speed = 0;
+                    task.upload_speed = 0;
+                    self.events.send(EngineEvent::DownloadPause {
+                        gid: gid.to_string(),
+                    });
+                    true
+                }
+                _ => false,
+            }
+        };
+        if should_cancel {
+            let active = self.active_downloads.read().await;
+            if let Some(ad) = active.get(gid) {
+                ad.cancel_token.cancel();
             }
         }
     }
@@ -2045,14 +2132,14 @@ impl TaskManager {
         // Cap stopped task history once per tick to avoid long-uptime growth
         self.enforce_result_cap().await;
 
-        // If there are no Active or Waiting tasks, skip the
-        // expensive write-lock + per-task scan + try_start_next entirely
-        // This reduces per-second CPU wake-ups when the engine is idle
         {
             let tasks_ro = self.tasks.read().await;
-            let any_work = tasks_ro
-                .iter()
-                .any(|t| matches!(t.status, TaskStatus::Active | TaskStatus::Waiting));
+            let any_work = tasks_ro.iter().any(|t| {
+                matches!(
+                    t.status,
+                    TaskStatus::Active | TaskStatus::Waiting | TaskStatus::Scheduled
+                )
+            });
             if !any_work {
                 return;
             }
@@ -2374,9 +2461,10 @@ impl TaskManager {
                 }
             }
         }
-        // Start any waiting tasks if download slots are available
+        // Promote due scheduled tasks, then enforce the strict-priority queue
         self.ensure_active_magnet_resolvers().await;
-        self.try_start_next().await;
+        self.check_scheduled_tasks().await;
+        self.reconcile_active_set().await;
     }
 
     async fn ensure_active_magnet_resolvers(&self) {
@@ -2486,13 +2574,159 @@ impl TaskManager {
             } else {
                 self.ensure_active_magnet_resolvers().await;
             }
+            self.send_download_start(gid);
         } else {
             self.try_start_next().await;
         }
 
-        self.events.send(EngineEvent::DownloadStart {
-            gid: gid.to_string(),
-        });
+        Ok(())
+    }
+
+    /// Promote scheduled tasks whose start time has arrived
+    async fn check_scheduled_tasks(&self) {
+        const GRACE_SECS: u64 = 300;
+        let now = crate::engine::util::now_secs();
+        let mut tasks = self.tasks.write().await;
+        for task in tasks.iter_mut() {
+            if task.status != TaskStatus::Scheduled || task.schedule_missed {
+                continue;
+            }
+            let Some(ts) = task.start_at else { continue };
+            if now < ts {
+                continue;
+            }
+            if now - ts <= GRACE_SECS {
+                tracing::info!(
+                    "[task:{}] Scheduled task now due, promoting to Waiting (now={}, start_at={}, elapsed={}s)",
+                    task.gid,
+                    now,
+                    ts,
+                    now - ts
+                );
+                task.status = TaskStatus::Waiting;
+                task.start_at = None;
+            } else {
+                tracing::warn!(
+                    "[task:{}] Scheduled task missed (now={}, start_at={}, overdue by {}s)",
+                    task.gid,
+                    now,
+                    ts,
+                    now - ts
+                );
+                task.schedule_missed = true;
+            }
+        }
+    }
+
+    pub async fn set_task_schedule(&self, gid: &str, start_at: u64) -> Result<(), String> {
+        let now = crate::engine::util::now_secs();
+        if start_at <= now {
+            return Err("Schedule time must be in the future".to_string());
+        }
+        tracing::info!(
+            "[task:{}] set_task_schedule: start_at={}, now={}, delay={}s",
+            gid,
+            start_at,
+            now,
+            start_at.saturating_sub(now)
+        );
+        {
+            let mut tasks = self.tasks.write().await;
+            let task = tasks
+                .iter_mut()
+                .find(|t| t.gid == gid)
+                .ok_or_else(|| format!("Task {} not found", gid))?;
+            if task.kind == TaskKind::Torrent {
+                return Err("Scheduling torrent tasks is not supported".to_string());
+            }
+            if task.status.is_stopped() {
+                return Err(format!("Task {} is already finished", gid));
+            }
+            task.status = TaskStatus::Scheduled;
+            task.start_at = Some(start_at);
+            task.schedule_missed = false;
+            task.download_speed = 0;
+            task.upload_speed = 0;
+        }
+        {
+            let active = self.active_downloads.read().await;
+            if let Some(ad) = active.get(gid) {
+                ad.cancel_token.cancel();
+            }
+        }
+        // The freed slot
+        self.reconcile_active_set().await;
+        Ok(())
+    }
+
+    /// Start a scheduled task immediately + clearing its schedule
+    pub async fn start_task_now(&self, gid: &str) -> Result<(), String> {
+        tracing::info!(
+            "[task:{}] start_task_now: manually starting scheduled task",
+            gid
+        );
+        {
+            let mut tasks = self.tasks.write().await;
+            let task = tasks
+                .iter_mut()
+                .find(|t| t.gid == gid)
+                .ok_or_else(|| format!("Task {} not found", gid))?;
+            if task.status != TaskStatus::Scheduled {
+                return Err(format!("Task {} is not scheduled", gid));
+            }
+            task.status = TaskStatus::Waiting;
+            task.start_at = None;
+            task.schedule_missed = false;
+        }
+        self.reconcile_active_set().await;
+        Ok(())
+    }
+
+    /// Move one or more tasks
+    pub async fn move_tasks(
+        &self,
+        gids: &[String],
+        target_gid: &str,
+        after: bool,
+    ) -> Result<(), String> {
+        {
+            let mut guard = self.tasks.write().await;
+            let move_set: std::collections::HashSet<&str> =
+                gids.iter().map(|s| s.as_str()).collect();
+            if !guard.iter().any(|t| move_set.contains(t.gid.as_str())) {
+                return Err("no matching tasks to move".to_string());
+            }
+            if !guard
+                .iter()
+                .any(|t| t.gid == target_gid && !move_set.contains(t.gid.as_str()))
+            {
+                return Err(format!("target task {target_gid} not found"));
+            }
+            let mut moved = Vec::new();
+            let mut remaining = Vec::new();
+            for t in std::mem::take(&mut *guard) {
+                if move_set.contains(t.gid.as_str()) {
+                    moved.push(t);
+                } else {
+                    remaining.push(t);
+                }
+            }
+            if moved.is_empty() {
+                *guard = remaining;
+                return Err("no matching tasks to move".to_string());
+            }
+            let insert_at = remaining
+                .iter()
+                .position(|t| t.gid == target_gid)
+                .map(|p| if after { p + 1 } else { p })
+                .expect("target task was validated before splitting");
+            let mut result = Vec::with_capacity(remaining.len() + moved.len());
+            result.extend(remaining.drain(..insert_at));
+            result.extend(moved);
+            result.extend(remaining);
+            *guard = result;
+        }
+        self.reconcile_active_set().await;
         Ok(())
     }
 
@@ -2543,9 +2777,6 @@ impl TaskManager {
             }
         }
         self.try_start_next().await;
-        self.events.send(EngineEvent::DownloadStart {
-            gid: gid.to_string(),
-        });
         Ok(())
     }
 
@@ -2620,6 +2851,16 @@ impl TaskManager {
         Value::Array(Self::paginate_newest_first(&stopped, offset, num, keys))
     }
 
+    pub async fn tell_scheduled(&self, offset: i64, num: usize, keys: &[String]) -> Value {
+        let tasks = self.tasks.read().await;
+        let scheduled: Vec<&DownloadTask> = tasks
+            .iter()
+            .filter(|t| t.status == TaskStatus::Scheduled)
+            .collect();
+        let num = num.min(10_000);
+        Value::Array(Self::paginate_newest_first(&scheduled, offset, num, keys))
+    }
+
     fn paginate_newest_first(
         items: &[&DownloadTask],
         offset: i64,
@@ -2658,7 +2899,9 @@ impl TaskManager {
                     dl_speed += task.download_speed;
                     ul_speed += task.upload_speed;
                 }
-                TaskStatus::Waiting | TaskStatus::Paused => num_waiting += 1,
+                TaskStatus::Waiting | TaskStatus::Paused | TaskStatus::Scheduled => {
+                    num_waiting += 1
+                }
                 _ => num_stopped += 1,
             }
         }
@@ -3202,12 +3445,10 @@ impl TaskManager {
                     if task.kind == TaskKind::Torrent {
                         task.status = TaskStatus::Active;
                         torrent_gids.push(task.gid.clone());
+                        self.send_download_start(&task.gid);
                     } else {
                         task.status = TaskStatus::Waiting;
                     }
-                    self.events.send(EngineEvent::DownloadStart {
-                        gid: task.gid.clone(),
-                    });
                 }
             }
         }
@@ -3627,6 +3868,93 @@ mod tests {
         );
         task.status = status;
         task
+    }
+
+    #[tokio::test]
+    async fn move_tasks_moves_the_block_next_to_the_target() {
+        // Paused tasks so the reconcile at the end never spawns a real download
+        let mgr = make_test_manager(vec![
+            make_task("a", TaskStatus::Paused),
+            make_task("b", TaskStatus::Paused),
+            make_task("c", TaskStatus::Paused),
+            make_task("d", TaskStatus::Paused),
+        ]);
+
+        // Move [c, d] to just before "a"
+        mgr.move_tasks(&["c".into(), "d".into()], "a", false)
+            .await
+            .unwrap();
+
+        let order: Vec<String> = mgr
+            .tasks
+            .read()
+            .await
+            .iter()
+            .map(|t| t.gid.clone())
+            .collect();
+        assert_eq!(order, vec!["c", "d", "a", "b"]);
+    }
+
+    #[tokio::test]
+    async fn move_tasks_errors_when_target_is_stale() {
+        let mgr = make_test_manager(vec![
+            make_task("a", TaskStatus::Paused),
+            make_task("b", TaskStatus::Paused),
+        ]);
+
+        let err = mgr
+            .move_tasks(&["b".into()], "missing", false)
+            .await
+            .unwrap_err();
+        assert!(err.contains("target task missing not found"));
+
+        let order: Vec<String> = mgr
+            .tasks
+            .read()
+            .await
+            .iter()
+            .map(|t| t.gid.clone())
+            .collect();
+        assert_eq!(order, vec!["a", "b"]);
+    }
+
+    #[tokio::test]
+    async fn check_scheduled_promotes_due_and_flags_missed() {
+        let now = crate::engine::util::now_secs();
+        let mut due = make_task("due", TaskStatus::Scheduled);
+        due.start_at = Some(now.saturating_sub(5)); // just past -> within grace, start it
+        let mut missed = make_task("missed", TaskStatus::Scheduled);
+        missed.start_at = Some(now.saturating_sub(10_000)); // long overdue -> flag missed
+        let mut future = make_task("future", TaskStatus::Scheduled);
+        future.start_at = Some(now + 10_000); // not yet due
+
+        let mgr = make_test_manager(vec![due, missed, future]);
+        mgr.check_scheduled_tasks().await;
+
+        let tasks = mgr.tasks.read().await;
+        let get = |gid: &str| tasks.iter().find(|t| t.gid == gid).unwrap();
+        assert_eq!(get("due").status, TaskStatus::Waiting);
+        assert!(get("due").start_at.is_none());
+        assert_eq!(get("missed").status, TaskStatus::Scheduled);
+        assert!(get("missed").schedule_missed);
+        assert_eq!(get("future").status, TaskStatus::Scheduled);
+        assert!(!get("future").schedule_missed);
+    }
+
+    #[tokio::test]
+    async fn update_progress_runs_scheduler_when_only_scheduled_tasks_exist() {
+        let now = crate::engine::util::now_secs();
+        let mut due = make_task("due", TaskStatus::Scheduled);
+        due.kind = TaskKind::Torrent;
+        due.start_at = Some(now.saturating_sub(5));
+        let mgr = make_test_manager(vec![due]);
+
+        mgr.update_progress().await;
+
+        let tasks = mgr.tasks.read().await;
+        let task = tasks.iter().find(|t| t.gid == "due").unwrap();
+        assert_eq!(task.status, TaskStatus::Waiting);
+        assert!(task.start_at.is_none());
     }
 
     async fn make_test_manager_with_engine() -> (TaskManager, tempfile::TempDir) {

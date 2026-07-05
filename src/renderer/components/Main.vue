@@ -35,6 +35,7 @@
       </button>
     </nav>
     <add-task-dialog :visible="addTaskVisible" :type="addTaskType" />
+    <missed-schedule-dialog />
     <about-panel :visible="aboutPanelVisible" />
     <drop-zone />
   </div>
@@ -50,6 +51,7 @@ import Dragger from "@/components/Dragger/Index.vue";
 import TitleBar from "@/components/Native/TitleBar.vue";
 import Sidebar from "@/components/Sidebar/Index.vue";
 import AddTask from "@/components/Task/AddTask.vue";
+import MissedScheduleDialog from "@/components/Task/MissedScheduleDialog.vue";
 import is from "@/shims/platform";
 import { useAppStore } from "@/store/app";
 import { useTaskStore } from "@/store/task";
@@ -61,6 +63,7 @@ export default {
 		[Sidebar.name]: Sidebar,
 		[TitleBar.name]: TitleBar,
 		[AddTask.name]: AddTask,
+		[MissedScheduleDialog.name]: MissedScheduleDialog,
 		[Dragger.name]: Dragger,
 		ListTodo,
 		Plus,

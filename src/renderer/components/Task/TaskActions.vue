@@ -47,36 +47,6 @@
       class="item"
       effect="dark"
       placement="bottom"
-      :content="$t('task.move-task-up')"
-      v-if="currentList !== 'stopped'"
-    >
-      <i
-        class="task-action"
-        :class="{ disabled: selectedGidListCount === 0 }"
-        @click="onMoveUpClick"
-      >
-        <ArrowUp :size="14" />
-      </i>
-    </ui-tooltip>
-    <ui-tooltip
-      class="item"
-      effect="dark"
-      placement="bottom"
-      :content="$t('task.move-task-down')"
-      v-if="currentList !== 'stopped'"
-    >
-      <i
-        class="task-action"
-        :class="{ disabled: selectedGidListCount === 0 }"
-        @click="onMoveDownClick"
-      >
-        <ArrowDown :size="14" />
-      </i>
-    </ui-tooltip>
-    <ui-tooltip
-      class="item"
-      effect="dark"
-      placement="bottom"
       :content="hasSelection ? $t('task.resume-selected-tasks') : $t('task.resume-all-task')"
     >
       <i class="task-action" @click="onResumeClick">
@@ -109,8 +79,6 @@
 
 <script lang="ts">
 import {
-	ArrowDown,
-	ArrowUp,
 	Eraser,
 	ListChecks,
 	Pause,
@@ -119,7 +87,6 @@ import {
 	Trash2,
 } from "@lucide/vue";
 import { bytesToSize } from "@shared/utils";
-import { toast } from "vue-sonner";
 import { commands } from "@/components/CommandManager/instance";
 import { useTaskStore } from "@/store/task";
 
@@ -132,8 +99,6 @@ export default {
 		Pause,
 		Eraser,
 		ListChecks,
-		ArrowUp,
-		ArrowDown,
 	},
 	data() {
 		return {
@@ -260,42 +225,6 @@ export default {
 						}
 					});
 			}
-		},
-		onMoveUpClick() {
-			useTaskStore()
-				.moveSelectedTasks("up", {
-					onSyncError: () => {
-						toast.error(this.$t("task.sync-priority-failed"), {
-							duration: 1800,
-						});
-					},
-				})
-				.then((movedCount) => {
-					if (movedCount > 0) {
-						this.$msg.success(this.$t("task.move-task-up"));
-					}
-				})
-				.catch(() => {
-					this.$msg.error(this.$t("task.move-task-up"));
-				});
-		},
-		onMoveDownClick() {
-			useTaskStore()
-				.moveSelectedTasks("down", {
-					onSyncError: () => {
-						toast.error(this.$t("task.sync-priority-failed"), {
-							duration: 1800,
-						});
-					},
-				})
-				.then((movedCount) => {
-					if (movedCount > 0) {
-						this.$msg.success(this.$t("task.move-task-down"));
-					}
-				})
-				.catch(() => {
-					this.$msg.error(this.$t("task.move-task-down"));
-				});
 		},
 		onPurgeRecordClick() {
 			useTaskStore()

@@ -1,7 +1,7 @@
 <template>
   <div
     v-if="isMobileList"
-    :key="task.gid"
+    :key="`${task.gid}-mobile`"
     class="task-item-actions task-item-actions--mobile"
     @click.stop
     v-on:dblclick.stop="() => null"
@@ -34,12 +34,18 @@
           @click="onActionClick(action, $event)"
         >
           <component :is="actionIcons[action]" :size="14" />
-          <span>{{ $t(actionLabels[action]) }}</span>
+          <span>{{ actionLabel(action) }}</span>
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
   </div>
-  <div v-else :key="task.gid" class="task-item-actions" @click.stop v-on:dblclick.stop="() => null">
+  <div
+    v-else
+    :key="`${task.gid}-desktop`"
+    class="task-item-actions"
+    @click.stop
+    v-on:dblclick.stop="() => null"
+  >
     <button
       type="button"
       v-for="(action, index) in taskActions"
@@ -50,7 +56,8 @@
     >
       <Pause v-if="action === 'PAUSE'" :size="14" />
       <Square v-else-if="action === 'STOP'" :size="14" />
-      <Play v-else-if="action === 'RESUME'" :size="14" />
+      <Play v-else-if="action === 'RESUME' || action === 'START_NOW'" :size="14" />
+      <Clock v-else-if="action === 'SCHEDULE' || action === 'RESCHEDULE'" :size="14" />
       <RotateCcw v-else-if="action === 'RESTART'" :size="14" />
       <Trash2 v-else-if="action === 'DELETE'" :size="14" />
       <Trash v-else-if="action === 'TRASH'" :size="14" />
@@ -63,6 +70,7 @@
 
 <script lang="ts">
 import {
+	Clock,
 	EllipsisVertical,
 	Folder,
 	Info,
@@ -75,7 +83,7 @@ import {
 	Trash2,
 } from "@lucide/vue";
 import { TASK_STATUS } from "@shared/constants";
-import { checkTaskIsSeeder, getTaskName } from "@shared/utils";
+import { checkTaskIsBT, checkTaskIsSeeder, getTaskName } from "@shared/utils";
 import { commands } from "@/components/CommandManager/instance";
 import {
 	DropdownMenu,
@@ -94,8 +102,9 @@ import {
 
 const taskActionsMap = {
 	[TASK_STATUS.ACTIVE]: ["PAUSE", "DELETE"],
-	[TASK_STATUS.PAUSED]: ["RESUME", "DELETE"],
-	[TASK_STATUS.WAITING]: ["RESUME", "DELETE"],
+	[TASK_STATUS.PAUSED]: ["RESUME", "SCHEDULE", "DELETE"],
+	[TASK_STATUS.WAITING]: ["RESUME", "SCHEDULE", "DELETE"],
+	[TASK_STATUS.SCHEDULED]: ["START_NOW", "RESCHEDULE", "DELETE"],
 	[TASK_STATUS.ERROR]: ["RESTART", "TRASH"],
 	[TASK_STATUS.COMPLETE]: ["RESTART", "TRASH"],
 	[TASK_STATUS.REMOVED]: ["RESTART", "TRASH"],
@@ -105,6 +114,9 @@ const taskActionsMap = {
 const actionIconsMap = {
 	PAUSE: Pause,
 	RESUME: Play,
+	START_NOW: Play,
+	SCHEDULE: Clock,
+	RESCHEDULE: Clock,
 	STOP: Square,
 	RESTART: RotateCcw,
 	DELETE: Trash2,
@@ -117,6 +129,9 @@ const actionIconsMap = {
 const actionLabelsMap: Record<string, string> = {
 	PAUSE: "task.pause-task",
 	RESUME: "task.resume-task",
+	START_NOW: "task.start-now",
+	SCHEDULE: "task.schedule-task",
+	RESCHEDULE: "task.reschedule-task",
 	STOP: "task.stop-seeding",
 	RESTART: "task.restart-task",
 	DELETE: "task.delete-task",
@@ -126,9 +141,16 @@ const actionLabelsMap: Record<string, string> = {
 	INFO: "task.task-detail-title",
 };
 
+const actionLabelFallbacks: Record<string, string> = {
+	START_NOW: "Start Now",
+	SCHEDULE: "Schedule...",
+	RESCHEDULE: "Reschedule...",
+};
+
 export default {
 	name: "task-item-actions",
 	components: {
+		Clock,
 		Play,
 		Pause,
 		Square,
@@ -185,18 +207,25 @@ export default {
 				return task.status;
 			}
 		},
+		isBT() {
+			return checkTaskIsBT(this.task);
+		},
+		statusActions() {
+			const actions = taskActionsMap[this.taskStatus] || [];
+			if (this.isBT) {
+				return actions.filter((a) => a !== "SCHEDULE" && a !== "RESCHEDULE");
+			}
+			return actions;
+		},
 		primaryAction() {
-			return (taskActionsMap[this.taskStatus] || [])[0];
+			return this.statusActions[0];
 		},
 		overflowActions() {
-			const rest = (taskActionsMap[this.taskStatus] || []).slice(1);
+			const rest = this.statusActions.slice(1);
 			const common = this.isCardView
 				? ["LINK", "INFO"]
 				: ["FOLDER", "LINK", "INFO"];
 			return [...rest, ...common];
-		},
-		actionLabels() {
-			return actionLabelsMap;
 		},
 		actionIcons() {
 			return actionIconsMap;
@@ -217,13 +246,17 @@ export default {
 			return result;
 		},
 		taskActions() {
-			const { taskStatus, taskCommonActions } = this;
-			const actions = taskActionsMap[taskStatus] || [];
-			const result = [...actions, ...taskCommonActions].reverse();
+			const { statusActions, taskCommonActions } = this;
+			const result = [...statusActions, ...taskCommonActions].reverse();
 			return result;
 		},
 	},
 	methods: {
+		actionLabel(action: string) {
+			const key = actionLabelsMap[action];
+			const label = this.$t(key);
+			return label === key ? actionLabelFallbacks[action] || key : label;
+		},
 		onActionClick(action, event) {
 			switch (action) {
 				case "PAUSE":
@@ -253,6 +286,13 @@ export default {
 				case "INFO":
 					this.onInfoClick();
 					break;
+				case "SCHEDULE":
+				case "RESCHEDULE":
+					this.onScheduleClick();
+					break;
+				case "START_NOW":
+					this.onStartNowClick();
+					break;
 			}
 		},
 		onResumeClick() {
@@ -261,6 +301,14 @@ export default {
 				task,
 				taskName,
 			});
+		},
+		onScheduleClick() {
+			const { task, taskName } = this;
+			commands.emit("schedule-task", { task, taskName });
+		},
+		onStartNowClick() {
+			const { task, taskName } = this;
+			commands.emit("start-task-now", { task, taskName });
 		},
 		onRestartClick(event) {
 			const { task, taskName } = this;

@@ -93,6 +93,10 @@
           :files="currentTaskFiles"
           :peers="currentTaskPeers"
         />
+        <schedule-dialog
+          v-model:visible="scheduleDialogVisible"
+          :task="scheduleTask"
+        />
       </div>
       <loading-overlay :show="taskActionLoading" :text="taskActionLoadingText" />
     </div>
@@ -107,6 +111,7 @@ import logger from "@shared/utils/logger";
 import api from "@/api";
 import { commands } from "@/components/CommandManager/instance";
 import SubnavSwitcher from "@/components/Subnav/SubnavSwitcher.vue";
+import ScheduleDialog from "@/components/Task/ScheduleDialog.vue";
 import TaskActions from "@/components/Task/TaskActions.vue";
 import TaskList from "@/components/Task/TaskList.vue";
 import TaskDetail from "@/components/TaskDetail/Index.vue";
@@ -132,6 +137,7 @@ export default {
 		[TaskActions.name]: TaskActions,
 		[TaskList.name]: TaskList,
 		[TaskDetail.name]: TaskDetail,
+		[ScheduleDialog.name]: ScheduleDialog,
 		[SubnavSwitcher.name]: SubnavSwitcher,
 		[LoadingOverlay.name]: LoadingOverlay,
 		Select,
@@ -202,6 +208,11 @@ export default {
 					title: this.$t("task.stopped"),
 					route: "/task/stopped",
 				},
+				{
+					key: "scheduled",
+					title: this.$t("task.scheduled"),
+					route: "/task/scheduled",
+				},
 			];
 		},
 		title() {
@@ -253,6 +264,7 @@ export default {
 			return (
 				this.currentList !== "stopped" &&
 				this.currentList !== "completed" &&
+				this.currentList !== "scheduled" &&
 				this.totalLength > 0
 			);
 		},
@@ -273,6 +285,8 @@ export default {
 		return {
 			taskActionLoading: false,
 			taskActionLoadingText: "",
+			scheduleDialogVisible: false,
+			scheduleTask: null,
 		};
 	},
 	methods: {
@@ -656,6 +670,21 @@ export default {
 			const { task } = payload;
 			useTaskStore().showTaskDetail(task);
 		},
+		handleScheduleTask(payload) {
+			this.scheduleTask = payload.task;
+			this.scheduleDialogVisible = true;
+		},
+		handleStartTaskNow(payload) {
+			const { task, taskName } = payload;
+			useTaskStore()
+				.startNow(task.gid)
+				.catch((err: unknown) => {
+					this.$msg.error(
+						(err as Error)?.message ||
+							this.$t("task.start-now-fail", { taskName }),
+					);
+				});
+		},
 	},
 	created() {
 		this.changeCurrentList();
@@ -671,6 +700,8 @@ export default {
 		commands.on("batch-delete-task", this.handleBatchDeleteTask);
 		commands.on("copy-task-link", this.handleCopyTaskLink);
 		commands.on("show-task-info", this.handleShowTaskInfo);
+		commands.on("schedule-task", this.handleScheduleTask);
+		commands.on("start-task-now", this.handleStartTaskNow);
 	},
 	beforeUnmount() {
 		commands.off("pause-task", this.handlePauseTask);
@@ -683,6 +714,8 @@ export default {
 		commands.off("batch-delete-task", this.handleBatchDeleteTask);
 		commands.off("copy-task-link", this.handleCopyTaskLink);
 		commands.off("show-task-info", this.handleShowTaskInfo);
+		commands.off("schedule-task", this.handleScheduleTask);
+		commands.off("start-task-now", this.handleStartTaskNow);
 	},
 };
 </script>

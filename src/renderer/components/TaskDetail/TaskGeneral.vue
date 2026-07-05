@@ -50,12 +50,23 @@
           ><task-status :theme="currentTheme" :status="taskStatus"
         /></span>
       </div>
+      <div class="general-card-row" v-if="isScheduled">
+        <span class="general-card-label">{{ $t('task.schedule-start-at') }}</span>
+        <span class="general-card-value">{{ scheduledStartText }}</span>
+      </div>
       <div class="general-card-row" v-if="task.errorCode && task.errorCode !== '0'">
         <span class="general-card-label">{{ $t('task.task-error-info') }}</span>
         <span class="general-card-value general-card-value--error"
           >{{ task.errorCode }} {{ task.errorMessage }}</span
         >
       </div>
+    </div>
+    <div
+      v-if="isScheduled && startingAfterText"
+      class="mt-2 flex items-center gap-1.5 rounded-md bg-sky-500/10 px-3 py-2 text-xs font-medium text-sky-600 dark:text-sky-400"
+    >
+      <Clock :size="13" />
+      <span>{{ $t('task.starting-after', { duration: startingAfterText }) }}</span>
     </div>
     <div v-if="isBT" class="general-section-header">
       <Magnet :size="14" /><span>{{ $t('task.task-bittorrent-info') }}</span>
@@ -95,7 +106,7 @@
   </div>
 </template>
 <script lang="ts">
-import { Link, Magnet } from "@lucide/vue";
+import { Clock, Link, Magnet } from "@lucide/vue";
 import { APP_THEME, TASK_STATUS } from "@shared/constants";
 import {
 	bytesToSize,
@@ -122,11 +133,17 @@ export default {
 		[TaskStatus.name]: TaskStatus,
 		Magnet,
 		Link,
+		Clock,
 	},
 	props: {
 		task: {
 			type: Object,
 		},
+	},
+	data() {
+		return {
+			nowMs: Date.now(),
+		};
 	},
 	computed: {
 		isRenderer: () => is.renderer(),
@@ -192,6 +209,51 @@ export default {
 			const creationDate = this.task?.bittorrent?.creationDate;
 			return localeDateTimeFormat(creationDate, locale);
 		},
+		isScheduled() {
+			return this.task?.status === TASK_STATUS.SCHEDULED;
+		},
+		scheduledStartText() {
+			const secs = Number(this.task?.startAt);
+			const locale = usePreferenceStore().config?.locale || "en-US";
+			return Number.isFinite(secs) && secs > 0
+				? localeDateTimeFormat(secs, locale)
+				: "";
+		},
+		startingAfterText() {
+			const startAt = Number(this.task?.startAt);
+			if (!Number.isFinite(startAt) || startAt <= 0) {
+				return "";
+			}
+			const nowSecs = Math.floor(this.nowMs / 1000);
+			const remain = startAt - nowSecs;
+			if (remain <= 0) {
+				return "";
+			}
+			return timeFormat(remain, {
+				prefix: "",
+				i18n: {
+					gt1d: this.$t("app.gt1d"),
+					hour: this.$t("app.hour"),
+					minute: this.$t("app.minute"),
+					second: this.$t("app.second"),
+				},
+			});
+		},
+	},
+	watch: {
+		isScheduled: {
+			immediate: true,
+			handler(scheduled: boolean) {
+				if (scheduled && !this._nowTimer) {
+					this._nowTimer = setInterval(() => {
+						this.nowMs = Date.now();
+					}, 1000);
+				} else if (!scheduled && this._nowTimer) {
+					clearInterval(this._nowTimer);
+					this._nowTimer = null;
+				}
+			},
+		},
 	},
 	methods: {
 		formatBytes: bytesToSize,
@@ -205,6 +267,12 @@ export default {
 					this.$msg.error(this.$t("task.copy-link-failed"));
 				});
 		},
+	},
+	beforeUnmount() {
+		if (this._nowTimer) {
+			clearInterval(this._nowTimer);
+			this._nowTimer = null;
+		}
 	},
 };
 </script>

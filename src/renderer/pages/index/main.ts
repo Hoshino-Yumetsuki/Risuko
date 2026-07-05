@@ -83,8 +83,6 @@ const updateAppMenuLabels = (i18n: { t: (key: string) => string }) => {
 		"pause-task": i18n.t("task.pause-task"),
 		"resume-task": i18n.t("task.resume-task"),
 		"delete-task": i18n.t("task.delete-task"),
-		"move-task-up": i18n.t("task.move-task-up"),
-		"move-task-down": i18n.t("task.move-task-down"),
 		"pause-all-task": i18n.t("task.pause-all-task"),
 		"resume-all-task": i18n.t("task.resume-all-task"),
 		"select-all-task": i18n.t("task.select-all-task"),

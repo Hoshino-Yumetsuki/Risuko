@@ -462,31 +462,29 @@ export default {
 			}
 			this.retrying = true;
 			try {
-				await api.importBrowserCookies({
+				const imported = await api.importBrowserCookies({
 					browser: this.selectedBrowser,
 					url: this.url || `https://${this.host}`,
 					persist: true,
 					userAgent: ua,
 				});
+				this.imported = imported;
 				const appStore = useAppStore();
-				appStore.markCloudflareRetried(
-					this.gid,
-					this.imported.cookieNames || [],
-				);
+				appStore.markCloudflareRetried(this.gid, imported.cookieNames || []);
 				await api.retryWithCookies({
 					gid: this.gid,
-					cookie: this.imported.cookieHeader,
-					userAgent: ua,
+					cookie: imported.cookieHeader,
+					userAgent: imported.userAgent || ua,
 				});
 				toast.success(
 					this.$t("task.task-cookie-import-success", {
-						count: this.imported.count,
+						count: imported.count,
 						browser:
 							this.browsers.find((b) => b.id === this.selectedBrowser)?.name ||
 							this.selectedBrowser,
 					}),
 					{
-						description: this.imported.cookieNames.join(", "),
+						description: imported.cookieNames.join(", "),
 					},
 				);
 				appStore.hideCloudflareDialog();

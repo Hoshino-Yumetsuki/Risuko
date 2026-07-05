@@ -42,6 +42,7 @@ export interface TaskForm {
 	completionScriptCommand: string;
 	completionScriptArgs: string;
 	completionScriptTimeoutMs: number;
+	startAt: number | null;
 	[key: string]: unknown;
 }
 
@@ -89,6 +90,7 @@ export const initTaskForm = (state: TaskFormState) => {
 		completionScriptCommand: "",
 		completionScriptArgs: "",
 		completionScriptTimeoutMs: 30000,
+		startAt: null,
 		...addTaskOptions,
 	};
 	return result;
@@ -188,9 +190,12 @@ export const buildOption = (type: string, form: TaskForm) => {
 			result["risuko-completion-script-timeout-ms"] =
 				Number(form.completionScriptTimeoutMs) || 30000;
 		} else {
-			// Override toggled on but no command — explicitly disable per task
 			result["risuko-completion-script-enabled"] = false;
 		}
+	}
+
+	if (type !== ADD_TASK_TYPE.TORRENT && form.startAt && form.startAt > 0) {
+		result["risuko-start-at"] = form.startAt;
 	}
 
 	return result;

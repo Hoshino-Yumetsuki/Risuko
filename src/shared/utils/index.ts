@@ -6,6 +6,7 @@ import {
 	TASK_STATUS,
 	TEMP_DOWNLOAD_SUFFIX,
 } from "@shared/constants";
+import { getLanguage } from "@shared/locales";
 import type { DownloadTask } from "@shared/types/task";
 import {
 	camelCase,
@@ -173,7 +174,7 @@ export const localeDateTimeFormat = (timestamp, locale) => {
 		timestamp *= 1000;
 	}
 	const date = new Date(timestamp);
-	return date.toLocaleDateString(locale, {
+	return date.toLocaleDateString(getLanguage(locale || "en-US"), {
 		year: "numeric",
 		month: "long",
 		day: "numeric",
@@ -620,12 +621,8 @@ const isFtpsLink = (uri: string): boolean => {
 	return uri.trim().toLowerCase().startsWith("ftps://");
 };
 
-export const isSftpLink = (uri: string): boolean => {
+const isSftpLink = (uri: string): boolean => {
 	return uri.trim().toLowerCase().startsWith("sftp://");
-};
-
-export const isFtpFamily = (uri: string): boolean => {
-	return isFtpLink(uri) || isFtpsLink(uri) || isSftpLink(uri);
 };
 
 export const getLangDirection = (locale = "en-US") => {

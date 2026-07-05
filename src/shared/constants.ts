@@ -21,6 +21,7 @@ export const TASK_STATUS = {
 	ACTIVE: "active",
 	WAITING: "waiting",
 	PAUSED: "paused",
+	SCHEDULED: "scheduled",
 	ERROR: "error",
 	COMPLETE: "complete",
 	REMOVED: "removed",

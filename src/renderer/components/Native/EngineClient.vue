@@ -521,6 +521,9 @@ export default {
 			taskStore.saveSession();
 			const { gid } = payload;
 			this.clearAutoRetryState(gid);
+			if (taskStore.currentTaskItem?.gid === gid) {
+				taskStore.updateCurrentTaskDetail();
+			}
 			const { seedingList } = this;
 			if (seedingList.includes(gid)) {
 				return;
@@ -635,7 +638,7 @@ export default {
 				} else {
 					message = this.$t("task.download-error-message", { taskName });
 				}
-				const link = `https://risuko.vercel.app/docs/reference/error-codes#${errorCode}`;
+				const link = `https://risuko.app/docs/reference/error-codes#${errorCode}`;
 				this.$msg.error({
 					duration: isMissingYtDlp ? 9000 : 5000,
 					message: `${message} (${errorCode}) ${link}`,
@@ -1027,6 +1030,7 @@ export default {
 				return;
 			}
 			this.startupAutoResumeHandled = true;
+			this.checkMissedSchedules();
 
 			if (!this.resumeAllWhenAppLaunched) {
 				return;
@@ -1040,6 +1044,34 @@ export default {
 						err?.message || err,
 					);
 				});
+		},
+		async checkMissedSchedules() {
+			const missed: DownloadTask[] = [];
+			const num = 5000;
+			let offset = 0;
+			try {
+				for (;;) {
+					const tasks = await api.fetchScheduledTaskList({
+						offset,
+						num,
+						keys: ["gid", "scheduleMissed", "startAt", "files", "bittorrent"],
+					});
+					const page = Array.isArray(tasks) ? tasks : [];
+					missed.push(...page.filter((t) => t.scheduleMissed));
+					if (page.length < num) {
+						break;
+					}
+					offset += page.length;
+				}
+				if (missed.length > 0) {
+					useAppStore().showMissedScheduled(missed);
+				}
+			} catch (err) {
+				logger.warn(
+					"[Risuko] checkMissedSchedules failed:",
+					err?.message || err,
+				);
+			}
 		},
 	},
 	created() {

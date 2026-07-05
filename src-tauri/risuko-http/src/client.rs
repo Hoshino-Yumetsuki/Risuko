@@ -510,9 +510,6 @@ impl ClientBuilder {
             tcp_keepalive: self.tcp_keepalive,
         };
 
-        // The connector below never advertises h2 ALPN and the plain-HTTP
-        // path never initiates an h2c upgrade, so this client is HTTP/1.1
-        // only at the wire level
         let mut hyper_builder = HyperClient::builder(TokioExecutor::new());
         if let Some(d) = self.pool_idle_timeout {
             hyper_builder.pool_idle_timeout(d);
@@ -582,6 +579,7 @@ fn build_tls(danger_accept_invalid: bool, extra: &[Vec<u8>]) -> Result<ClientCon
     let mut config = ClientConfig::builder()
         .with_root_certificates(roots)
         .with_no_client_auth();
+    config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
 
     if danger_accept_invalid {
         config
@@ -635,5 +633,19 @@ impl rustls::client::danger::ServerCertVerifier for NoCertVerifier {
             RSA_PSS_SHA384,
             RSA_PSS_SHA512,
         ]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn build_tls_advertises_h2_then_http11_alpn() {
+        let config = build_tls(false, &[]).unwrap();
+        assert_eq!(
+            config.alpn_protocols,
+            vec![b"h2".to_vec(), b"http/1.1".to_vec()]
+        );
     }
 }

@@ -102,7 +102,7 @@ mod prev_focus {
         let self_pid = std::process::id() as i32;
         let pid = NSWorkspace::sharedWorkspace()
             .frontmostApplication()
-            .map(|a| a.processIdentifier() as i32)
+            .map(|a| a.processIdentifier())
             .filter(|&p| p != self_pid)
             .unwrap_or(0);
         PREV_APP_PID.store(pid, Ordering::SeqCst);

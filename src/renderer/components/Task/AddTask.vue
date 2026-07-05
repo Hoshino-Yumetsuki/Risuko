@@ -151,7 +151,7 @@
                 class="resize-none text-xs"
               />
             </div>
-            <div>
+            <div class="col-span-2">
               <label class="mb-1 block text-[11px] text-muted-foreground">{{ $t('task.task-referer') }}</label>
               <Textarea
                 auto-complete="off"
@@ -161,15 +161,15 @@
                 class="resize-none text-xs"
               />
             </div>
-            <div>
-              <label class="mb-1 flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
-                <span>{{ $t('task.task-cookie') }}</span>
+            <div class="col-span-2">
+              <div class="mb-1 flex items-center justify-between gap-2">
+                <label class="text-[11px] text-muted-foreground">{{ $t('task.task-cookie') }}</label>
                 <BrowserCookiePicker
-                  v-if="cookiePickerUrl"
-                  :url="cookiePickerUrl"
+                  :url="cookiePickerUrl || 'https://'"
+                  :disabled="!cookiePickerUrl"
                   @imported="onCookiesImported"
                 />
-              </label>
+              </div>
               <Textarea
                 auto-complete="off"
                 rows="2"
@@ -203,6 +203,21 @@
               >
                 {{ $t('task.navigate-to-downloading') }}
               </ui-checkbox>
+            </div>
+            <div v-if="showScheduleField" class="col-span-2">
+              <label class="mb-1 block text-[11px] text-muted-foreground">{{
+                $t('task.schedule-start-at')
+              }}</label>
+              <DateTimePicker
+                v-model="form.startAt"
+                :placeholder="$t('task.schedule-start-at-placeholder')"
+              />
+              <p
+                v-if="showScheduleTorrentHint"
+                class="mt-1 text-[11px] leading-snug text-muted-foreground"
+              >
+                {{ $t('task.schedule-torrent-ignored') }}
+              </p>
             </div>
             <div class="col-span-2">
               <ui-checkbox
@@ -316,6 +331,7 @@ import BatchItemCard from "@/components/Task/BatchItemCard.vue";
 import BrowserCookiePicker from "@/components/Task/BrowserCookiePicker.vue";
 import { Accordion } from "@/components/ui/accordion";
 import UiButton from "@/components/ui/compat/UiButton.vue";
+import { DateTimePicker } from "@/components/ui/date-time-picker";
 import {
 	Dialog,
 	DialogContent,
@@ -353,6 +369,7 @@ export default {
 		BrowserCookiePicker,
 		UiButton,
 		NumberInput,
+		DateTimePicker,
 		Dialog,
 		DialogContent,
 		DialogHeader,
@@ -414,6 +431,21 @@ export default {
 		},
 		canSubmit(): boolean {
 			return this.queue.length > 0 || this.draftLinkCount > 0;
+		},
+		hasSchedulableQueueItem(): boolean {
+			return this.queue.some((it) => it.kind !== ADD_TASK_TYPE.TORRENT);
+		},
+		hasTorrentQueueItem(): boolean {
+			return this.queue.some((it) => it.kind === ADD_TASK_TYPE.TORRENT);
+		},
+		showScheduleField(): boolean {
+			if (this.hasSchedulableQueueItem || this.draftLinkCount > 0) {
+				return true;
+			}
+			return this.queue.length === 0 && this.type !== ADD_TASK_TYPE.TORRENT;
+		},
+		showScheduleTorrentHint(): boolean {
+			return !!this.form.startAt && this.hasTorrentQueueItem;
 		},
 		submitCount(): number {
 			return this.queue.length + this.draftLinkCount;
@@ -756,8 +788,8 @@ export default {
 		onNewTaskShowDownloadingChange(enable: boolean) {
 			this.form.newTaskShowDownloading = !!enable;
 		},
-		buildSharedOptions() {
-			const base = buildOption(ADD_TASK_TYPE.TORRENT, this.form);
+		buildSharedOptions(type = ADD_TASK_TYPE.URI) {
+			const base = buildOption(type, this.form);
 			delete (base as Record<string, unknown>).selectFile;
 			delete (base as Record<string, unknown>).out;
 			return base;
@@ -869,7 +901,7 @@ export default {
 				const r = await this.submitPathBatch(torrentItems, () =>
 					taskStore.addTorrents({
 						paths: torrentItems.map((it) => it.path as string),
-						options: this.buildSharedOptions(),
+						options: this.buildSharedOptions(ADD_TASK_TYPE.TORRENT),
 					}),
 				);
 				okCount += r.ok;

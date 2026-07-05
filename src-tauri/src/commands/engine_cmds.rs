@@ -1,11 +1,9 @@
 use std::path::Path;
-use std::time::Duration;
 use std::{collections::HashMap, collections::HashSet};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use tauri::{AppHandle, Manager};
-use tokio::time::sleep;
 
 use risuko_engine::engine;
 use risuko_engine::engine::torrent;
@@ -34,20 +32,6 @@ pub struct AutoRetryPlanResult {
     pub attempt_map: HashMap<String, u32>,
     pub next_attempt: u32,
     pub delay_ms: u64,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SelectedTaskOrderInput {
-    pub gid: String,
-    pub status: String,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SyncOrderResult {
-    pub moved: u32,
-    pub partial_error: bool,
 }
 
 fn normalize_non_negative(value: f64) -> u64 {
@@ -874,92 +858,57 @@ pub async fn resolve_magnet(
     }))
 }
 
+/// Move a drag selection to sit before/after a neighbor task in the queue
 #[tauri::command]
-pub async fn sync_selected_task_order(
-    _state: tauri::State<'_, crate::state::AppState>,
-    direction: String,
-    selected_tasks: Vec<SelectedTaskOrderInput>,
-) -> Result<SyncOrderResult, String> {
-    let normalized_direction = direction.trim().to_ascii_lowercase();
-    if normalized_direction != "up" && normalized_direction != "down" {
-        return Err("Invalid direction".to_string());
+pub async fn reorder_tasks(
+    gids: Vec<String>,
+    target_gid: String,
+    after: bool,
+) -> Result<(), String> {
+    if gids.is_empty() {
+        return Err("no tasks to reorder".to_string());
     }
-
-    let mut seen_gids = HashSet::new();
-    let mut selected_active_gids = Vec::new();
-    for task in selected_tasks {
-        let gid = task.gid.trim().to_string();
-        if gid.is_empty() || !seen_gids.insert(gid.clone()) {
-            continue;
-        }
-
-        if task.status.eq_ignore_ascii_case("active") {
-            selected_active_gids.push(gid);
-        }
+    if gids.iter().any(|gid| gid == &target_gid) {
+        return Err("target task must not be included in the moved tasks".to_string());
     }
-
-    if seen_gids.is_empty() {
-        return Ok(SyncOrderResult {
-            moved: 0,
-            partial_error: false,
-        });
-    }
-
     let manager = engine::get_manager().await.ok_or("Engine not running")?;
+    manager.move_tasks(&gids, &target_gid, after).await?;
+    let _ = manager.save_session().await;
+    Ok(())
+}
 
-    let mut sync_error = false;
-    let mut moved: u32 = 0;
+/// Hold a task for a scheduled start
+#[tauri::command]
+pub async fn set_task_schedule(gid: String, start_at: u64) -> Result<(), String> {
+    let manager = engine::get_manager().await.ok_or("Engine not running")?;
+    manager.set_task_schedule(&gid, start_at).await?;
+    let _ = manager.save_session().await;
+    Ok(())
+}
 
-    // Pause active tasks first
-    if !selected_active_gids.is_empty() {
-        for gid in &selected_active_gids {
-            if manager.pause(gid).await.is_err() {
-                sync_error = true;
-            }
-        }
-        // little delay for status transition
-        sleep(Duration::from_millis(100)).await;
-    }
+/// Start a scheduled task immediately + clearing its schedule
+#[tauri::command]
+pub async fn start_task_now(gid: String) -> Result<(), String> {
+    let manager = engine::get_manager().await.ok_or("Engine not running")?;
+    manager.start_task_now(&gid).await?;
+    let _ = manager.save_session().await;
+    Ok(())
+}
 
-    // Move tasks one position at a time, matching frontend behavior
-
-    // For "up": iterate in forward order so earlier items move first
-    //   preserving relative order among selected tasks
-    // For "down": iterate in reverse order so later items move first
-    let ordered_gids: Vec<String> = if normalized_direction == "up" {
-        // Get current waiting queue order, filter to selected
-        manager.get_waiting_gids_in_order(&seen_gids).await
-    } else {
-        let mut v = manager.get_waiting_gids_in_order(&seen_gids).await;
-        v.reverse();
-        v
-    };
-
-    for gid in &ordered_gids {
-        let pos = if normalized_direction == "up" {
-            -1i64
-        } else {
-            1i64
-        };
-        match manager.change_position(gid, pos, "POS_CUR").await {
-            Ok(_) => moved += 1,
-            Err(_) => sync_error = true,
-        }
-    }
-
-    // Unpause previously active tasks
-    if !selected_active_gids.is_empty() {
-        for gid in &selected_active_gids {
-            if manager.unpause(gid).await.is_err() {
-                sync_error = true;
-            }
-        }
-    }
-
-    Ok(SyncOrderResult {
-        moved,
-        partial_error: sync_error,
-    })
+#[tauri::command]
+pub async fn tell_scheduled(
+    offset: Option<i64>,
+    num: Option<usize>,
+    keys: Option<Vec<String>>,
+) -> Result<Value, String> {
+    let manager = engine::get_manager().await.ok_or("Engine not running")?;
+    Ok(manager
+        .tell_scheduled(
+            offset.unwrap_or(0),
+            num.unwrap_or(5000),
+            &keys.unwrap_or_default(),
+        )
+        .await)
 }
 
 // Tauri commands wrapping TaskManager for direct invoke() calls
