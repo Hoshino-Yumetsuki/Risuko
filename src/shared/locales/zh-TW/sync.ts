@@ -38,6 +38,7 @@ export default {
 	"category-download": "下載行為",
 	"category-media": "媒體格式",
 	"category-rss": "RSS",
+	"category-stats": "統計",
 	"category-task-routing": "任務路由",
 	"category-notifications": "通知",
 	"category-low-speed": "低速偵測",

@@ -17,6 +17,7 @@ interface SyncState {
 
 let pushTimer: ReturnType<typeof setTimeout> | null = null;
 const pendingCategories = new Set<string>();
+const STATS_CATEGORY = "stats";
 
 export const useSyncStore = defineStore("sync", {
 	state: (): SyncState => ({
@@ -36,7 +37,16 @@ export const useSyncStore = defineStore("sync", {
 			);
 		},
 
-		extractCategoryData(categoryId: string): Record<string, unknown> {
+		async extractCategoryData(
+			categoryId: string,
+		): Promise<Record<string, unknown>> {
+			if (categoryId === STATS_CATEGORY) {
+				return (await api.exportDownloadStats()) as unknown as Record<
+					string,
+					unknown
+				>;
+			}
+
 			const cat = syncCategories.find((c) => c.id === categoryId);
 			if (!cat) {
 				return {};
@@ -53,6 +63,17 @@ export const useSyncStore = defineStore("sync", {
 				}
 			}
 			return data;
+		},
+
+		async applyCategoryData(
+			categoryId: string,
+			data: Record<string, unknown>,
+		): Promise<void> {
+			if (categoryId === STATS_CATEGORY) {
+				await api.mergeDownloadStats(data);
+				return;
+			}
+			await usePreferenceStore().save(data, { skipSync: true });
 		},
 
 		getCategoryTimestamp(categoryId: string): number | undefined {
@@ -84,7 +105,7 @@ export const useSyncStore = defineStore("sync", {
 				return;
 			}
 
-			const data = this.extractCategoryData(categoryId);
+			const data = await this.extractCategoryData(categoryId);
 			if (Object.keys(data).length === 0) {
 				return;
 			}
@@ -117,8 +138,15 @@ export const useSyncStore = defineStore("sync", {
 				const pulledTimestamps: Record<string, number> = {};
 
 				for (const categoryId of selectedCategories) {
-					if (settings[categoryId]) {
-						Object.assign(merged, settings[categoryId]);
+					const remoteData = settings[categoryId] as
+						| Record<string, unknown>
+						| undefined;
+					if (remoteData) {
+						if (categoryId === STATS_CATEGORY) {
+							await this.applyCategoryData(categoryId, remoteData);
+						} else {
+							Object.assign(merged, remoteData);
+						}
 						if (timestamps[categoryId]) {
 							pulledTimestamps[categoryId] = timestamps[categoryId] as number;
 						}
@@ -170,7 +198,7 @@ export const useSyncStore = defineStore("sync", {
 					const remoteTimestamp = remoteTimestamps[categoryId] as
 						| number
 						| undefined;
-					const localData = this.extractCategoryData(categoryId);
+					const localData = await this.extractCategoryData(categoryId);
 					const remoteData = remoteSettings[categoryId] as
 						| Record<string, unknown>
 						| undefined;
@@ -182,7 +210,11 @@ export const useSyncStore = defineStore("sync", {
 					}
 
 					if (!hasLocal && hasRemote && remoteData) {
-						Object.assign(toPull, remoteData);
+						if (categoryId === STATS_CATEGORY) {
+							await this.applyCategoryData(categoryId, remoteData);
+						} else {
+							Object.assign(toPull, remoteData);
+						}
 						toPullTimestamps[categoryId] = remoteTimestamp;
 						continue;
 					}
@@ -196,7 +228,11 @@ export const useSyncStore = defineStore("sync", {
 					}
 
 					if (localTimestamp === undefined && hasRemote && remoteData) {
-						Object.assign(toPull, remoteData);
+						if (categoryId === STATS_CATEGORY) {
+							await this.applyCategoryData(categoryId, remoteData);
+						} else {
+							Object.assign(toPull, remoteData);
+						}
 						toPullTimestamps[categoryId] = remoteTimestamp;
 						continue;
 					}
@@ -208,7 +244,11 @@ export const useSyncStore = defineStore("sync", {
 								await this.setCategoryTimestamp(categoryId, updatedAt);
 							}
 						} else if (remoteTimestamp > localTimestamp && remoteData) {
-							Object.assign(toPull, remoteData);
+							if (categoryId === STATS_CATEGORY) {
+								await this.applyCategoryData(categoryId, remoteData);
+							} else {
+								Object.assign(toPull, remoteData);
+							}
 							toPullTimestamps[categoryId] = remoteTimestamp;
 						}
 						// Equal: skip
@@ -217,9 +257,10 @@ export const useSyncStore = defineStore("sync", {
 
 				if (Object.keys(toPull).length > 0) {
 					await preferenceStore.save(toPull, { skipSync: true });
-					for (const [cat, ts] of Object.entries(toPullTimestamps)) {
-						await this.setCategoryTimestamp(cat, ts);
-					}
+				}
+
+				for (const [cat, ts] of Object.entries(toPullTimestamps)) {
+					await this.setCategoryTimestamp(cat, ts);
 				}
 
 				this.lastSyncAt = Date.now();
@@ -245,6 +286,26 @@ export const useSyncStore = defineStore("sync", {
 			}
 		},
 
+		syncCategoryOnChange(categoryId: string): void {
+			if (!this.isAutoSyncEnabled()) {
+				return;
+			}
+			if (!this.getSelectedCategories().includes(categoryId)) {
+				return;
+			}
+
+			pendingCategories.add(categoryId);
+			this.schedulePendingPush();
+		},
+
+		async markCategoryChanged(categoryId: string): Promise<void> {
+			await this.setCategoryTimestamp(
+				categoryId,
+				Math.floor(Date.now() / 1000),
+			);
+			this.syncCategoryOnChange(categoryId);
+		},
+
 		syncOnChange(changedConfig: Record<string, unknown>): void {
 			if (!this.isAutoSyncEnabled()) {
 				return;
@@ -255,12 +316,12 @@ export const useSyncStore = defineStore("sync", {
 			for (const key of Object.keys(kebabConfig)) {
 				const cats = getCategoriesForKey(key);
 				for (const cat of cats) {
-					if (this.getSelectedCategories().includes(cat)) {
-						pendingCategories.add(cat);
-					}
+					this.syncCategoryOnChange(cat);
 				}
 			}
+		},
 
+		schedulePendingPush(): void {
 			if (pendingCategories.size === 0) {
 				return;
 			}

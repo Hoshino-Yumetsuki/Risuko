@@ -13,8 +13,9 @@ const props = withDefaults(
 	defineProps<{
 		modelValue?: number | null;
 		placeholder?: string;
+		allowPast?: boolean;
 	}>(),
-	{ modelValue: null, placeholder: "" },
+	{ modelValue: null, placeholder: "", allowPast: false },
 );
 const emit = defineEmits<{ "update:modelValue": [number | null] }>();
 
@@ -65,7 +66,7 @@ const grid = computed(() => {
 		return {
 			date,
 			inMonth: date.getMonth() === viewDate.value.getMonth(),
-			disabled: date < todayStart,
+			disabled: !props.allowPast && date < todayStart,
 		};
 	});
 });

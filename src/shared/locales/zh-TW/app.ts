@@ -7,6 +7,7 @@ export default {
 	"nav-health": "健康",
 	"nav-settings": "設定",
 	"nav-share": "分享",
+	"nav-stats": "統計",
 	"nav-account": "帳戶",
 	"android-back-again-to-quit": "再次返回以結束 Risuko",
 	"android-storage-access-required":

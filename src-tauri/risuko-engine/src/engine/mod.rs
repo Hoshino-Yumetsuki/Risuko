@@ -19,6 +19,7 @@ pub mod rss;
 pub mod session;
 pub mod speed_limiter;
 pub mod ssh_known_hosts;
+pub mod stats;
 pub mod task;
 pub mod torrent;
 pub mod upload;

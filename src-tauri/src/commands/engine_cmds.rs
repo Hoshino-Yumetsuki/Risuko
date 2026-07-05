@@ -1056,11 +1056,14 @@ pub async fn unpause_all_tasks() -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn purge_download_result() -> Result<(), String> {
+pub async fn purge_download_result(
+    state: tauri::State<'_, crate::state::AppState>,
+) -> Result<(), String> {
     let manager = engine::get_manager().await.ok_or("Engine not running")?;
     manager.purge_download_result().await;
+    let stats_result = state.stats.clear().await;
     let _ = manager.save_session().await;
-    Ok(())
+    stats_result
 }
 
 #[tauri::command]

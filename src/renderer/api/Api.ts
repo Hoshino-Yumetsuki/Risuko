@@ -3,6 +3,12 @@ import type { AppConfig } from "@shared/types/config";
 import type { HealthReport, RunHealthChecksParams } from "@shared/types/health";
 import type { RssRule } from "@shared/types/rss";
 import type {
+	DownloadStatsMinuteInput,
+	DownloadStatsQuery,
+	DownloadStatsStore,
+	DownloadStatsView,
+} from "@shared/types/stats";
+import type {
 	AutoRetryPlanResult,
 	DownloadTask,
 	GlobalStat,
@@ -476,6 +482,26 @@ export default class Api {
 	removeTaskRecord(params: { gid: string }) {
 		const { gid } = params;
 		return invoke("remove_download_result", { gid });
+	}
+
+	recordDownloadStatsMinute(input: DownloadStatsMinuteInput) {
+		return invoke("record_download_stats_minute", { input });
+	}
+
+	getDownloadStats(query: DownloadStatsQuery) {
+		return invoke<DownloadStatsView>("get_download_stats", { query });
+	}
+
+	exportDownloadStats() {
+		return invoke<DownloadStatsStore>("export_download_stats");
+	}
+
+	mergeDownloadStats(data: DownloadStatsStore | Record<string, unknown>) {
+		return invoke("merge_download_stats", { data });
+	}
+
+	clearDownloadStats() {
+		return invoke("clear_download_stats");
 	}
 
 	multicall(

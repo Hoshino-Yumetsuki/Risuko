@@ -93,7 +93,7 @@ async fn announce_inner(
     BigEndian::write_u16(&mut body[96..98], req.port);
 
     let is_ipv6 = sock.peer_addr().map(|a| a.is_ipv6()).unwrap_or(false);
-    let mut buf = vec![0u8; 2048];
+    let mut buf = vec![0u8; announce_response_buffer_len(is_ipv6, req.num_want)];
     for attempt in 0..3u32 {
         sock.send(&body).await?;
         let wait = Duration::from_secs(5u64 << attempt);
@@ -113,6 +113,16 @@ async fn announce_inner(
         }
     }
     Err(TrackerError::Timeout)
+}
+
+fn announce_response_buffer_len(is_ipv6: bool, num_want: u32) -> usize {
+    const HEADER: usize = 20;
+    const MIN_PACKET: usize = 2048;
+    const MAX_UDP_PACKET: usize = 65_536;
+    let stride: usize = if is_ipv6 { 18 } else { 6 };
+    HEADER
+        .saturating_add(stride.saturating_mul(num_want as usize))
+        .clamp(MIN_PACKET, MAX_UDP_PACKET)
 }
 
 fn parse_announce_response(buf: &[u8], is_ipv6: bool) -> AnnounceResponse {
@@ -195,5 +205,11 @@ mod tests {
     #[test]
     fn rejects_wrong_scheme() {
         assert!(parse_udp_url("http://x:1").is_err());
+    }
+
+    #[test]
+    fn announce_response_buffer_fits_requested_ipv6_peers() {
+        assert_eq!(announce_response_buffer_len(false, 200), 2048);
+        assert_eq!(announce_response_buffer_len(true, 200), 3620);
     }
 }

@@ -105,6 +105,10 @@ const namedCategories: SyncCategory[] = [
 		keys: ["rss-auto-update", "rss-update-interval"],
 	},
 	{
+		id: "stats",
+		keys: [],
+	},
+	{
 		id: "task-routing",
 		keys: ["task-routing-rules"],
 	},

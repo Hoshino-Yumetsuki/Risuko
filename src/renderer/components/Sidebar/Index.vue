@@ -90,6 +90,24 @@
         <ul class="sidebar-group">
           <li
             class="sidebar-item"
+            :class="{ active: activeKey === 'stats' }"
+            :title="collapsed ? $t('app.nav-stats') : undefined"
+            @click="nav('/stats')"
+          >
+            <Motion
+              v-if="activeKey === 'stats'"
+              layout-id="sidebar-active-pill"
+              class="sidebar-pill"
+              :initial="false"
+              :transition="pillTransition"
+            />
+            <i class="sidebar-item-icon">
+              <Activity :size="15" />
+            </i>
+            <span class="sidebar-item-label">{{ $t('app.nav-stats') }}</span>
+          </li>
+          <li
+            class="sidebar-item"
             :class="{ active: activeKey === 'settings' }"
             :title="collapsed ? $t('app.nav-settings') : undefined"
             @click="nav('/preference')"
@@ -151,6 +169,7 @@ const appWindow = getCurrentWebviewWindow();
 export default {
 	name: "AppSidebar",
 	components: {
+		Activity,
 		ArrowDown,
 		ArrowUp,
 		Info,
@@ -257,6 +276,9 @@ export default {
 			}
 			if (path.startsWith("/health")) {
 				return "health";
+			}
+			if (path.startsWith("/stats")) {
+				return "stats";
 			}
 			if (path.startsWith("/preference")) {
 				return "settings";
