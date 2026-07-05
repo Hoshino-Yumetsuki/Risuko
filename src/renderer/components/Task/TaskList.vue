@@ -1,5 +1,6 @@
 <template>
   <div class="task-list-wrapper" v-if="taskList.length > 0">
+    <p class="sr-only" aria-live="polite" aria-atomic="true">{{ reorderAnnouncement }}</p>
     <recycle-scroller
       v-if="useVirtualList"
       class="task-list task-list-virtual"
@@ -7,9 +8,9 @@
       :item-size="virtualItemSize"
       key-field="_displayKey"
     >
-      <template #default="{ item }">
+      <template #default="{ item, index }">
         <div
-          :attr="item._displayKey"
+          :data-task-key="item._displayKey"
           :class="dropClass(item._displayKey)"
           @click="handleItemClick(item, $event)"
         >
@@ -17,20 +18,27 @@
             :task="item"
             :selected="isItemSelected(item)"
             :show-drag-handle="canDrag"
+            :position="index + 1"
+            :position-count="paginatedTaskList.length"
             @handle-down="onHandleDown"
             @keyboard-reorder="onKeyboardReorder"
           />
         </div>
       </template>
     </recycle-scroller>
-    <drag-select v-else class="task-list" attribute="attr" @change="handleDragSelectChange">
+    <drag-select
+      v-else
+      class="task-list"
+      attribute="data-task-key"
+      @change="handleDragSelectChange"
+    >
       <motion-enter
         v-for="(item, index) in paginatedTaskList"
         :key="item._displayKey"
         preset="fadeInUp"
         :duration="0.4"
         :delay="getStaggerDelay(index)"
-        :attr="item._displayKey"
+        :data-task-key="item._displayKey"
         :class="dropClass(item._displayKey)"
         @click="handleItemClick(item, $event)"
       >
@@ -38,6 +46,8 @@
           :task="item"
           :selected="isItemSelected(item)"
           :show-drag-handle="canDrag"
+          :position="index + 1"
+          :position-count="paginatedTaskList.length"
           @handle-down="onHandleDown"
           @keyboard-reorder="onKeyboardReorder"
         />
@@ -108,6 +118,9 @@ export default {
 			draggingKeys: [] as string[],
 			dropTargetKey: null as string | null,
 			dropAfter: false,
+			dragScroller: null as HTMLElement | null,
+			dragScrollerRect: null as DOMRect | null,
+			reorderAnnouncement: "",
 		};
 	},
 	computed: {
@@ -176,6 +189,11 @@ export default {
 			document.body.classList.remove("task-dragging");
 			this.draggingKeys = [];
 			this.dropTargetKey = null;
+			this.dragScroller = null;
+			this.dragScrollerRect = null;
+			this._onDragMove = null;
+			this._onDragUp = null;
+			this._onDragCancel = null;
 		},
 		showAddTask() {
 			useAppStore().showAddTaskDialog(ADD_TASK_TYPE.URI);
@@ -267,12 +285,18 @@ export default {
 				return;
 			}
 			event.preventDefault?.();
+			this.clearDragState();
 			const key = task._displayKey || task.gid;
 			const selected = new Set(this.selectedList);
 			const keys = this.paginatedTaskList.map((t) => t._displayKey);
 			this.draggingKeys = selected.has(key)
 				? keys.filter((k) => selected.has(k))
 				: [key];
+			this.dragScroller = this.$el?.querySelector?.(
+				".task-list",
+			) as HTMLElement | null;
+			this.dragScrollerRect =
+				this.dragScroller?.getBoundingClientRect() ?? null;
 			this._onDragMove = this.onDragMove.bind(this);
 			this._onDragUp = this.onDragUp.bind(this);
 			this._onDragCancel = this.onDragCancel.bind(this);
@@ -290,11 +314,9 @@ export default {
 			if (this.draggingKeys.length === 0) {
 				return;
 			}
-			const scroller = this.$el?.querySelector?.(
-				".task-list",
-			) as HTMLElement | null;
-			if (scroller) {
-				const r = scroller.getBoundingClientRect();
+			const scroller = this.dragScroller;
+			const r = this.dragScrollerRect;
+			if (scroller && r) {
 				const EDGE = 44;
 				if (event.clientY < r.top + EDGE) {
 					scroller.scrollTop -= 14;
@@ -306,12 +328,12 @@ export default {
 				event.clientX,
 				event.clientY,
 			) as HTMLElement | null;
-			const rowEl = el?.closest?.("[attr]") as HTMLElement | null;
+			const rowEl = el?.closest?.("[data-task-key]") as HTMLElement | null;
 			if (!rowEl) {
 				this.dropTargetKey = null;
 				return;
 			}
-			const targetKey = rowEl.getAttribute("attr");
+			const targetKey = rowEl.getAttribute("data-task-key");
 			if (!targetKey || this.draggingKeys.includes(targetKey)) {
 				this.dropTargetKey = null;
 				return;
@@ -350,6 +372,9 @@ export default {
 				targetTask.gid,
 				direction === "down",
 			);
+			this.reorderAnnouncement = `${this.$t("task.reorder-handle")}: ${
+				targetIdx + 1
+			} / ${list.length}`;
 		},
 		dropClass(key: string) {
 			if (this.dropTargetKey !== key) {

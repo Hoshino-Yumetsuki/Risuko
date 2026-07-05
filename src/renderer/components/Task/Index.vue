@@ -264,6 +264,7 @@ export default {
 			return (
 				this.currentList !== "stopped" &&
 				this.currentList !== "completed" &&
+				this.currentList !== "scheduled" &&
 				this.totalLength > 0
 			);
 		},

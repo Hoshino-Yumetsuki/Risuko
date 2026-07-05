@@ -4,6 +4,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildManifest } from "./build-updater-manifest.mjs";
 
+const previousArgv1 = process.argv[1];
+try {
+	process.argv[1] = undefined;
+	await import(`./build-updater-manifest.mjs?argv-missing=${Date.now()}`);
+} finally {
+	process.argv[1] = previousArgv1;
+}
+
 const dir = mkdtempSync(join(tmpdir(), "frag-"));
 
 try {
@@ -75,11 +83,40 @@ try {
 			() => buildManifest(dupDir, { version: "1.0.0", repo: "x/y" }),
 			/duplicate fragment key/,
 		);
-	} finally {
-		rmSync(dupDir, { recursive: true, force: true });
-	}
+		} finally {
+			rmSync(dupDir, { recursive: true, force: true });
+		}
 
-	console.log("ok");
-} finally {
+		const weirdDir = mkdtempSync(join(tmpdir(), "frag-weird-"));
+		try {
+			writeFileSync(
+				join(weirdDir, "b.json"),
+				JSON.stringify({ key: "b", asset: "b.tar.gz", signature: "SIG_B" }),
+			);
+			writeFileSync(
+				join(weirdDir, "a.json"),
+				JSON.stringify({ key: "a", asset: "a.tar.gz", signature: "SIG_A" }),
+			);
+			writeFileSync(
+				join(weirdDir, "proto.json"),
+				JSON.stringify({
+					key: "__proto__",
+					asset: "proto.tar.gz",
+					signature: "SIG_P",
+				}),
+			);
+			const weird = buildManifest(weirdDir, {
+				version: "1.0.0",
+				repo: "x/y",
+			});
+			assert.equal(Object.getPrototypeOf(weird.platforms), null);
+			assert.deepEqual(Object.keys(weird.platforms), ["a", "b", "__proto__"]);
+			assert.equal(weird.platforms.__proto__.signature, "SIG_P");
+		} finally {
+			rmSync(weirdDir, { recursive: true, force: true });
+		}
+
+		console.log("ok");
+	} finally {
 	rmSync(dir, { recursive: true, force: true });
 }

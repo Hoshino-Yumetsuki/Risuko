@@ -653,9 +653,6 @@ impl TaskManager {
         });
     }
 
-    /// Common tail for the queue-based protocols: honor a per-task `pause`
-    /// option (explicitly set, not from global defaults), enqueue the task,
-    /// kick the scheduler, and emit DownloadStart
     async fn enqueue(&self, mut task: DownloadTask) -> Result<String, String> {
         let gid = task.gid.clone();
         let pause = task
@@ -683,15 +680,12 @@ impl TaskManager {
 
         if scheduled.is_none() && !pause {
             self.try_start_next().await;
-            self.send_download_start(&gid);
         } else if scheduled.is_some() {
             tracing::info!(
                 "[task:{}] Queued as scheduled (start_at={:?})",
                 gid,
                 scheduled
             );
-        } else {
-            self.send_download_start(&gid);
         }
 
         Ok(gid)
@@ -2580,18 +2574,16 @@ impl TaskManager {
             } else {
                 self.ensure_active_magnet_resolvers().await;
             }
+            self.send_download_start(gid);
         } else {
             self.try_start_next().await;
         }
 
-        self.send_download_start(gid);
         Ok(())
     }
 
     /// Promote scheduled tasks whose start time has arrived
     async fn check_scheduled_tasks(&self) {
-        // ponytail: 5-min tolerance separates "came due while running" from
-        // "overdue because we were off"; tune if wake-from-sleep feels wrong
         const GRACE_SECS: u64 = 300;
         let now = crate::engine::util::now_secs();
         let mut tasks = self.tasks.write().await;
@@ -2687,7 +2679,6 @@ impl TaskManager {
             task.schedule_missed = false;
         }
         self.reconcile_active_set().await;
-        self.send_download_start(gid);
         Ok(())
     }
 
@@ -2702,6 +2693,15 @@ impl TaskManager {
             let mut guard = self.tasks.write().await;
             let move_set: std::collections::HashSet<&str> =
                 gids.iter().map(|s| s.as_str()).collect();
+            if !guard.iter().any(|t| move_set.contains(t.gid.as_str())) {
+                return Err("no matching tasks to move".to_string());
+            }
+            if !guard
+                .iter()
+                .any(|t| t.gid == target_gid && !move_set.contains(t.gid.as_str()))
+            {
+                return Err(format!("target task {target_gid} not found"));
+            }
             let mut moved = Vec::new();
             let mut remaining = Vec::new();
             for t in std::mem::take(&mut *guard) {
@@ -2719,7 +2719,7 @@ impl TaskManager {
                 .iter()
                 .position(|t| t.gid == target_gid)
                 .map(|p| if after { p + 1 } else { p })
-                .unwrap_or(remaining.len());
+                .expect("target task was validated before splitting");
             let mut result = Vec::with_capacity(remaining.len() + moved.len());
             result.extend(remaining.drain(..insert_at));
             result.extend(moved);
@@ -2777,7 +2777,6 @@ impl TaskManager {
             }
         }
         self.try_start_next().await;
-        self.send_download_start(gid);
         Ok(())
     }
 
@@ -3446,10 +3445,10 @@ impl TaskManager {
                     if task.kind == TaskKind::Torrent {
                         task.status = TaskStatus::Active;
                         torrent_gids.push(task.gid.clone());
+                        self.send_download_start(&task.gid);
                     } else {
                         task.status = TaskStatus::Waiting;
                     }
-                    self.send_download_start(&task.gid);
                 }
             }
         }
@@ -3894,6 +3893,29 @@ mod tests {
             .map(|t| t.gid.clone())
             .collect();
         assert_eq!(order, vec!["c", "d", "a", "b"]);
+    }
+
+    #[tokio::test]
+    async fn move_tasks_errors_when_target_is_stale() {
+        let mgr = make_test_manager(vec![
+            make_task("a", TaskStatus::Paused),
+            make_task("b", TaskStatus::Paused),
+        ]);
+
+        let err = mgr
+            .move_tasks(&["b".into()], "missing", false)
+            .await
+            .unwrap_err();
+        assert!(err.contains("target task missing not found"));
+
+        let order: Vec<String> = mgr
+            .tasks
+            .read()
+            .await
+            .iter()
+            .map(|t| t.gid.clone())
+            .collect();
+        assert_eq!(order, vec!["a", "b"]);
     }
 
     #[tokio::test]

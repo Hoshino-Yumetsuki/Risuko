@@ -11,7 +11,12 @@
           v-if="showDragHandle"
           class="task-drag-handle"
           tabindex="0"
-          role="button"
+          role="slider"
+          aria-orientation="vertical"
+          :aria-valuemin="1"
+          :aria-valuemax="positionCount"
+          :aria-valuenow="position"
+          :aria-valuetext="`${position} / ${positionCount}`"
           :aria-label="$t('task.reorder-handle')"
           @pointerdown.stop="onHandleDown"
           @keydown="onHandleKeydown"
@@ -122,6 +127,14 @@ export default {
 		showDragHandle: {
 			type: Boolean,
 			default: false,
+		},
+		position: {
+			type: Number,
+			default: 1,
+		},
+		positionCount: {
+			type: Number,
+			default: 1,
 		},
 	},
 	emits: ["handle-down", "keyboard-reorder"],

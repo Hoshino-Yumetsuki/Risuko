@@ -204,7 +204,7 @@
                 {{ $t('task.navigate-to-downloading') }}
               </ui-checkbox>
             </div>
-            <div v-if="type !== 'torrent'" class="col-span-2">
+            <div v-if="showScheduleField" class="col-span-2">
               <label class="mb-1 block text-[11px] text-muted-foreground">{{
                 $t('task.schedule-start-at')
               }}</label>
@@ -212,6 +212,12 @@
                 v-model="form.startAt"
                 :placeholder="$t('task.schedule-start-at-placeholder')"
               />
+              <p
+                v-if="showScheduleTorrentHint"
+                class="mt-1 text-[11px] leading-snug text-muted-foreground"
+              >
+                {{ $t('task.schedule-torrent-ignored') }}
+              </p>
             </div>
             <div class="col-span-2">
               <ui-checkbox
@@ -425,6 +431,21 @@ export default {
 		},
 		canSubmit(): boolean {
 			return this.queue.length > 0 || this.draftLinkCount > 0;
+		},
+		hasSchedulableQueueItem(): boolean {
+			return this.queue.some((it) => it.kind !== ADD_TASK_TYPE.TORRENT);
+		},
+		hasTorrentQueueItem(): boolean {
+			return this.queue.some((it) => it.kind === ADD_TASK_TYPE.TORRENT);
+		},
+		showScheduleField(): boolean {
+			if (this.hasSchedulableQueueItem || this.draftLinkCount > 0) {
+				return true;
+			}
+			return this.queue.length === 0 && this.type !== ADD_TASK_TYPE.TORRENT;
+		},
+		showScheduleTorrentHint(): boolean {
+			return !!this.form.startAt && this.hasTorrentQueueItem;
 		},
 		submitCount(): number {
 			return this.queue.length + this.draftLinkCount;

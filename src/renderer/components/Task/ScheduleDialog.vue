@@ -22,7 +22,7 @@
         <Button variant="ghost" size="sm" @click="close">
           {{ $t('app.cancel') }}
         </Button>
-        <Button size="sm" :disabled="!startAt" @click="confirm">
+        <Button size="sm" :disabled="!canConfirm" @click="confirm">
           {{ $t('task.schedule-confirm') }}
         </Button>
       </DialogFooter>
@@ -70,15 +70,19 @@ export default {
 		taskName(): string {
 			return this.task ? getTaskName(this.task) : "";
 		},
+		canConfirm(): boolean {
+			return Number(this.startAt) > Date.now() / 1000;
+		},
 	},
 	watch: {
 		visible(v: boolean) {
 			if (v) {
-				const existing = Number(this.task?.startAt);
-				this.startAt =
-					Number.isFinite(existing) && existing > 0
-						? existing
-						: this.nextTwoAm();
+				this.resetStartAt();
+			}
+		},
+		task() {
+			if (this.visible) {
+				this.resetStartAt();
 			}
 		},
 	},
@@ -91,6 +95,13 @@ export default {
 			}
 			return Math.floor(d.getTime() / 1000);
 		},
+		resetStartAt() {
+			const existing = Number(this.task?.startAt);
+			this.startAt =
+				Number.isFinite(existing) && existing > Date.now() / 1000
+					? existing
+					: this.nextTwoAm();
+		},
 		onOpenChange(open: boolean) {
 			if (!open) {
 				this.close();
@@ -100,7 +111,7 @@ export default {
 			this.$emit("update:visible", false);
 		},
 		async confirm() {
-			if (!this.task || !this.startAt) {
+			if (!this.task || !this.canConfirm) {
 				return;
 			}
 			try {

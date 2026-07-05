@@ -960,7 +960,7 @@ async fn run_single_uri_download(
 
     let is_http = uri.starts_with("http://") || uri.starts_with("https://");
 
-    let has_cf_clearance = headers_have_cookie_name(&headers, "cf_clearance");
+    let has_cf_clearance = effective_cookies_have_name(&client, &headers, uri, "cf_clearance");
     let wants_range_probe = split > 1 || filename_was_url_derived;
 
     let probe_for_name: Option<ProbeResult> = if is_http && wants_range_probe && !has_cf_clearance {
@@ -1276,12 +1276,30 @@ fn headers_have_cookie_name(headers: &HeaderMap, name: &str) -> bool {
     headers
         .get(risuko_http::header::COOKIE)
         .and_then(|v| v.to_str().ok())
-        .is_some_and(|raw| {
-            raw.split(';')
-                .filter_map(|kv| kv.split('=').next())
-                .map(str::trim)
-                .any(|cookie_name| cookie_name.eq_ignore_ascii_case(name))
-        })
+        .is_some_and(|raw| cookie_header_has_name(raw, name))
+}
+
+fn cookie_header_has_name(raw: &str, name: &str) -> bool {
+    raw.split(';')
+        .filter_map(|kv| kv.split('=').next())
+        .map(str::trim)
+        .any(|cookie_name| cookie_name.eq_ignore_ascii_case(name))
+}
+
+fn effective_cookies_have_name(
+    client: &Client,
+    headers: &HeaderMap,
+    uri: &str,
+    name: &str,
+) -> bool {
+    if headers_have_cookie_name(headers, name) {
+        return true;
+    }
+    url::Url::parse(uri)
+        .ok()
+        .and_then(|u| client.jar_cookies(&u))
+        .and_then(|v| v.to_str().ok().map(|raw| cookie_header_has_name(raw, name)))
+        .unwrap_or(false)
 }
 
 fn log_cloudflare_diagnostic(
@@ -3119,6 +3137,21 @@ mod tests {
         assert!(headers_have_cookie_name(&headers, "CF_CLEARANCE"));
         assert!(headers_have_cookie_name(&headers, "xf_session"));
         assert!(!headers_have_cookie_name(&headers, "missing"));
+    }
+
+    #[test]
+    fn effective_cookies_have_name_checks_client_jar() {
+        let url = url::Url::parse("https://example.com/file.bin").unwrap();
+        let jar = Arc::new(risuko_http::Jar::new());
+        jar.add_cookie_str("cf_clearance=abc; Path=/; Domain=example.com", &url);
+        let client = Client::builder().cookie_provider(jar).build().unwrap();
+
+        assert!(effective_cookies_have_name(
+            &client,
+            &HeaderMap::new(),
+            url.as_str(),
+            "cf_clearance",
+        ));
     }
 
     #[test]

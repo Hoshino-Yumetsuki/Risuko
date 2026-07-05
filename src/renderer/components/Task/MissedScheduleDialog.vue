@@ -85,10 +85,7 @@ export default {
 			if (!Number.isFinite(secs) || secs <= 0) {
 				return "";
 			}
-			return localeDateTimeFormat(
-				secs,
-				usePreferenceStore().config?.locale || "en-US",
-			);
+			return localeDateTimeFormat(secs, usePreferenceStore().config?.locale);
 		},
 		onOpenChange(open: boolean) {
 			if (!open) {
@@ -119,17 +116,21 @@ export default {
 		},
 		async startAll() {
 			const pending = [...useAppStore().missedScheduledTasks];
-			const results = await Promise.allSettled(
-				pending.map((t) => useTaskStore().startNow(t.gid)),
-			);
-			const failed = pending.filter((_, i) => results[i].status === "rejected");
+			const failed: DownloadTask[] = [];
+			let firstErr: unknown = null;
+			const taskStore = useTaskStore();
+			for (const task of pending) {
+				try {
+					await taskStore.startNow(task.gid);
+				} catch (err) {
+					firstErr ??= err;
+					failed.push(task);
+				}
+			}
 			if (failed.length > 0) {
 				useAppStore().showMissedScheduled(failed);
-				const firstErr = results.find((r) => r.status === "rejected") as
-					| PromiseRejectedResult
-					| undefined;
 				this.$msg?.error?.(
-					(firstErr?.reason as Error)?.message ||
+					(firstErr as Error)?.message ||
 						this.$t("task.missed-schedule-start-all-fail", {
 							count: failed.length,
 						}),

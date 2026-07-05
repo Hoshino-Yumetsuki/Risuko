@@ -416,57 +416,47 @@ export const useTaskStore = defineStore("task", {
 			let stoppedCount = this.taskCountMap.stopped || 0;
 			let allCount = numActive + numWaiting + numStoppedTotal;
 
-			const needFetch = numActive + numWaiting + numStoppedTotal > 0;
-			if (needFetch) {
-				try {
-					const keys = ["gid", "status", "files", "bittorrent"];
-					const empty = Promise.resolve([] as DownloadTask[]);
-					const fetchSmall = (
-						type: "active" | "waiting" | "scheduled" | "stopped",
-					) => api.fetchTaskList({ type, keys }) as Promise<DownloadTask[]>;
-					const [activeData, waitingData, scheduledData, stoppedData] =
-						await Promise.all([
-							numActive > 0 ? fetchSmall("active") : empty,
-							numWaiting > 0 ? fetchSmall("waiting") : empty,
-							numWaiting > 0 ? fetchSmall("scheduled") : empty,
-							numStoppedTotal > 0 ? fetchSmall("stopped") : empty,
-						]);
-					const activeArr = Array.isArray(activeData) ? activeData : [];
-					const waitingArr = Array.isArray(waitingData) ? waitingData : [];
-					const scheduledArr = Array.isArray(scheduledData)
-						? scheduledData
-						: [];
-					const stoppedArr = Array.isArray(stoppedData) ? stoppedData : [];
-					const completedArr = stoppedArr.filter(
-						(t) => t.status === TASK_STATUS.COMPLETE,
-					);
-					const stoppedOnlyArr = stoppedArr.filter(
-						(t) => t.status !== TASK_STATUS.COMPLETE,
-					);
-					activeCount = activeArr.length;
-					waitingCount = waitingArr.length;
-					scheduledCount = scheduledArr.length;
-					completedCount = completedArr.length;
-					stoppedCount = stoppedOnlyArr.length;
-					allCount =
-						activeCount +
-						waitingCount +
-						scheduledCount +
-						completedCount +
-						stoppedCount;
-				} catch {
-					// Keep previous counts on failure
-					activeCount = this.taskCountMap.active || 0;
-					waitingCount = this.taskCountMap.waiting || 0;
-					scheduledCount = this.taskCountMap.scheduled || 0;
-					completedCount = this.taskCountMap.completed || 0;
-					stoppedCount = this.taskCountMap.stopped || 0;
-					allCount = this.taskCountMap.all || 0;
-				}
-			} else {
-				scheduledCount = 0;
-				completedCount = 0;
-				stoppedCount = 0;
+			try {
+				const keys = ["gid", "status", "files", "bittorrent"];
+				const empty = Promise.resolve([] as DownloadTask[]);
+				const fetchSmall = (
+					type: "active" | "waiting" | "scheduled" | "stopped",
+				) => api.fetchTaskList({ type, keys }) as Promise<DownloadTask[]>;
+				const [activeData, waitingData, scheduledData, stoppedData] =
+					await Promise.all([
+						numActive > 0 ? fetchSmall("active") : empty,
+						numWaiting > 0 ? fetchSmall("waiting") : empty,
+						fetchSmall("scheduled"),
+						numStoppedTotal > 0 ? fetchSmall("stopped") : empty,
+					]);
+				const activeArr = Array.isArray(activeData) ? activeData : [];
+				const waitingArr = Array.isArray(waitingData) ? waitingData : [];
+				const scheduledArr = Array.isArray(scheduledData) ? scheduledData : [];
+				const stoppedArr = Array.isArray(stoppedData) ? stoppedData : [];
+				const completedArr = stoppedArr.filter(
+					(t) => t.status === TASK_STATUS.COMPLETE,
+				);
+				const stoppedOnlyArr = stoppedArr.filter(
+					(t) => t.status !== TASK_STATUS.COMPLETE,
+				);
+				activeCount = activeArr.length;
+				waitingCount = waitingArr.length;
+				scheduledCount = scheduledArr.length;
+				completedCount = completedArr.length;
+				stoppedCount = stoppedOnlyArr.length;
+				allCount =
+					activeCount +
+					waitingCount +
+					scheduledCount +
+					completedCount +
+					stoppedCount;
+			} catch {
+				activeCount = this.taskCountMap.active || 0;
+				waitingCount = this.taskCountMap.waiting || 0;
+				scheduledCount = this.taskCountMap.scheduled || 0;
+				completedCount = this.taskCountMap.completed || 0;
+				stoppedCount = this.taskCountMap.stopped || 0;
+				allCount = this.taskCountMap.all || 0;
 			}
 
 			this.taskCountMap = {

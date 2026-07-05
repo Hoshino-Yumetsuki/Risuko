@@ -19,6 +19,7 @@ export default {
 	"schedule-confirm": "Schedule",
 	"schedule-start-at": "Time",
 	"schedule-start-at-placeholder": "Not scheduled — starts immediately",
+	"schedule-torrent-ignored": "Scheduled time does not apply to torrent items.",
 	"starting-after": "Starting after {{duration}}",
 	"missed-schedule-title": "Missed scheduled downloads",
 	"missed-schedule-hint":

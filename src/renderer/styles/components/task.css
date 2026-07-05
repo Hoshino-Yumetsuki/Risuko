@@ -639,10 +639,10 @@
 		cursor: grabbing;
 		user-select: none;
 	}
-	[attr].drop-before {
+	[data-task-key].drop-before {
 		box-shadow: inset 0 2px 0 0 #3b82f6;
 	}
-	[attr].drop-after {
+	[data-task-key].drop-after {
 		box-shadow: inset 0 -2px 0 0 #3b82f6;
 	}
 	.task-item.has-drag-handle .task-card-progress,

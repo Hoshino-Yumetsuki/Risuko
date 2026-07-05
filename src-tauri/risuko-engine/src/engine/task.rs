@@ -716,6 +716,7 @@ mod tests {
         assert_eq!(TaskStatus::Active.as_str(), "active");
         assert_eq!(TaskStatus::Waiting.as_str(), "waiting");
         assert_eq!(TaskStatus::Paused.as_str(), "paused");
+        assert_eq!(TaskStatus::Scheduled.as_str(), "scheduled");
         assert_eq!(TaskStatus::Complete.as_str(), "complete");
         assert_eq!(TaskStatus::Error.as_str(), "error");
         assert_eq!(TaskStatus::Removed.as_str(), "removed");

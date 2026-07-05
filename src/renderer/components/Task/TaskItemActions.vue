@@ -34,7 +34,7 @@
           @click="onActionClick(action, $event)"
         >
           <component :is="actionIcons[action]" :size="14" />
-          <span>{{ $t(actionLabels[action]) }}</span>
+          <span>{{ actionLabel(action) }}</span>
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
@@ -141,6 +141,12 @@ const actionLabelsMap: Record<string, string> = {
 	INFO: "task.task-detail-title",
 };
 
+const actionLabelFallbacks: Record<string, string> = {
+	START_NOW: "Start Now",
+	SCHEDULE: "Schedule...",
+	RESCHEDULE: "Reschedule...",
+};
+
 export default {
 	name: "task-item-actions",
 	components: {
@@ -221,9 +227,6 @@ export default {
 				: ["FOLDER", "LINK", "INFO"];
 			return [...rest, ...common];
 		},
-		actionLabels() {
-			return actionLabelsMap;
-		},
 		actionIcons() {
 			return actionIconsMap;
 		},
@@ -249,6 +252,11 @@ export default {
 		},
 	},
 	methods: {
+		actionLabel(action: string) {
+			const key = actionLabelsMap[action];
+			const label = this.$t(key);
+			return label === key ? actionLabelFallbacks[action] || key : label;
+		},
 		onActionClick(action, event) {
 			switch (action) {
 				case "PAUSE":

@@ -10,14 +10,14 @@ export function buildManifest(dir, { version, repo } = {}) {
 	if (!version) throw new Error("version required");
 	if (!repo) throw new Error("repo (owner/repo) required");
 	const base = `https://github.com/${repo}/releases/download/v${version}`;
-	const platforms = {};
-	for (const file of readdirSync(dir)) {
+	const platforms = Object.create(null);
+	for (const file of readdirSync(dir).sort()) {
 		if (!file.endsWith(".json")) continue;
 		const frag = JSON.parse(readFileSync(join(dir, file), "utf8"));
 		if (!frag.key || !frag.asset || !frag.signature) {
 			throw new Error(`incomplete fragment: ${file}`);
 		}
-		if (platforms[frag.key]) {
+		if (Object.hasOwn(platforms, frag.key)) {
 			throw new Error(`duplicate fragment key: ${frag.key}`);
 		}
 		platforms[frag.key] = { signature: frag.signature, url: `${base}/${frag.asset}` };
@@ -28,7 +28,7 @@ export function buildManifest(dir, { version, repo } = {}) {
 }
 
 // CLI: node scripts/build-updater-manifest.mjs <fragments-dir> [out]
-if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
 	const [dir, out = "latest.json"] = process.argv.slice(2);
 	if (!dir) {
 		console.error("Usage: build-updater-manifest.mjs <fragments-dir> [out]");

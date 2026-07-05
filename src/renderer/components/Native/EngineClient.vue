@@ -1045,23 +1045,33 @@ export default {
 					);
 				});
 		},
-		checkMissedSchedules() {
-			api
-				.fetchScheduledTaskList()
-				.then((tasks) => {
-					const missed = (Array.isArray(tasks) ? tasks : []).filter(
-						(t) => t.scheduleMissed,
-					);
-					if (missed.length > 0) {
-						useAppStore().showMissedScheduled(missed);
+		async checkMissedSchedules() {
+			const missed: DownloadTask[] = [];
+			const num = 5000;
+			let offset = 0;
+			try {
+				for (;;) {
+					const tasks = await api.fetchScheduledTaskList({
+						offset,
+						num,
+						keys: ["gid", "scheduleMissed"],
+					});
+					const page = Array.isArray(tasks) ? tasks : [];
+					missed.push(...page.filter((t) => t.scheduleMissed));
+					if (page.length < num) {
+						break;
 					}
-				})
-				.catch((err) => {
-					logger.warn(
-						"[Risuko] checkMissedSchedules failed:",
-						err?.message || err,
-					);
-				});
+					offset += page.length;
+				}
+				if (missed.length > 0) {
+					useAppStore().showMissedScheduled(missed);
+				}
+			} catch (err) {
+				logger.warn(
+					"[Risuko] checkMissedSchedules failed:",
+					err?.message || err,
+				);
+			}
 		},
 	},
 	created() {

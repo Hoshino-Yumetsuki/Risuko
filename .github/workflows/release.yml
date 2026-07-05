@@ -293,6 +293,17 @@ jobs:
             cp "$signed" "$asset"
             cp "$sig" "$asset.sig"
             echo "UPDATER_SIG_FILE=$asset.sig" >> "$GITHUB_ENV"
+            if [[ "$os" == "linux" ]]; then
+              appimage=$(find "$bundle_dir/appimage" -name "*.AppImage" -type f | head -1)
+              if [[ -z "$appimage" ]]; then
+                echo "::error::No AppImage under $bundle_dir/appimage"
+                find "$bundle_dir" -maxdepth 3 -type f | sed 's/^/found: /' || true
+                exit 1
+              fi
+              plain_asset="Risuko_${version}_${os}_${arch}.AppImage"
+              cp "$appimage" "$plain_asset"
+              echo "PLAIN_APPIMAGE_ASSET=$plain_asset" >> "$GITHUB_ENV"
+            fi
           elif [[ "$os" == "darwin" ]]; then
             asset="Risuko_${version}_${os}_${arch}.app.tar.gz"
             tar czf "$asset" -C "$bundle_dir/macos" "Risuko.app"
@@ -347,6 +358,13 @@ jobs:
           set -euo pipefail
           node scripts/write-sha256-sidecar.mjs "$APP_ASSET"
 
+      - name: Write plain Linux AppImage SHA-256 sidecar
+        if: runner.os == 'Linux' && startsWith(github.ref, 'refs/tags/') && env.PLAIN_APPIMAGE_ASSET != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/write-sha256-sidecar.mjs "$PLAIN_APPIMAGE_ASSET"
+
       # Record this platform's updater entry (key + asset + signature) for the
       # aggregation job that assembles latest.json across all matrix jobs.
       - name: Emit updater manifest fragment
@@ -388,6 +406,17 @@ jobs:
             ${{ env.APP_ASSET }}
             ${{ env.APP_ASSET }}.sha256
             ${{ env.APP_ASSET }}.sig
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload plain Linux AppImage to GitHub Release
+        if: runner.os == 'Linux' && startsWith(github.ref, 'refs/tags/') && env.PLAIN_APPIMAGE_ASSET != ''
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: |
+            ${{ env.PLAIN_APPIMAGE_ASSET }}
+            ${{ env.PLAIN_APPIMAGE_ASSET }}.sha256
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -555,9 +584,7 @@ jobs:
           REPO: ${{ github.repository }}
 
       - name: Upload latest.json to GitHub Release
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
-        with:
-          tag_name: ${{ github.ref_name }}
-          files: latest.json
+        shell: bash
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "${{ github.ref_name }}" latest.json --clobber --repo "${{ github.repository }}"

@@ -200,11 +200,23 @@ const inputClass =
     </PopoverTrigger>
     <PopoverContent class="w-auto p-3" align="start">
       <div class="flex items-center justify-between px-1 pb-2">
-        <Button type="button" variant="ghost" size="icon-sm" @click="prevMonth">
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          aria-label="Previous month"
+          @click="prevMonth"
+        >
           <ChevronLeft class="size-4" />
         </Button>
         <span class="text-sm font-medium">{{ monthLabel }}</span>
-        <Button type="button" variant="ghost" size="icon-sm" @click="nextMonth">
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          aria-label="Next month"
+          @click="nextMonth"
+        >
           <ChevronRight class="size-4" />
         </Button>
       </div>
