@@ -146,11 +146,16 @@ impl AsyncWrite for BoxedIo {
 /// Hyper-compatible IO wrapper around `MaybeTls`
 pub struct ConnIo {
     io: TokioIo<MaybeTls>,
+    negotiated_h2: bool,
 }
 
 impl Connection for ConnIo {
     fn connected(&self) -> Connected {
-        Connected::new()
+        if self.negotiated_h2 {
+            Connected::new().negotiated_h2()
+        } else {
+            Connected::new()
+        }
     }
 }
 
@@ -251,12 +256,9 @@ impl Connector {
             None => BoxedIo::new(self.direct(&host, port).await?),
         };
 
-        let final_io = if is_https {
+        let (final_io, negotiated_h2) = if is_https {
             let server_name = ServerName::try_from(host.clone())
                 .map_err(|e| Error::Tls(format!("invalid server name: {e}")))?;
-            // The TCP-connect timeout above doesn't cover the TLS
-            // handshake, so apply the same budget here to avoid hangs on
-            // half-open or misconfigured TLS servers
             let handshake = self.tls_connector().connect(server_name, stream);
             let tls = match self.connect_timeout {
                 Some(d) => tokio::time::timeout(d, handshake)
@@ -265,13 +267,15 @@ impl Connector {
                     .map_err(|e| Error::Tls(e.to_string()))?,
                 None => handshake.await.map_err(|e| Error::Tls(e.to_string()))?,
             };
-            MaybeTls::Tls(Box::new(tls))
+            let negotiated_h2 = tls.get_ref().1.alpn_protocol() == Some(b"h2".as_slice());
+            (MaybeTls::Tls(Box::new(tls)), negotiated_h2)
         } else {
-            MaybeTls::Plain(stream)
+            (MaybeTls::Plain(stream), false)
         };
 
         Ok(ConnIo {
             io: TokioIo::new(final_io),
+            negotiated_h2,
         })
     }
 
@@ -690,6 +694,16 @@ mod tests {
             tcp_nodelay: true,
             tcp_keepalive: None,
         }
+    }
+
+    #[test]
+    fn conn_io_reports_negotiated_h2() {
+        let (client, _server) = tokio::io::duplex(64);
+        let conn = ConnIo {
+            io: TokioIo::new(MaybeTls::Plain(BoxedIo::new(client))),
+            negotiated_h2: true,
+        };
+        assert!(conn.connected().is_negotiated_h2());
     }
 
     #[tokio::test]

@@ -680,7 +680,7 @@ export default {
 				.catch((err: unknown) => {
 					this.$msg.error(
 						(err as Error)?.message ||
-							this.$t("task.resume-task-fail", { taskName }),
+							this.$t("task.start-now-fail", { taskName }),
 					);
 				});
 		},

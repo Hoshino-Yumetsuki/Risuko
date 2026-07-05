@@ -6,6 +6,10 @@ export default {
 	stopped: "Stopped",
 	completed: "Completed",
 	"start-now": "Start Now",
+	"start-now-fail": 'Failed to start "{{taskName}}" now',
+	"schedule-fail": "Failed to schedule download",
+	"missed-schedule-start-all-fail":
+		"Failed to start {{count}} scheduled download(s)",
 	"schedule-task": "Schedule…",
 	"reschedule-task": "Reschedule…",
 	"schedule-dialog-title": "Schedule Download",
@@ -21,6 +25,7 @@ export default {
 		"These downloads were due while the app was closed. Start them now, or reschedule them from the Scheduled tab.",
 	"missed-schedule-dismiss": "Dismiss",
 	"missed-schedule-start-all": "Start all",
+	"reorder-handle": "Reorder task (use arrow keys to move)",
 	"new-task": "New Task",
 	"new-bt-task": "New BT Task",
 	"open-file": "Open Torrent File...",

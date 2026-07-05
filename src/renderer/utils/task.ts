@@ -194,7 +194,7 @@ export const buildOption = (type: string, form: TaskForm) => {
 		}
 	}
 
-	if (form.startAt && form.startAt > 0) {
+	if (type !== ADD_TASK_TYPE.TORRENT && form.startAt && form.startAt > 0) {
 		result["risuko-start-at"] = form.startAt;
 	}
 

@@ -99,9 +99,15 @@ export default {
 			useAppStore().hideMissedScheduled();
 		},
 		async startNow(task: DownloadTask) {
-			await useTaskStore()
-				.startNow(task.gid)
-				.catch(() => {});
+			try {
+				await useTaskStore().startNow(task.gid);
+			} catch (err) {
+				this.$msg?.error?.(
+					(err as Error)?.message ||
+						this.$t("task.start-now-fail", { taskName: this.taskName(task) }),
+				);
+				return;
+			}
 			const remaining = useAppStore().missedScheduledTasks.filter(
 				(t) => t.gid !== task.gid,
 			);
@@ -113,10 +119,22 @@ export default {
 		},
 		async startAll() {
 			const pending = [...useAppStore().missedScheduledTasks];
-			for (const t of pending) {
-				await useTaskStore()
-					.startNow(t.gid)
-					.catch(() => {});
+			const results = await Promise.allSettled(
+				pending.map((t) => useTaskStore().startNow(t.gid)),
+			);
+			const failed = pending.filter((_, i) => results[i].status === "rejected");
+			if (failed.length > 0) {
+				useAppStore().showMissedScheduled(failed);
+				const firstErr = results.find((r) => r.status === "rejected") as
+					| PromiseRejectedResult
+					| undefined;
+				this.$msg?.error?.(
+					(firstErr?.reason as Error)?.message ||
+						this.$t("task.missed-schedule-start-all-fail", {
+							count: failed.length,
+						}),
+				);
+				return;
 			}
 			this.close();
 		},

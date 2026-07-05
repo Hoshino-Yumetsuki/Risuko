@@ -619,6 +619,18 @@ fn build_headers(options: &Map<String, Value>) -> HeaderMap {
         }
     }
 
+    if !headers.contains_key(risuko_http::header::USER_AGENT) {
+        if let Some(user_agent) = options
+            .get("user-agent")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+        {
+            if let Ok(v) = HeaderValue::from_str(user_agent) {
+                headers.insert(risuko_http::header::USER_AGENT, v);
+            }
+        }
+    }
+
     if let Some(cookie) = options
         .get("cookie")
         .and_then(|v| v.as_str())
@@ -948,12 +960,10 @@ async fn run_single_uri_download(
 
     let is_http = uri.starts_with("http://") || uri.starts_with("https://");
 
-    // Only probe when the result will actually be used: multi-chunk downloads
-    // need range metadata, and URL-derived filenames can be replaced by a
-    // Content-Disposition suggestion. Single-stream downloads with an explicit
-    // output name get no benefit and the extra GET can break single-use URLs
-    let probe_for_name: Option<ProbeResult> = if is_http && (split > 1 || filename_was_url_derived)
-    {
+    let has_cf_clearance = headers_have_cookie_name(&headers, "cf_clearance");
+    let wants_range_probe = split > 1 || filename_was_url_derived;
+
+    let probe_for_name: Option<ProbeResult> = if is_http && wants_range_probe && !has_cf_clearance {
         match probe_range_support(&range_client, uri, &headers).await {
             Ok(p) => Some(p),
             Err(e) => {
@@ -962,6 +972,9 @@ async fn run_single_uri_download(
             }
         }
     } else {
+        if is_http && wants_range_probe && has_cf_clearance {
+            tracing::debug!("Skipping range probe because cf_clearance is present");
+        }
         None
     };
 
@@ -1257,6 +1270,18 @@ fn looks_like_cloudflare_block(headers: &HeaderMap, status: u16) -> bool {
         }
     }
     false
+}
+
+fn headers_have_cookie_name(headers: &HeaderMap, name: &str) -> bool {
+    headers
+        .get(risuko_http::header::COOKIE)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|raw| {
+            raw.split(';')
+                .filter_map(|kv| kv.split('=').next())
+                .map(str::trim)
+                .any(|cookie_name| cookie_name.eq_ignore_ascii_case(name))
+        })
 }
 
 fn log_cloudflare_diagnostic(
@@ -2476,11 +2501,14 @@ async fn run_single_download(
         .and_then(|v| v.to_str().ok())
         .map(|s| s.to_string());
     let final_filename = if filename_was_url_derived {
-        filename_with_content_type_extension(
-            filename,
-            content_type_from_headers(resp.headers()).as_deref(),
-        )
-        .unwrap_or_else(|| filename.to_string())
+        filename_from_content_disposition(resp.headers())
+            .or_else(|| {
+                filename_with_content_type_extension(
+                    filename,
+                    content_type_from_headers(resp.headers()).as_deref(),
+                )
+            })
+            .unwrap_or_else(|| filename.to_string())
     } else {
         filename.to_string()
     };
@@ -3061,6 +3089,36 @@ mod tests {
             headers.get(risuko_http::header::REFERER).unwrap(),
             "https://pan.baidu.com/"
         );
+    }
+
+    #[test]
+    fn build_headers_adds_user_agent_option_unless_header_sets_one() {
+        let mut options = Map::new();
+        options.insert("user-agent".to_string(), Value::String("ua-option".into()));
+        let headers = build_headers(&options);
+        assert_eq!(
+            headers.get(risuko_http::header::USER_AGENT).unwrap(),
+            "ua-option"
+        );
+
+        options.insert(
+            "header".to_string(),
+            Value::String("User-Agent: ua-header".into()),
+        );
+        let headers = build_headers(&options);
+        assert_eq!(
+            headers.get(risuko_http::header::USER_AGENT).unwrap(),
+            "ua-header"
+        );
+    }
+
+    #[test]
+    fn headers_have_cookie_name_matches_case_insensitively() {
+        let headers = h(&[("cookie", "a=1; cf_clearance=abc; xf_session=def")]);
+
+        assert!(headers_have_cookie_name(&headers, "CF_CLEARANCE"));
+        assert!(headers_have_cookie_name(&headers, "xf_session"));
+        assert!(!headers_have_cookie_name(&headers, "missing"));
     }
 
     #[test]

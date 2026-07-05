@@ -3,6 +3,7 @@
 
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 
 export function buildManifest(dir, { version, repo } = {}) {
 	version = String(version ?? "").replace(/^v/i, "");
@@ -16,6 +17,9 @@ export function buildManifest(dir, { version, repo } = {}) {
 		if (!frag.key || !frag.asset || !frag.signature) {
 			throw new Error(`incomplete fragment: ${file}`);
 		}
+		if (platforms[frag.key]) {
+			throw new Error(`duplicate fragment key: ${frag.key}`);
+		}
 		platforms[frag.key] = { signature: frag.signature, url: `${base}/${frag.asset}` };
 	}
 	if (Object.keys(platforms).length === 0) throw new Error(`no fragments in ${dir}`);
@@ -24,7 +28,7 @@ export function buildManifest(dir, { version, repo } = {}) {
 }
 
 // CLI: node scripts/build-updater-manifest.mjs <fragments-dir> [out]
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
 	const [dir, out = "latest.json"] = process.argv.slice(2);
 	if (!dir) {
 		console.error("Usage: build-updater-manifest.mjs <fragments-dir> [out]");

@@ -32,7 +32,9 @@
 
 <script lang="ts">
 import { Clock } from "@lucide/vue";
+import type { DownloadTask } from "@shared/types/task";
 import { getTaskName } from "@shared/utils";
+import type { PropType } from "vue";
 import { Button } from "@/components/ui/button";
 import { DateTimePicker } from "@/components/ui/date-time-picker";
 import {
@@ -58,7 +60,7 @@ export default {
 	},
 	props: {
 		visible: { type: Boolean, default: false },
-		task: { type: Object, default: null },
+		task: { type: Object as PropType<DownloadTask | null>, default: null },
 	},
 	emits: ["update:visible"],
 	data() {
@@ -105,7 +107,9 @@ export default {
 				await useTaskStore().setSchedule(this.task.gid, this.startAt);
 				this.close();
 			} catch (err) {
-				this.$msg?.error?.((err as Error)?.message || "Failed to schedule");
+				this.$msg?.error?.(
+					(err as Error)?.message || this.$t("task.schedule-fail"),
+				);
 			}
 		},
 	},

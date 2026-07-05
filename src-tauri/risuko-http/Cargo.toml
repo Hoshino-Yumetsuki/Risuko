@@ -10,8 +10,8 @@ license = "MIT"
 name = "risuko_http"
 
 [dependencies]
-hyper = { version = "1", features = ["client", "http1"] }
-hyper-util = { version = "0.1", features = ["client", "client-legacy", "tokio", "http1"] }
+hyper = { version = "1", features = ["client", "http1", "http2"] }
+hyper-util = { version = "0.1", features = ["client", "client-legacy", "tokio", "http1", "http2"] }
 http = "1"
 http-body = "1"
 http-body-util = "0.1"

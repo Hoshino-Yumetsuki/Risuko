@@ -253,19 +253,30 @@ jobs:
       - name: Package app bundle with standardized name (unix)
         if: runner.os != 'Windows'
         shell: bash
+        env:
+          MATRIX_PLATFORM: ${{ matrix.platform }}
+          MATRIX_TARGET: ${{ matrix.target }}
+          GITHUB_REF: ${{ github.ref }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          IFS='/' read -r os arch <<< "${{ matrix.platform }}"
-          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
-            version="${{ github.ref_name }}"; version="${version#v}"
+          IFS='/' read -r os arch <<< "$MATRIX_PLATFORM"
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            version="$GITHUB_REF_NAME"; version="${version#v}"
           else
             version=$(grep -m1 '^version' src-tauri/Cargo.toml | sed 's/.*"\(.*\)"/\1/')
           fi
-          bundle_dir="src-tauri/target/${{ matrix.target }}/release/bundle"
-          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+          bundle_dir="src-tauri/target/$MATRIX_TARGET/release/bundle"
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
             # Serve tauri's exact updater artifact so its minisign .sig stays valid.
             # Renaming is fine — minisign signs file *contents*, not the filename.
-            sig=$(find "$bundle_dir" -name '*.sig' -type f | head -1)
+            if [[ "$os" == "darwin" ]]; then
+              sig=$(find "$bundle_dir" -name '*.app.tar.gz.sig' -type f | head -1)
+            elif [[ "$os" == "linux" ]]; then
+              sig=$(find "$bundle_dir" -name '*.AppImage.tar.gz.sig' -type f | head -1)
+            else
+              sig=$(find "$bundle_dir" -name '*.sig' -type f | head -1)
+            fi
             if [[ -z "$sig" ]]; then
               echo "::error::No updater .sig under $bundle_dir. Is TAURI_SIGNING_PRIVATE_KEY set?"
               find "$bundle_dir" -maxdepth 3 -type f | sed 's/^/found: /' || true
@@ -273,9 +284,10 @@ jobs:
             fi
             signed="${sig%.sig}"
             case "$(basename "$signed")" in
-              *.app.tar.gz) ext="app.tar.gz" ;;
-              *.AppImage)   ext="AppImage" ;;
-              *)            ext="${signed##*.}" ;;
+              *.app.tar.gz)      ext="app.tar.gz" ;;
+              *.AppImage.tar.gz) ext="AppImage.tar.gz" ;;
+              *.AppImage)        ext="AppImage" ;;
+              *)                 ext="${signed##*.}" ;;
             esac
             asset="Risuko_${version}_${os}_${arch}.${ext}"
             cp "$signed" "$asset"
@@ -295,18 +307,23 @@ jobs:
       - name: Package app bundle with standardized name (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
+        env:
+          MATRIX_PLATFORM: ${{ matrix.platform }}
+          MATRIX_TARGET: ${{ matrix.target }}
+          GITHUB_REF: ${{ github.ref }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
         run: |
-          $parts = "${{ matrix.platform }}" -split "/"
+          $parts = $env:MATRIX_PLATFORM -split "/"
           $os = $parts[0]; $arch = $parts[1]
-          if ("${{ github.ref }}" -match "^refs/tags/") {
-            $version = "${{ github.ref_name }}" -replace "^v", ""
+          if ($env:GITHUB_REF -match "^refs/tags/") {
+            $version = $env:GITHUB_REF_NAME -replace "^v", ""
           } else {
             $cargo = Get-Content "src-tauri/Cargo.toml" -Raw
             $version = [regex]::Match($cargo, '^version\s*=\s*"([^"]+)"', [System.Text.RegularExpressions.RegexOptions]::Multiline).Groups[1].Value
           }
-          $nsis = "src-tauri/target/${{ matrix.target }}/release/bundle/nsis"
+          $nsis = "src-tauri/target/$env:MATRIX_TARGET/release/bundle/nsis"
           $asset = "Risuko_${version}_${os}_${arch}.setup.exe"
-          if ("${{ github.ref }}" -match "^refs/tags/") {
+          if ($env:GITHUB_REF -match "^refs/tags/") {
             # Serve tauri's exact signed installer so its minisign .sig stays valid.
             $sig = Get-ChildItem $nsis -Filter "*-setup.exe.sig" | Select-Object -First 1
             if (-not $sig) {
@@ -335,9 +352,13 @@ jobs:
       - name: Emit updater manifest fragment
         if: startsWith(github.ref, 'refs/tags/')
         shell: bash
+        env:
+          MATRIX_TARGET: ${{ matrix.target }}
+          APP_ASSET: ${{ env.APP_ASSET }}
+          UPDATER_SIG_FILE: ${{ env.UPDATER_SIG_FILE }}
         run: |
           set -euo pipefail
-          triple="${{ matrix.target }}"
+          triple="$MATRIX_TARGET"
           arch="${triple%%-*}"   # x86_64 | aarch64 | i686
           case "$triple" in
             *apple-darwin) tos=darwin ;;
@@ -353,7 +374,7 @@ jobs:
 
       - name: Upload updater fragment
         if: startsWith(github.ref, 'refs/tags/')
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: updater-fragment-${{ matrix.target }}
           path: fragments/*.json
@@ -510,17 +531,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out Git repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           persist-credentials: false
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 24
 
       - name: Download updater fragments
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           path: fragments
           pattern: updater-fragment-*
@@ -534,7 +555,7 @@ jobs:
           REPO: ${{ github.repository }}
 
       - name: Upload latest.json to GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
         with:
           tag_name: ${{ github.ref_name }}
           files: latest.json

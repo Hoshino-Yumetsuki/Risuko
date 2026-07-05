@@ -10,7 +10,11 @@
         <span
           v-if="showDragHandle"
           class="task-drag-handle"
+          tabindex="0"
+          role="button"
+          :aria-label="$t('task.reorder-handle')"
           @pointerdown.stop="onHandleDown"
+          @keydown="onHandleKeydown"
           @mousedown.stop
           @touchstart.stop
           @click.stop
@@ -120,7 +124,7 @@ export default {
 			default: false,
 		},
 	},
-	emits: ["handle-down"],
+	emits: ["handle-down", "keyboard-reorder"],
 	data() {
 		return {
 			filesExpanded: true,
@@ -219,6 +223,15 @@ export default {
 	methods: {
 		onHandleDown(event) {
 			this.$emit("handle-down", { task: this.task, event });
+		},
+		onHandleKeydown(event: KeyboardEvent) {
+			if (event.key === "ArrowUp") {
+				event.preventDefault();
+				this.$emit("keyboard-reorder", { task: this.task, direction: "up" });
+			} else if (event.key === "ArrowDown") {
+				event.preventDefault();
+				this.$emit("keyboard-reorder", { task: this.task, direction: "down" });
+			}
 		},
 		onDbClick() {
 			const { status } = this.task;

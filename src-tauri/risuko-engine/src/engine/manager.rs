@@ -665,6 +665,7 @@ impl TaskManager {
             .unwrap_or(false);
 
         // Scheduled start
+        let now = crate::engine::util::now_secs();
         let scheduled = task
             .options
             .get("risuko-start-at")
@@ -672,7 +673,7 @@ impl TaskManager {
                 v.as_u64()
                     .or_else(|| v.as_str().and_then(|s| s.parse::<u64>().ok()))
             })
-            .filter(|&ts| ts > 0);
+            .filter(|&ts| ts > now);
         if let Some(ts) = scheduled {
             task.start_at = Some(ts);
             task.status = TaskStatus::Scheduled;
@@ -682,9 +683,16 @@ impl TaskManager {
 
         if scheduled.is_none() && !pause {
             self.try_start_next().await;
+            self.send_download_start(&gid);
+        } else if scheduled.is_some() {
+            tracing::info!(
+                "[task:{}] Queued as scheduled (start_at={:?})",
+                gid,
+                scheduled
+            );
+        } else {
+            self.send_download_start(&gid);
         }
-
-        self.send_download_start(&gid);
 
         Ok(gid)
     }
@@ -2620,6 +2628,9 @@ impl TaskManager {
 
     pub async fn set_task_schedule(&self, gid: &str, start_at: u64) -> Result<(), String> {
         let now = crate::engine::util::now_secs();
+        if start_at <= now {
+            return Err("Schedule time must be in the future".to_string());
+        }
         tracing::info!(
             "[task:{}] set_task_schedule: start_at={}, now={}, delay={}s",
             gid,
@@ -2627,12 +2638,6 @@ impl TaskManager {
             now,
             start_at.saturating_sub(now)
         );
-        {
-            let active = self.active_downloads.read().await;
-            if let Some(ad) = active.get(gid) {
-                ad.cancel_token.cancel();
-            }
-        }
         {
             let mut tasks = self.tasks.write().await;
             let task = tasks
@@ -2650,6 +2655,12 @@ impl TaskManager {
             task.schedule_missed = false;
             task.download_speed = 0;
             task.upload_speed = 0;
+        }
+        {
+            let active = self.active_downloads.read().await;
+            if let Some(ad) = active.get(gid) {
+                ad.cancel_token.cancel();
+            }
         }
         // The freed slot
         self.reconcile_active_set().await;

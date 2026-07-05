@@ -865,6 +865,12 @@ pub async fn reorder_tasks(
     target_gid: String,
     after: bool,
 ) -> Result<(), String> {
+    if gids.is_empty() {
+        return Err("no tasks to reorder".to_string());
+    }
+    if gids.iter().any(|gid| gid == &target_gid) {
+        return Err("target task must not be included in the moved tasks".to_string());
+    }
     let manager = engine::get_manager().await.ok_or("Engine not running")?;
     manager.move_tasks(&gids, &target_gid, after).await?;
     let _ = manager.save_session().await;

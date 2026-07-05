@@ -151,7 +151,7 @@
                 class="resize-none text-xs"
               />
             </div>
-            <div>
+            <div class="col-span-2">
               <label class="mb-1 block text-[11px] text-muted-foreground">{{ $t('task.task-referer') }}</label>
               <Textarea
                 auto-complete="off"
@@ -161,15 +161,15 @@
                 class="resize-none text-xs"
               />
             </div>
-            <div>
-              <label class="mb-1 flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
-                <span>{{ $t('task.task-cookie') }}</span>
+            <div class="col-span-2">
+              <div class="mb-1 flex items-center justify-between gap-2">
+                <label class="text-[11px] text-muted-foreground">{{ $t('task.task-cookie') }}</label>
                 <BrowserCookiePicker
-                  v-if="cookiePickerUrl"
-                  :url="cookiePickerUrl"
+                  :url="cookiePickerUrl || 'https://'"
+                  :disabled="!cookiePickerUrl"
                   @imported="onCookiesImported"
                 />
-              </label>
+              </div>
               <Textarea
                 auto-complete="off"
                 rows="2"
@@ -767,8 +767,8 @@ export default {
 		onNewTaskShowDownloadingChange(enable: boolean) {
 			this.form.newTaskShowDownloading = !!enable;
 		},
-		buildSharedOptions() {
-			const base = buildOption(ADD_TASK_TYPE.TORRENT, this.form);
+		buildSharedOptions(type = ADD_TASK_TYPE.URI) {
+			const base = buildOption(type, this.form);
 			delete (base as Record<string, unknown>).selectFile;
 			delete (base as Record<string, unknown>).out;
 			return base;
@@ -880,7 +880,7 @@ export default {
 				const r = await this.submitPathBatch(torrentItems, () =>
 					taskStore.addTorrents({
 						paths: torrentItems.map((it) => it.path as string),
-						options: this.buildSharedOptions(),
+						options: this.buildSharedOptions(ADD_TASK_TYPE.TORRENT),
 					}),
 				);
 				okCount += r.ok;

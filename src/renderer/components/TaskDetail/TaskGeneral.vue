@@ -240,6 +240,21 @@ export default {
 			});
 		},
 	},
+	watch: {
+		isScheduled: {
+			immediate: true,
+			handler(scheduled: boolean) {
+				if (scheduled && !this._nowTimer) {
+					this._nowTimer = setInterval(() => {
+						this.nowMs = Date.now();
+					}, 1000);
+				} else if (!scheduled && this._nowTimer) {
+					clearInterval(this._nowTimer);
+					this._nowTimer = null;
+				}
+			},
+		},
+	},
 	methods: {
 		formatBytes: bytesToSize,
 		handleCopyClick() {
@@ -253,14 +268,10 @@ export default {
 				});
 		},
 	},
-	mounted() {
-		this._nowTimer = setInterval(() => {
-			this.nowMs = Date.now();
-		}, 1000);
-	},
 	beforeUnmount() {
 		if (this._nowTimer) {
 			clearInterval(this._nowTimer);
+			this._nowTimer = null;
 		}
 	},
 };

@@ -844,6 +844,7 @@ export const useTaskStore = defineStore("task", {
 				this.saveSession();
 			} catch (err: unknown) {
 				logger.warn("[Risuko] reorderTasks failed:", (err as Error).message);
+				this.updateTaskOrder(this.currentList, []);
 				await this.fetchList();
 			}
 		},

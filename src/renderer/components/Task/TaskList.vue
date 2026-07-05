@@ -18,6 +18,7 @@
             :selected="isItemSelected(item)"
             :show-drag-handle="canDrag"
             @handle-down="onHandleDown"
+            @keyboard-reorder="onKeyboardReorder"
           />
         </div>
       </template>
@@ -38,6 +39,7 @@
           :selected="isItemSelected(item)"
           :show-drag-handle="canDrag"
           @handle-down="onHandleDown"
+          @keyboard-reorder="onKeyboardReorder"
         />
       </motion-enter>
     </drag-select>
@@ -158,14 +160,23 @@ export default {
 	},
 	beforeUnmount() {
 		window.removeEventListener("keydown", this._onKeyDown);
-		if (this._onDragMove) {
-			window.removeEventListener("pointermove", this._onDragMove);
-		}
-		if (this._onDragUp) {
-			window.removeEventListener("pointerup", this._onDragUp);
-		}
+		this.clearDragState();
 	},
 	methods: {
+		clearDragState() {
+			if (this._onDragMove) {
+				window.removeEventListener("pointermove", this._onDragMove);
+			}
+			if (this._onDragUp) {
+				window.removeEventListener("pointerup", this._onDragUp);
+			}
+			if (this._onDragCancel) {
+				window.removeEventListener("pointercancel", this._onDragCancel);
+			}
+			document.body.classList.remove("task-dragging");
+			this.draggingKeys = [];
+			this.dropTargetKey = null;
+		},
 		showAddTask() {
 			useAppStore().showAddTaskDialog(ADD_TASK_TYPE.URI);
 		},
@@ -264,9 +275,16 @@ export default {
 				: [key];
 			this._onDragMove = this.onDragMove.bind(this);
 			this._onDragUp = this.onDragUp.bind(this);
+			this._onDragCancel = this.onDragCancel.bind(this);
 			window.addEventListener("pointermove", this._onDragMove);
 			window.addEventListener("pointerup", this._onDragUp, { once: true });
+			window.addEventListener("pointercancel", this._onDragCancel, {
+				once: true,
+			});
 			document.body.classList.add("task-dragging");
+		},
+		onDragCancel() {
+			this.clearDragState();
 		},
 		onDragMove(event: PointerEvent) {
 			if (this.draggingKeys.length === 0) {
@@ -290,6 +308,7 @@ export default {
 			) as HTMLElement | null;
 			const rowEl = el?.closest?.("[attr]") as HTMLElement | null;
 			if (!rowEl) {
+				this.dropTargetKey = null;
 				return;
 			}
 			const targetKey = rowEl.getAttribute("attr");
@@ -302,17 +321,35 @@ export default {
 			this.dropTargetKey = targetKey;
 		},
 		async onDragUp() {
-			window.removeEventListener("pointermove", this._onDragMove);
-			document.body.classList.remove("task-dragging");
 			const targetKey = this.dropTargetKey;
 			const after = this.dropAfter;
 			const gids = [...this.draggingKeys];
-			this.draggingKeys = [];
-			this.dropTargetKey = null;
+			this.clearDragState();
 			if (!targetKey || gids.length === 0) {
 				return;
 			}
 			await useTaskStore().reorderTasks(gids, targetKey, after);
+		},
+		async onKeyboardReorder({ task, direction }) {
+			if (!this.canDrag) {
+				return;
+			}
+			const list = this.paginatedTaskList;
+			const key = task._displayKey || task.gid;
+			const idx = list.findIndex((t) => (t._displayKey || t.gid) === key);
+			if (idx < 0) {
+				return;
+			}
+			const targetIdx = direction === "up" ? idx - 1 : idx + 1;
+			if (targetIdx < 0 || targetIdx >= list.length) {
+				return;
+			}
+			const targetTask = list[targetIdx];
+			await useTaskStore().reorderTasks(
+				[task.gid],
+				targetTask.gid,
+				direction === "down",
+			);
 		},
 		dropClass(key: string) {
 			if (this.dropTargetKey !== key) {

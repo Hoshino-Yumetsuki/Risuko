@@ -24,9 +24,13 @@ const startOfMonth = (d: Date) => new Date(d.getFullYear(), d.getMonth(), 1);
 
 const defaultTime = () => {
 	const d = new Date();
-	d.setHours(2, 0, 0, 0);
+	d.setSeconds(0, 0);
+	d.setMinutes(d.getMinutes() + 1);
 	return d;
 };
+
+const commit = (d: Date) =>
+	emit("update:modelValue", Math.floor(d.getTime() / 1000));
 
 const selected = computed<Date | null>(() =>
 	props.modelValue ? new Date(props.modelValue * 1000) : null,
@@ -66,9 +70,6 @@ const grid = computed(() => {
 	});
 });
 
-const commit = (d: Date) =>
-	emit("update:modelValue", Math.floor(d.getTime() / 1000));
-
 const loadHourFormat = (): boolean => {
 	const saved = localStorage.getItem("risuko.time-24h");
 	if (saved === "true") return true;
@@ -92,6 +93,15 @@ const baseDate = () => new Date(selected.value ?? defaultTime());
 const currentHours = () => (selected.value ?? defaultTime()).getHours();
 const isPM = computed(() => currentHours() >= 12);
 
+watch(open, (isOpen) => {
+	if (!isOpen) return;
+	if (!props.modelValue) {
+		const d = defaultTime();
+		commit(d);
+		viewDate.value = startOfMonth(d);
+	}
+});
+
 const hourField = computed({
 	get() {
 		const h = currentHours();
@@ -99,9 +109,7 @@ const hourField = computed({
 	},
 	set(v: number) {
 		const raw = Number(v);
-		if (!Number.isFinite(raw)) {
-			return;
-		}
+		if (!Number.isFinite(raw)) return;
 		const d = baseDate();
 		if (hour24.value) {
 			d.setHours(Math.min(23, Math.max(0, Math.floor(raw))));
@@ -119,9 +127,7 @@ const minuteField = computed({
 	},
 	set(v: number) {
 		const raw = Number(v);
-		if (!Number.isFinite(raw)) {
-			return;
-		}
+		if (!Number.isFinite(raw)) return;
 		const d = baseDate();
 		d.setMinutes(Math.min(59, Math.max(0, Math.floor(raw))));
 		commit(d);
@@ -175,6 +181,9 @@ const triggerLabel = computed(() =>
 			})
 		: props.placeholder,
 );
+
+const inputClass =
+	"border-input bg-transparent focus-visible:border-ring focus-visible:ring-ring/50 h-8 w-12 rounded-md border text-center text-sm outline-none focus-visible:ring-[3px] [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none";
 </script>
 
 <template>
@@ -228,7 +237,7 @@ const triggerLabel = computed(() =>
           :min="hour24 ? 0 : 1"
           :max="hour24 ? 23 : 12"
           aria-label="Hour"
-          class="border-input bg-transparent focus-visible:border-ring focus-visible:ring-ring/50 h-8 w-12 rounded-md border text-center text-sm outline-none focus-visible:ring-[3px] [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none"
+          :class="inputClass"
         />
         <span class="text-muted-foreground">:</span>
         <input
@@ -237,7 +246,7 @@ const triggerLabel = computed(() =>
           min="0"
           max="59"
           aria-label="Minute"
-          class="border-input bg-transparent focus-visible:border-ring focus-visible:ring-ring/50 h-8 w-12 rounded-md border text-center text-sm outline-none focus-visible:ring-[3px] [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none"
+          :class="inputClass"
         />
         <button
           v-if="!hour24"

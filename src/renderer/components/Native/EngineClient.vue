@@ -1056,7 +1056,12 @@ export default {
 						useAppStore().showMissedScheduled(missed);
 					}
 				})
-				.catch(() => {});
+				.catch((err) => {
+					logger.warn(
+						"[Risuko] checkMissedSchedules failed:",
+						err?.message || err,
+					);
+				});
 		},
 	},
 	created() {
