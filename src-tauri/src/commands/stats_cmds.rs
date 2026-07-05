@@ -20,7 +20,7 @@ pub async fn get_download_stats(
     state: State<'_, AppState>,
     query: DownloadStatsQuery,
 ) -> Result<DownloadStatsView, String> {
-    Ok(state.stats.query(query).await)
+    state.stats.query(query).await
 }
 
 #[tauri::command]

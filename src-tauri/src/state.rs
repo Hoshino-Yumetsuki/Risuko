@@ -3,29 +3,13 @@ use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 
 use risuko_engine::config::ConfigManager;
+use risuko_engine::engine::options::EngineOptions;
 use risuko_engine::engine::rss::RssManager;
 use risuko_engine::engine::stats::DownloadStatsManager;
 use risuko_engine::engine::upload::UploadSinkManager;
 use risuko_engine::traits::StorageBackend;
 
 use crate::managers::vault::VaultManager;
-
-fn config_bool(value: Option<&serde_json::Value>) -> bool {
-    value
-        .and_then(|v| match v {
-            serde_json::Value::Bool(flag) => Some(*flag),
-            serde_json::Value::String(text) => {
-                let normalized = text.trim().to_ascii_lowercase();
-                Some(matches!(normalized.as_str(), "1" | "true" | "yes" | "on"))
-            }
-            serde_json::Value::Number(number) => number
-                .as_i64()
-                .map(|n| n != 0)
-                .or_else(|| number.as_f64().map(|n| n != 0.0)),
-            _ => None,
-        })
-        .unwrap_or(false)
-}
 
 pub struct AppState {
     pub config: Mutex<ConfigManager>,
@@ -59,7 +43,9 @@ impl AppState {
         if let Err(e) = stats_manager.load() {
             tracing::warn!("Failed to load download stats: {}", e);
         }
-        if config_bool(config.get_user_config().get("purge-record-on-start")) {
+        let options =
+            EngineOptions::from_config(config.get_system_config(), config.get_user_config());
+        if options.purge_record_on_start() {
             if let Err(e) = stats_manager.clear_sync() {
                 tracing::warn!("Failed to clear download stats on startup: {}", e);
             }

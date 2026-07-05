@@ -211,9 +211,10 @@ impl DownloadStatsManager {
         self.save().await
     }
 
-    pub async fn query(&self, query: DownloadStatsQuery) -> DownloadStatsView {
+    pub async fn query(&self, query: DownloadStatsQuery) -> Result<DownloadStatsView, String> {
+        let query = normalize_query(query)?;
         let store = self.store.lock().await;
-        build_view(&store, query)
+        Ok(build_view(&store, query))
     }
 
     pub async fn export(&self) -> Value {
@@ -265,13 +266,13 @@ fn build_view(store: &DownloadStatsStore, query: DownloadStatsQuery) -> Download
     let start = query.start.min(query.end);
     let end = query.start.max(query.end);
     let mut monthly: BTreeMap<String, BTreeMap<String, u64>> = BTreeMap::new();
-    let mut speed_protocol_map: BTreeMap<String, u64> = BTreeMap::new();
+    let mut speed_protocols: BTreeMap<String, ()> = BTreeMap::new();
     let mut speed = Vec::new();
 
     for (minute, bucket) in store.speed.range(start..=end) {
         let mut point_protocols = Vec::new();
         for (protocol, agg) in &bucket.protocols {
-            *speed_protocol_map.entry(protocol.clone()).or_default() += agg.received_bytes;
+            speed_protocols.entry(protocol.clone()).or_default();
             point_protocols.push(ProtocolSpeedPoint {
                 protocol: protocol.clone(),
                 download_speed: avg(agg.download_sum, agg.samples),
@@ -305,17 +306,16 @@ fn build_view(store: &DownloadStatsStore, query: DownloadStatsQuery) -> Download
         })
         .collect::<Vec<_>>();
 
-    let protocol_totals = if speed.is_empty() {
-        let mut protocol_map: BTreeMap<String, u64> = BTreeMap::new();
-        for month in &monthly {
-            for item in &month.protocols {
-                *protocol_map.entry(item.protocol.clone()).or_default() += item.received_bytes;
-            }
+    let mut protocol_map: BTreeMap<String, u64> = BTreeMap::new();
+    for month in &monthly {
+        for item in &month.protocols {
+            *protocol_map.entry(item.protocol.clone()).or_default() += item.received_bytes;
         }
-        protocol_totals(protocol_map)
-    } else {
-        protocol_totals(speed_protocol_map)
-    };
+    }
+    for protocol in speed_protocols.keys() {
+        protocol_map.entry(protocol.clone()).or_default();
+    }
+    let protocol_totals = protocol_totals(protocol_map);
 
     DownloadStatsView {
         monthly,
@@ -337,10 +337,13 @@ fn merge_store(store: &mut DownloadStatsStore, incoming: DownloadStatsStore) {
             .or_insert(baseline);
     }
 
+    // ponytail: no per-device bucket ids; max keeps full-snapshot sync idempotent.
+    // Add bucket ids if cross-device additive merge matters.
     for (month, protocols) in incoming.monthly {
         let target = store.monthly.entry(month).or_default();
         for (protocol, bytes) in protocols {
-            *target.entry(protocol).or_default() += bytes;
+            let target_bytes = target.entry(protocol).or_default();
+            *target_bytes = (*target_bytes).max(bytes);
         }
     }
 
@@ -357,11 +360,10 @@ fn merge_store(store: &mut DownloadStatsStore, incoming: DownloadStatsStore) {
         }
         for (protocol, agg) in bucket.protocols {
             let target_agg = target.protocols.entry(protocol).or_default();
-            target_agg.download_sum = target_agg.download_sum.saturating_add(agg.download_sum);
-            target_agg.upload_sum = target_agg.upload_sum.saturating_add(agg.upload_sum);
-            target_agg.samples = target_agg.samples.saturating_add(agg.samples);
-            target_agg.received_bytes =
-                target_agg.received_bytes.saturating_add(agg.received_bytes);
+            target_agg.download_sum = target_agg.download_sum.max(agg.download_sum);
+            target_agg.upload_sum = target_agg.upload_sum.max(agg.upload_sum);
+            target_agg.samples = target_agg.samples.max(agg.samples);
+            target_agg.received_bytes = target_agg.received_bytes.max(agg.received_bytes);
         }
     }
 }
@@ -406,11 +408,41 @@ fn normalize_kind(kind: &str) -> String {
 
 fn normalize_month(month: &str) -> String {
     let trimmed = month.trim();
-    if trimmed.len() == 7 && trimmed.as_bytes().get(4) == Some(&b'-') {
+    if is_valid_month(trimmed) {
         trimmed.to_string()
     } else {
         "unknown".to_string()
     }
+}
+
+fn normalize_query(mut query: DownloadStatsQuery) -> Result<DownloadStatsQuery, String> {
+    query.start_month = validate_query_month(&query.start_month, "startMonth")?;
+    query.end_month = validate_query_month(&query.end_month, "endMonth")?;
+    if query.start_month > query.end_month {
+        std::mem::swap(&mut query.start_month, &mut query.end_month);
+    }
+    Ok(query)
+}
+
+fn validate_query_month(month: &str, field: &str) -> Result<String, String> {
+    let trimmed = month.trim();
+    if is_valid_month(trimmed) {
+        Ok(trimmed.to_string())
+    } else {
+        Err(format!("Invalid {field}: expected YYYY-MM"))
+    }
+}
+
+fn is_valid_month(month: &str) -> bool {
+    if month.len() != 7 || month.as_bytes().get(4) != Some(&b'-') {
+        return false;
+    }
+    if !month[..4].bytes().all(|b| b.is_ascii_digit())
+        || !month[5..].bytes().all(|b| b.is_ascii_digit())
+    {
+        return false;
+    }
+    matches!(month[5..].parse::<u8>(), Ok(1..=12))
 }
 
 #[cfg(test)]
@@ -432,7 +464,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn baselines_deltas_and_merge_are_additive() {
+    async fn baselines_deltas_and_merge_are_idempotent() {
         let dir = TempDir::new().unwrap();
         let storage: Arc<dyn StorageBackend> = Arc::new(FileStorage::new(dir.path().to_path_buf()));
         let mgr = DownloadStatsManager::new(storage);
@@ -451,7 +483,8 @@ mod tests {
                 start_month: "2023-11".to_string(),
                 end_month: "2023-11".to_string(),
             })
-            .await;
+            .await
+            .unwrap();
         assert_eq!(
             view.protocol_totals
                 .first()
@@ -468,6 +501,7 @@ mod tests {
         .await
         .unwrap();
         let exported = mgr.export().await;
+        mgr.merge(exported.clone()).await.unwrap();
         mgr.merge(exported).await.unwrap();
         let view = mgr
             .query(DownloadStatsQuery {
@@ -476,9 +510,10 @@ mod tests {
                 start_month: "2023-11".to_string(),
                 end_month: "2023-11".to_string(),
             })
-            .await;
-        assert_eq!(view.protocol_totals[0].received_bytes, 120);
-        assert_eq!(view.monthly[0].protocols[0].received_bytes, 120);
+            .await
+            .unwrap();
+        assert_eq!(view.protocol_totals[0].received_bytes, 60);
+        assert_eq!(view.monthly[0].protocols[0].received_bytes, 60);
     }
 
     #[tokio::test]
@@ -505,7 +540,78 @@ mod tests {
                 start_month: "2023-11".to_string(),
                 end_month: "2023-11".to_string(),
             })
-            .await;
+            .await
+            .unwrap();
         assert_eq!(view.protocol_totals[0].received_bytes, 60);
+    }
+
+    #[tokio::test]
+    async fn query_rejects_invalid_months() {
+        let dir = TempDir::new().unwrap();
+        let storage: Arc<dyn StorageBackend> = Arc::new(FileStorage::new(dir.path().to_path_buf()));
+        let mgr = DownloadStatsManager::new(storage);
+
+        let err = mgr
+            .query(DownloadStatsQuery {
+                start: 0,
+                end: 0,
+                start_month: "2023-1".to_string(),
+                end_month: "abcd-ef".to_string(),
+            })
+            .await
+            .unwrap_err();
+        assert!(err.contains("startMonth"));
+    }
+
+    #[test]
+    fn normalize_month_rejects_non_digit_or_bad_month() {
+        assert_eq!(normalize_month("2023-11"), "2023-11");
+        assert_eq!(normalize_month("abcd-ef"), "unknown");
+        assert_eq!(normalize_month("0000-00"), "unknown");
+        assert_eq!(normalize_month("2023-13"), "unknown");
+    }
+
+    #[test]
+    fn protocol_totals_include_monthly_protocols_without_speed() {
+        let mut store = DownloadStatsStore::default();
+        store
+            .monthly
+            .entry("2023-11".to_string())
+            .or_default()
+            .insert("http".to_string(), 100);
+        store
+            .monthly
+            .entry("2023-11".to_string())
+            .or_default()
+            .insert("torrent".to_string(), 50);
+        store.speed.insert(
+            1_700_000_000,
+            SpeedMinuteBucket {
+                month: "2023-11".to_string(),
+                protocols: BTreeMap::from([(
+                    "http".to_string(),
+                    SpeedAggregate {
+                        received_bytes: 10,
+                        ..SpeedAggregate::default()
+                    },
+                )]),
+            },
+        );
+
+        let view = build_view(
+            &store,
+            DownloadStatsQuery {
+                start: 1_699_999_000,
+                end: 1_700_001_000,
+                start_month: "2023-11".to_string(),
+                end_month: "2023-11".to_string(),
+            },
+        );
+
+        assert_eq!(view.protocol_totals.len(), 2);
+        assert_eq!(view.protocol_totals[0].protocol, "http");
+        assert_eq!(view.protocol_totals[0].received_bytes, 100);
+        assert_eq!(view.protocol_totals[1].protocol, "torrent");
+        assert_eq!(view.protocol_totals[1].received_bytes, 50);
     }
 }

@@ -1061,9 +1061,9 @@ pub async fn purge_download_result(
 ) -> Result<(), String> {
     let manager = engine::get_manager().await.ok_or("Engine not running")?;
     manager.purge_download_result().await;
-    state.stats.clear().await?;
+    let stats_result = state.stats.clear().await;
     let _ = manager.save_session().await;
-    Ok(())
+    stats_result
 }
 
 #[tauri::command]

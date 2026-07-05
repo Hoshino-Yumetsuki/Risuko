@@ -301,6 +301,7 @@ const expandedProtocols = ref(false);
 const splitMode = ref<SplitMode>("overall");
 const seriesMode = ref<SeriesMode>("both");
 const showTickLabels = ref(true);
+let loadStatsId = 0;
 
 const chartWidth = CHART_WIDTH;
 const chartHeight = CHART_HEIGHT;
@@ -369,7 +370,11 @@ const visibleProtocols = computed(() =>
 );
 const legendProtocols = computed(() => {
 	const protocols = [...visibleProtocols.value];
-	if (!expandedProtocols.value && extraProtocolCount.value > 0) {
+	if (
+		!expandedProtocols.value &&
+		extraProtocolCount.value > 0 &&
+		!protocols.includes("other")
+	) {
 		protocols.push("other");
 	}
 	return protocols;
@@ -398,7 +403,7 @@ const monthlySegments = (month: MonthlyProtocolTotal) => {
 		const other = Math.max(0, month.total - visibleTotal);
 		if (other > 0) {
 			segments.push({
-				key: "other",
+				key: "other:aggregate",
 				label: protocolLabel("other"),
 				value: other,
 				color: colorForProtocol("other"),
@@ -525,23 +530,33 @@ const speedLines = computed<SpeedLine[]>(() => {
 });
 
 async function loadStats() {
+	const loadId = ++loadStatsId;
 	loading.value = true;
 	error.value = "";
 	const start = Math.min(startAt.value, endAt.value);
 	const end = Math.max(startAt.value, endAt.value);
 	try {
 		await flushDownloadStatsMinute();
-		stats.value = await api.getDownloadStats({
+		const nextStats = await api.getDownloadStats({
 			start,
 			end,
 			startMonth: toMonth(start),
 			endMonth: toMonth(end),
 		});
+		if (loadId !== loadStatsId) {
+			return;
+		}
+		stats.value = nextStats;
 	} catch (err) {
+		if (loadId !== loadStatsId) {
+			return;
+		}
 		error.value = (err as Error).message || "Failed to load stats";
 		stats.value = null;
 	} finally {
-		loading.value = false;
+		if (loadId === loadStatsId) {
+			loading.value = false;
+		}
 	}
 }
 
