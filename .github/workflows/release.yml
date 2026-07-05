@@ -274,6 +274,9 @@ jobs:
               sig=$(find "$bundle_dir" -name '*.app.tar.gz.sig' -type f | head -1)
             elif [[ "$os" == "linux" ]]; then
               sig=$(find "$bundle_dir" -name '*.AppImage.tar.gz.sig' -type f | head -1)
+              if [[ -z "$sig" ]]; then
+                sig=$(find "$bundle_dir" -name '*.AppImage.sig' -type f | head -1)
+              fi
             else
               sig=$(find "$bundle_dir" -name '*.sig' -type f | head -1)
             fi
