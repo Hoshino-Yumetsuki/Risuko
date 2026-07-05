@@ -4875,9 +4875,9 @@ dependencies = [
 
 [[package]]
 name = "napi"
-version = "3.10.2"
+version = "3.10.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8ef2a2b7d3216aa19b4ef0e3071ac5ea55a887dc553d71648baf4f2cca705a15"
+checksum = "0c71997d6f7ad4a756966e452426848ac27d3b37a295302d63afbbcce0270f93"
 dependencies = [
  "bitflags 2.13.0",
  "ctor 1.0.7",
@@ -5260,9 +5260,9 @@ dependencies = [
 
 [[package]]
 name = "num-bigint"
-version = "0.4.7"
+version = "0.4.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c863e9ab5e7bf9c99ba75e1050f1e4d624ae87ed3532d6238ffbdc7b585dbbe6"
+checksum = "c89e69e7e0f03bea5ef08013795c25018e101932225a656383bd384495ecc367"
 dependencies = [
  "num-integer",
  "num-traits",
@@ -6057,13 +6057,13 @@ checksum = "19f132c84eca552bf34cab8ec81f1c1dcc229b811638f9d283dceabe58c5569e"
 
 [[package]]
 name = "plist"
-version = "1.9.0"
+version = "1.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "092791278e026273c1b65bbdcfbba3a300f2994c896bd01ab01da613c29c46f1"
+checksum = "7da1d65da6dd5d1e44199ac0f58712d241c0f439f80adea8924d832384087f85"
 dependencies = [
  "base64 0.22.1",
  "indexmap 2.14.0",
- "quick-xml 0.39.4",
+ "quick-xml 0.41.0",
  "serde",
  "time",
 ]
@@ -6474,6 +6474,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "quick-xml"
+version = "0.41.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e660451e55124f798a69a5af3f49ccfbefbd41910eefd25caf2393e1f3473ec1"
+dependencies = [
+ "memchr",
+]
+
+[[package]]
 name = "quote"
 version = "1.0.46"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6854,7 +6863,7 @@ dependencies = [
 
 [[package]]
 name = "risuko"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "apple-native-keyring-store",
  "base64 0.22.1",
@@ -6930,7 +6939,7 @@ dependencies = [
 
 [[package]]
 name = "risuko-cli"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "base64 0.22.1",
  "clap",
@@ -6945,7 +6954,7 @@ dependencies = [
 
 [[package]]
 name = "risuko-cookies"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "aes 0.9.1",
  "aes-gcm 0.11.0",
@@ -6971,7 +6980,7 @@ dependencies = [
 
 [[package]]
 name = "risuko-engine"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "aes 0.9.1",
  "async-trait",
@@ -7024,7 +7033,7 @@ dependencies = [
 
 [[package]]
 name = "risuko-http"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "async-compression",
  "async-stream",
@@ -7058,7 +7067,7 @@ dependencies = [
 
 [[package]]
 name = "risuko-napi"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "dirs 6.0.0",
  "napi",
@@ -7072,7 +7081,7 @@ dependencies = [
 
 [[package]]
 name = "risuko-share"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "anyhow",
  "iroh",
@@ -7085,7 +7094,7 @@ dependencies = [
 
 [[package]]
 name = "risuko-webview-upgrade"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "tauri",
  "tauri-plugin",

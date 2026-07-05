@@ -1,6 +1,6 @@
 {
 	"name": "risuko",
-	"version": "0.5.0",
+	"version": "0.6.0",
 	"description": "A full-featured download manager",
 	"homepage": "https://risuko.app",
 	"author": {
@@ -46,7 +46,7 @@
 		"@tauri-apps/plugin-clipboard-manager": "^2.3.2",
 		"@tauri-apps/plugin-deep-link": "^2.4.9",
 		"@tauri-apps/plugin-dialog": "^2.7.1",
-		"@tauri-apps/plugin-notification": "^2.3.1",
+		"@tauri-apps/plugin-notification": "^2.3.3",
 		"@vueuse/core": "^14.3.0",
 		"cnfast": "^0.0.8",
 		"eventemitter3": "^5.0.4",

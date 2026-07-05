@@ -27,7 +27,7 @@ importers:
         specifier: ^2.7.1
         version: 2.7.1
       '@tauri-apps/plugin-notification':
-        specifier: ^2.3.1
+        specifier: ^2.3.3
         version: 2.3.3
       '@vueuse/core':
         specifier: ^14.3.0
@@ -120,47 +120,9 @@ importers:
 
   packages/risuko-app: {}
 
-  packages/risuko-cli:
-    optionalDependencies:
-      '@risuko/cli-darwin-arm64':
-        specifier: 0.5.0
-        version: 0.5.0
-      '@risuko/cli-darwin-x64':
-        specifier: 0.5.0
-        version: 0.5.0
-      '@risuko/cli-linux-arm64-gnu':
-        specifier: 0.5.0
-        version: 0.5.0
-      '@risuko/cli-linux-x64-gnu':
-        specifier: 0.5.0
-        version: 0.5.0
-      '@risuko/cli-win32-arm64-msvc':
-        specifier: 0.5.0
-        version: 0.5.0
-      '@risuko/cli-win32-x64-msvc':
-        specifier: 0.5.0
-        version: 0.5.0
+  packages/risuko-cli: {}
 
-  packages/risuko-js:
-    optionalDependencies:
-      '@risuko/js-darwin-arm64':
-        specifier: 0.5.0
-        version: 0.5.0
-      '@risuko/js-darwin-x64':
-        specifier: 0.5.0
-        version: 0.5.0
-      '@risuko/js-linux-arm64-gnu':
-        specifier: 0.5.0
-        version: 0.5.0
-      '@risuko/js-linux-x64-gnu':
-        specifier: 0.5.0
-        version: 0.5.0
-      '@risuko/js-win32-arm64-msvc':
-        specifier: 0.5.0
-        version: 0.5.0
-      '@risuko/js-win32-x64-msvc':
-        specifier: 0.5.0
-        version: 0.5.0
+  packages/risuko-js: {}
 
 packages:
 
@@ -264,68 +226,6 @@ packages:
 
   '@oxc-project/types@0.138.0':
     resolution: {integrity: sha512-1a7ZKmrRTCoN1XMZ4L0PyyqrMnrNlLyPuOkdSX2MZg7IiIGRUyurNhAm73ptDOraoBcIordsIGKNPKUzy3ZmfA==}
-
-  '@risuko/cli-darwin-arm64@0.5.0':
-    resolution: {integrity: sha512-jyPzJhZzOwrvH8MwcULwndj8CRwZK7vMMFM4j0XXRV+KqKrDVshvajR8iPt2zCz6J/rq2DrMD52VzQnbj8EpcA==}
-    cpu: [arm64]
-    os: [darwin]
-
-  '@risuko/cli-darwin-x64@0.5.0':
-    resolution: {integrity: sha512-e2mChap3j/0WcAIswaNmKW6pL6ELPldmurlLnY/UwxG9uik2fRZdMn6ALOHZFCPnyc/iXkqXOyVUm278oVCYRg==}
-    cpu: [x64]
-    os: [darwin]
-
-  '@risuko/cli-linux-arm64-gnu@0.5.0':
-    resolution: {integrity: sha512-zMM0LEaawsIX0HDljeqVDwBCp56Mt2YqgyO8pcpP9ZU98UyViss7gYKk1y4kjcNpLKHOoG3pZyNA7hVGzTcZnw==}
-    cpu: [arm64]
-    os: [linux]
-
-  '@risuko/cli-linux-x64-gnu@0.5.0':
-    resolution: {integrity: sha512-Qd+t6Ipd/W3CQcTL0Mlf0wEGI8Zj8L+hHbuDmbhfdI6yDt0W2xMWSdu+gHV1g3S+aFAOL4IpTDGKGxyP8qE3+A==}
-    cpu: [x64]
-    os: [linux]
-
-  '@risuko/cli-win32-arm64-msvc@0.5.0':
-    resolution: {integrity: sha512-LTos2C+jq3DRgfsNXWlR34rlbo9Dskt8gbFe2+/NCv21YP/9UwB6ZqdP9rTAQPssh9NWQDQWx38Lpvr5nuo+/g==}
-    cpu: [arm64]
-    os: [win32]
-
-  '@risuko/cli-win32-x64-msvc@0.5.0':
-    resolution: {integrity: sha512-znWNM9YrWSjWm0Zko7OjaWbvGRhnTf+R81/bNyugRMIhXLbwlGMK+HpreKPSttZ019WexM3L3wULRf1CIDNUZw==}
-    cpu: [x64]
-    os: [win32]
-
-  '@risuko/js-darwin-arm64@0.5.0':
-    resolution: {integrity: sha512-BCM8zMe8gAalhxfaGOUhts3mz3LQcv7YKi/tVhTf6aMYmtb165oJWfPlUqBFPkyyNFWqnZJ6nv/cbeIt2KpDdQ==}
-    cpu: [arm64]
-    os: [darwin]
-
-  '@risuko/js-darwin-x64@0.5.0':
-    resolution: {integrity: sha512-qDwA1HArj0UcZLjBdFBdK4MMr1AgQ8GFZ1iSpS9R47ftKNe7SrUquWdbU3JUaq3jCR4zSlcplyBa+DVUuNlizA==}
-    cpu: [x64]
-    os: [darwin]
-
-  '@risuko/js-linux-arm64-gnu@0.5.0':
-    resolution: {integrity: sha512-gAaIm8/qVaCjQR/uhC4ypF+OrReXEk8ylUCPPCXL10CdNGl4yx0DMoXPPqGIYbFn5Lrzrgd9Zo/SCRfpb9wqUA==}
-    cpu: [arm64]
-    os: [linux]
-    libc: [glibc]
-
-  '@risuko/js-linux-x64-gnu@0.5.0':
-    resolution: {integrity: sha512-fJTMQyxDQItW7atZNLUJ0KGdLyk2t8aQ1ojE74TtFD6T5X9TZca1jDToxnAC6j4yVLup1zM4GpvRzYixMfJpDg==}
-    cpu: [x64]
-    os: [linux]
-    libc: [glibc]
-
-  '@risuko/js-win32-arm64-msvc@0.5.0':
-    resolution: {integrity: sha512-HZD6RausNcJ4BpdZtAo5OnAV9TvQEwNQOefzKmMZbU/qGLFI1IyTmSHfz6CyUtCXCd42sQA8HAGN6vtjU/Hclw==}
-    cpu: [arm64]
-    os: [win32]
-
-  '@risuko/js-win32-x64-msvc@0.5.0':
-    resolution: {integrity: sha512-4iMe9C/0LwiyGRYzivSuxxHJ+sDatepB37SgiS10hZ+vSarvufJ5kVIV4CLkQrfKtpjXZkUhvuF+uBp2wpmfHQ==}
-    cpu: [x64]
-    os: [win32]
 
   '@rolldown/binding-android-arm64@1.1.4':
     resolution: {integrity: sha512-EZLpf/8y7GXkkra90ML47kzik/GMP3EMcE9bPyHmRfxLC6z9+aW5A8poCsoxjrT5GfEcNAAvWwUHjvP1pUQkfw==}
@@ -1709,42 +1609,6 @@ snapshots:
     optional: true
 
   '@oxc-project/types@0.138.0': {}
-
-  '@risuko/cli-darwin-arm64@0.5.0':
-    optional: true
-
-  '@risuko/cli-darwin-x64@0.5.0':
-    optional: true
-
-  '@risuko/cli-linux-arm64-gnu@0.5.0':
-    optional: true
-
-  '@risuko/cli-linux-x64-gnu@0.5.0':
-    optional: true
-
-  '@risuko/cli-win32-arm64-msvc@0.5.0':
-    optional: true
-
-  '@risuko/cli-win32-x64-msvc@0.5.0':
-    optional: true
-
-  '@risuko/js-darwin-arm64@0.5.0':
-    optional: true
-
-  '@risuko/js-darwin-x64@0.5.0':
-    optional: true
-
-  '@risuko/js-linux-arm64-gnu@0.5.0':
-    optional: true
-
-  '@risuko/js-linux-x64-gnu@0.5.0':
-    optional: true
-
-  '@risuko/js-win32-arm64-msvc@0.5.0':
-    optional: true
-
-  '@risuko/js-win32-x64-msvc@0.5.0':
-    optional: true
 
   '@rolldown/binding-android-arm64@1.1.4':
     optional: true
