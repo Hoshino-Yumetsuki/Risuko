@@ -1,15 +1,4 @@
 //! Bencode codec (BEP-3)
-//!
-//! Provides:
-//! - [`Value`] — an owned/borrowed bencode value tree
-//! - [`decode`] / [`decode_all`] — streaming decoder that also records the
-//!   byte span of every decoded value; this lets callers recover the exact
-//!   raw bytes of a sub-value (needed to hash a torrent's `info` dict)
-//! - [`encode_to_vec`] / [`encode_to_writer`] — canonical encoder that sorts
-//!   dict keys lexicographically
-//!
-//! The codec intentionally operates on byte slices only; text decoding is a
-//! higher layer concern
 
 use std::collections::BTreeMap;
 use std::io::{self, Write};
@@ -32,21 +21,22 @@ pub enum Error {
     NonStringDictKey(usize),
     #[error("trailing bytes after decoded value")]
     TrailingBytes,
+    #[error("bencode input exceeds limit: len={len}, max={max}")]
+    InputLimit { len: usize, max: usize },
+    #[error("bencode nesting exceeds limit at position {pos}: max depth={max}")]
+    DepthLimit { pos: usize, max: usize },
+    #[error("bencode value count exceeds limit: max values={max}")]
+    ValueLimit { max: usize },
     #[error("io error: {0}")]
     Io(#[from] io::Error),
 }
 
 /// A bencode value
-///
-/// Variants hold owned data; borrow-friendly decoding can be layered on top
-/// by holding `&Value` and byte spans
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Value {
     Int(i64),
     Bytes(Vec<u8>),
     List(Vec<Value>),
-    /// Dict preserves insertion order for round-tripping convenience; the
-    /// encoder always sorts on serialize so canonical output is guaranteed
     Dict(Vec<(Vec<u8>, Value)>),
 }
 
@@ -88,24 +78,34 @@ impl Value {
     }
 }
 
-/// Decoded value paired with the raw byte span it was parsed from
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DecodeLimits {
+    pub max_input_len: usize,
+    pub max_depth: usize,
+    pub max_values: usize,
+}
+
+impl DecodeLimits {
+    pub const fn new(max_input_len: usize, max_depth: usize, max_values: usize) -> Self {
+        Self {
+            max_input_len,
+            max_depth,
+            max_values,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Decoded {
     pub value: Value,
-    /// Half-open byte range within the original input
     pub span: std::ops::Range<usize>,
 }
 
-/// Decode a single bencode value at the start of `input`
-///
-/// Returns the decoded value and the number of bytes consumed
 pub fn decode(input: &[u8]) -> Result<Decoded, Error> {
-    let mut p = Parser { buf: input, pos: 0 };
-    let v = p.parse_value()?;
-    Ok(v)
+    let mut p = Parser::strict(input);
+    p.parse_value(0)
 }
 
-/// Decode a single value and error if trailing bytes remain.
 pub fn decode_all(input: &[u8]) -> Result<Value, Error> {
     let d = decode(input)?;
     if d.span.end != input.len() {
@@ -114,12 +114,64 @@ pub fn decode_all(input: &[u8]) -> Result<Value, Error> {
     Ok(d.value)
 }
 
+pub fn decode_external(input: &[u8], limits: DecodeLimits) -> Result<Decoded, Error> {
+    if input.len() > limits.max_input_len {
+        return Err(Error::InputLimit {
+            len: input.len(),
+            max: limits.max_input_len,
+        });
+    }
+    let mut p = Parser::external(input, limits);
+    p.parse_value(0)
+}
+
+/// Decode one bounded network value, allowing only trailing ASCII whitespace.
+pub fn decode_all_external(input: &[u8], limits: DecodeLimits) -> Result<Value, Error> {
+    let d = decode_external(input, limits)?;
+    if !input[d.span.end..]
+        .iter()
+        .all(|byte| byte.is_ascii_whitespace())
+    {
+        return Err(Error::TrailingBytes);
+    }
+    Ok(d.value)
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DictMode {
+    Canonical,
+    Relaxed,
+}
+
 struct Parser<'a> {
     buf: &'a [u8],
     pos: usize,
+    dict_mode: DictMode,
+    limits: Option<DecodeLimits>,
+    values: usize,
 }
 
 impl<'a> Parser<'a> {
+    fn strict(buf: &'a [u8]) -> Self {
+        Self {
+            buf,
+            pos: 0,
+            dict_mode: DictMode::Canonical,
+            limits: None,
+            values: 0,
+        }
+    }
+
+    fn external(buf: &'a [u8], limits: DecodeLimits) -> Self {
+        Self {
+            buf,
+            pos: 0,
+            dict_mode: DictMode::Relaxed,
+            limits: Some(limits),
+            values: 0,
+        }
+    }
+
     fn peek(&self) -> Result<u8, Error> {
         self.buf
             .get(self.pos)
@@ -127,13 +179,32 @@ impl<'a> Parser<'a> {
             .ok_or(Error::UnexpectedEof(self.pos))
     }
 
-    fn parse_value(&mut self) -> Result<Decoded, Error> {
+    fn note_value(&mut self, depth: usize) -> Result<(), Error> {
+        if let Some(limits) = self.limits {
+            if depth > limits.max_depth {
+                return Err(Error::DepthLimit {
+                    pos: self.pos,
+                    max: limits.max_depth,
+                });
+            }
+            if self.values >= limits.max_values {
+                return Err(Error::ValueLimit {
+                    max: limits.max_values,
+                });
+            }
+        }
+        self.values = self.values.saturating_add(1);
+        Ok(())
+    }
+
+    fn parse_value(&mut self, depth: usize) -> Result<Decoded, Error> {
+        self.note_value(depth)?;
         let start = self.pos;
         let b = self.peek()?;
         let value = match b {
             b'i' => self.parse_int()?,
-            b'l' => self.parse_list()?,
-            b'd' => self.parse_dict()?,
+            b'l' => self.parse_list(depth)?,
+            b'd' => self.parse_dict(depth)?,
             b'0'..=b'9' => self.parse_bytes()?,
             other => {
                 return Err(Error::UnexpectedByte {
@@ -209,6 +280,12 @@ impl<'a> Parser<'a> {
         let digits = &self.buf[start..self.pos];
         // skip ':'
         self.pos += 1;
+        if digits.len() > 1 && digits[0] == b'0' {
+            return Err(Error::BadLength {
+                pos: start,
+                reason: "leading zero",
+            });
+        }
         let s = std::str::from_utf8(digits).map_err(|_| Error::BadLength {
             pos: start,
             reason: "non-ascii",
@@ -234,34 +311,36 @@ impl<'a> Parser<'a> {
         Ok(Value::Bytes(bytes))
     }
 
-    fn parse_list(&mut self) -> Result<Value, Error> {
+    fn parse_list(&mut self, depth: usize) -> Result<Value, Error> {
         debug_assert_eq!(self.buf[self.pos], b'l');
         self.pos += 1;
         let mut items = Vec::new();
         while self.peek()? != b'e' {
-            items.push(self.parse_value()?.value);
+            items.push(self.parse_value(depth.saturating_add(1))?.value);
         }
         self.pos += 1;
         Ok(Value::List(items))
     }
 
-    fn parse_dict(&mut self) -> Result<Value, Error> {
+    fn parse_dict(&mut self, depth: usize) -> Result<Value, Error> {
         debug_assert_eq!(self.buf[self.pos], b'd');
         self.pos += 1;
         let mut items: Vec<(Vec<u8>, Value)> = Vec::new();
         while self.peek()? != b'e' {
             let key_pos = self.pos;
-            let key_val = self.parse_value()?.value;
+            let key_val = self.parse_value(depth.saturating_add(1))?.value;
             let key = match key_val {
                 Value::Bytes(b) => b,
                 _ => return Err(Error::NonStringDictKey(key_pos)),
             };
-            if let Some((prev, _)) = items.last() {
-                if prev.as_slice() >= key.as_slice() {
-                    return Err(Error::BadDictOrder(key_pos));
+            if self.dict_mode == DictMode::Canonical {
+                if let Some((prev, _)) = items.last() {
+                    if prev.as_slice() >= key.as_slice() {
+                        return Err(Error::BadDictOrder(key_pos));
+                    }
                 }
             }
-            let value = self.parse_value()?.value;
+            let value = self.parse_value(depth.saturating_add(1))?.value;
             items.push((key, value));
         }
         self.pos += 1;
@@ -275,7 +354,7 @@ pub fn decode_dict_field_raw<'a>(
     input: &'a [u8],
     key: &[u8],
 ) -> Result<Option<(Value, &'a [u8])>, Error> {
-    let mut p = Parser { buf: input, pos: 0 };
+    let mut p = Parser::strict(input);
     if p.peek()? != b'd' {
         return Err(Error::UnexpectedByte {
             byte: input[0],
@@ -284,12 +363,12 @@ pub fn decode_dict_field_raw<'a>(
     }
     p.pos += 1;
     while p.peek()? != b'e' {
-        let k = match p.parse_value()?.value {
+        let k = match p.parse_value(1)?.value {
             Value::Bytes(b) => b,
             _ => return Err(Error::NonStringDictKey(p.pos)),
         };
         let val_start = p.pos;
-        let v = p.parse_value()?;
+        let v = p.parse_value(1)?;
         if k == key {
             let raw = &input[val_start..v.span.end];
             return Ok(Some((v.value, raw)));
@@ -390,6 +469,55 @@ mod tests {
     fn reject_unsorted_dict() {
         assert!(decode_all(b"d3:fooi1e3:bari2ee").is_err());
         assert!(decode_all(b"d3:fooi1e3:fooi2ee").is_err());
+    }
+
+    #[test]
+    fn external_decode_accepts_unsorted_and_duplicate_keys_first_wins() {
+        let limits = DecodeLimits::new(128, 8, 32);
+        let value = decode_all_external(b"d3:fooi1e3:bari2e3:fooi3ee", limits).unwrap();
+        let items = value.as_dict().unwrap();
+
+        assert_eq!(items.len(), 3);
+        assert_eq!(value.get(b"foo").and_then(Value::as_int), Some(1));
+    }
+
+    #[test]
+    fn external_decode_allows_only_whitespace_tail() {
+        let limits = DecodeLimits::new(128, 8, 32);
+
+        assert_eq!(
+            decode_all_external(b"i7e \t\n", limits).unwrap(),
+            Value::Int(7)
+        );
+        assert!(matches!(
+            decode_all_external(b"i7ejunk", limits),
+            Err(Error::TrailingBytes)
+        ));
+    }
+
+    #[test]
+    fn external_decode_enforces_input_depth_and_value_limits() {
+        assert!(matches!(
+            decode_external(b"4:spam", DecodeLimits::new(5, 8, 8)),
+            Err(Error::InputLimit { len: 6, max: 5 })
+        ));
+        assert!(matches!(
+            decode_all_external(b"lli1eee", DecodeLimits::new(16, 1, 8)),
+            Err(Error::DepthLimit { max: 1, .. })
+        ));
+        assert!(matches!(
+            decode_all_external(b"li1ei2ee", DecodeLimits::new(16, 8, 2)),
+            Err(Error::ValueLimit { max: 2 })
+        ));
+    }
+
+    #[test]
+    fn external_decode_reports_consumed_header_before_binary_tail() {
+        let limits = DecodeLimits::new(128, 8, 32);
+        let decoded = decode_external(b"d1:ai1ee\0\xff", limits).unwrap();
+
+        assert_eq!(decoded.span, 0..8);
+        assert_eq!(decoded.value.get(b"a").and_then(Value::as_int), Some(1));
     }
 
     #[test]

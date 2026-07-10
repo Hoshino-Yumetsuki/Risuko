@@ -124,35 +124,95 @@ pub async fn connect_utp_plaintext(
     connect_plaintext(reader, writer, addr, &spawn).await
 }
 
-/// Dial a peer, preferring TCP and falling back to µTP (BEP-29) when the TCP attempt
-/// fails (refused, filtered, or timed out). Many peers are reachable over only one
-/// transport—notably those behind NATs/ISPs that drop inbound TCP SYNs but pass UDP—so
-/// the fallback widens connectivity. With `utp = None` this is exactly [`connect`], so
-/// callers without a µTP socket keep the unchanged TCP path
-///
-/// TCP is tried first rather than racing both at once: TCP carries our fast path today,
-/// and a pure fallback avoids opening (then cancelling) a µTP connection for every peer
-/// that TCP already reaches
 pub async fn connect_with_utp_fallback(
     spawn: SpawnPeer,
     utp: Option<std::sync::Arc<crate::utp::UtpSocket>>,
 ) -> std::io::Result<(PeerHandle, mpsc::Receiver<PeerEvent>)> {
+    dial_with_transport_order(spawn, utp, false).await
+}
+
+pub async fn connect_prefer_utp(
+    spawn: SpawnPeer,
+    utp: Option<std::sync::Arc<crate::utp::UtpSocket>>,
+) -> std::io::Result<(PeerHandle, mpsc::Receiver<PeerEvent>)> {
+    dial_with_transport_order(spawn, utp, true).await
+}
+
+async fn dial_with_transport_order(
+    spawn: SpawnPeer,
+    utp: Option<std::sync::Arc<crate::utp::UtpSocket>>,
+    prefer_utp: bool,
+) -> std::io::Result<(PeerHandle, mpsc::Receiver<PeerEvent>)> {
+    if matches!(spawn.encryption, EncryptionPolicy::RequireEncryption) {
+        tracing::debug!(
+            "skipping µTP dial to {} because encryption is required",
+            spawn.addr
+        );
+        return connect(spawn).await;
+    }
+
     let Some(utp) = utp else {
         return connect(spawn).await;
     };
     let addr = spawn.addr;
     let utp_timeout = spawn.connect_timeout;
+
+    let try_utp = |spawn: SpawnPeer, utp: std::sync::Arc<crate::utp::UtpSocket>| async move {
+        if matches!(spawn.encryption, EncryptionPolicy::RequireEncryption) {
+            tracing::debug!("skipping µTP dial to {addr} because encryption is required");
+            return connect(spawn).await;
+        }
+
+        match utp.connect_timeout(addr, utp_timeout).await {
+            Ok(stream) => connect_utp_plaintext(stream, spawn).await,
+            Err(e) => {
+                tracing::debug!("µTP dial to {addr} failed: {e}");
+                Err(e)
+            }
+        }
+    };
+
+    if prefer_utp {
+        match try_utp(spawn.clone(), utp.clone()).await {
+            Ok(v) => {
+                tracing::debug!("connected to {addr} via µTP (preferred)");
+                return Ok(v);
+            }
+            Err(utp_err) => {
+                if alternate_dial_cannot_help(&utp_err) {
+                    return Err(utp_err);
+                }
+                tracing::debug!("µTP-first to {addr} failed ({utp_err}); trying TCP");
+                return connect(spawn).await;
+            }
+        }
+    }
+
     match connect(spawn.clone()).await {
         Ok(v) => Ok(v),
-        Err(tcp_err) => match utp.connect_timeout(addr, utp_timeout).await {
-            Ok(stream) => {
-                tracing::debug!("tcp dial to {addr} failed ({tcp_err}); connected via µTP");
-                connect_utp_plaintext(stream, spawn).await
+        Err(tcp_err) => {
+            if alternate_dial_cannot_help(&tcp_err) {
+                return Err(tcp_err);
             }
-            // Surface the TCP error — it's usually the more actionable one
-            Err(_) => Err(tcp_err),
-        },
+            match try_utp(spawn, utp).await {
+                Ok(v) => {
+                    tracing::debug!("tcp dial to {addr} failed ({tcp_err}); connected via µTP");
+                    Ok(v)
+                }
+                Err(utp_err) => {
+                    tracing::debug!(
+                        "tcp+µTP dial to {addr} both failed (tcp={tcp_err}, utp={utp_err})"
+                    );
+                    Err(tcp_err)
+                }
+            }
+        }
     }
+}
+
+fn alternate_dial_cannot_help(err: &std::io::Error) -> bool {
+    let message = err.to_string();
+    message == "info hash mismatch" || message.starts_with("self-connection ")
 }
 
 /// Accept an inbound peer connection: peer sends handshake first, we reply
@@ -324,20 +384,14 @@ async fn drive_handshake(
             let (reader, writer) = stream.into_split();
             connect_plaintext(reader, writer, addr, &spawn).await
         }
-        EncryptionPolicy::RequireEncryption => connect_mse(stream, addr, &spawn).await,
+        EncryptionPolicy::RequireEncryption => {
+            timeout(spawn.connect_timeout, connect_mse(stream, addr, &spawn))
+                .await
+                .map_err(|_| {
+                    std::io::Error::new(std::io::ErrorKind::TimedOut, "mse handshake timeout")
+                })?
+        }
         EncryptionPolicy::Prefer => {
-            // Try plaintext first: it's a single 68-byte exchange and
-            // succeeds for the overwhelming majority of public-tracker
-            // peers. MSE-first wasted a full connect_timeout on every
-            // plaintext-only peer because the failed handshake leaves us
-            // unable to reuse the socket; we'd have to redial for the
-            // fallback. With plaintext-first we only redial for the rare
-            // ISP-blocked case
-            //
-            // Bound the plaintext attempt by connect_timeout so a peer that
-            // accepts the TCP connect but never sends the handshake cannot
-            // tie us up for the much longer read_timeout before we fall
-            // back to MSE
             let (reader, writer) = stream.into_split();
             let plaintext = timeout(
                 spawn.connect_timeout,
@@ -351,20 +405,23 @@ async fn drive_handshake(
                     std::io::Error::new(std::io::ErrorKind::TimedOut, "plaintext handshake timeout")
                 }
             };
+            if alternate_dial_cannot_help(&fallback_err) {
+                tracing::debug!(
+                    "plaintext handshake to {addr} failed: {fallback_err}; skipping mse"
+                );
+                return Err(fallback_err);
+            }
             tracing::debug!("plaintext handshake to {addr} failed: {fallback_err}; trying mse");
-            let stream = timeout(spawn.connect_timeout, TcpStream::connect(spawn.addr))
-                .await
-                .map_err(|_| {
-                    std::io::Error::new(std::io::ErrorKind::TimedOut, "connect timeout")
-                })??;
-            let _ = stream.set_nodelay(true);
-            // Log the MSE outcome so a debug-level log captures whether the
-            // encrypted fallback ever succeeds. Without this, an operator
-            // troubleshooting "0 KB/s" only sees N "trying mse" lines and
-            // cannot tell whether (a) every peer also rejects MSE so no
-            // outbound peer ever connects, or (b) MSE works fine and the
-            // download is slow for some other reason
-            match connect_mse(stream, addr, &spawn).await {
+            let mse = timeout(spawn.connect_timeout, async {
+                let stream = TcpStream::connect(spawn.addr).await?;
+                let _ = stream.set_nodelay(true);
+                connect_mse(stream, addr, &spawn).await
+            })
+            .await
+            .map_err(|_| {
+                std::io::Error::new(std::io::ErrorKind::TimedOut, "mse fallback timeout")
+            })?;
+            match mse {
                 Ok(v) => {
                     tracing::debug!("mse handshake to {addr} succeeded");
                     Ok(v)
@@ -464,7 +521,7 @@ async fn connect_mse(
     spawn: &SpawnPeer,
 ) -> std::io::Result<(PeerHandle, mpsc::Receiver<PeerEvent>)> {
     let (mut read_h, mut write_h) = stream.into_split();
-    let read_timeout = spawn.read_timeout;
+    let hs_timeout = spawn.connect_timeout;
 
     // Step 1: A -> B: Ya || PadA (0..512 bytes)
     let keys = DhKeys::generate();
@@ -478,7 +535,7 @@ async fn connect_mse(
     // until we sync on HASH('req1', S) — which is how PadB is implicitly
     // delimited on our side
     let mut yb = [0u8; DH_LEN];
-    timeout(read_timeout, read_h.read_exact(&mut yb))
+    timeout(hs_timeout, read_h.read_exact(&mut yb))
         .await
         .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "mse yb timeout"))??;
     let s = keys.shared_secret(&yb)?;
@@ -517,22 +574,13 @@ async fn connect_mse(
     to_send.extend_from_slice(&payload);
     write_h.write_all(&to_send).await?;
 
-    // Step 4: scan B's reply for encrypted VC. Because rc4 0.2 does not
-    // expose Clone, and we cannot "rewind" an RC4 stream, we instead
-    // materialise the first `max_scan` bytes of our decrypt keystream up
-    // front: XORing zero bytes through `dec_in` produces the keystream,
-    // which we consume in-place while scanning for any offset where
-    // ciphertext XOR keystream[off..off+8] == VC (all-zero), i.e. where
-    // ciphertext[off..off+8] == keystream[off..off+8]
     let max_scan = 1100usize;
     let mut keystream = vec![0u8; max_scan];
     dec_in.apply_keystream(&mut keystream);
-    // dec_in has now advanced by max_scan bytes; we'll reset it below once
-    // we know the offset. To do that we recreate dec_in from the key
     let mut recv = Vec::with_capacity(max_scan);
     let mut chunk = [0u8; 256];
     let mut found_offset: Option<usize> = None;
-    let deadline = tokio::time::Instant::now() + read_timeout;
+    let deadline = tokio::time::Instant::now() + hs_timeout;
     while recv.len() < max_scan {
         let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
         if remaining.is_zero() {
@@ -1017,8 +1065,20 @@ fn finish_spawn(
         })
         .map_err(|e| std::io::Error::other(format!("{e}")))?;
 
-    tokio::spawn(reader_task(reader, event_tx));
-    tokio::spawn(writer_task(writer, cmd_rx));
+    let reader_events = event_tx.clone();
+    tokio::spawn(async move {
+        let reason = {
+            let reader = reader_task(reader, reader_events);
+            let writer = writer_task(writer, cmd_rx);
+            tokio::pin!(reader);
+            tokio::pin!(writer);
+            tokio::select! {
+                reason = &mut reader => reason,
+                reason = &mut writer => reason,
+            }
+        };
+        let _ = event_tx.send(PeerEvent::Disconnected { reason }).await;
+    });
 
     Ok((PeerHandle { addr, tx: cmd_tx }, event_rx))
 }
@@ -1152,7 +1212,10 @@ impl AsyncWrite for Rc4WriteHalf {
     }
 }
 
-async fn reader_task(mut reader: Box<dyn AsyncRead + Unpin + Send>, tx: mpsc::Sender<PeerEvent>) {
+async fn reader_task(
+    mut reader: Box<dyn AsyncRead + Unpin + Send>,
+    tx: mpsc::Sender<PeerEvent>,
+) -> String {
     // Larger temp buffer => fewer read syscalls per Piece message. Each
     // Piece reply is up to 16 KiB of payload + 13 B header; 64 KiB lets us
     // ingest several pipelined replies per syscall
@@ -1163,17 +1226,12 @@ async fn reader_task(mut reader: Box<dyn AsyncRead + Unpin + Send>, tx: mpsc::Se
             match MessageDecoder::try_decode(&mut buf) {
                 Ok(Some(msg)) => {
                     if tx.send(PeerEvent::Message(msg)).await.is_err() {
-                        return;
+                        return "event receiver closed".into();
                     }
                 }
                 Ok(None) => break,
                 Err(e) => {
-                    let _ = tx
-                        .send(PeerEvent::Disconnected {
-                            reason: format!("decode: {e}"),
-                        })
-                        .await;
-                    return;
+                    return format!("decode: {e}");
                 }
             }
         }
@@ -1181,21 +1239,11 @@ async fn reader_task(mut reader: Box<dyn AsyncRead + Unpin + Send>, tx: mpsc::Se
         buf.reserve(64 * 1024);
         match reader.read_buf(&mut buf).await {
             Ok(0) => {
-                let _ = tx
-                    .send(PeerEvent::Disconnected {
-                        reason: "eof".into(),
-                    })
-                    .await;
-                return;
+                return "eof".into();
             }
             Ok(_) => {}
             Err(e) => {
-                let _ = tx
-                    .send(PeerEvent::Disconnected {
-                        reason: format!("io: {e}"),
-                    })
-                    .await;
-                return;
+                return format!("io: {e}");
             }
         }
     }
@@ -1204,7 +1252,7 @@ async fn reader_task(mut reader: Box<dyn AsyncRead + Unpin + Send>, tx: mpsc::Se
 async fn writer_task(
     mut writer: Box<dyn AsyncWrite + Unpin + Send>,
     mut rx: mpsc::Receiver<PeerCommand>,
-) {
+) -> String {
     // Coalesce all commands currently queued into a single write_all so a
     // burst of 128 pipelined Request frames becomes one syscall instead of
     // 128. Per-message write_all + write_all overhead was a major
@@ -1234,21 +1282,26 @@ async fn writer_task(
                 Err(_) => break,
             }
         }
-        if !batch.is_empty() && writer.write_all(&batch).await.is_err() {
-            return;
+        if !batch.is_empty() {
+            if let Err(e) = writer.write_all(&batch).await {
+                return format!("write: {e}");
+            }
         }
         if disconnect {
-            let _ = writer.shutdown().await;
-            return;
+            return "local disconnect".into();
         }
     }
-    let _ = writer.shutdown().await;
+    "command channel closed".into()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::wire::Message;
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    };
     use tokio::net::TcpListener;
 
     async fn run_pair() -> (
@@ -1291,6 +1344,65 @@ mod tests {
 
         let (handle_b, rx_b) = accept_fut.await.unwrap();
         (handle_a, rx_a, handle_b, rx_b)
+    }
+
+    #[test]
+    fn alternate_dials_are_only_suppressed_for_identity_failures() {
+        for (kind, message) in [
+            (std::io::ErrorKind::ConnectionReset, "reset"),
+            (std::io::ErrorKind::UnexpectedEof, "eof"),
+            (std::io::ErrorKind::BrokenPipe, "broken pipe"),
+            (std::io::ErrorKind::NotConnected, "not connected"),
+            (std::io::ErrorKind::TimedOut, "timeout"),
+            (std::io::ErrorKind::InvalidData, "invalid handshake length"),
+        ] {
+            let err = std::io::Error::new(kind, message);
+            assert!(
+                !alternate_dial_cannot_help(&err),
+                "{kind:?} / {message} should allow an alternate dial"
+            );
+        }
+
+        assert!(alternate_dial_cannot_help(&std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "info hash mismatch",
+        )));
+        assert!(alternate_dial_cannot_help(&std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "self-connection (peer_id matches ours)",
+        )));
+    }
+
+    #[tokio::test]
+    async fn local_disconnect_promptly_closes_actor_and_emits_once() {
+        let (local, mut local_rx, remote, mut remote_rx) = run_pair().await;
+        assert!(matches!(
+            local_rx.recv().await,
+            Some(PeerEvent::Handshook { .. })
+        ));
+        assert!(matches!(
+            remote_rx.recv().await,
+            Some(PeerEvent::Handshook { .. })
+        ));
+
+        let _remote = remote;
+        local.tx.send(PeerCommand::Disconnect).await.unwrap();
+
+        let event = tokio::time::timeout(Duration::from_millis(500), local_rx.recv())
+            .await
+            .expect("local disconnect event timed out")
+            .expect("event channel closed before Disconnected");
+        assert!(matches!(
+            event,
+            PeerEvent::Disconnected { ref reason } if reason == "local disconnect"
+        ));
+        assert!(
+            tokio::time::timeout(Duration::from_millis(500), local_rx.recv())
+                .await
+                .expect("event channel did not close after Disconnected")
+                .is_none(),
+            "peer actor emitted more than one terminal event"
+        );
     }
 
     #[tokio::test]
@@ -1419,6 +1531,76 @@ mod tests {
             PeerEvent::Message(Message::Have { piece_index }) => assert_eq!(piece_index, 7),
             e => panic!("unexpected: {e:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn prefer_utp_skips_utp_when_encryption_required() {
+        use crate::utp::UtpSocket;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server_utp = UtpSocket::bind(addr).await.unwrap();
+        let client_utp = UtpSocket::bind("127.0.0.1:0".parse().unwrap())
+            .await
+            .unwrap();
+        let info_hash = Id20([7u8; 20]);
+        let peer_a = Id20([8u8; 20]);
+        let peer_b = Id20([9u8; 20]);
+        let utp_seen = Arc::new(AtomicBool::new(false));
+
+        let utp_seen_task = utp_seen.clone();
+        let utp_watch = tokio::spawn(async move {
+            if let Ok(Ok(_stream)) =
+                tokio::time::timeout(Duration::from_secs(1), server_utp.accept()).await
+            {
+                utp_seen_task.store(true, Ordering::SeqCst);
+            }
+        });
+
+        let accept_fut = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            accept(
+                stream,
+                peer_b,
+                vec![info_hash.into()],
+                Duration::from_secs(10),
+                EncryptionPolicy::RequireEncryption,
+            )
+            .await
+            .unwrap()
+        });
+
+        let (_client, mut rx_client) = connect_prefer_utp(
+            SpawnPeer {
+                addr,
+                info_hash,
+                our_peer_id: peer_a,
+                connect_timeout: Duration::from_secs(5),
+                read_timeout: Duration::from_secs(10),
+                encryption: EncryptionPolicy::RequireEncryption,
+                advertise_v2: true,
+                ext_handshake_builder: None,
+            },
+            Some(client_utp),
+        )
+        .await
+        .unwrap();
+        let (_server, mut rx_server) = accept_fut.await.unwrap();
+
+        match rx_client.recv().await.unwrap() {
+            PeerEvent::Handshook { encrypted, .. } => assert!(encrypted),
+            e => panic!("unexpected event: {e:?}"),
+        }
+        match rx_server.recv().await.unwrap() {
+            PeerEvent::Handshook { encrypted, .. } => assert!(encrypted),
+            e => panic!("unexpected event: {e:?}"),
+        }
+
+        utp_watch.await.unwrap();
+        assert!(
+            !utp_seen.load(Ordering::SeqCst),
+            "µTP should not be attempted when encryption is required"
+        );
     }
 
     #[tokio::test]

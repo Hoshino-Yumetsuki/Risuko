@@ -55,6 +55,14 @@
               {{ $t('app.browse') }}
             </button>
           </div>
+          <div
+            v-if="showTorrentNetworkInterferenceWarning"
+            role="note"
+            class="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] leading-relaxed text-amber-700 dark:text-amber-300"
+          >
+            <TriangleAlert :size="14" class="mt-0.5 shrink-0" aria-hidden="true" />
+            <span>{{ $t('task.torrent-network-interference-warning') }}</span>
+          </div>
         </div>
 
         <div class="mt-3 mb-12 px-4">
@@ -308,6 +316,7 @@ import {
 	ExternalLink,
 	FileArchive,
 	SlidersHorizontal,
+	TriangleAlert,
 	X,
 } from "@lucide/vue";
 import {
@@ -383,6 +392,7 @@ export default {
 		Download,
 		FileArchive,
 		SlidersHorizontal,
+		TriangleAlert,
 		ChevronDown,
 		ExternalLink,
 		X,
@@ -428,6 +438,14 @@ export default {
 		},
 		draftLinkCount(): number {
 			return splitTaskLinks(this.uriDraft || "").length;
+		},
+		showTorrentNetworkInterferenceWarning(): boolean {
+			return (
+				this.queue.some(
+					(item) => item.kind === "magnet" || item.kind === "torrent",
+				) ||
+				splitTaskLinks(this.uriDraft || "").some((uri) => /^magnet:/i.test(uri))
+			);
 		},
 		canSubmit(): boolean {
 			return this.queue.length > 0 || this.draftLinkCount > 0;

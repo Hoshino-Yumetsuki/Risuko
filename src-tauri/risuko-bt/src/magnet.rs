@@ -1,9 +1,5 @@
 //! Magnet URI → info-dict resolution
 //!
-//! Discovers peers via user-supplied trackers and the process-wide warm DHT
-//! (`Dht::shared`), then downloads the `info` dict from them using BEP-9
-//! (ut_metadata)
-
 use std::collections::{BTreeMap, HashSet};
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -20,7 +16,7 @@ use super::core::{
     generate_peer_id, parse_info_v2_from_bytes, Id20, Id32, Magnet, ValidatedTorrentMetaV2Info,
 };
 use super::dht::Dht;
-use super::peer::{connect, PeerCommand, PeerEvent, SpawnPeer};
+use super::peer::{connect_with_utp_fallback, PeerCommand, PeerEvent, SpawnPeer};
 use super::tracker::{announce, AnnounceEvent, AnnounceRequest};
 use super::wire::extended::{
     parse_ut_metadata, ut_metadata_request, ut_metadata_type, ExtHandshake, EXT_HANDSHAKE_ID,
@@ -34,28 +30,21 @@ const OUR_UT_PEX_ID: u8 = 4;
 const TRACKER_TIMEOUT: Duration = Duration::from_secs(10);
 const PEER_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const PEER_READ_TIMEOUT: Duration = Duration::from_secs(10);
-/// Per-peer ceiling: enough to fetch a full info dict + every file's piece
-/// layer over `HASH_REQUEST` on a single connection without timing out
 const PEER_TOTAL_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_CONCURRENT_PEERS: usize = 128;
-/// Stable error-message prefix used by the engine error classifier to map a
-/// failed pure-v2 magnet resolution onto a typed error code. Keep in sync
-/// with `risuko-engine::engine::error_code`
 pub const ERR_PIECE_LAYERS_UNAVAILABLE: &str = "piece layers unavailable";
 
-/// Resolution result: the wire info-hash, raw bencoded info dict, the
-/// optional v2 SHA-256 info-hash (when the magnet was hybrid or pure-v2),
-/// and the union of trackers (magnet's `tr=` + caller-supplied)
+/// Resolution result
 pub struct Resolved {
     pub info_hash: Id20,
     pub info_hash_v2: Option<Id32>,
     pub info_bytes: Vec<u8>,
     pub trackers: Vec<String>,
-    /// BEP 52 piece layers fetched from peers via `HASH_REQUEST`. Keyed by
-    /// each file's `pieces root`. Empty for v1-only magnets and for v2
-    /// magnets whose every file fits in a single piece (no layer required)
     pub piece_layers: BTreeMap<Id32, Vec<u8>>,
+    pub peers: Vec<SocketAddr>,
 }
+
+const DEFAULT_LISTEN_PORT: u16 = 6881;
 
 /// Resolve a magnet URI to its raw info dict
 pub async fn resolve(
@@ -64,12 +53,55 @@ pub async fn resolve(
     budget: Duration,
     encryption: crate::peer::EncryptionPolicy,
 ) -> Result<Resolved, String> {
-    resolve_with_peers(magnet_uri, extra_trackers, &[], budget, encryption).await
+    resolve_with_port(
+        magnet_uri,
+        extra_trackers,
+        DEFAULT_LISTEN_PORT,
+        budget,
+        encryption,
+    )
+    .await
 }
 
-/// Like [`resolve`] but seeds the peer pool with explicitly known
-/// addresses (in addition to tracker / DHT discovery). Used by tests and
-/// callers that have cached peers from a prior session
+/// Resolve a magnet while advertising the caller's real peer-listen port
+pub async fn resolve_with_port(
+    magnet_uri: &str,
+    extra_trackers: &[String],
+    listen_port: u16,
+    budget: Duration,
+    encryption: crate::peer::EncryptionPolicy,
+) -> Result<Resolved, String> {
+    resolve_with_port_and_utp(
+        magnet_uri,
+        extra_trackers,
+        listen_port,
+        budget,
+        encryption,
+        None,
+    )
+    .await
+}
+
+pub async fn resolve_with_port_and_utp(
+    magnet_uri: &str,
+    extra_trackers: &[String],
+    listen_port: u16,
+    budget: Duration,
+    encryption: crate::peer::EncryptionPolicy,
+    utp: Option<Arc<crate::utp::UtpSocket>>,
+) -> Result<Resolved, String> {
+    resolve_with_peers_and_port_and_utp(
+        magnet_uri,
+        extra_trackers,
+        &[],
+        listen_port,
+        budget,
+        encryption,
+        utp,
+    )
+    .await
+}
+
 pub async fn resolve_with_peers(
     magnet_uri: &str,
     extra_trackers: &[String],
@@ -77,30 +109,67 @@ pub async fn resolve_with_peers(
     budget: Duration,
     encryption: crate::peer::EncryptionPolicy,
 ) -> Result<Resolved, String> {
+    resolve_with_peers_and_port(
+        magnet_uri,
+        extra_trackers,
+        extra_peers,
+        DEFAULT_LISTEN_PORT,
+        budget,
+        encryption,
+    )
+    .await
+}
+
+pub async fn resolve_with_peers_and_port(
+    magnet_uri: &str,
+    extra_trackers: &[String],
+    extra_peers: &[SocketAddr],
+    listen_port: u16,
+    budget: Duration,
+    encryption: crate::peer::EncryptionPolicy,
+) -> Result<Resolved, String> {
+    resolve_with_peers_and_port_and_utp(
+        magnet_uri,
+        extra_trackers,
+        extra_peers,
+        listen_port,
+        budget,
+        encryption,
+        None,
+    )
+    .await
+}
+
+pub async fn resolve_with_peers_and_port_and_utp(
+    magnet_uri: &str,
+    extra_trackers: &[String],
+    extra_peers: &[SocketAddr],
+    listen_port: u16,
+    budget: Duration,
+    encryption: crate::peer::EncryptionPolicy,
+    utp: Option<Arc<crate::utp::UtpSocket>>,
+) -> Result<Resolved, String> {
     let magnet = Magnet::parse(magnet_uri).map_err(|e| e.to_string())?;
     let info_hash = magnet.info_hash();
     let want_v1 = magnet.info_hash_v1();
     let want_v2 = magnet.info_hash_v2();
     let advertise_v2 = want_v1.is_none() && want_v2.is_some();
 
-    let mut trackers: Vec<String> = magnet.trackers.clone();
-    for t in extra_trackers {
-        if !trackers.iter().any(|x| x == t) {
-            trackers.push(t.clone());
+    let mut trackers: Vec<String> = Vec::new();
+    for t in magnet.trackers.iter().chain(extra_trackers.iter()) {
+        for part in expand_tracker_entries(t) {
+            if !trackers.iter().any(|x| x == &part) {
+                trackers.push(part);
+            }
         }
     }
 
     let our_peer_id = generate_peer_id();
-    let req = AnnounceRequest {
-        info_hash,
-        peer_id: our_peer_id,
-        port: 6881,
-        uploaded: 0,
-        downloaded: 0,
-        left: 0,
-        event: AnnounceEvent::Started,
-        num_want: 200,
-    };
+    // Announce as a leecher (`left != 0`). `left: 0` marks us as a seeder and
+    // trackers then return other leechers — useless for metadata fetch and for
+    // the peer list we hand off to the download. Size is unknown until the
+    // info dict arrives, so use a large sentinel (common BT client practice).
+    let req = metadata_announce_request(info_hash, our_peer_id, listen_port);
 
     let deadline = Instant::now() + budget;
     let started = Instant::now();
@@ -155,8 +224,8 @@ pub async fn resolve_with_peers(
     }
     drop(peer_tx);
 
-    // First successful (info, piece_layers) pair wins via this oneshot
-    type ResolvedPayload = (Vec<u8>, BTreeMap<Id32, Vec<u8>>);
+    // First successful (info, piece_layers, winner_addr) triple wins via this oneshot
+    type ResolvedPayload = (Vec<u8>, BTreeMap<Id32, Vec<u8>>, SocketAddr);
     let (result_tx, result_rx) = oneshot::channel::<ResolvedPayload>();
     let result_tx: Arc<Mutex<Option<oneshot::Sender<ResolvedPayload>>>> =
         Arc::new(Mutex::new(Some(result_tx)));
@@ -169,14 +238,29 @@ pub async fn resolve_with_peers(
 
     // Bound fan-out so we don't open thousands of sockets
     let sem = Arc::new(Semaphore::new(MAX_CONCURRENT_PEERS));
+    // Shared so we can hand discovered peers to the download after resolve.
+    // A fan-in task owns `peer_rx` and records every addr before dialing.
+    let discovered: Arc<Mutex<HashSet<SocketAddr>>> = Arc::new(Mutex::new(HashSet::new()));
+    let (dial_tx, mut dial_rx) = mpsc::unbounded_channel::<SocketAddr>();
+    let fan_discovered = discovered.clone();
+    let fan_in = tokio::spawn(async move {
+        while let Some(addr) = peer_rx.recv().await {
+            if !is_dialable_peer_addr(addr) {
+                continue;
+            }
+            if fan_discovered.lock().insert(addr) {
+                let _ = dial_tx.send(addr);
+            }
+        }
+    });
 
     // Driver: consume peer addresses and spawn bounded fetch tasks
     let driver = {
         let result_tx = result_tx.clone();
         let sem = sem.clone();
         let layers_failed = layers_failed.clone();
+        let utp = utp.clone();
         async move {
-            let mut seen: HashSet<SocketAddr> = HashSet::new();
             let mut joinset: JoinSet<()> = JoinSet::new();
 
             loop {
@@ -185,7 +269,7 @@ pub async fn resolve_with_peers(
                     break;
                 }
                 tokio::select! {
-                    maybe = peer_rx.recv() => {
+                    maybe = dial_rx.recv() => {
                         let Some(addr) = maybe else {
                             // Trackers drained; wait for in-flight to finish
                             while joinset.join_next().await.is_some() {
@@ -193,7 +277,6 @@ pub async fn resolve_with_peers(
                             }
                             break;
                         };
-                        if !seen.insert(addr) { continue; }
 
                         let permit = match Arc::clone(&sem).acquire_owned().await {
                             Ok(p) => p,
@@ -201,11 +284,19 @@ pub async fn resolve_with_peers(
                         };
                         let result_tx = result_tx.clone();
                         let layers_failed = layers_failed.clone();
+                        let utp = utp.clone();
                         joinset.spawn(async move {
                             let _permit = permit;
                             let fetched = tokio::time::timeout(
                                 PEER_TOTAL_TIMEOUT,
-                                try_fetch_from_peer(addr, info_hash, our_peer_id, encryption, advertise_v2),
+                                try_fetch_from_peer(
+                                    addr,
+                                    info_hash,
+                                    our_peer_id,
+                                    encryption,
+                                    advertise_v2,
+                                    utp,
+                                ),
                             )
                             .await
                             .ok()
@@ -240,7 +331,7 @@ pub async fn resolve_with_peers(
                             if !layers_complete {
                                 if can_use_v1_metadata_without_piece_layers(want_v1, &bytes) {
                                     if let Some(tx) = result_tx.lock().take() {
-                                        let _ = tx.send((bytes, BTreeMap::new()));
+                                        let _ = tx.send((bytes, BTreeMap::new(), addr));
                                     }
                                     return;
                                 }
@@ -252,7 +343,7 @@ pub async fn resolve_with_peers(
                                 return;
                             }
                             if let Some(tx) = result_tx.lock().take() {
-                                let _ = tx.send((bytes, layers));
+                                let _ = tx.send((bytes, layers, addr));
                             }
                         });
                     }
@@ -277,16 +368,33 @@ pub async fn resolve_with_peers(
     if let Some(h) = dht_handle {
         h.abort();
     }
+    // Brief wait so fan-in can record peers already in-flight before senders drop
+    let _ = tokio::time::timeout(Duration::from_millis(200), fan_in).await;
+
+    let peers: Vec<SocketAddr> = discovered.lock().iter().copied().collect();
 
     match winner {
-        Some((info_bytes, piece_layers)) => {
-            tracing::info!("Resolved magnet in {:?}", started.elapsed());
+        Some((info_bytes, piece_layers, winner_addr)) => {
+            // Prefer the peer that already served metadata — they are a proven
+            // live contact for the subsequent download.
+            let mut peers = peers;
+            if let Some(pos) = peers.iter().position(|a| *a == winner_addr) {
+                peers.swap(0, pos);
+            } else if is_dialable_peer_addr(winner_addr) {
+                peers.insert(0, winner_addr);
+            }
+            tracing::info!(
+                "Resolved magnet in {:?} ({} peers discovered, winner={winner_addr})",
+                started.elapsed(),
+                peers.len()
+            );
             Ok(Resolved {
                 info_hash,
                 info_hash_v2: want_v2,
                 info_bytes,
                 trackers,
                 piece_layers,
+                peers,
             })
         }
         None => {
@@ -304,6 +412,66 @@ pub async fn resolve_with_peers(
             }
         }
     }
+}
+
+fn metadata_announce_request(info_hash: Id20, peer_id: Id20, listen_port: u16) -> AnnounceRequest {
+    AnnounceRequest {
+        info_hash,
+        peer_id,
+        port: listen_port,
+        uploaded: 0,
+        downloaded: 0,
+        left: u64::MAX / 2,
+        event: AnnounceEvent::Started,
+        num_want: 200,
+    }
+}
+
+fn expand_tracker_entries(raw: &str) -> Vec<String> {
+    raw.split([',', '\n', '\r'])
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+pub fn is_dialable_peer_addr(addr: SocketAddr) -> bool {
+    if addr.port() == 0 {
+        return false;
+    }
+    match addr.ip() {
+        std::net::IpAddr::V4(ip) => {
+            if ip.is_unspecified() || ip.is_broadcast() || ip.is_multicast() || ip.is_link_local() {
+                return false;
+            }
+            // Cloudflare anycast shows up via PEX/DHT as "peers" that always
+            // time out and burn dial slots (162.158/15, 172.64/13, …).
+            !is_cloudflare_v4(ip)
+        }
+        std::net::IpAddr::V6(ip) => {
+            !(ip.is_unspecified() || ip.is_multicast() || ip.is_unicast_link_local())
+        }
+    }
+}
+
+fn is_cloudflare_v4(ip: std::net::Ipv4Addr) -> bool {
+    let o = ip.octets();
+    matches!(
+        (o[0], o[1]),
+        (162, 158 | 159) // 162.158.0.0/15
+            | (172, 64..=71) // 172.64.0.0/13
+            | (104, 16..=31) // 104.16.0.0/12 (covers /13 published ranges)
+            | (173, 245) // 173.245.48.0/20 — coarse; rare false positives OK
+            | (108, 162) // 108.162.192.0/18
+            | (141, 101) // 141.101.64.0/18
+            | (188, 114) // 188.114.96.0/20
+            | (190, 93) // 190.93.240.0/20
+            | (197, 234) // 197.234.240.0/22
+            | (198, 41) // 198.41.128.0/17
+    ) || matches!(
+        (o[0], o[1], o[2]),
+        (103, 21, 244..=247) | (103, 22, 200..=203) | (103, 31, 4..=7) | (131, 0, 72..=75)
+    )
 }
 
 fn can_use_v1_metadata_without_piece_layers(want_v1: Option<Id20>, info_bytes: &[u8]) -> bool {
@@ -337,6 +505,7 @@ async fn try_fetch_from_peer(
     our_peer_id: Id20,
     encryption: crate::peer::EncryptionPolicy,
     advertise_v2: bool,
+    utp: Option<Arc<crate::utp::UtpSocket>>,
 ) -> Option<(Vec<u8>, BTreeMap<Id32, Vec<u8>>, bool)> {
     // Build a per-peer extended-handshake builder. The connection layer
     // invokes it once with the peer's IP so `yourip` matches that peer —
@@ -352,16 +521,19 @@ async fn try_fetch_from_peer(
                 payload: hs.encode(),
             })
         });
-    let (handle, rx) = connect(SpawnPeer {
-        addr,
-        info_hash,
-        our_peer_id,
-        connect_timeout: PEER_CONNECT_TIMEOUT,
-        read_timeout: PEER_READ_TIMEOUT,
-        encryption,
-        advertise_v2,
-        ext_handshake_builder: Some(ext_handshake_builder),
-    })
+    let (handle, rx) = connect_with_utp_fallback(
+        SpawnPeer {
+            addr,
+            info_hash,
+            our_peer_id,
+            connect_timeout: PEER_CONNECT_TIMEOUT,
+            read_timeout: PEER_READ_TIMEOUT,
+            encryption,
+            advertise_v2,
+            ext_handshake_builder: Some(ext_handshake_builder),
+        },
+        utp,
+    )
     .await
     .ok()?;
 
@@ -683,6 +855,18 @@ mod tests {
     use super::*;
 
     #[test]
+    fn metadata_announce_uses_supplied_listen_port() {
+        let info_hash = Id20::from_slice(&[1u8; 20]).unwrap();
+        let peer_id = Id20::from_slice(&[2u8; 20]).unwrap();
+        let request = metadata_announce_request(info_hash, peer_id, 51_234);
+
+        assert_eq!(request.port, 51_234);
+        assert_eq!(request.info_hash, info_hash);
+        assert_eq!(request.peer_id, peer_id);
+        assert_eq!(request.event, AnnounceEvent::Started);
+    }
+
+    #[test]
     fn synth_torrent_round_trips_through_parse() {
         use crate::bencode::{encode_to_vec, Value};
         let pieces = vec![0u8; 20];
@@ -701,6 +885,21 @@ mod tests {
         assert_eq!(
             meta.announce.as_deref(),
             Some("http://tracker.example/announce")
+        );
+    }
+
+    #[test]
+    fn expand_tracker_entries_splits_newlines_and_commas() {
+        let parts = expand_tracker_entries(
+            "udp://a:1/announce\n\nudp://b:2/announce,http://c:3/announce\r\n",
+        );
+        assert_eq!(
+            parts,
+            vec![
+                "udp://a:1/announce".to_string(),
+                "udp://b:2/announce".to_string(),
+                "http://c:3/announce".to_string(),
+            ]
         );
     }
 
@@ -764,5 +963,18 @@ mod tests {
         // here, so the runtime falls back to the v1 download path
         assert!(meta.info_v2.is_some());
         assert!(!crate::core::supports_v2_wire(&meta));
+    }
+
+    #[test]
+    fn dialable_filter_drops_cloudflare_anycast() {
+        use std::net::{Ipv4Addr, SocketAddr};
+        let cf: SocketAddr = (Ipv4Addr::new(162, 158, 179, 174), 6881).into();
+        let cf2: SocketAddr = (Ipv4Addr::new(172, 71, 219, 4), 60329).into();
+        let ok: SocketAddr = (Ipv4Addr::new(111, 193, 237, 96), 34000).into();
+        let loopback: SocketAddr = (Ipv4Addr::LOCALHOST, 6881).into();
+        assert!(!is_dialable_peer_addr(cf));
+        assert!(!is_dialable_peer_addr(cf2));
+        assert!(is_dialable_peer_addr(ok));
+        assert!(is_dialable_peer_addr(loopback));
     }
 }

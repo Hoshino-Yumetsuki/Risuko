@@ -1,9 +1,14 @@
+use futures_util::FutureExt;
 use risuko_bt as bt;
 use serde_json::{Map, Value};
-use std::net::Ipv4Addr;
+use std::collections::HashMap;
+use std::future::Future;
+use std::net::{Ipv4Addr, SocketAddr};
+use std::panic::AssertUnwindSafe;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
+use tokio::sync::{watch, Mutex};
 
 /// BitTorrent session tuning passed from the user/system config. All
 /// fields are optional; missing entries fall back to `risuko-bt` defaults
@@ -32,11 +37,120 @@ pub struct BtHealthSnapshot {
     pub dht_nodes: usize,
 }
 
+#[derive(Debug)]
+struct ResolvedMagnetMeta {
+    bytes: Arc<[u8]>,
+    peers: Arc<[SocketAddr]>,
+}
+
+struct CachedMagnetMeta {
+    meta: Arc<ResolvedMagnetMeta>,
+    expires_at: Instant,
+}
+
+type SharedMagnetResult = Result<Arc<ResolvedMagnetMeta>, Arc<str>>;
+
+#[derive(Default)]
+struct MagnetMetaCacheState {
+    completed: HashMap<[u8; 20], CachedMagnetMeta>,
+    in_flight: HashMap<[u8; 20], watch::Sender<Option<SharedMagnetResult>>>,
+}
+
+#[derive(Clone, Default)]
+struct MagnetMetaCache {
+    state: Arc<Mutex<MagnetMetaCacheState>>,
+}
+
+const MAGNET_META_CACHE_TTL: Duration = Duration::from_secs(120);
+
+impl MagnetMetaCache {
+    async fn get_or_resolve<F, Fut>(
+        &self,
+        key: [u8; 20],
+        resolver: F,
+    ) -> Result<Arc<ResolvedMagnetMeta>, String>
+    where
+        F: FnOnce() -> Fut + Send + 'static,
+        Fut: Future<Output = Result<ResolvedMagnetMeta, String>> + Send + 'static,
+    {
+        let receiver = {
+            let mut state = self.state.lock().await;
+            let now = Instant::now();
+            state.completed.retain(|_, entry| entry.expires_at > now);
+
+            if let Some(entry) = state.completed.get(&key) {
+                tracing::info!(
+                    "Magnet metadata cache hit ({} peers)",
+                    entry.meta.peers.len()
+                );
+                return Ok(entry.meta.clone());
+            }
+
+            if let Some(sender) = state.in_flight.get(&key) {
+                tracing::info!("Joining in-flight magnet metadata resolution");
+                sender.subscribe()
+            } else {
+                let (sender, receiver) = watch::channel(None);
+                state.in_flight.insert(key, sender.clone());
+
+                let cache = self.clone();
+                tokio::spawn(async move {
+                    let result = match AssertUnwindSafe(async move { resolver().await })
+                        .catch_unwind()
+                        .await
+                    {
+                        Ok(result) => result.map(Arc::new).map_err(Arc::<str>::from),
+                        Err(_) => {
+                            tracing::warn!("Magnet metadata resolver panicked");
+                            Err(Arc::<str>::from("Magnet metadata resolver panicked"))
+                        }
+                    };
+
+                    {
+                        let mut state = cache.state.lock().await;
+                        if let Ok(meta) = &result {
+                            state.completed.insert(
+                                key,
+                                CachedMagnetMeta {
+                                    meta: meta.clone(),
+                                    expires_at: Instant::now() + MAGNET_META_CACHE_TTL,
+                                },
+                            );
+                        }
+                        state.in_flight.remove(&key);
+                    }
+
+                    let _ = sender.send(Some(result));
+                });
+
+                receiver
+            }
+        };
+
+        Self::await_result(receiver).await
+    }
+
+    async fn await_result(
+        mut receiver: watch::Receiver<Option<SharedMagnetResult>>,
+    ) -> Result<Arc<ResolvedMagnetMeta>, String> {
+        loop {
+            if let Some(result) = receiver.borrow().clone() {
+                return result.map_err(|error| error.to_string());
+            }
+            receiver
+                .changed()
+                .await
+                .map_err(|_| "Magnet metadata resolver stopped unexpectedly".to_string())?;
+        }
+    }
+}
+
 /// BitTorrent download management via the in-tree `risuko-bt` engine
 #[derive(Clone)]
 pub struct TorrentEngine {
     session: Option<Arc<bt::Session>>,
     output_dir: PathBuf,
+    magnet_cache: MagnetMetaCache,
 }
 
 impl TorrentEngine {
@@ -74,6 +188,7 @@ impl TorrentEngine {
         Ok(Self {
             session: Some(session),
             output_dir: output_dir.to_path_buf(),
+            magnet_cache: MagnetMetaCache::default(),
         })
     }
 
@@ -139,6 +254,16 @@ impl TorrentEngine {
         data: &[u8],
         options: &Map<String, Value>,
     ) -> Result<TorrentHandle, String> {
+        self.add_torrent_bytes_with_peers(data, options, Vec::new())
+            .await
+    }
+
+    pub async fn add_torrent_bytes_with_peers(
+        &self,
+        data: &[u8],
+        options: &Map<String, Value>,
+        initial_peers: Vec<std::net::SocketAddr>,
+    ) -> Result<TorrentHandle, String> {
         let session = self.get_session()?;
 
         let dir = options
@@ -163,6 +288,7 @@ impl TorrentEngine {
             only_files,
             list_only: false,
             create_subfolder,
+            initial_peers,
         };
 
         tracing::info!("Adding torrent bytes ({} bytes) to dir={}", data.len(), dir);
@@ -190,28 +316,18 @@ impl TorrentEngine {
         options: &Map<String, Value>,
         timeout_secs: u64,
     ) -> Result<TorrentHandle, String> {
-        let trackers = Self::parse_trackers(options);
-        let enc = encryption_policy_from_str(
-            options.get("bt-encryption-policy").and_then(|v| v.as_str()),
-        );
-        let resolved = bt::magnet::resolve(
-            magnet_uri,
-            &trackers,
-            Duration::from_secs(timeout_secs),
-            enc,
-        )
-        .await
-        .map_err(|e| format!("Failed to resolve magnet: {}", e))?;
-
-        let bytes = bt::magnet::synth_torrent_bytes(
-            &resolved.info_bytes,
-            &resolved.trackers,
-            &resolved.piece_layers,
-        );
+        let (bytes, peers) = self
+            .resolve_magnet_bytes(magnet_uri, options, timeout_secs)
+            .await?;
 
         save_torrent_metadata_if_enabled(&bytes, options, &self.output_dir).await;
 
-        self.add_torrent_bytes(&bytes, options).await
+        tracing::info!(
+            "Magnet resolved with {} discovered peers; seeding download",
+            peers.len()
+        );
+        self.add_torrent_bytes_with_peers(&bytes, options, peers)
+            .await
     }
 
     pub async fn resolve_magnet(
@@ -234,31 +350,11 @@ impl TorrentEngine {
             }
         }
 
-        let trackers = Self::parse_trackers(options);
         tracing::info!("Resolving magnet metadata: {}", magnet_uri);
         let start = std::time::Instant::now();
-
-        let enc = encryption_policy_from_str(
-            options.get("bt-encryption-policy").and_then(|v| v.as_str()),
-        );
-        let resolved = tokio::time::timeout(
-            Duration::from_secs(timeout_secs),
-            bt::magnet::resolve(
-                magnet_uri,
-                &trackers,
-                Duration::from_secs(timeout_secs),
-                enc,
-            ),
-        )
-        .await
-        .map_err(|_| "Timed out resolving magnet metadata".to_string())?
-        .map_err(|e| format!("Failed to resolve magnet: {}", e))?;
-
-        let torrent_bytes = bt::magnet::synth_torrent_bytes(
-            &resolved.info_bytes,
-            &resolved.trackers,
-            &resolved.piece_layers,
-        );
+        let (torrent_bytes, _) = self
+            .resolve_magnet_bytes(magnet_uri, options, timeout_secs)
+            .await?;
         let meta = bt::parse_torrent(&torrent_bytes)
             .map_err(|e| format!("Failed to parse resolved metadata: {}", e))?;
         let files = extract_file_details(&meta.info);
@@ -270,15 +366,90 @@ impl TorrentEngine {
         Ok(files)
     }
 
+    async fn resolve_magnet_bytes(
+        &self,
+        magnet_uri: &str,
+        options: &Map<String, Value>,
+        timeout_secs: u64,
+    ) -> Result<(Vec<u8>, Vec<SocketAddr>), String> {
+        let info_hash_key = bt::Magnet::parse(magnet_uri)
+            .ok()
+            .map(|m| *m.info_hash().as_bytes());
+        let trackers = Self::parse_trackers(options);
+        let enc = encryption_policy_from_str(
+            options.get("bt-encryption-policy").and_then(|v| v.as_str()),
+        );
+        let session = self.get_session()?;
+        let listen_port = session.listen_port();
+        let utp = session.utp_socket();
+        let magnet_uri = magnet_uri.to_string();
+
+        let resolve = move || async move {
+            Self::resolve_magnet_uncached(magnet_uri, trackers, listen_port, timeout_secs, enc, utp)
+                .await
+        };
+
+        let resolved = match info_hash_key {
+            Some(key) => self.magnet_cache.get_or_resolve(key, resolve).await?,
+            None => Arc::new(resolve().await?),
+        };
+
+        Ok((resolved.bytes.to_vec(), resolved.peers.to_vec()))
+    }
+
+    async fn resolve_magnet_uncached(
+        magnet_uri: String,
+        trackers: Vec<String>,
+        listen_port: u16,
+        timeout_secs: u64,
+        enc: bt::EncryptionPolicy,
+        utp: Option<Arc<bt::utp::UtpSocket>>,
+    ) -> Result<ResolvedMagnetMeta, String> {
+        let resolved = tokio::time::timeout(
+            Duration::from_secs(timeout_secs),
+            bt::magnet::resolve_with_port_and_utp(
+                &magnet_uri,
+                &trackers,
+                listen_port,
+                Duration::from_secs(timeout_secs),
+                enc,
+                utp,
+            ),
+        )
+        .await
+        .map_err(|_| "Timed out resolving magnet metadata".to_string())?
+        .map_err(|e| format!("Failed to resolve magnet: {}", e))?;
+
+        Ok(ResolvedMagnetMeta {
+            bytes: Arc::from(
+                bt::magnet::synth_torrent_bytes(
+                    &resolved.info_bytes,
+                    &resolved.trackers,
+                    &resolved.piece_layers,
+                )
+                .into_boxed_slice(),
+            ),
+            peers: Arc::from(resolved.peers.into_boxed_slice()),
+        })
+    }
+
     fn parse_trackers(options: &Map<String, Value>) -> Vec<String> {
-        options
+        let raw = options
             .get("bt-tracker")
             .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .split(',')
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect()
+            .unwrap_or("");
+        let mut out = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        for part in raw.split([',', '\n', '\r']) {
+            let t = part.trim();
+            if t.is_empty() {
+                continue;
+            }
+            if seen.insert(t.to_string()) {
+                out.push(t.to_string());
+            }
+        }
+        out
     }
 
     pub fn get_torrent_stats(&self, torrent_id: usize) -> Option<TorrentStats> {
@@ -555,6 +726,117 @@ fn encryption_policy_from_str(s: Option<&str>) -> bt::EncryptionPolicy {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    fn resolved_meta(byte: u8) -> ResolvedMagnetMeta {
+        ResolvedMagnetMeta {
+            bytes: Arc::from(vec![byte].into_boxed_slice()),
+            peers: Arc::from(Vec::<SocketAddr>::new().into_boxed_slice()),
+        }
+    }
+
+    #[tokio::test]
+    async fn magnet_cache_singleflights_concurrent_callers() {
+        let cache = MagnetMetaCache::default();
+        let key = [7; 20];
+        let calls = Arc::new(AtomicUsize::new(0));
+
+        let first_calls = calls.clone();
+        let first = cache.get_or_resolve(key, move || async move {
+            first_calls.fetch_add(1, Ordering::SeqCst);
+            tokio::time::sleep(Duration::from_millis(25)).await;
+            Ok(resolved_meta(42))
+        });
+
+        let second_calls = calls.clone();
+        let second = cache.get_or_resolve(key, move || async move {
+            second_calls.fetch_add(1, Ordering::SeqCst);
+            tokio::time::sleep(Duration::from_millis(25)).await;
+            Ok(resolved_meta(42))
+        });
+
+        let (first, second) = tokio::join!(first, second);
+        assert_eq!(first.unwrap().bytes.as_ref(), &[42]);
+        assert_eq!(second.unwrap().bytes.as_ref(), &[42]);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+        let cached_calls = calls.clone();
+        let cached = cache
+            .get_or_resolve(key, move || async move {
+                cached_calls.fetch_add(1, Ordering::SeqCst);
+                Ok(resolved_meta(99))
+            })
+            .await
+            .unwrap();
+        assert_eq!(cached.bytes.as_ref(), &[42]);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn magnet_cache_failure_does_not_poison_retry() {
+        let cache = MagnetMetaCache::default();
+        let key = [9; 20];
+
+        let error = cache
+            .get_or_resolve(key, || async { Err("first attempt failed".to_string()) })
+            .await
+            .unwrap_err();
+        assert_eq!(error, "first attempt failed");
+
+        let retried = cache
+            .get_or_resolve(key, || async { Ok(resolved_meta(11)) })
+            .await
+            .unwrap();
+        assert_eq!(retried.bytes.as_ref(), &[11]);
+    }
+
+    #[tokio::test]
+    async fn magnet_cache_panic_does_not_leave_in_flight_entry() {
+        let cache = MagnetMetaCache::default();
+        let key = [4; 20];
+
+        let error = tokio::time::timeout(Duration::from_secs(1), async {
+            cache
+                .get_or_resolve(key, || async {
+                    panic!("resolver boom");
+                    #[allow(unreachable_code)]
+                    Ok(resolved_meta(0))
+                })
+                .await
+        })
+        .await
+        .expect("panicked resolver should not hang")
+        .unwrap_err();
+        assert_eq!(error, "Magnet metadata resolver panicked");
+
+        let retried = tokio::time::timeout(Duration::from_secs(1), async {
+            cache
+                .get_or_resolve(key, || async { Ok(resolved_meta(12)) })
+                .await
+        })
+        .await
+        .expect("retry after resolver panic should not hang")
+        .unwrap();
+        assert_eq!(retried.bytes.as_ref(), &[12]);
+    }
+
+    #[test]
+    fn parse_trackers_splits_newlines_and_commas() {
+        let mut opts = Map::new();
+        opts.insert(
+            "bt-tracker".into(),
+            json!("udp://a:1/announce\n\nudp://b:2/announce,http://c:3/announce\r\nudp://a:1/announce"),
+        );
+        assert_eq!(
+            TorrentEngine::parse_trackers(&opts),
+            vec![
+                "udp://a:1/announce".to_string(),
+                "udp://b:2/announce".to_string(),
+                "http://c:3/announce".to_string(),
+            ]
+        );
+    }
 
     #[test]
     fn encryption_policy_known_values() {

@@ -315,6 +315,8 @@ export default {
 	"batch-queue-empty":
 		"Paste links above or drop .torrent files here to build a queue.",
 	"batch-drop-hint": "Drop .torrent files here, or click to browse",
+	"torrent-network-interference-warning":
+		"System proxies, VPNs, proxy clients, and tunnel or network-filtering software may reduce tracker, DHT, and peer connectivity, resulting in slower torrent downloads.",
 	"batch-remove-item": "Remove",
 	"batch-item-magnet-resolving": "Resolving magnet…",
 	"batch-item-resolve-failed": "Failed to resolve",

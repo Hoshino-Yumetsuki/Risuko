@@ -386,8 +386,8 @@
               <div class="settings-row-action">
                 <NumberInput
                   v-model="form.btMaxOutstandingPerPeer"
-                  :min="8"
-                  :max="512"
+                  :min="0"
+                  :max="256"
                   :step="1"
                 />
               </div>
@@ -1395,7 +1395,7 @@ const initForm = (config) => {
 		externalEngineSecret: externalEngineSecret || "",
 		btTracker: convertCommaToLine(btTracker),
 		btMaxPeersPerTorrent: btMaxPeersPerTorrent ?? 100,
-		btMaxOutstandingPerPeer: btMaxOutstandingPerPeer ?? 128,
+		btMaxOutstandingPerPeer: btMaxOutstandingPerPeer ?? 0,
 		btEnableUpnp: parseBooleanConfig(btEnableUpnp, true),
 		btUpnpLease: btUpnpLease ?? 300,
 		btEnableLsd: parseBooleanConfig(btEnableLsd, true),

@@ -17,19 +17,10 @@ use super::core::{generate_peer_id, Id20, Lengths};
 use super::peer::{KnownInfoHash, PeerCommand, PeerEvent};
 use super::torrent::{spawn as spawn_torrent, ManagedTorrent, TorrentCommand, TorrentInit};
 
-/// Read-only snapshot of the UPnP forwarder state for diagnostics
 #[derive(Debug, Clone, Copy)]
 pub struct UpnpStatus {
-    /// True if the forwarder was started (config enabled) at session
-    /// creation. False means UPnP is disabled by config
     pub enabled: bool,
-    /// Number of mappings the router has currently confirmed. Zero is
-    /// possible while the first discovery pass is in flight
     pub mapping_count: usize,
-    /// Number of completed discover/map passes. Zero means the forwarder
-    /// hasn't finished its first attempt yet (still negotiating); >= 1
-    /// with `mapping_count == 0` means no IGD responded — the router
-    /// likely doesn't speak UPnP or has it blocked
     pub discovery_attempts: usize,
 }
 
@@ -37,12 +28,7 @@ pub struct UpnpStatus {
 pub struct ListenerOptions {
     pub listen_addr: Option<SocketAddr>,
     pub enable_upnp_port_forwarding: bool,
-    /// Optional override for UPnP mapping lease (default 300s when UPnP is
-    /// enabled). Only consulted if `enable_upnp_port_forwarding` is true
     pub upnp_lease: Option<std::time::Duration>,
-    /// Also bind an IPv6 TCP listener on the same port. Opt-in because many
-    /// hosts lack global v6 connectivity; a failed v6 bind is logged and
-    /// ignored rather than aborting session startup
     pub listen_ipv6: bool,
 }
 
@@ -50,20 +36,10 @@ pub struct ListenerOptions {
 pub struct SessionOptions {
     pub disable_dht: bool,
     pub listen: Option<ListenerOptions>,
-    /// Maximum concurrent chunk requests per peer. Higher values improve
-    /// throughput on high-latency links at the cost of more memory per peer
-    /// `None` uses the crate default (128)
     pub max_outstanding_requests_per_peer: Option<usize>,
-    /// Maximum simultaneous peer connections per torrent
-    /// `None` uses the crate default (100)
     pub max_peers_per_torrent: Option<usize>,
     pub upload_rate_limit: Option<u64>,
-    /// Disable BEP-14 Local Service Discovery. Defaults to enabled; some
-    /// hosts (CI runners, strict corporate networks) cannot bind the
-    /// multicast group and will warn-and-continue regardless
     pub disable_local_service_discovery: bool,
-    /// BEP-8 Message Stream Encryption (MSE/PE) policy for peer connections.
-    /// Defaults to `Prefer`, which tries MSE first with plaintext fallback
     pub encryption: super::peer::EncryptionPolicy,
 }
 
@@ -73,11 +49,8 @@ pub struct AddTorrentOptions {
     pub trackers: Option<Vec<String>>,
     pub only_files: Option<Vec<usize>>,
     pub list_only: bool,
-    /// When `true` (default), multi-file torrents are placed inside a
-    /// subfolder named after the torrent (`<output>/<name>/...`). When
-    /// `false`, files are written directly under the output folder
-    /// Single-file torrents are unaffected
     pub create_subfolder: bool,
+    pub initial_peers: Vec<std::net::SocketAddr>,
 }
 
 impl Default for AddTorrentOptions {
@@ -88,6 +61,7 @@ impl Default for AddTorrentOptions {
             only_files: None,
             list_only: false,
             create_subfolder: true,
+            initial_peers: Vec::new(),
         }
     }
 }
@@ -113,9 +87,6 @@ pub struct Session {
     opts: SessionOptions,
     peer_id: Id20,
     listen_port: u16,
-    /// Shared µTP (BEP-29) endpoint, bound on the same UDP port as the TCP
-    /// listener. Threaded into every torrent so outbound dials can retry over
-    /// µTP when TCP fails. `None` when µTP could not bind (TCP-only fallback).
     utp: Option<Arc<super::utp::UtpSocket>>,
     upload_limiter: Option<Arc<super::limiter::UploadLimiter>>,
     inner: Mutex<SessionInner>,
@@ -179,25 +150,6 @@ impl Session {
         let local_port = listener.local_addr()?.port();
         tracing::info!("session listening on port {local_port}");
 
-        let mut upnp_handle: Option<super::upnp::UpnpHandle> = None;
-        if opts
-            .listen
-            .as_ref()
-            .map(|l| l.enable_upnp_port_forwarding)
-            .unwrap_or(false)
-        {
-            let lease = opts
-                .listen
-                .as_ref()
-                .and_then(|l| l.upnp_lease)
-                .unwrap_or(std::time::Duration::from_secs(300));
-            let fwd = super::upnp::UpnpPortForwarder::new(
-                vec![(local_port, super::upnp::MapProto::Tcp)],
-                lease,
-            );
-            upnp_handle = Some(fwd.spawn());
-        }
-
         // µTP (BEP-29) endpoint: bind UDP on the same port as the TCP listener so
         // peers reach us at the same ip:port over either transport
         // Outbound dials retry over µTP when TCP fails. A bind failure is non-fatal—
@@ -222,6 +174,26 @@ impl Session {
                     }
                 }
             };
+
+        let upnp_handle = if opts
+            .listen
+            .as_ref()
+            .map(|l| l.enable_upnp_port_forwarding)
+            .unwrap_or(false)
+        {
+            let lease = opts
+                .listen
+                .as_ref()
+                .and_then(|l| l.upnp_lease)
+                .unwrap_or(std::time::Duration::from_secs(300));
+            let mappings = upnp_mapping_specs(
+                local_port,
+                utp.as_ref().map(|socket| socket.local_addr().port()),
+            );
+            Some(super::upnp::UpnpPortForwarder::new(mappings, lease).spawn())
+        } else {
+            None
+        };
 
         let upload_limiter = opts
             .upload_rate_limit
@@ -368,6 +340,10 @@ impl Session {
         self.listen_port
     }
 
+    pub fn utp_socket(&self) -> Option<Arc<super::utp::UtpSocket>> {
+        self.utp.clone()
+    }
+
     /// True if Local Service Discovery is currently spawned and running
     pub fn lsd_active(&self) -> bool {
         self.lsd.lock().is_some()
@@ -416,11 +392,13 @@ impl Session {
             }
             AddTorrent::Url(url) => {
                 let extra_trackers = opts.trackers.clone().unwrap_or_default();
-                let resolved = super::magnet::resolve(
+                let resolved = super::magnet::resolve_with_port_and_utp(
                     &url,
                     &extra_trackers,
+                    self.listen_port,
                     std::time::Duration::from_secs(120),
                     self.opts.encryption,
+                    self.utp_socket(),
                 )
                 .await?;
                 let torrent_bytes = super::magnet::synth_torrent_bytes(
@@ -430,6 +408,12 @@ impl Session {
                 );
                 let meta = parse_torrent(&torrent_bytes)
                     .map_err(|e| format!("parse synthesized torrent: {e}"))?;
+                let mut opts = opts;
+                if opts.initial_peers.is_empty() {
+                    opts.initial_peers = resolved.peers;
+                } else {
+                    opts.initial_peers.extend(resolved.peers);
+                }
                 self.add_from_meta(meta, opts).await
             }
         }
@@ -477,7 +461,21 @@ impl Session {
             .map_err(|e| format!("bad lengths: {e}"))?;
         let mut meta = meta;
         if let Some(extra) = opts.trackers {
-            meta.announce_list.push(extra);
+            let mut expanded = Vec::new();
+            for raw in extra {
+                for part in raw
+                    .split([',', '\n', '\r'])
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                {
+                    if !expanded.iter().any(|x: &String| x == part) {
+                        expanded.push(part.to_string());
+                    }
+                }
+            }
+            if !expanded.is_empty() {
+                meta.announce_list.push(expanded);
+            }
         }
         // Reserve an id and claim the info-hash atomically so a concurrent
         // add_from_meta cannot race past the duplicate check above. If spawn
@@ -545,15 +543,28 @@ impl Session {
             let mut inner = self.inner.lock();
             inner.torrents.insert(id, handle.clone());
         }
+        if !opts.initial_peers.is_empty() {
+            let cmd_tx = handle.cmd_tx();
+            let peers = opts.initial_peers;
+            tracing::info!(
+                "Seeding torrent id={id} with {} peers from magnet resolve",
+                peers.len()
+            );
+            tokio::spawn(async move {
+                for addr in peers {
+                    if cmd_tx
+                        .send(super::torrent::TorrentCommand::AddPeer(addr))
+                        .await
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+            });
+        }
         if let Some(lsd) = self.lsd.lock().as_ref() {
             lsd.add_infohash(meta.info_hash);
         }
-        // Wire DHT peer discovery into the running torrent. The session DHT is
-        // otherwise only used during one-shot magnet resolution; running downloads
-        // discover peers via trackers, LSD, and inbound connections. For a
-        // trackerless torrent—or one with dead trackers, which is common for CN
-        // Thunder/Xunlei swarms—this leaves the download with no peer source so it
-        // stalls at 0% even though the swarm is reachable over DHT
         if !info.private {
             if let Some(dht) = self.dht.lock().clone() {
                 let info_hash = meta.info_hash;
@@ -721,6 +732,14 @@ impl Session {
     }
 }
 
+fn upnp_mapping_specs(tcp_port: u16, utp_port: Option<u16>) -> Vec<(u16, super::upnp::MapProto)> {
+    let mut mappings = vec![(tcp_port, crate::upnp::MapProto::Tcp)];
+    if let Some(utp_port) = utp_port {
+        mappings.push((utp_port, crate::upnp::MapProto::Udp));
+    }
+    mappings
+}
+
 /// Bind a TCP listener on an IPv6 address with `IPV6_V6ONLY` set to avoid
 /// dual-stack conflicts when an IPv4 listener already bound the same port
 fn bind_v6_listener(addr: SocketAddr) -> std::io::Result<std::net::TcpListener> {
@@ -831,5 +850,25 @@ async fn run_utp_accept_loop(utp: Arc<super::utp::UtpSocket>, weak: std::sync::W
                 }
             }
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn upnp_specs_map_tcp_and_actual_utp_ports() {
+        assert_eq!(
+            upnp_mapping_specs(41_000, Some(42_000)),
+            vec![
+                (41_000, crate::upnp::MapProto::Tcp),
+                (42_000, crate::upnp::MapProto::Udp),
+            ]
+        );
+        assert_eq!(
+            upnp_mapping_specs(41_000, None),
+            vec![(41_000, crate::upnp::MapProto::Tcp)]
+        );
     }
 }

@@ -282,6 +282,8 @@ export default {
 	"batch-add-title": "添加任务",
 	"batch-queue-empty": "在上方粘贴链接，或将 .torrent 文件拖到此处以构建队列。",
 	"batch-drop-hint": "将 .torrent 文件拖到此处，或点击浏览",
+	"torrent-network-interference-warning":
+		"系统代理、VPN、代理客户端、隧道或网络过滤软件可能会降低 Tracker、DHT 和节点的连接能力，从而导致种子下载速度变慢。",
 	"batch-remove-item": "移除",
 	"batch-item-magnet-resolving": "正在解析磁力链接...",
 	"batch-item-resolve-failed": "解析失败",
