@@ -1,6 +1,4 @@
 //! Minimal BEP-5 DHT
-//! Supports IPv4 and IPv6 (BEP-32) via two parallel UDP sockets when the
-//! host has global v6 connectivity
 
 use std::collections::{BTreeMap, HashSet};
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
@@ -13,7 +11,7 @@ use tokio::net::{lookup_host, UdpSocket};
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinSet;
 
-use super::bencode::{decode_all, encode_to_vec, Value};
+use super::bencode::{decode_all_external, encode_to_vec, DecodeLimits, Value};
 use super::core::Id20;
 
 /// Decoded `get_peers` reply: source addr, responder id (if present),
@@ -38,6 +36,7 @@ const K: usize = 8;
 const ALPHA: usize = 3;
 const QUERY_TIMEOUT: Duration = Duration::from_secs(4);
 const MAX_ROUND_QUERIES: usize = 50;
+const KRPC_DECODE_LIMITS: DecodeLimits = DecodeLimits::new(2048, 16, 1024);
 
 pub const DEFAULT_BOOTSTRAP: &[&str] = &[
     "router.bittorrent.com:6881",
@@ -235,21 +234,15 @@ impl Dht {
             return;
         }
 
-        // BTreeMap keyed by XOR distance to info_hash → candidate endpoints
-        // We keep the K closest "live" nodes we've heard responses from
         let mut shortlist: BTreeMap<Id20, SocketAddr> = BTreeMap::new();
         let mut queried: HashSet<SocketAddr> = HashSet::new();
         let mut peers_seen: HashSet<SocketAddr> = HashSet::new();
-        // Nodes (keyed by XOR distance to the target) that returned a write
-        // token, paired with that token. After the lookup we announce
-        // ourselves to the closest of these (BEP-5) when announce_port is set
         let mut announce_targets: BTreeMap<Id20, (SocketAddr, Vec<u8>)> = BTreeMap::new();
 
-        // Seed: ask bootstrap nodes with a dummy id = info_hash (so their
-        // responses contain nodes close to the target)
-        for a in addrs.iter().take(MAX_ROUND_QUERIES) {
-            queried.insert(*a);
-        }
+        let mut seed_seen = HashSet::new();
+        addrs.retain(|addr| seed_seen.insert(*addr));
+        addrs.truncate(MAX_ROUND_QUERIES);
+        queried.extend(addrs.iter().copied());
 
         let mut futs: JoinSet<Option<GetPeersReply>> = JoinSet::new();
         for a in addrs {
@@ -714,7 +707,7 @@ async fn reader_loop(sock: Arc<UdpSocket>, pending: Arc<Mutex<PendingMap>>) {
             Ok(x) => x,
             Err(_) => return,
         };
-        let Ok(msg) = decode_all(&buf[..n]) else {
+        let Ok(msg) = decode_all_external(&buf[..n], KRPC_DECODE_LIMITS) else {
             continue;
         };
         let Some(ty) = msg.get(b"y").and_then(|v| v.as_bytes()) else {
@@ -745,6 +738,7 @@ async fn reader_loop(sock: Arc<UdpSocket>, pending: Arc<Mutex<PendingMap>>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::bencode::decode_all;
 
     #[test]
     fn routing_table_inserts_dedupes_and_indexes_distance() {

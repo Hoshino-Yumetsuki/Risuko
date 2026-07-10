@@ -6,10 +6,12 @@ use std::time::Duration;
 
 use percent_encoding::{percent_encode, NON_ALPHANUMERIC};
 
-use super::super::bencode::decode_all;
+use super::super::bencode::{decode_all_external, DecodeLimits};
 use super::{AnnounceRequest, AnnounceResponse, TrackerError};
 
 /// RFC 3986 unreserved + `-_.~` are safe in a URL without percent-encoding
+const TRACKER_RESPONSE_LIMITS: DecodeLimits = DecodeLimits::new(2 * 1024 * 1024, 64, 262_144);
+
 const QUERY_SAFE: &percent_encoding::AsciiSet = &NON_ALPHANUMERIC
     .remove(b'-')
     .remove(b'.')
@@ -64,7 +66,7 @@ fn build_query(req: &AnnounceRequest) -> String {
 }
 
 fn parse_response(bytes: &[u8]) -> Result<AnnounceResponse, TrackerError> {
-    let value = decode_all(bytes)?;
+    let value = decode_all_external(bytes, TRACKER_RESPONSE_LIMITS)?;
     value
         .as_dict()
         .ok_or_else(|| TrackerError::Rejected("response not a dict".into()))?;
@@ -180,6 +182,15 @@ mod tests {
         assert_eq!(r.interval, Duration::from_secs(60));
         assert_eq!(r.peers.len(), 2);
         assert_eq!(r.peers[0].port(), 6881);
+    }
+
+    #[test]
+    fn accepts_unsorted_response_and_trailing_whitespace() {
+        let body = b"d5:peers0:8:intervali60ee\r\n";
+        let response = parse_response(body).unwrap();
+
+        assert_eq!(response.interval, Duration::from_secs(60));
+        assert!(response.peers.is_empty());
     }
 
     #[test]

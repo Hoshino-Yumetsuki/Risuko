@@ -183,7 +183,7 @@ export default {
 		"Maximum concurrent peer connections per torrent. Higher values improve swarm discovery (requires engine restart)",
 	"bt-max-outstanding-per-peer": "Max Outstanding Requests per Peer",
 	"bt-max-outstanding-per-peer-tips":
-		"Maximum concurrent chunk requests pipelined to each peer. Higher values improve throughput on high-latency links (requires engine restart)",
+		"Maximum concurrent chunk requests pipelined to each peer (cap, up to 256). 0 uses the adaptive 6–96 default; a torrent-wide request budget is shared across active peers. Requires engine restart",
 	"bt-enable-upnp": "UPnP Port Forwarding",
 	"bt-enable-upnp-tips":
 		"Automatically open the BitTorrent listen port on the router via UPnP IGD (requires engine restart)",

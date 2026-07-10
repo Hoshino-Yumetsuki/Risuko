@@ -127,6 +127,32 @@ impl PieceTracker {
         }
     }
 
+    pub fn update_peer_have(&mut self, peer_bitfield: &mut [u8], idx: ValidPieceIndex) -> bool {
+        let piece = idx.get_usize();
+        let byte = piece / 8;
+        let bit = 7 - (piece % 8);
+        let Some(slot) = peer_bitfield.get_mut(byte) else {
+            return false;
+        };
+        let mask = 1 << bit;
+        if *slot & mask != 0 {
+            return false;
+        }
+
+        *slot |= mask;
+        self.availability[piece] = self.availability[piece].saturating_add(1);
+        self.sorted_dirty = true;
+        true
+    }
+
+    pub fn replace_peer_bitfield(&mut self, peer_bitfield: &mut [u8], replacement: &[u8]) {
+        self.remove_peer_bitfield(peer_bitfield);
+        peer_bitfield.fill(0);
+        let copied = peer_bitfield.len().min(replacement.len());
+        peer_bitfield[..copied].copy_from_slice(&replacement[..copied]);
+        self.add_peer_bitfield(peer_bitfield);
+    }
+
     pub fn note_peer_has(&mut self, idx: ValidPieceIndex) {
         let slot = &mut self.availability[idx.get_usize()];
         *slot = slot.saturating_add(1);
@@ -305,6 +331,41 @@ mod tests {
         assert_eq!(bf.len(), 2);
         assert_eq!(bf[0], 0b1000_0000);
         assert_eq!(bf[1], 0b1000_0000);
+    }
+
+    #[test]
+    fn repeated_have_updates_availability_once() {
+        let mut tracker = PieceTracker::new(lengths(4));
+        let mut peer = vec![0u8; 1];
+        let piece = tracker.lengths.validate_piece(1).unwrap();
+
+        assert!(tracker.update_peer_have(&mut peer, piece));
+        assert!(!tracker.update_peer_have(&mut peer, piece));
+        assert_eq!(peer, vec![0b0100_0000]);
+        assert_eq!(tracker.availability, vec![0, 1, 0, 0]);
+
+        tracker.remove_peer_bitfield(&peer);
+        assert_eq!(tracker.availability, vec![0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn replacing_bitfield_removes_old_counts_and_clears_short_tail() {
+        let mut tracker = PieceTracker::new(lengths(10));
+        let mut peer = vec![0u8; 2];
+
+        tracker.replace_peer_bitfield(&mut peer, &[0b1000_0000, 0b1000_0000]);
+        assert_eq!(tracker.availability[0], 1);
+        assert_eq!(tracker.availability[8], 1);
+
+        tracker.replace_peer_bitfield(&mut peer, &[0b0100_0000]);
+        assert_eq!(peer, vec![0b0100_0000, 0]);
+        assert_eq!(tracker.availability[0], 0);
+        assert_eq!(tracker.availability[1], 1);
+        assert_eq!(tracker.availability[8], 0);
+
+        // Repeating the same replacement remains one peer of availability.
+        tracker.replace_peer_bitfield(&mut peer, &[0b0100_0000]);
+        assert_eq!(tracker.availability[1], 1);
     }
 
     #[test]

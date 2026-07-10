@@ -282,6 +282,8 @@ export default {
 	"batch-add-title": "新增任務",
 	"batch-queue-empty": "在上方貼上連結，或將 .torrent 檔案拖曳至此以建立佇列。",
 	"batch-drop-hint": "將 .torrent 檔案拖曳至此，或點選瀏覽",
+	"torrent-network-interference-warning":
+		"系統代理、VPN、代理用戶端、隧道或網路過濾軟體可能會降低 Tracker、DHT 和節點的連線能力，從而導致種子下載速度變慢。",
 	"batch-remove-item": "移除",
 	"batch-item-magnet-resolving": "正在解析磁力連結…",
 	"batch-item-resolve-failed": "解析失敗",

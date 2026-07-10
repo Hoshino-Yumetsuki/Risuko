@@ -171,7 +171,7 @@ export default {
 		"每个种子允许的最大对等节点数，值越大 peer 覆盖越广（需重启引擎生效）",
 	"bt-max-outstanding-per-peer": "每个对等节点最大并发请求数",
 	"bt-max-outstanding-per-peer-tips":
-		"每个 peer 的 pipeline 并发请求数，值越大高延迟链路下载越快（需重启引擎生效）",
+		"每个 peer 的 pipeline 并发请求上限（最高 256）。0 表示使用 6–96 的自适应默认值；活跃 peer 会共享单个种子的总请求预算。需重启引擎生效",
 	"bt-enable-upnp": "UPnP 端口转发",
 	"bt-enable-upnp-tips":
 		"通过 UPnP IGD 自动在路由器开放 BT 监听端口（需重启引擎生效）",

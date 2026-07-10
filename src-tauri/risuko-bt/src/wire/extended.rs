@@ -10,9 +10,14 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
 use bytes::Bytes;
 
-use super::super::bencode::{decode_all, encode_to_vec, Value};
+use super::super::bencode::{
+    decode_all_external, decode_external, encode_to_vec, DecodeLimits, Value,
+};
 
 pub const EXT_HANDSHAKE_ID: u8 = 0;
+
+const EXTENSION_DECODE_LIMITS: DecodeLimits =
+    DecodeLimits::new(super::MAX_MESSAGE_BYTES, 32, 65_536);
 
 pub const EXT_NAME_UT_METADATA: &[u8] = b"ut_metadata";
 pub const EXT_NAME_UT_PEX: &[u8] = b"ut_pex";
@@ -51,16 +56,11 @@ pub mod holepunch_err {
 
 #[derive(Debug, Clone, Default)]
 pub struct ExtHandshake {
-    /// Map of extension name -> per-peer message id
     pub supported: HashMap<Vec<u8>, u8>,
-    /// Total size of the `info` dict, if the peer advertises it (BEP-9)
     pub metadata_size: Option<u64>,
-    /// Peer-advertised client string ("v" key)
     pub client: Option<String>,
-    /// BEP-10 `yourip`: the peer's public address as we observed it. Some real-world
-    /// clients (notably some CN BT implementations) only engage with a remote that
-    /// echoes their address back here
     pub yourip: Option<IpAddr>,
+    pub reqq: Option<u32>,
 }
 
 impl ExtHandshake {
@@ -79,6 +79,7 @@ impl ExtHandshake {
                 env!("CARGO_PKG_VERSION")
             )),
             yourip: None,
+            reqq: None,
         }
     }
 
@@ -89,9 +90,6 @@ impl ExtHandshake {
         self
     }
 
-    /// Advertise `ut_holepunch` (BEP-55) with the message id we want peers to
-    /// use when sending us holepunch messages. Builder so callers can opt in
-    /// without churning the `new_outgoing` signature
     pub fn with_holepunch(mut self, ut_holepunch_id: u8) -> Self {
         self.supported
             .insert(EXT_NAME_UT_HOLEPUNCH.to_vec(), ut_holepunch_id);
@@ -126,7 +124,7 @@ impl ExtHandshake {
     }
 
     pub fn decode(payload: &[u8]) -> Option<Self> {
-        let value = decode_all(payload).ok()?;
+        let value = decode_all_external(payload, EXTENSION_DECODE_LIMITS).ok()?;
         let dict = value.as_dict()?;
         let mut supported = HashMap::new();
         if let Some((_, m)) = dict.iter().find(|(k, _)| k == b"m") {
@@ -166,11 +164,17 @@ impl ExtHandshake {
                 }
                 _ => None,
             });
+        let reqq = dict
+            .iter()
+            .find(|(k, _)| k == b"reqq")
+            .and_then(|(_, v)| v.as_int())
+            .and_then(|n| if n > 0 { Some(n as u32) } else { None });
         Some(Self {
             supported,
             metadata_size,
             client,
             yourip,
+            reqq,
         })
     }
 
@@ -230,7 +234,7 @@ pub struct UtMetadataMsg {
 pub fn parse_ut_metadata(payload: Bytes) -> Option<UtMetadataMsg> {
     // ut_metadata messages carry a bencoded dict followed by the raw data for
     // DATA messages. We need to know how many bytes the dict consumed
-    let mut p = crate::bencode::decode(&payload).ok()?;
+    let mut p = decode_external(&payload, EXTENSION_DECODE_LIMITS).ok()?;
     let block = payload.slice(p.span.end..);
     let dict = match &mut p.value {
         Value::Dict(d) => std::mem::take(&mut *d),
@@ -261,7 +265,7 @@ pub fn parse_ut_metadata(payload: Bytes) -> Option<UtMetadataMsg> {
 pub fn parse_ut_pex(
     payload: &[u8],
 ) -> Option<(Vec<std::net::SocketAddr>, Vec<std::net::SocketAddr>)> {
-    let value = decode_all(payload).ok()?;
+    let value = decode_all_external(payload, EXTENSION_DECODE_LIMITS).ok()?;
     let dict = value.as_dict()?;
     let mut v4 = Vec::new();
     let mut v6 = Vec::new();
@@ -427,6 +431,20 @@ mod tests {
         assert_eq!(parsed.ut_pex_id(), Some(4));
         assert_eq!(parsed.metadata_size, Some(1024));
         assert!(parsed.client.is_some());
+    }
+
+    #[test]
+    fn handshake_parses_reqq() {
+        let payload = encode_to_vec(&Value::Dict(vec![
+            (
+                b"m".to_vec(),
+                Value::Dict(vec![(b"ut_metadata".to_vec(), Value::Int(2))]),
+            ),
+            (b"reqq".to_vec(), Value::Int(250)),
+        ]));
+        let parsed = ExtHandshake::decode(&payload).unwrap();
+        assert_eq!(parsed.reqq, Some(250));
+        assert_eq!(parsed.ut_metadata_id(), Some(2));
     }
 
     #[test]

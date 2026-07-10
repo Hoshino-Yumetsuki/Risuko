@@ -9,11 +9,24 @@ use risuko_engine::engine::manager::TaskManager;
 use risuko_engine::engine::options::EngineOptions;
 use risuko_engine::engine::rpc::RpcServer;
 
+fn init_headless_tracing() {
+    use tracing_subscriber::EnvFilter;
+    let filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new("info,diag=debug,risuko_bt=debug,risuko_engine=info"));
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_writer(std::io::stderr)
+        .with_ansi(false)
+        .try_init();
+}
+
 /// Start the engine in headless mode (no Tauri, no GUI).
 /// Returns a handle to shut down when done
 pub async fn start_headless_engine(
     rpc_port: u16,
 ) -> Result<HeadlessEngine, Box<dyn std::error::Error>> {
+    init_headless_tracing();
+
     let config_dir = get_config_dir();
     std::fs::create_dir_all(&config_dir)?;
 

@@ -7,12 +7,14 @@
 //! Retransmits use the BEP-15 recommendation: n = 0..8, timeout = 15 * 2^n
 //! seconds. For v1 we shorten to 3 tries to fit into our async budget
 
+use std::collections::HashSet;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::time::Duration;
 
 use byteorder::{BigEndian, ByteOrder};
 use rand::RngExt;
 use tokio::net::{lookup_host, UdpSocket};
+use tokio::task::JoinSet;
 use tokio::time::timeout;
 
 use super::{AnnounceRequest, AnnounceResponse, TrackerError};
@@ -24,11 +26,49 @@ const ACTION_ERROR: u32 = 3;
 
 pub async fn announce(url: &str, req: &AnnounceRequest) -> Result<AnnounceResponse, TrackerError> {
     let (host, port) = parse_udp_url(url)?;
-    let target = lookup_host((host.as_str(), port))
-        .await?
-        .next()
-        .ok_or_else(|| TrackerError::Url(format!("no DNS result for {host}")))?;
+    let targets = dedupe_endpoints(lookup_host((host.as_str(), port)).await?);
+    if targets.is_empty() {
+        return Err(TrackerError::Url(format!("no DNS result for {host}")));
+    }
 
+    let mut attempts = JoinSet::new();
+    for target in targets {
+        let req = req.clone();
+        attempts.spawn(async move { announce_endpoint(target, &req).await });
+    }
+
+    let mut last_error = None;
+    while let Some(result) = attempts.join_next().await {
+        match result {
+            Ok(Ok(response)) => {
+                attempts.abort_all();
+                return Ok(response);
+            }
+            Ok(Err(error)) => last_error = Some(error),
+            Err(error) => {
+                last_error = Some(TrackerError::Io(std::io::Error::other(format!(
+                    "UDP tracker endpoint task failed: {error}"
+                ))));
+            }
+        }
+    }
+
+    Err(last_error
+        .unwrap_or_else(|| TrackerError::Url(format!("no usable DNS endpoint for {host}"))))
+}
+
+fn dedupe_endpoints(endpoints: impl IntoIterator<Item = SocketAddr>) -> Vec<SocketAddr> {
+    let mut seen = HashSet::new();
+    endpoints
+        .into_iter()
+        .filter(|endpoint| seen.insert(*endpoint))
+        .collect()
+}
+
+async fn announce_endpoint(
+    target: SocketAddr,
+    req: &AnnounceRequest,
+) -> Result<AnnounceResponse, TrackerError> {
     let sock = UdpSocket::bind(if target.is_ipv6() {
         "[::]:0"
     } else {
@@ -199,6 +239,17 @@ mod tests {
         assert_eq!(
             parse_udp_url("udp://[::1]:2710").unwrap(),
             ("::1".to_string(), 2710)
+        );
+    }
+
+    #[test]
+    fn dns_endpoints_are_deduplicated_without_reordering() {
+        let v4: SocketAddr = "192.0.2.10:80".parse().unwrap();
+        let v6: SocketAddr = "[2001:db8::10]:80".parse().unwrap();
+        let other: SocketAddr = "192.0.2.11:80".parse().unwrap();
+        assert_eq!(
+            dedupe_endpoints([v4, v6, v4, other, v6]),
+            vec![v4, v6, other]
         );
     }
 

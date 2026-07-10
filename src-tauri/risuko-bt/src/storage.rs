@@ -66,7 +66,7 @@ impl FilesystemStorage {
         .await
         .unwrap_or(false)
     }
-    
+
     pub async fn write_at_owned(&self, offset: u64, buf: bytes::Bytes) -> Result<(), StorageError> {
         let total = self.layout.total_length();
         let end = offset

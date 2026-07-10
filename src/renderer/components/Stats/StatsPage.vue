@@ -163,62 +163,106 @@
 
         <div v-if="!speedLines.length" class="stats-empty">No speed samples in this range</div>
         <div v-else class="speed-chart-wrap">
-          <svg
-            class="speed-chart"
-            :viewBox="`0 0 ${chartWidth} ${chartHeight}`"
-            preserveAspectRatio="none"
+          <div
+            class="speed-chart-stage"
+            @mousemove="onSpeedChartMove"
+            @mouseleave="clearSpeedHover"
           >
-            <line
-              v-for="tick in speedTicks"
-              :key="tick.y"
-              :x1="CHART_PAD_X"
-              :x2="chartWidth - CHART_PAD_RIGHT"
-              :y1="tick.y"
-              :y2="tick.y"
-              class="speed-grid"
-            />
-            <g v-if="showTickLabels">
-              <text
+            <svg
+              class="speed-chart"
+              :viewBox="`0 0 ${chartWidth} ${chartHeight}`"
+              preserveAspectRatio="none"
+            >
+              <line
                 v-for="tick in speedTicks"
-                :key="`y-label-${tick.y}`"
-                class="speed-tick-label speed-tick-label--y"
-                :x="CHART_PAD_X - 8"
-                :y="tick.y + 4"
-              >{{ tick.label }}</text>
+                :key="tick.y"
+                :x1="CHART_PAD_X"
+                :x2="chartWidth - CHART_PAD_RIGHT"
+                :y1="tick.y"
+                :y2="tick.y"
+                class="speed-grid"
+              />
+              <g v-if="showTickLabels">
+                <text
+                  v-for="tick in speedTicks"
+                  :key="`y-label-${tick.y}`"
+                  class="speed-tick-label speed-tick-label--y"
+                  :x="CHART_PAD_X - 8"
+                  :y="tick.y + 4"
+                >{{ tick.label }}</text>
+                <text
+                  v-for="tick in speedXTicks"
+                  :key="`x-label-${tick.minute}`"
+                  class="speed-tick-label speed-tick-label--x"
+                  :x="tick.x"
+                  :y="CHART_X_TICK_Y"
+                  :transform="`rotate(-45 ${tick.x} ${CHART_X_TICK_Y})`"
+                >{{ tick.label }}</text>
+              </g>
               <text
-                v-for="tick in speedXTicks"
-                :key="`x-label-${tick.minute}`"
-                class="speed-tick-label speed-tick-label--x"
-                :x="tick.x"
-                :y="CHART_X_TICK_Y"
-                :transform="`rotate(-45 ${tick.x} ${CHART_X_TICK_Y})`"
-              >{{ tick.label }}</text>
-            </g>
-            <text
-              class="speed-axis-label speed-axis-label--y"
-              :transform="`translate(18 ${CHART_PAD_TOP + CHART_PLOT_HEIGHT / 2}) rotate(-90)`"
-            >Speed</text>
-            <text
-              class="speed-axis-label speed-axis-label--x"
-              :x="chartWidth / 2"
-              :y="chartHeight - 7"
-            >Time</text>
-            <path
-              v-for="line in speedLines"
-              :key="line.key"
-              :d="line.path"
-              class="speed-line"
-              :stroke="line.color"
-              :stroke-dasharray="line.metric === 'upload' ? '5 4' : undefined"
-            />
-          </svg>
+                class="speed-axis-label speed-axis-label--y"
+                :transform="`translate(18 ${CHART_PAD_TOP + CHART_PLOT_HEIGHT / 2}) rotate(-90)`"
+              >Speed</text>
+              <text
+                class="speed-axis-label speed-axis-label--x"
+                :x="chartWidth / 2"
+                :y="chartHeight - 7"
+              >Time</text>
+              <path
+                v-for="line in speedLines"
+                :key="line.key"
+                :d="line.path"
+                class="speed-line"
+                :stroke="line.color"
+                :stroke-dasharray="line.metric === 'upload' ? '5 4' : undefined"
+              />
+              <line
+                v-if="speedHover"
+                :x1="speedHover.x"
+                :x2="speedHover.x"
+                :y1="CHART_PAD_TOP"
+                :y2="CHART_PLOT_BOTTOM"
+                class="speed-hover-guide"
+              />
+              <circle
+                v-for="point in speedHover?.points || []"
+                :key="`hover-${point.key}`"
+                :cx="speedHover?.x"
+                :cy="point.y"
+                r="3.5"
+                :fill="point.color"
+                class="speed-hover-dot"
+              />
+            </svg>
+            <div
+              v-if="speedHover"
+              class="speed-tooltip"
+              :style="speedTooltipStyle"
+            >
+              <div class="speed-tooltip-time">{{ speedHover.label }}</div>
+              <div
+                v-for="point in speedHover.points"
+                :key="point.key"
+                class="speed-tooltip-row"
+              >
+                <i :style="{ backgroundColor: point.color }" />
+                <span>{{ point.label }}</span>
+                <strong>{{ formatBytes(point.value) }}/s</strong>
+              </div>
+            </div>
+          </div>
           <div class="speed-legend">
             <span
               v-for="line in speedLines"
               :key="line.key"
               class="legend-item"
             >
-              <i :style="{ backgroundColor: line.color }" />
+              <i
+                :style="{
+                  backgroundColor: line.color,
+                  borderRadius: line.metric === 'upload' ? '0' : '50%',
+                }"
+              />
               {{ line.label }}
             </span>
           </div>
@@ -256,16 +300,12 @@ const CHART_PAD_BOTTOM = 98;
 const CHART_PLOT_BOTTOM = CHART_HEIGHT - CHART_PAD_BOTTOM;
 const CHART_PLOT_HEIGHT = CHART_PLOT_BOTTOM - CHART_PAD_TOP;
 const CHART_X_TICK_Y = CHART_PLOT_BOTTOM + 18;
-const COLORS = [
-	"#2563eb",
-	"#16a34a",
-	"#dc2626",
-	"#9333ea",
-	"#ca8a04",
-	"#0891b2",
-	"#db2777",
-	"#475569",
-];
+const TOOLTIP_EDGE_GAP = 12;
+const TOOLTIP_CURSOR_GAP = 14;
+const TOOLTIP_WIDTH = 240;
+const TOOLTIP_MAX_HEIGHT = 360;
+const TOOLTIP_HEADER_HEIGHT = 30;
+const TOOLTIP_ROW_HEIGHT = 22;
 
 const presets = [
 	{ label: "1d", seconds: 24 * 60 * 60 },
@@ -282,9 +322,27 @@ type SpeedLine = {
 	key: string;
 	label: string;
 	metric: SpeedMetric;
+	protocol: string;
 	color: string;
 	path: string;
 	values: number[];
+};
+
+type SpeedHoverPoint = {
+	key: string;
+	label: string;
+	color: string;
+	value: number;
+	y: number;
+};
+
+type SpeedHover = {
+	index: number;
+	x: number;
+	label: string;
+	points: SpeedHoverPoint[];
+	clientX: number;
+	clientY: number;
 };
 
 const nowSeconds = () => Math.floor(Date.now() / 1000);
@@ -301,6 +359,7 @@ const expandedProtocols = ref(false);
 const splitMode = ref<SplitMode>("overall");
 const seriesMode = ref<SeriesMode>("both");
 const showTickLabels = ref(true);
+const speedHover = ref<SpeedHover | null>(null);
 let loadStatsId = 0;
 
 const chartWidth = CHART_WIDTH;
@@ -330,20 +389,6 @@ const protocolLabel = (protocol: string) => {
 		other: "Other",
 	};
 	return labels[protocol] || protocol.toUpperCase();
-};
-
-const colorForProtocol = (protocol: string) => {
-	if (protocol === "overall") {
-		return "#14b8a6";
-	}
-	if (protocol === "other") {
-		return "#64748b";
-	}
-	let hash = 0;
-	for (const char of protocol) {
-		hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
-	}
-	return COLORS[hash % COLORS.length];
 };
 
 const totalReceived = computed(() =>
@@ -379,6 +424,44 @@ const legendProtocols = computed(() => {
 	}
 	return protocols;
 });
+
+const protocolColorOrder = computed(() =>
+	[...new Set(visibleProtocols.value)].sort((left, right) =>
+		left.localeCompare(right),
+	),
+);
+
+const protocolHue = (protocol: string) => {
+	const protocols = protocolColorOrder.value;
+	const index = protocols.indexOf(protocol);
+	if (index >= 0) {
+		return (210 + (index * 360) / Math.max(1, protocols.length)) % 360;
+	}
+
+	let hash = 0;
+	for (const char of protocol) {
+		hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
+	}
+	return hash % 360;
+};
+
+const colorForProtocol = (
+	protocol: string,
+	metric: SpeedMetric = "download",
+) => {
+	if (protocol === "overall") {
+		return metric === "upload" ? "#fb923c" : "#14b8a6";
+	}
+	if (protocol === "other") {
+		return metric === "upload" ? "#94a3b8" : "#64748b";
+	}
+	const hue = Number(protocolHue(protocol).toFixed(3));
+	const lightness = metric === "upload" ? 62 : 43;
+	return `hsl(${hue}, 72%, ${lightness}%)`;
+};
+
+const colorForSpeedLine = (protocol: string, metric: SpeedMetric) =>
+	colorForProtocol(protocol, metric);
 
 const monthlySegments = (month: MonthlyProtocolTotal) => {
 	const protocolMap = new Map(
@@ -518,7 +601,8 @@ const speedLines = computed<SpeedLine[]>(() => {
 			key: `${protocol}:${metric}`,
 			label: `${protocolLabel(protocol)} ${metric === "download" ? "Down" : "Up"}`,
 			metric,
-			color: metric === "upload" ? "#f97316" : colorForProtocol(protocol),
+			protocol,
+			color: colorForSpeedLine(protocol, metric),
 			values: points.map((point) => pointValue(point, protocol, metric)),
 			path: "",
 		})),
@@ -528,6 +612,105 @@ const speedLines = computed<SpeedLine[]>(() => {
 		.filter((line) => line.values.some((value) => value > 0))
 		.map((line) => ({ ...line, path: makePath(line.values, max) }));
 });
+
+const speedTooltipStyle = computed(() => {
+	const hover = speedHover.value;
+	if (!hover) {
+		return {};
+	}
+	const viewportWidth = window.innerWidth;
+	const viewportHeight = window.innerHeight;
+	const estimatedHeight = Math.min(
+		TOOLTIP_MAX_HEIGHT,
+		TOOLTIP_HEADER_HEIGHT + hover.points.length * TOOLTIP_ROW_HEIGHT,
+	);
+	const preferredLeft = hover.clientX + TOOLTIP_CURSOR_GAP;
+	const fallbackLeft = hover.clientX - TOOLTIP_WIDTH - TOOLTIP_CURSOR_GAP;
+	const left = Math.min(
+		Math.max(
+			TOOLTIP_EDGE_GAP,
+			preferredLeft + TOOLTIP_WIDTH + TOOLTIP_EDGE_GAP <= viewportWidth
+				? preferredLeft
+				: fallbackLeft,
+		),
+		Math.max(
+			TOOLTIP_EDGE_GAP,
+			viewportWidth - TOOLTIP_WIDTH - TOOLTIP_EDGE_GAP,
+		),
+	);
+	const preferredTop = hover.clientY + TOOLTIP_CURSOR_GAP;
+	const fallbackTop = hover.clientY - estimatedHeight - TOOLTIP_CURSOR_GAP;
+	const top = Math.min(
+		Math.max(
+			TOOLTIP_EDGE_GAP,
+			preferredTop + estimatedHeight + TOOLTIP_EDGE_GAP <= viewportHeight
+				? preferredTop
+				: fallbackTop,
+		),
+		Math.max(
+			TOOLTIP_EDGE_GAP,
+			viewportHeight - estimatedHeight - TOOLTIP_EDGE_GAP,
+		),
+	);
+	return {
+		left: `${left}px`,
+		top: `${top}px`,
+	};
+});
+
+function clearSpeedHover() {
+	speedHover.value = null;
+}
+
+function onSpeedChartMove(event: MouseEvent) {
+	const points = stats.value?.speed || [];
+	const lines = speedLines.value;
+	if (!points.length || !lines.length) {
+		clearSpeedHover();
+		return;
+	}
+	const target = event.currentTarget as HTMLElement | null;
+	if (!target) {
+		return;
+	}
+	const rect = target.getBoundingClientRect();
+	if (rect.width <= 0) {
+		clearSpeedHover();
+		return;
+	}
+	const plotWidth = CHART_WIDTH - CHART_PAD_X - CHART_PAD_RIGHT;
+	const relX = ((event.clientX - rect.left) / rect.width) * CHART_WIDTH;
+	const clamped = Math.min(
+		CHART_WIDTH - CHART_PAD_RIGHT,
+		Math.max(CHART_PAD_X, relX),
+	);
+	const ratio = plotWidth <= 0 ? 0 : (clamped - CHART_PAD_X) / plotWidth;
+	const index = Math.round(ratio * (points.length - 1));
+	const max = speedMax.value;
+	const bottom = CHART_PLOT_BOTTOM;
+	const hoverPoints = lines
+		.map((line) => {
+			const value = line.values[index] || 0;
+			return {
+				key: line.key,
+				label: line.label,
+				color: line.color,
+				value,
+				y: bottom - (value / max) * CHART_PLOT_HEIGHT,
+			};
+		})
+		.sort((a, b) => b.value - a.value);
+	speedHover.value = {
+		index,
+		x:
+			CHART_PAD_X +
+			(points.length === 1 ? 0 : (index / (points.length - 1)) * plotWidth),
+		label: formatTimeTick(points[index].minute),
+		points: hoverPoints,
+		clientX: event.clientX,
+		clientY: event.clientY,
+	};
+}
 
 async function loadStats() {
 	const loadId = ++loadStatsId;
@@ -567,6 +750,7 @@ function applyPreset(seconds: number) {
 }
 
 watch([startAt, endAt], loadStats, { immediate: true });
+watch([splitMode, seriesMode, expandedProtocols], clearSpeedHover);
 </script>
 
 <style scoped>
@@ -802,12 +986,76 @@ watch([startAt, endAt], loadStats, { immediate: true });
 	gap: 8px;
 }
 
+.speed-chart-stage {
+	position: relative;
+}
+
 .speed-chart {
 	width: 100%;
 	height: 300px;
 	border: 1px solid var(--color-border);
 	border-radius: 8px;
 	background: var(--color-background);
+}
+
+.speed-hover-guide {
+	stroke: var(--color-foreground);
+	stroke-width: 1;
+	stroke-dasharray: 3 3;
+	opacity: 0.35;
+	pointer-events: none;
+}
+
+.speed-hover-dot {
+	stroke: var(--color-background);
+	stroke-width: 1.5;
+	pointer-events: none;
+}
+
+.speed-tooltip {
+	box-sizing: border-box;
+	position: fixed;
+	z-index: 20;
+	min-width: 160px;
+	width: min(240px, calc(100vw - 24px));
+	max-height: min(360px, calc(100vh - 24px));
+	overflow-y: auto;
+	padding: 8px 10px;
+	border: 1px solid var(--color-border);
+	border-radius: 8px;
+	background: var(--color-background);
+	box-shadow: 0 8px 24px color-mix(in srgb, #000 16%, transparent);
+	pointer-events: none;
+}
+
+.speed-tooltip-time {
+	margin-bottom: 6px;
+	color: var(--text-2);
+	font-size: 11px;
+}
+
+.speed-tooltip-row {
+	display: grid;
+	grid-template-columns: 9px minmax(0, 1fr) auto;
+	gap: 8px;
+	align-items: center;
+	font-size: 12px;
+}
+
+.speed-tooltip-row + .speed-tooltip-row {
+	margin-top: 4px;
+}
+
+.speed-tooltip-row i {
+	display: inline-block;
+	width: 9px;
+	height: 9px;
+	border-radius: 50%;
+}
+
+.speed-tooltip-row strong {
+	font-weight: 600;
+	font-variant-numeric: tabular-nums;
 }
 
 .speed-grid {

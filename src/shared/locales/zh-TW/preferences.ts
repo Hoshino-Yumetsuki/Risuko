@@ -158,7 +158,7 @@ export default {
 		"每個種子允許的最大對等節點數，值越大 peer 涵蓋越廣（需重啟引擎生效）",
 	"bt-max-outstanding-per-peer": "每個對等節點最大並發請求數",
 	"bt-max-outstanding-per-peer-tips":
-		"每個 peer 的 pipeline 並發請求數，值越大高延遲鏈路下載越快（需重啟引擎生效）",
+		"每個 peer 的 pipeline 並發請求上限（最高 256）。0 表示使用 6–96 的自適應預設值；活躍 peer 會共享單一種子的總請求預算。需重啟引擎生效",
 	"bt-enable-upnp": "UPnP 連接埠轉發",
 	"bt-enable-upnp-tips":
 		"透過 UPnP IGD 自動在路由器開放 BT 監聽連接埠（需重啟引擎生效）",
