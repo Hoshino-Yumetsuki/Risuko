@@ -1,8 +1,10 @@
+use futures_util::FutureExt;
 use risuko_bt as bt;
 use serde_json::{Map, Value};
 use std::collections::HashMap;
 use std::future::Future;
 use std::net::{Ipv4Addr, SocketAddr};
+use std::panic::AssertUnwindSafe;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -93,7 +95,16 @@ impl MagnetMetaCache {
 
                 let cache = self.clone();
                 tokio::spawn(async move {
-                    let result = resolver().await.map(Arc::new).map_err(Arc::<str>::from);
+                    let result = match AssertUnwindSafe(async move { resolver().await })
+                        .catch_unwind()
+                        .await
+                    {
+                        Ok(result) => result.map(Arc::new).map_err(Arc::<str>::from),
+                        Err(_) => {
+                            tracing::warn!("Magnet metadata resolver panicked");
+                            Err(Arc::<str>::from("Magnet metadata resolver panicked"))
+                        }
+                    };
 
                     {
                         let mut state = cache.state.lock().await;
@@ -778,6 +789,36 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(retried.bytes.as_ref(), &[11]);
+    }
+
+    #[tokio::test]
+    async fn magnet_cache_panic_does_not_leave_in_flight_entry() {
+        let cache = MagnetMetaCache::default();
+        let key = [4; 20];
+
+        let error = tokio::time::timeout(Duration::from_secs(1), async {
+            cache
+                .get_or_resolve(key, || async {
+                    panic!("resolver boom");
+                    #[allow(unreachable_code)]
+                    Ok(resolved_meta(0))
+                })
+                .await
+        })
+        .await
+        .expect("panicked resolver should not hang")
+        .unwrap_err();
+        assert_eq!(error, "Magnet metadata resolver panicked");
+
+        let retried = tokio::time::timeout(Duration::from_secs(1), async {
+            cache
+                .get_or_resolve(key, || async { Ok(resolved_meta(12)) })
+                .await
+        })
+        .await
+        .expect("retry after resolver panic should not hang")
+        .unwrap();
+        assert_eq!(retried.bytes.as_ref(), &[12]);
     }
 
     #[test]

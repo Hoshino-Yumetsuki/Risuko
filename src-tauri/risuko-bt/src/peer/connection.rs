@@ -143,6 +143,14 @@ async fn dial_with_transport_order(
     utp: Option<std::sync::Arc<crate::utp::UtpSocket>>,
     prefer_utp: bool,
 ) -> std::io::Result<(PeerHandle, mpsc::Receiver<PeerEvent>)> {
+    if matches!(spawn.encryption, EncryptionPolicy::RequireEncryption) {
+        tracing::debug!(
+            "skipping µTP dial to {} because encryption is required",
+            spawn.addr
+        );
+        return connect(spawn).await;
+    }
+
     let Some(utp) = utp else {
         return connect(spawn).await;
     };
@@ -150,6 +158,11 @@ async fn dial_with_transport_order(
     let utp_timeout = spawn.connect_timeout;
 
     let try_utp = |spawn: SpawnPeer, utp: std::sync::Arc<crate::utp::UtpSocket>| async move {
+        if matches!(spawn.encryption, EncryptionPolicy::RequireEncryption) {
+            tracing::debug!("skipping µTP dial to {addr} because encryption is required");
+            return connect(spawn).await;
+        }
+
         match utp.connect_timeout(addr, utp_timeout).await {
             Ok(stream) => connect_utp_plaintext(stream, spawn).await,
             Err(e) => {
@@ -1285,6 +1298,10 @@ async fn writer_task(
 mod tests {
     use super::*;
     use crate::wire::Message;
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    };
     use tokio::net::TcpListener;
 
     async fn run_pair() -> (
@@ -1514,6 +1531,76 @@ mod tests {
             PeerEvent::Message(Message::Have { piece_index }) => assert_eq!(piece_index, 7),
             e => panic!("unexpected: {e:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn prefer_utp_skips_utp_when_encryption_required() {
+        use crate::utp::UtpSocket;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server_utp = UtpSocket::bind(addr).await.unwrap();
+        let client_utp = UtpSocket::bind("127.0.0.1:0".parse().unwrap())
+            .await
+            .unwrap();
+        let info_hash = Id20([7u8; 20]);
+        let peer_a = Id20([8u8; 20]);
+        let peer_b = Id20([9u8; 20]);
+        let utp_seen = Arc::new(AtomicBool::new(false));
+
+        let utp_seen_task = utp_seen.clone();
+        let utp_watch = tokio::spawn(async move {
+            if let Ok(Ok(_stream)) =
+                tokio::time::timeout(Duration::from_secs(1), server_utp.accept()).await
+            {
+                utp_seen_task.store(true, Ordering::SeqCst);
+            }
+        });
+
+        let accept_fut = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            accept(
+                stream,
+                peer_b,
+                vec![info_hash.into()],
+                Duration::from_secs(10),
+                EncryptionPolicy::RequireEncryption,
+            )
+            .await
+            .unwrap()
+        });
+
+        let (_client, mut rx_client) = connect_prefer_utp(
+            SpawnPeer {
+                addr,
+                info_hash,
+                our_peer_id: peer_a,
+                connect_timeout: Duration::from_secs(5),
+                read_timeout: Duration::from_secs(10),
+                encryption: EncryptionPolicy::RequireEncryption,
+                advertise_v2: true,
+                ext_handshake_builder: None,
+            },
+            Some(client_utp),
+        )
+        .await
+        .unwrap();
+        let (_server, mut rx_server) = accept_fut.await.unwrap();
+
+        match rx_client.recv().await.unwrap() {
+            PeerEvent::Handshook { encrypted, .. } => assert!(encrypted),
+            e => panic!("unexpected event: {e:?}"),
+        }
+        match rx_server.recv().await.unwrap() {
+            PeerEvent::Handshook { encrypted, .. } => assert!(encrypted),
+            e => panic!("unexpected event: {e:?}"),
+        }
+
+        utp_watch.await.unwrap();
+        assert!(
+            !utp_seen.load(Ordering::SeqCst),
+            "µTP should not be attempted when encryption is required"
+        );
     }
 
     #[tokio::test]

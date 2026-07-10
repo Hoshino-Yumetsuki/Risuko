@@ -386,7 +386,7 @@
               <div class="settings-row-action">
                 <NumberInput
                   v-model="form.btMaxOutstandingPerPeer"
-                  :min="8"
+                  :min="0"
                   :max="256"
                   :step="1"
                 />
