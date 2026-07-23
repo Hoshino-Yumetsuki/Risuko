@@ -1,7 +1,7 @@
 export const bytesToSize = (bytes, precision = 1) => {
 	const b = parseInt(bytes, 10);
 	const sizes = ["B", "KB", "MB", "GB", "TB"];
-	if (!Number.isFinite(b) || b === 0) {
+	if (!Number.isFinite(b) || b <= 0) {
 		return "0 KB";
 	}
 	const i = Math.min(

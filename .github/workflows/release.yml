@@ -153,7 +153,7 @@ jobs:
 
       - name: Upload Android APKs to GitHub Release
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
         with:
           tag_name: ${{ github.ref_name }}
           files: dist/android/*.apk
@@ -162,7 +162,7 @@ jobs:
 
       - name: Upload Android APK artifacts (manual builds)
         if: github.event_name == 'workflow_dispatch'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: app-android
           path: dist/android/*.apk
@@ -255,7 +255,7 @@ jobs:
 
       - name: Build release artifacts (tag)
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
-        uses: tauri-apps/tauri-action@v0
+        uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5
         with:
           args: --target ${{ matrix.target }} ${{ matrix.tauri_args }}
           includeUpdaterJson: false
@@ -341,7 +341,7 @@ jobs:
 
       - name: Upload standardized app bundle to GitHub Release
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
         with:
           tag_name: ${{ github.ref_name }}
           files: |
@@ -354,7 +354,7 @@ jobs:
 
       - name: Upload standardized app bundle artifact (manual builds)
         if: github.event_name == 'workflow_dispatch'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: app-${{ env.APP_PLATFORM_LABEL }}
           path: |
@@ -370,7 +370,7 @@ jobs:
 
       - name: Upload Windows portable exe to GitHub Release
         if: runner.os == 'Windows' && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
         with:
           tag_name: ${{ github.ref_name }}
           files: |
@@ -381,7 +381,7 @@ jobs:
 
       - name: Upload Windows portable exe artifact (manual builds)
         if: runner.os == 'Windows' && github.event_name == 'workflow_dispatch'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: app-portable-${{ env.APP_PLATFORM_LABEL }}
           path: |
@@ -424,7 +424,7 @@ jobs:
 
       - name: Upload risuko-cli to GitHub Release
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') && matrix.target != 'i686-pc-windows-msvc'
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
         with:
           tag_name: ${{ github.ref_name }}
           files: ${{ env.CLI_ASSET }}
@@ -433,7 +433,7 @@ jobs:
 
       - name: Upload risuko-cli artifact (manual builds)
         if: github.event_name == 'workflow_dispatch' && matrix.target != 'i686-pc-windows-msvc'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: risuko-cli-${{ matrix.target }}
           path: ${{ env.CLI_ASSET }}
