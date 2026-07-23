@@ -29,6 +29,7 @@ jobs:
     if: >
       github.event_name == 'workflow_dispatch' ||
       (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
        startsWith(github.event.workflow_run.head_branch, 'v'))
     steps:
       - name: Resolve target tag
@@ -75,8 +76,8 @@ jobs:
             "risuko-cli-darwin-x64.tar.gz"
             "risuko-cli-linux-arm64.tar.gz"
             "risuko-cli-linux-x64.tar.gz"
-            "Risuko_${VERSION}_aarch64.dmg"
-            "Risuko_${VERSION}_x64.dmg"
+            "Risuko_${VERSION}_darwin_arm64.dmg"
+            "Risuko_${VERSION}_darwin_x64.dmg"
           )
 
           for asset in "${assets[@]}"; do
@@ -91,8 +92,8 @@ jobs:
           sha_cli_darwin_x64=$(sha256sum   "risuko-cli-darwin-x64.tar.gz"   | awk '{print $1}')
           sha_cli_linux_arm64=$(sha256sum  "risuko-cli-linux-arm64.tar.gz"  | awk '{print $1}')
           sha_cli_linux_x64=$(sha256sum    "risuko-cli-linux-x64.tar.gz"    | awk '{print $1}')
-          sha_app_arm=$(sha256sum  "Risuko_${VERSION}_aarch64.dmg" | awk '{print $1}')
-          sha_app_intel=$(sha256sum "Risuko_${VERSION}_x64.dmg"     | awk '{print $1}')
+          sha_app_arm=$(sha256sum  "Risuko_${VERSION}_darwin_arm64.dmg" | awk '{print $1}')
+          sha_app_intel=$(sha256sum "Risuko_${VERSION}_darwin_x64.dmg"   | awk '{print $1}')
 
           {
             echo "cli_darwin_arm64=$sha_cli_darwin_arm64"
@@ -152,10 +153,9 @@ jobs:
           formula.write_text(src)
 
           # --- Cask ---
-          # The cask uses {version} interpolation in the URL, so we anchor
-          # on the architecture suffix in the URL line and rewrite the
-          # nearest preceding sha256 line within the same on_arm/on_intel
-          # block.
+          # The cask uses {version} interpolation in the URL. Keep the URL
+          # filenames in lockstep with the canonical release DMG names while
+          # replacing the matching checksum inside each architecture block.
           src = cask.read_text()
           src = re.sub(
               r'^(\s*version\s+")[^"]+(")',
@@ -165,19 +165,20 @@ jobs:
               flags=re.MULTILINE,
           )
 
-          def replace_block(src, block_keyword, sha):
-              # Match `on_arm do` or `on_intel do` ... `end`, replace its sha256
+          def replace_block(src, block_keyword, sha, filename):
+              # Match `on_arm do` or `on_intel do` ... `end`, then rewrite its
+              # checksum and URL filename together.
               pat = re.compile(
-                  r'(' + block_keyword + r'\s+do\b.*?sha256\s+")[0-9a-f]{64}(".*?\n\s*end)',
+                  r'(' + block_keyword + r'\s+do\b.*?sha256\s+")[0-9a-f]{64}(".*?url\s+"[^"]*/)[^"]+(".*?\n\s*end)',
                   flags=re.DOTALL,
               )
-              new_src, n = pat.subn(rf'\g<1>{sha}\g<2>', src, count=1)
+              new_src, n = pat.subn(rf'\g<1>{sha}\g<2>{filename}\g<3>', src, count=1)
               if n != 1:
-                  raise SystemExit(f"Failed to update sha256 in {block_keyword} block of risuko-app.rb")
+                  raise SystemExit(f"Failed to update DMG URL and sha256 in {block_keyword} block of risuko-app.rb")
               return new_src
 
-          src = replace_block(src, "on_arm",   os.environ["APP_ARM"])
-          src = replace_block(src, "on_intel", os.environ["APP_INTEL"])
+          src = replace_block(src, "on_arm", os.environ["APP_ARM"], "Risuko_#{version}_darwin_arm64.dmg")
+          src = replace_block(src, "on_intel", os.environ["APP_INTEL"], "Risuko_#{version}_darwin_x64.dmg")
           cask.write_text(src)
 
           print("Rewrote Formula/risuko-cli.rb and Casks/risuko-app.rb")

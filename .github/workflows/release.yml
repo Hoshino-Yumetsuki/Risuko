@@ -12,9 +12,50 @@ permissions:
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
+concurrency:
+  group: release-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
+  create-release:
+    name: Prepare GitHub release
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create tagged release once
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $TAG already exists."
+            exit 0
+          fi
+
+          args=(
+            release create "$TAG"
+            --repo "$GITHUB_REPOSITORY"
+            --verify-tag
+            --title "Risuko $TAG"
+            --notes "See the assets for this release."
+          )
+          if [[ "$TAG" == *-* ]]; then
+            args+=(--prerelease)
+          fi
+          if ! gh "${args[@]}"; then
+            if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              echo "Release $TAG was created concurrently."
+              exit 0
+            fi
+            exit 1
+          fi
+
   android-release:
     name: Release (android)
+    needs: create-release
+    if: ${{ always() && (github.event_name == 'workflow_dispatch' || needs.create-release.result == 'success') }}
     runs-on: ubuntu-22.04
     steps:
       - name: Check out Git repository
@@ -111,7 +152,7 @@ jobs:
           done
 
       - name: Upload Android APKs to GitHub Release
-        if: startsWith(github.ref, 'refs/tags/')
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
@@ -120,7 +161,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload Android APK artifacts (manual builds)
-        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        if: github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v4
         with:
           name: app-android
@@ -128,6 +169,8 @@ jobs:
 
   release:
     name: Release (${{ matrix.platform }})
+    needs: create-release
+    if: ${{ always() && (github.event_name == 'workflow_dispatch' || needs.create-release.result == 'success') }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -204,25 +247,19 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Inject updater public key from secrets
-        if: startsWith(github.ref, 'refs/tags/')
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
         run: |
           node -e "const fs=require('node:fs');const p='src-tauri/tauri.conf.json';const key=(process.env.TAURI_UPDATER_PUBKEY||'').trim();if(!key){console.error('TAURI_UPDATER_PUBKEY secret is required for tagged releases');process.exit(1);}const c=JSON.parse(fs.readFileSync(p,'utf8'));c.plugins??={};c.plugins.updater??={};c.plugins.updater.pubkey=key;c.bundle??={};c.bundle.createUpdaterArtifacts=true;fs.writeFileSync(p,JSON.stringify(c,null,2)+'\n');console.log('Enabled updater artifacts + injected pubkey into tauri.conf.json for this workflow run.');"
         env:
           TAURI_UPDATER_PUBKEY: ${{ secrets.TAURI_UPDATER_PUBKEY }}
 
-      - name: Build and publish release artifacts (tag)
-        if: startsWith(github.ref, 'refs/tags/')
+      - name: Build release artifacts (tag)
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
         uses: tauri-apps/tauri-action@v0
         with:
           args: --target ${{ matrix.target }} ${{ matrix.tauri_args }}
-          tagName: ${{ github.ref_name }}
-          releaseName: Risuko ${{ github.ref_name }}
-          releaseBody: See the assets for this release.
-          releaseDraft: false
-          prerelease: ${{ contains(github.ref_name, '-') }}
+          includeUpdaterJson: false
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          CARGO_TARGET_ARMV7_UNKNOWN_LINUX_GNUEABIHF_LINKER: ${{ matrix.linker }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           TEAM_ID: ${{ secrets.team_id }}
@@ -230,10 +267,8 @@ jobs:
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.apple_app_specific_password }}
 
       - name: Build release artifacts (manual)
-        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        if: github.event_name == 'workflow_dispatch'
         run: pnpm tauri build --target ${{ matrix.target }} ${{ matrix.tauri_args }}
-        env:
-          CARGO_TARGET_ARMV7_UNKNOWN_LINUX_GNUEABIHF_LINKER: ${{ matrix.linker }}
 
       - name: Verify local bundle output exists
         shell: bash
@@ -247,113 +282,17 @@ jobs:
           fi
           find "$bundle_dir" -maxdepth 3 -type f | sed 's/^/built: /'
 
-      # ── Package app bundle with standardized name ──
-      # Naming: Risuko_{version}_{os}_{arch}.{ext}
-      # Matches process.platform / process.arch in Node.js exactly.
-      - name: Package app bundle with standardized name (unix)
-        if: runner.os != 'Windows'
+      # The helper is the sole owner of canonical filenames. It copies Tauri's
+      # exact signed updater payloads and keeps additional installer formats.
+      - name: Package canonical desktop assets
         shell: bash
         env:
           MATRIX_PLATFORM: ${{ matrix.platform }}
           MATRIX_TARGET: ${{ matrix.target }}
           GITHUB_REF: ${{ github.ref }}
           GITHUB_REF_NAME: ${{ github.ref_name }}
-        run: |
-          set -euo pipefail
-          IFS='/' read -r os arch <<< "$MATRIX_PLATFORM"
-          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
-            version="$GITHUB_REF_NAME"; version="${version#v}"
-          else
-            version=$(grep -m1 '^version' src-tauri/Cargo.toml | sed 's/.*"\(.*\)"/\1/')
-          fi
-          bundle_dir="src-tauri/target/$MATRIX_TARGET/release/bundle"
-          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
-            # Serve tauri's exact updater artifact so its minisign .sig stays valid.
-            # Renaming is fine — minisign signs file *contents*, not the filename.
-            if [[ "$os" == "darwin" ]]; then
-              sig=$(find "$bundle_dir" -name '*.app.tar.gz.sig' -type f | head -1)
-            elif [[ "$os" == "linux" ]]; then
-              sig=$(find "$bundle_dir" -name '*.AppImage.tar.gz.sig' -type f | head -1)
-              if [[ -z "$sig" ]]; then
-                sig=$(find "$bundle_dir" -name '*.AppImage.sig' -type f | head -1)
-              fi
-            else
-              sig=$(find "$bundle_dir" -name '*.sig' -type f | head -1)
-            fi
-            if [[ -z "$sig" ]]; then
-              echo "::error::No updater .sig under $bundle_dir. Is TAURI_SIGNING_PRIVATE_KEY set?"
-              find "$bundle_dir" -maxdepth 3 -type f | sed 's/^/found: /' || true
-              exit 1
-            fi
-            signed="${sig%.sig}"
-            case "$(basename "$signed")" in
-              *.app.tar.gz)      ext="app.tar.gz" ;;
-              *.AppImage.tar.gz) ext="AppImage.tar.gz" ;;
-              *.AppImage)        ext="AppImage" ;;
-              *)                 ext="${signed##*.}" ;;
-            esac
-            asset="Risuko_${version}_${os}_${arch}.${ext}"
-            cp "$signed" "$asset"
-            cp "$sig" "$asset.sig"
-            echo "UPDATER_SIG_FILE=$asset.sig" >> "$GITHUB_ENV"
-            if [[ "$os" == "linux" ]]; then
-              appimage=$(find "$bundle_dir/appimage" -name "*.AppImage" -type f | head -1)
-              if [[ -z "$appimage" ]]; then
-                echo "::error::No AppImage under $bundle_dir/appimage"
-                find "$bundle_dir" -maxdepth 3 -type f | sed 's/^/found: /' || true
-                exit 1
-              fi
-              plain_asset="Risuko_${version}_${os}_${arch}.AppImage"
-              cp "$appimage" "$plain_asset"
-              echo "PLAIN_APPIMAGE_ASSET=$plain_asset" >> "$GITHUB_ENV"
-            fi
-          elif [[ "$os" == "darwin" ]]; then
-            asset="Risuko_${version}_${os}_${arch}.app.tar.gz"
-            tar czf "$asset" -C "$bundle_dir/macos" "Risuko.app"
-          else
-            appimage=$(find "$bundle_dir/appimage" -name "*.AppImage" -type f | head -1)
-            asset="Risuko_${version}_${os}_${arch}.AppImage"
-            cp "$appimage" "$asset"
-          fi
-          echo "APP_ASSET=$asset" >> "$GITHUB_ENV"
-          echo "APP_PLATFORM_LABEL=${os}-${arch}" >> "$GITHUB_ENV"
-
-      - name: Package app bundle with standardized name (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        env:
-          MATRIX_PLATFORM: ${{ matrix.platform }}
-          MATRIX_TARGET: ${{ matrix.target }}
-          GITHUB_REF: ${{ github.ref }}
-          GITHUB_REF_NAME: ${{ github.ref_name }}
-        run: |
-          $parts = $env:MATRIX_PLATFORM -split "/"
-          $os = $parts[0]; $arch = $parts[1]
-          if ($env:GITHUB_REF -match "^refs/tags/") {
-            $version = $env:GITHUB_REF_NAME -replace "^v", ""
-          } else {
-            $cargo = Get-Content "src-tauri/Cargo.toml" -Raw
-            $version = [regex]::Match($cargo, '^version\s*=\s*"([^"]+)"', [System.Text.RegularExpressions.RegexOptions]::Multiline).Groups[1].Value
-          }
-          $nsis = "src-tauri/target/$env:MATRIX_TARGET/release/bundle/nsis"
-          $asset = "Risuko_${version}_${os}_${arch}.setup.exe"
-          if ($env:GITHUB_REF -match "^refs/tags/") {
-            # Serve tauri's exact signed installer so its minisign .sig stays valid.
-            $sig = Get-ChildItem $nsis -Filter "*-setup.exe.sig" | Select-Object -First 1
-            if (-not $sig) {
-              Write-Error "No updater .sig under $nsis (is TAURI_SIGNING_PRIVATE_KEY set?)"
-              exit 1
-            }
-            $signed = $sig.FullName -replace '\.sig$', ''
-            Copy-Item $signed $asset
-            Copy-Item $sig.FullName "$asset.sig"
-            "UPDATER_SIG_FILE=$asset.sig" | Out-File -Append -FilePath $env:GITHUB_ENV -Encoding utf8
-          } else {
-            $setup = Get-ChildItem $nsis -Filter "*-setup.exe" | Select-Object -First 1
-            Copy-Item $setup.FullName $asset
-          }
-          "APP_ASSET=$asset" | Out-File -Append -FilePath $env:GITHUB_ENV -Encoding utf8
-          "APP_PLATFORM_LABEL=${os}-${arch}" | Out-File -Append -FilePath $env:GITHUB_ENV -Encoding utf8
+          RELEASE_TAGGED: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') }}
+        run: node scripts/package-release-assets.mjs
 
       - name: Write app bundle SHA-256 sidecar
         shell: bash
@@ -362,7 +301,7 @@ jobs:
           node scripts/write-sha256-sidecar.mjs "$APP_ASSET"
 
       - name: Write plain Linux AppImage SHA-256 sidecar
-        if: runner.os == 'Linux' && startsWith(github.ref, 'refs/tags/') && env.PLAIN_APPIMAGE_ASSET != ''
+        if: runner.os == 'Linux' && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') && env.PLAIN_APPIMAGE_ASSET != ''
         shell: bash
         run: |
           set -euo pipefail
@@ -371,7 +310,7 @@ jobs:
       # Record this platform's updater entry (key + asset + signature) for the
       # aggregation job that assembles latest.json across all matrix jobs.
       - name: Emit updater manifest fragment
-        if: startsWith(github.ref, 'refs/tags/')
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
         shell: bash
         env:
           MATRIX_TARGET: ${{ matrix.target }}
@@ -394,14 +333,14 @@ jobs:
           echo "fragment: fragments/${key}.json -> $APP_ASSET"
 
       - name: Upload updater fragment
-        if: startsWith(github.ref, 'refs/tags/')
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: updater-fragment-${{ matrix.target }}
           path: fragments/*.json
 
       - name: Upload standardized app bundle to GitHub Release
-        if: startsWith(github.ref, 'refs/tags/')
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
@@ -409,52 +348,18 @@ jobs:
             ${{ env.APP_ASSET }}
             ${{ env.APP_ASSET }}.sha256
             ${{ env.APP_ASSET }}.sig
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Upload plain Linux AppImage to GitHub Release
-        if: runner.os == 'Linux' && startsWith(github.ref, 'refs/tags/') && env.PLAIN_APPIMAGE_ASSET != ''
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ github.ref_name }}
-          files: |
-            ${{ env.PLAIN_APPIMAGE_ASSET }}
-            ${{ env.PLAIN_APPIMAGE_ASSET }}.sha256
+            ${{ env.EXTRA_APP_ASSETS }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload standardized app bundle artifact (manual builds)
-        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        if: github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v4
         with:
           name: app-${{ env.APP_PLATFORM_LABEL }}
           path: |
             ${{ env.APP_ASSET }}
             ${{ env.APP_ASSET }}.sha256
-
-      # ── Package Windows portable exe (raw unpacked binary) ──
-      # Naming: Risuko_{version}_win32_{arch}.portable.exe
-      # Used by `pnpx @risuko/app` on Windows to avoid running the NSIS installer.
-      - name: Package Windows portable exe
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $parts = "${{ matrix.platform }}" -split "/"
-          $os = $parts[0]; $arch = $parts[1]
-          if ("${{ github.ref }}" -match "^refs/tags/") {
-            $version = "${{ github.ref_name }}" -replace "^v", ""
-          } else {
-            $cargo = Get-Content "src-tauri/Cargo.toml" -Raw
-            $version = [regex]::Match($cargo, '^version\s*=\s*"([^"]+)"', [System.Text.RegularExpressions.RegexOptions]::Multiline).Groups[1].Value
-          }
-          $exe = "src-tauri/target/${{ matrix.target }}/release/Risuko.exe"
-          if (-not (Test-Path $exe)) {
-            Write-Error "Portable exe not found at $exe"
-            exit 1
-          }
-          $asset = "Risuko_${version}_${os}_${arch}.portable.exe"
-          Copy-Item $exe $asset
-          "PORTABLE_ASSET=$asset" | Out-File -Append -FilePath $env:GITHUB_ENV -Encoding utf8
 
       - name: Write Windows portable SHA-256 sidecar
         if: runner.os == 'Windows'
@@ -464,7 +369,7 @@ jobs:
           node scripts/write-sha256-sidecar.mjs "$PORTABLE_ASSET"
 
       - name: Upload Windows portable exe to GitHub Release
-        if: runner.os == 'Windows' && startsWith(github.ref, 'refs/tags/')
+        if: runner.os == 'Windows' && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
@@ -475,7 +380,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload Windows portable exe artifact (manual builds)
-        if: runner.os == 'Windows' && !startsWith(github.ref, 'refs/tags/')
+        if: runner.os == 'Windows' && github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v4
         with:
           name: app-portable-${{ env.APP_PLATFORM_LABEL }}
@@ -518,7 +423,7 @@ jobs:
           echo "CLI_ASSET=risuko-cli-${label}.zip" >> $env:GITHUB_ENV
 
       - name: Upload risuko-cli to GitHub Release
-        if: startsWith(github.ref, 'refs/tags/') && matrix.target != 'i686-pc-windows-msvc'
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') && matrix.target != 'i686-pc-windows-msvc'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
@@ -527,7 +432,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload risuko-cli artifact (manual builds)
-        if: ${{ !startsWith(github.ref, 'refs/tags/') && matrix.target != 'i686-pc-windows-msvc' }}
+        if: github.event_name == 'workflow_dispatch' && matrix.target != 'i686-pc-windows-msvc'
         uses: actions/upload-artifact@v4
         with:
           name: risuko-cli-${{ matrix.target }}
@@ -559,7 +464,7 @@ jobs:
   updater-manifest:
     name: Build updater latest.json
     needs: release
-    if: startsWith(github.ref, 'refs/tags/')
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     steps:
       - name: Check out Git repository

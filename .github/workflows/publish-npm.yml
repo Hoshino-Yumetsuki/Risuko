@@ -81,26 +81,6 @@ jobs:
           name: cli-${{ matrix.npm_dir }}
           path: src-tauri/target/${{ matrix.target }}/release/${{ matrix.binary }}
 
-      # Also upload as a standalone release asset
-      - name: Prepare standalone binary
-        shell: bash
-        run: |
-          mkdir -p dist
-          cp "src-tauri/target/${{ matrix.target }}/release/${{ matrix.binary }}" dist/
-          cd dist
-          if [[ "${{ matrix.binary }}" == *.exe ]]; then
-            7z a "../risuko-${{ matrix.npm_dir }}.zip" "${{ matrix.binary }}"
-          else
-            chmod +x "${{ matrix.binary }}"
-            tar czf "../risuko-${{ matrix.npm_dir }}.tar.gz" "${{ matrix.binary }}"
-          fi
-
-      - name: Upload standalone archive
-        uses: actions/upload-artifact@v4
-        with:
-          name: standalone-${{ matrix.npm_dir }}
-          path: risuko-${{ matrix.npm_dir }}.*
-
   # ───────────────────────────────────────────────────────
   # Build risuko-napi native modules for all platforms
   # ───────────────────────────────────────────────────────

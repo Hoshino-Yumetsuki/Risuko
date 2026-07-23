@@ -1,7 +1,7 @@
 import logger from "@shared/utils/logger";
-import EventEmitter from "eventemitter3";
+import CommandEmitter from "./CommandEmitter";
 
-export default class CommandManager extends EventEmitter {
+export default class CommandManager extends CommandEmitter {
 	private commands: Record<string, (...args: unknown[]) => unknown>;
 	constructor() {
 		super();
