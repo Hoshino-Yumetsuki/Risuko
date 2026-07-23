@@ -1,44 +1,17 @@
-import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import tailwindcss from "@tailwindcss/vite";
 import vue from "@vitejs/plugin-vue";
-import { defineConfig, normalizePath } from "vite";
-import { viteStaticCopy } from "vite-plugin-static-copy";
+import { defineConfig } from "vite";
 
 const dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(dirname, "src/renderer/pages/index");
 const outDir = path.resolve(dirname, "dist/outputs");
-const staticDir = path.resolve(dirname, "static");
-
-const hasStaticAssets =
-	fs.existsSync(staticDir) &&
-	fs.statSync(staticDir).isDirectory() &&
-	fs.readdirSync(staticDir, { recursive: true }).some((entry) => {
-		const fullPath = path.join(staticDir, String(entry));
-		return fs.existsSync(fullPath) && fs.statSync(fullPath).isFile();
-	});
 
 export default defineConfig({
 	root: rootDir,
 	base: "",
-	plugins: [
-		vue(),
-		tailwindcss(),
-		...(hasStaticAssets
-			? [
-					viteStaticCopy({
-						targets: [
-							{
-								src: `${normalizePath(staticDir)}/**/*`,
-								dest: "static",
-							},
-						],
-						silent: true,
-					}),
-				]
-			: []),
-	],
+	plugins: [vue(), tailwindcss()],
 	resolve: {
 		alias: {
 			"@": path.resolve(dirname, "src/renderer"),
@@ -57,7 +30,7 @@ export default defineConfig({
 		emptyOutDir: true,
 		sourcemap: false,
 		chunkSizeWarningLimit: 2000,
-		minify: "terser",
+		minify: "oxc",
 		rollupOptions: {
 			input: {
 				index: path.resolve(rootDir, "index.html"),

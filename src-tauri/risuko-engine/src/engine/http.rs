@@ -2746,8 +2746,8 @@ fn finalize_download(
 /// Apply the remote server's Last-Modified time to the downloaded file.
 /// `last_modified_str` is the raw HTTP Last-Modified header value (RFC 2822 / RFC 7231)
 fn apply_remote_file_time(path: &Path, last_modified_str: &str) {
-    if let Some(ft) = parse_http_date(last_modified_str) {
-        if let Err(e) = filetime::set_file_mtime(path, ft) {
+    if let Some(time) = parse_http_date(last_modified_str) {
+        if let Err(e) = set_file_mtime(path, time) {
             tracing::warn!("Failed to set remote file time on {}: {e}", path.display());
         } else {
             tracing::info!(
@@ -2760,11 +2760,32 @@ fn apply_remote_file_time(path: &Path, last_modified_str: &str) {
     }
 }
 
-/// Parse an HTTP date string (all three RFC 7231 formats) into a `FileTime`
-fn parse_http_date(s: &str) -> Option<filetime::FileTime> {
-    httpdate::parse_http_date(s.trim())
-        .ok()
-        .map(filetime::FileTime::from_system_time)
+/// Parse an HTTP date string (all three RFC 7231 formats) into a `SystemTime`.
+fn parse_http_date(s: &str) -> Option<std::time::SystemTime> {
+    httpdate::parse_http_date(s.trim()).ok()
+}
+
+fn set_file_mtime(path: &Path, time: std::time::SystemTime) -> std::io::Result<()> {
+    let times = fs::FileTimes::new().set_modified(time);
+
+    // Preserve platform-specific handle access while delegating the timestamp
+    // update itself to Rust's standard library.
+    #[cfg(windows)]
+    let file = {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x02000000;
+        fs::OpenOptions::new()
+            .write(true)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+            .open(path)?
+    };
+
+    #[cfg(not(windows))]
+    let file = fs::File::open(path)
+        .or_else(|_| fs::OpenOptions::new().write(true).open(path))?;
+
+    file.set_times(times)
 }
 
 /// Sanitize a filename to prevent path traversal attacks.
@@ -3441,5 +3462,35 @@ mod tests {
             adopt_suggested_filename("Report.pdf", "download", &current_part, dir_path).unwrap();
         assert_eq!(name, "Report.pdf");
         assert_eq!(new_part, dir_path.join("Report.pdf.part"));
+    }
+
+    #[test]
+    fn apply_remote_file_time_sets_last_modified() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("download.bin");
+        std::fs::write(&path, b"content").unwrap();
+
+        let last_modified = "Sun, 06 Nov 1994 08:49:37 GMT";
+        let expected = parse_http_date(last_modified).unwrap();
+        apply_remote_file_time(&path, last_modified);
+
+        let actual = std::fs::metadata(&path).unwrap().modified().unwrap();
+        let difference = actual
+            .duration_since(expected)
+            .unwrap_or_else(|error| error.duration());
+        assert!(
+            difference <= std::time::Duration::from_secs(2),
+            "expected mtime {expected:?}, got {actual:?}"
+        );
+    }
+
+    #[test]
+    fn apply_remote_file_time_ignores_set_time_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing_path = dir.path().join("missing.bin");
+
+        apply_remote_file_time(&missing_path, "Sun, 06 Nov 1994 08:49:37 GMT");
+
+        assert!(!missing_path.exists());
     }
 }

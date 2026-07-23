@@ -1,5 +1,5 @@
 import { APP_THEME, TRAY_CANVAS_CONFIG } from "@shared/constants";
-import { bytesToSize } from "./index";
+import { bytesToSize } from "./format";
 
 const { WIDTH, HEIGHT, ICON_WIDTH, ICON_HEIGHT, TEXT_WIDTH, TEXT_FONT_SIZE } =
 	TRAY_CANVAS_CONFIG;

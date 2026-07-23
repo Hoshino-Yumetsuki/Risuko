@@ -42,7 +42,6 @@ tokio-util = { version = "0.7", features = ["io"] }
 async-trait = "0.1"
 bytes = "1"
 url = "2"
-filetime = "0.2"
 m3u8-rs = "6.0.0"
 quick-xml = { version = "0.40", features = ["serialize"] }
 aes = "0.9"
