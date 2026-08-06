@@ -50,10 +50,59 @@ pub enum TaskKind {
     M3u8,
     Ftp,
     Metalink,
+    Usenet,
     Adc,
     Gnutella,
     G2,
     Gift,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsenetTaskOptions {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cleanup_mode: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub archive_limits: Option<serde_json::Value>,
+    #[serde(default)]
+    pub archive_limit_override_confirmed: bool,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsenetTaskFile {
+    pub name: String,
+    pub subject: String,
+    #[serde(default)]
+    pub groups: Vec<String>,
+    #[serde(default)]
+    pub segments: Vec<UsenetTaskSegment>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsenetTaskSegment {
+    pub number: u32,
+    pub bytes: u64,
+    pub message_id: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsenetTaskData {
+    pub options: UsenetTaskOptions,
+    #[serde(default)]
+    pub files: Vec<UsenetTaskFile>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsenetRepairFailure {
+    pub needed_blocks: u32,
+    pub available_blocks: u32,
+    pub partials_retained: bool,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -114,6 +163,16 @@ pub struct DownloadTask {
     pub options: Map<String, Value>,
     #[serde(default)]
     pub tag: Option<String>,
+    /// Non-secret NZB manifest metadata and provider profile reference.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usenet: Option<UsenetTaskData>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usenet_stage: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usenet_warning: Option<String>,
+    /// Non-secret details for an insufficient PAR2 recovery set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usenet_repair_failure: Option<UsenetRepairFailure>,
     // BitTorrent
     pub info_hash: Option<String>,
     #[serde(default)]
@@ -287,6 +346,33 @@ impl DownloadTask {
             created_at: now_ms(),
             ..Default::default()
         }
+    }
+
+    pub fn new_usenet(
+        gid: String,
+        dir: String,
+        tag: Option<String>,
+        title: Option<String>,
+        options: Map<String, Value>,
+        files: Vec<DownloadFile>,
+    ) -> Self {
+        let out = title.unwrap_or_default();
+        Self {
+            gid,
+            kind: TaskKind::Usenet,
+            dir,
+            out,
+            files,
+            options,
+            tag,
+            created_at: now_ms(),
+            ..Default::default()
+        }
+    }
+
+    pub fn with_usenet_data(mut self, usenet: UsenetTaskData) -> Self {
+        self.usenet = Some(usenet);
+        self
     }
 
     pub fn new_ed2k(
@@ -659,6 +745,27 @@ impl DownloadTask {
             }
         }
 
+        if self.kind == TaskKind::Usenet {
+            if let Some(ref usenet) = self.usenet {
+                m.insert(
+                    "usenet".into(),
+                    serde_json::to_value(usenet).unwrap_or_default(),
+                );
+            }
+            if let Some(stage) = &self.usenet_stage {
+                m.insert("usenetStage".into(), Value::String(stage.clone()));
+            }
+            if let Some(warning) = &self.usenet_warning {
+                m.insert("usenetWarning".into(), Value::String(warning.clone()));
+            }
+            if let Some(repair_failure) = &self.usenet_repair_failure {
+                m.insert(
+                    "usenetRepairFailure".into(),
+                    serde_json::to_value(repair_failure).unwrap_or_default(),
+                );
+            }
+        }
+
         // Per-chunk progress for multi-thread HTTP downloads
         if !self.chunk_progress.is_empty() {
             let chunks: Vec<Value> = self
@@ -832,6 +939,139 @@ mod tests {
         assert_eq!(task.uris[0], "ftp://files.example.com/data.csv");
     }
 
+    #[test]
+    fn new_usenet_sets_kind_and_file_metadata() {
+        let files = vec![DownloadFile {
+            index: "1".into(),
+            path: "/dl/archive.part01.rar".into(),
+            length: "42".into(),
+            completed_length: "0".into(),
+            selected: "true".into(),
+            uris: Vec::new(),
+        }];
+        let metadata = UsenetTaskData {
+            options: UsenetTaskOptions {
+                profile_id: Some("provider-main".into()),
+                ..Default::default()
+            },
+            files: vec![UsenetTaskFile {
+                name: "archive.part01.rar".into(),
+                subject: "archive.part01.rar yEnc".into(),
+                groups: vec!["alt.binaries.example".into()],
+                segments: vec![UsenetTaskSegment {
+                    number: 1,
+                    bytes: 42,
+                    message_id: "<part-1@example>".into(),
+                }],
+            }],
+        };
+
+        let task = DownloadTask::new_usenet(
+            "ugid".into(),
+            "/dl".into(),
+            None,
+            Some("Release".into()),
+            Map::new(),
+            files,
+        )
+        .with_usenet_data(metadata.clone());
+
+        assert_eq!(task.kind, TaskKind::Usenet);
+        assert_eq!(task.out, "Release");
+        assert_eq!(task.files.len(), 1);
+        assert_eq!(task.usenet, Some(metadata));
+    }
+
+    #[test]
+    fn usenet_metadata_round_trips_without_credentials() {
+        let task = DownloadTask::new_usenet(
+            "ugid".into(),
+            "/dl".into(),
+            None,
+            None,
+            Map::new(),
+            Vec::new(),
+        )
+        .with_usenet_data(UsenetTaskData {
+            options: UsenetTaskOptions {
+                profile_id: Some("provider-main".into()),
+                ..Default::default()
+            },
+            files: vec![UsenetTaskFile {
+                name: "file.bin".into(),
+                subject: "file.bin yEnc".into(),
+                groups: vec!["alt.binaries.example".into()],
+                segments: vec![UsenetTaskSegment {
+                    number: 1,
+                    bytes: 7,
+                    message_id: "<one@example>".into(),
+                }],
+            }],
+        });
+
+        let encoded = serde_json::to_string(&task).unwrap();
+        assert!(encoded.contains("profileId"));
+        assert!(encoded.contains("messageId"));
+        assert!(!encoded.contains("password"));
+
+        let restored: DownloadTask = serde_json::from_str(&encoded).unwrap();
+        assert_eq!(restored.kind, TaskKind::Usenet);
+        assert_eq!(restored.usenet, task.usenet);
+    }
+
+    #[test]
+    fn usenet_repair_failure_round_trips_as_non_secret_task_metadata() {
+        let mut task = DownloadTask::new_usenet(
+            "ugid".into(),
+            "/dl".into(),
+            None,
+            None,
+            Map::new(),
+            Vec::new(),
+        );
+        task.usenet_repair_failure = Some(UsenetRepairFailure {
+            needed_blocks: 184,
+            available_blocks: 62,
+            partials_retained: true,
+        });
+
+        let encoded = serde_json::to_string(&task).unwrap();
+        let restored: DownloadTask = serde_json::from_str(&encoded).unwrap();
+
+        assert_eq!(restored.usenet_repair_failure, task.usenet_repair_failure);
+    }
+
+    #[test]
+    fn usenet_repair_failure_defaults_when_absent_from_legacy_task_data() {
+        let mut task = DownloadTask::new_usenet(
+            "ugid".into(),
+            "/dl".into(),
+            None,
+            None,
+            Map::new(),
+            Vec::new(),
+        );
+        task.usenet_repair_failure = Some(UsenetRepairFailure {
+            needed_blocks: 184,
+            available_blocks: 62,
+            partials_retained: true,
+        });
+        let mut encoded = serde_json::to_value(task).unwrap();
+        let removed = encoded
+            .as_object_mut()
+            .unwrap()
+            .remove("usenet_repair_failure");
+
+        assert!(
+            removed.is_some(),
+            "repair failure must be serialized with task data"
+        );
+
+        let restored: DownloadTask = serde_json::from_value(encoded).unwrap();
+
+        assert_eq!(restored.usenet_repair_failure, None);
+    }
+
     // -- to_rpc_status --
 
     #[test]
@@ -884,6 +1124,34 @@ mod tests {
         assert!(obj.contains_key("seeder"));
         let bt = obj.get("bittorrent").unwrap().as_object().unwrap();
         assert_eq!(bt.get("infoHash").unwrap(), "abc123");
+    }
+
+    #[test]
+    fn rpc_status_emits_usenet_repair_failure_for_usenet_tasks() {
+        let mut task = DownloadTask::new_usenet(
+            "ugid".into(),
+            "/dl".into(),
+            None,
+            None,
+            Map::new(),
+            Vec::new(),
+        );
+        task.usenet_repair_failure = Some(UsenetRepairFailure {
+            needed_blocks: 184,
+            available_blocks: 62,
+            partials_retained: true,
+        });
+
+        let status = task.to_rpc_status(&[]);
+
+        assert_eq!(
+            status.get("usenetRepairFailure"),
+            Some(&json!({
+                "neededBlocks": 184,
+                "availableBlocks": 62,
+                "partialsRetained": true,
+            }))
+        );
     }
 
     #[test]

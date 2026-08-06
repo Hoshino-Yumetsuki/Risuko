@@ -526,6 +526,110 @@ async fn add_metalink_by_path_inner(path: &str, options: Option<Value>) -> Resul
     manager.add_metalink_task(bytes, options).await
 }
 
+async fn add_nzb_by_path_inner(path: &str, options: Option<Value>) -> Result<String, String> {
+    let path = path.trim();
+    let fs_path = Path::new(path);
+    let is_nzb = fs_path
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(|ext| ext.eq_ignore_ascii_case("nzb"))
+        == Some(true);
+    if path.is_empty() || !is_nzb {
+        return Err("NZB file (.nzb) required".to_string());
+    }
+    const MAX_NZB_BYTES: u64 = 16 * 1024 * 1024;
+    let meta = tokio::fs::metadata(fs_path)
+        .await
+        .map_err(|e| e.to_string())?;
+    if meta.len() > MAX_NZB_BYTES {
+        return Err("NZB file too large".to_string());
+    }
+    let bytes = tokio::fs::read(fs_path).await.map_err(|e| e.to_string())?;
+    if bytes.is_empty() {
+        return Err("NZB payload is empty".to_string());
+    }
+    let mut options = match options.unwrap_or(Value::Object(Map::new())) {
+        Value::Object(map) => map,
+        _ => Map::new(),
+    };
+    options.insert(
+        "usenet-source-name".to_string(),
+        Value::String(
+            fs_path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("download.nzb")
+                .to_string(),
+        ),
+    );
+    let manager = engine::get_manager().await.ok_or("Engine not running")?;
+    manager.add_nzb_task(bytes, options).await
+}
+
+fn is_nzb_url(uri: &str) -> bool {
+    let path = uri.split(['?', '#']).next().unwrap_or(uri);
+    path.rsplit('/')
+        .next()
+        .unwrap_or("")
+        .to_ascii_lowercase()
+        .ends_with(".nzb")
+}
+
+async fn fetch_nzb_url(uri: &str) -> Result<Vec<u8>, String> {
+    const MAX_NZB_BYTES: usize = 16 * 1024 * 1024;
+    let client = risuko_http::Client::new();
+    let response = client
+        .get(uri)
+        .send()
+        .await
+        .map_err(|e| format!("NZB URL fetch failed: {e}"))?
+        .error_for_status()
+        .map_err(|e| format!("NZB URL returned an error: {e}"))?;
+    if response
+        .content_length()
+        .is_some_and(|length| length > MAX_NZB_BYTES as u64)
+    {
+        return Err("NZB URL payload too large".to_string());
+    }
+    let bytes = response
+        .bytes()
+        .await
+        .map_err(|e| format!("NZB URL body read failed: {e}"))?
+        .to_vec();
+    if bytes.len() > MAX_NZB_BYTES {
+        return Err("NZB URL payload too large".to_string());
+    }
+    Ok(bytes)
+}
+
+#[tauri::command]
+pub async fn add_nzbs_by_paths(
+    _handle: AppHandle,
+    _state: tauri::State<'_, crate::state::AppState>,
+    paths: Vec<String>,
+    options: Option<Value>,
+) -> Result<Vec<BatchAddResult>, String> {
+    if paths.is_empty() {
+        return Err("NZB file (.nzb) required".to_string());
+    }
+    let mut results = Vec::with_capacity(paths.len());
+    for path in paths.iter() {
+        match add_nzb_by_path_inner(path, options.clone()).await {
+            Ok(gid) => results.push(BatchAddResult {
+                path: path.clone(),
+                gid: Some(gid),
+                error: None,
+            }),
+            Err(err) => results.push(BatchAddResult {
+                path: path.clone(),
+                gid: None,
+                error: Some(err),
+            }),
+        }
+    }
+    Ok(results)
+}
+
 #[tauri::command]
 pub async fn add_metalinks_by_paths(
     _handle: AppHandle,
@@ -700,6 +804,11 @@ pub async fn add_uri(
         // Check if this is a magnet link
         let result = if torrent::is_magnet_uri(uri) {
             manager.add_magnet_task(uri, task_options).await
+        } else if is_nzb_url(uri) {
+            match fetch_nzb_url(uri).await {
+                Ok(bytes) => manager.add_nzb_task(bytes, task_options).await,
+                Err(error) => Err(error),
+            }
         } else if is_m3u8 {
             manager.add_m3u8_task(uri, task_options).await
         } else if engine::ed2k::is_ed2k_uri(uri) {

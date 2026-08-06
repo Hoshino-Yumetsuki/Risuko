@@ -213,6 +213,15 @@ const namedCategories: SyncCategory[] = [
 		],
 	},
 	{
+		id: "usenet",
+		keys: [
+			"usenet-profiles",
+			"usenet-archive-limits",
+			"usenet-cleanup-mode",
+			"usenet-limits-adjusted",
+		],
+	},
+	{
 		id: "g2-gnutella",
 		keys: [
 			"gnutella-cache",

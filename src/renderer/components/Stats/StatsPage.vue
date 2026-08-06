@@ -377,6 +377,7 @@ const protocolLabel = (protocol: string) => {
 	const labels: Record<string, string> = {
 		http: "HTTP",
 		torrent: "BitTorrent",
+		usenet: "Usenet",
 		ftp: "FTP",
 		ed2k: "ED2K",
 		m3u8: "M3U8",

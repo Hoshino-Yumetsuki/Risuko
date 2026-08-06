@@ -24,10 +24,17 @@ pub mod task;
 pub mod torrent;
 pub mod upload;
 pub mod uri_selector;
+pub mod usenet;
+pub mod usenet_par2;
+pub mod usenet_pipeline;
+pub mod usenet_transport;
+pub mod usenet_worker;
 pub(crate) mod util;
 
 // Legacy P2P / IPC protocol stacks
 pub mod adc;
+pub mod archive_pipeline;
+pub mod archive_safety;
 pub mod g2;
 pub mod gift;
 pub mod gnutella;
@@ -40,8 +47,6 @@ pub use session::SESSION_FILENAME;
 /// Suffix for per-chunk resume metadata sidecar file
 pub const CHUNK_META_SUFFIX: &str = ".chunks";
 
-/// Startup-only config keys (changes require an engine restart to take effect).
-/// Mirrors the list maintained on the frontend in `src/shared/configKeys.ts`
 pub const STARTUP_ONLY_KEYS: &[&str] = &[
     "rpc-listen-port",
     "rpc-secret",
@@ -61,6 +66,7 @@ pub const STARTUP_ONLY_KEYS: &[&str] = &[
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
+use tokio::sync::RwLock;
 
 use crate::config::ConfigManager;
 use crate::traits::EventSink;
@@ -74,12 +80,28 @@ use self::upload::UploadSinkManager;
 static ENGINE_INSTANCE: std::sync::LazyLock<Mutex<Option<EngineInstance>>> =
     std::sync::LazyLock::new(|| Mutex::new(None));
 
-/// Set when the engine successfully starts; cleared on stop. Read by health checks
-/// to derive uptime without coupling to TaskManager internals
+static USENET_CREDENTIAL_RESOLVER: std::sync::LazyLock<
+    RwLock<Option<std::sync::Arc<dyn usenet::UsenetCredentialResolver>>>,
+> = std::sync::LazyLock::new(|| RwLock::new(None));
+
+pub async fn set_usenet_credential_resolver(
+    resolver: std::sync::Arc<dyn usenet::UsenetCredentialResolver>,
+) {
+    *USENET_CREDENTIAL_RESOLVER.write().await = Some(resolver);
+}
+
+pub async fn usenet_credential_resolver() -> std::sync::Arc<dyn usenet::UsenetCredentialResolver> {
+    USENET_CREDENTIAL_RESOLVER
+        .read()
+        .await
+        .clone()
+        .unwrap_or_else(|| {
+            std::sync::Arc::new(crate::engine::usenet_worker::AnonymousCredentialResolver)
+        })
+}
+
 static ENGINE_STARTED_AT: std::sync::Mutex<Option<Instant>> = std::sync::Mutex::new(None);
 
-/// Snapshot of the values of `STARTUP_ONLY_KEYS` at the moment the engine last
-/// started. Health checks compare this against the live config to flag drift
 static STARTUP_SNAPSHOT: std::sync::Mutex<
     Option<std::collections::HashMap<String, serde_json::Value>>,
 > = std::sync::Mutex::new(None);

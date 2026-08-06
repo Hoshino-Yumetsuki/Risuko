@@ -627,6 +627,27 @@ fn dispatch_method<'a>(
                 Ok(Value::String(gid))
             }
 
+            "risuko.addNzb" => {
+                let nzb_b64 = params
+                    .first()
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| RpcError::from("NZB data required".to_string()))?;
+                let nzb_data = base64::engine::general_purpose::STANDARD
+                    .decode(nzb_b64)
+                    .map_err(|e| RpcError::from(format!("Invalid base64: {e}")))?;
+                let options = params
+                    .get(1)
+                    .and_then(|v| v.as_object())
+                    .cloned()
+                    .unwrap_or_default();
+                let gid = state
+                    .manager
+                    .add_nzb_task(nzb_data, options)
+                    .await
+                    .map_err(RpcError::from)?;
+                Ok(Value::String(gid))
+            }
+
             "risuko.addEd2k" => {
                 let uri = params
                     .first()

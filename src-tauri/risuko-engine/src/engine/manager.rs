@@ -18,10 +18,12 @@ use super::session::SessionManager;
 use super::speed_limiter::{parse_speed_limit, SpeedLimiter};
 use super::task::{
     generate_gid, ChunkProgress, DownloadFile, DownloadTask, FileUri, PeerInfo, TaskKind,
-    TaskStatus,
+    TaskStatus, UsenetRepairFailure, UsenetTaskData, UsenetTaskFile, UsenetTaskOptions,
+    UsenetTaskSegment,
 };
 use super::torrent::{self, TorrentEngine};
 use super::upload::UploadFileSnapshot;
+use super::usenet_transport::{ProviderConnectionCapacityRegistry, ProviderConnectionLease};
 use std::collections::HashSet;
 
 const MAGNET_METADATA_ATTEMPT_TIMEOUT_SECS: u64 = 60;
@@ -87,10 +89,6 @@ impl Counters {
     }
 }
 
-/// Per-chunk progress with a fair-share baseline denominator. With
-/// work-stealing, each counter holds total bytes downloaded by worker i
-/// across all pieces it pulled — not a fixed slice — so clamp so percent
-/// never exceeds 100%
 fn chunk_progress(chunks: &[Arc<AtomicU64>], total: u64) -> Vec<ChunkProgress> {
     let split_count = chunks.len() as u64;
     let chunk_size = total / split_count;
@@ -112,13 +110,6 @@ fn chunk_progress(chunks: &[Arc<AtomicU64>], total: u64) -> Vec<ChunkProgress> {
         .collect()
 }
 
-/// Epoch-checked completion bookkeeping shared by every protocol worker:
-/// sync the task record from the counters, build the single-file vec and
-/// emit DownloadComplete on success, map cancellation to Paused, mark
-/// anything else as Error, then drop the active entry if it's still this
-/// worker's. `on_found` runs for both outcomes (http's chunk snapshot),
-/// `on_ok` applies protocol extras and returns the file completed-length,
-/// `on_err` classifies the error (http also evicts stale cookies)
 #[allow(clippy::too_many_arguments)]
 async fn finish_task(
     tasks: &Arc<RevLock>,
@@ -155,21 +146,23 @@ async fn finish_task(
                     path.display()
                 );
                 task.status = TaskStatus::Complete;
-                task.files = vec![DownloadFile {
-                    index: "1".to_string(),
-                    path: path.to_string_lossy().to_string(),
-                    length: task.total_length.to_string(),
-                    completed_length: file_completed.to_string(),
-                    selected: "true".to_string(),
-                    uris: task
-                        .uris
-                        .iter()
-                        .map(|u| FileUri {
-                            uri: u.clone(),
-                            status: "used".to_string(),
-                        })
-                        .collect(),
-                }];
+                if task.files.is_empty() {
+                    task.files = vec![DownloadFile {
+                        index: "1".to_string(),
+                        path: path.to_string_lossy().to_string(),
+                        length: task.total_length.to_string(),
+                        completed_length: file_completed.to_string(),
+                        selected: "true".to_string(),
+                        uris: task
+                            .uris
+                            .iter()
+                            .map(|u| FileUri {
+                                uri: u.clone(),
+                                status: "used".to_string(),
+                            })
+                            .collect(),
+                    }];
+                }
                 events.send(EngineEvent::DownloadComplete {
                     gid: gid.to_string(),
                 });
@@ -200,6 +193,16 @@ async fn finish_task(
     if active_guard.get(gid).map(|ad| ad.epoch) == Some(worker_epoch) {
         active_guard.remove(gid);
     }
+}
+
+fn finish_usenet_failure(
+    task: &mut DownloadTask,
+    error: &str,
+    repair_failure: Option<UsenetRepairFailure>,
+) -> super::error_code::ErrorCode {
+    task.usenet_stage = Some("error".to_string());
+    task.usenet_repair_failure = repair_failure;
+    classify_error(error, "usenet")
 }
 
 async fn metalink_finish(
@@ -394,6 +397,7 @@ pub struct TaskManager {
     torrent_engine: Arc<RwLock<Option<TorrentEngine>>>,
     global_speed_limiter: Arc<SpeedLimiter>,
     cookie_store: Arc<CookieStore>,
+    usenet_connection_capacity: Arc<ProviderConnectionCapacityRegistry>,
 }
 
 /// Extract filename hint from the first HTTP URI by parsing URL path
@@ -532,6 +536,7 @@ impl TaskManager {
             torrent_engine: Arc::new(RwLock::new(torrent_engine)),
             global_speed_limiter,
             cookie_store: Arc::new(CookieStore::new(config_dir)),
+            usenet_connection_capacity: Arc::new(ProviderConnectionCapacityRegistry::default()),
         };
 
         if manager.restore_torrent_mappings().await {
@@ -902,6 +907,152 @@ impl TaskManager {
             download_files,
         ))
         .await
+    }
+
+    pub async fn add_nzb_task(
+        &self,
+        nzb: Vec<u8>,
+        options: Map<String, Value>,
+    ) -> Result<String, String> {
+        let document = super::usenet::parse(&nzb)?;
+        let filename_hint = document
+            .title
+            .clone()
+            .or_else(|| document.files.first().map(|file| file.name.clone()))
+            .unwrap_or_else(|| "usenet".to_string());
+        let (dir, tag) = self
+            .resolve_routing_for_task(&options, &filename_hint)
+            .await;
+        let files = document
+            .files
+            .iter()
+            .enumerate()
+            .map(|(index, file)| DownloadFile {
+                index: (index + 1).to_string(),
+                path: format!("{}/{}", dir, file.name),
+                length: file
+                    .segments
+                    .iter()
+                    .map(|segment| segment.bytes)
+                    .sum::<u64>()
+                    .to_string(),
+                completed_length: "0".to_string(),
+                selected: "true".to_string(),
+                uris: file
+                    .segments
+                    .iter()
+                    .map(|segment| FileUri {
+                        uri: format!("nntp://{}", segment.message_id),
+                        status: "waiting".to_string(),
+                    })
+                    .collect(),
+            })
+            .collect();
+        let gid = generate_gid();
+        let mut options = options;
+        for key in [
+            "username",
+            "password",
+            "usenet-username",
+            "usenet-password",
+            "archive-password",
+            "usenet-archive-password",
+        ] {
+            options.remove(key);
+        }
+        if let Some(Value::Array(profiles)) = options.get_mut("usenet-profiles") {
+            for profile in profiles {
+                if let Value::Object(profile) = profile {
+                    for key in ["username", "password", "user", "pass"] {
+                        profile.remove(key);
+                    }
+                }
+            }
+        }
+        if let Some(value) = options.get("usenet-archive-limits") {
+            let defaults = if cfg!(target_os = "android") {
+                super::archive_safety::ArchiveLimits::android_defaults()
+            } else {
+                super::archive_safety::ArchiveLimits::desktop_defaults()
+            };
+            let confirmed = options
+                .get("usenet-archive-limit-override-confirmed")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            super::archive_safety::validate_limits_override_value(defaults, value, confirmed)
+                .map_err(|error| format!("Invalid Usenet archive limits: {error:?}"))?;
+        }
+        options.insert(
+            "usenet-nzb-bytes".to_string(),
+            Value::Number((nzb.len() as u64).into()),
+        );
+        options.insert(
+            "usenet-title".to_string(),
+            document
+                .title
+                .clone()
+                .map(Value::String)
+                .unwrap_or(Value::Null),
+        );
+        options.insert(
+            "usenet-segment-count".to_string(),
+            Value::Number(
+                document
+                    .files
+                    .iter()
+                    .map(|file| file.segments.len() as u64)
+                    .sum::<u64>()
+                    .into(),
+            ),
+        );
+        let usenet_options = UsenetTaskOptions {
+            profile_id: options
+                .get("usenet-profile-id")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            cleanup_mode: options
+                .get("usenet-cleanup-mode")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            archive_limits: options.get("usenet-archive-limits").cloned(),
+            archive_limit_override_confirmed: options
+                .get("usenet-archive-limit-override-confirmed")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+        };
+        let metadata = UsenetTaskData {
+            options: usenet_options,
+            files: document
+                .files
+                .iter()
+                .map(|file| UsenetTaskFile {
+                    name: file.name.clone(),
+                    subject: file.subject.clone(),
+                    groups: file.groups.clone(),
+                    segments: file
+                        .segments
+                        .iter()
+                        .map(|segment| UsenetTaskSegment {
+                            number: segment.number,
+                            bytes: segment.bytes,
+                            message_id: segment.message_id.clone(),
+                        })
+                        .collect(),
+                })
+                .collect(),
+        };
+        let task = DownloadTask::new_usenet(gid, dir, tag, document.title, options, files)
+            .with_usenet_data(metadata);
+        self.enqueue(task).await
+    }
+
+    pub fn try_acquire_usenet_profile_connection(
+        &self,
+        profile: &super::usenet::UsenetProviderProfile,
+    ) -> Result<Option<ProviderConnectionLease>, String> {
+        self.usenet_connection_capacity
+            .try_acquire(profile)
+            .map_err(|error| error.to_string())
     }
 
     pub async fn add_magnet_task(
@@ -1394,6 +1545,95 @@ impl TaskManager {
         });
     }
 
+    fn spawn_usenet_download(&self, task: &DownloadTask, merged_options: Map<String, Value>) {
+        let gid = task.gid.clone();
+        let task_snapshot = task.clone();
+        let tasks = self.tasks.clone();
+        let active = self.active_downloads.clone();
+        let events = self.events.clone();
+        let connection_capacity = self.usenet_connection_capacity.clone();
+        let counters = Counters::new(task.total_length, 0);
+        let worker_epoch = next_worker_epoch();
+        tokio::spawn(async move {
+            active.write().await.insert(
+                gid.clone(),
+                counters.to_active(
+                    worker_epoch,
+                    Vec::new(),
+                    Arc::new(parking_lot::Mutex::new(None)),
+                ),
+            );
+            let result = super::usenet_worker::run_usenet_download(
+                &task_snapshot,
+                &merged_options,
+                counters.completed.clone(),
+                counters.total.clone(),
+                counters.cancel_token.clone(),
+                super::usenet_credential_resolver().await,
+                connection_capacity,
+            )
+            .await;
+            let repair_failure = result
+                .as_ref()
+                .err()
+                .and_then(|error| error.repair_failure().cloned());
+            let result = result.map_err(|error| error.to_string());
+            finish_task(
+                &tasks,
+                &active,
+                &events,
+                &gid,
+                worker_epoch,
+                "usenet",
+                &counters,
+                result,
+                |_| {},
+                |task, path| {
+                    task.usenet_repair_failure = None;
+                    if let Some(metadata) = task.usenet.as_ref() {
+                        task.usenet_stage = Some("complete".to_string());
+                        task.files = metadata
+                            .files
+                            .iter()
+                            .enumerate()
+                            .map(|(index, file)| DownloadFile {
+                                index: (index + 1).to_string(),
+                                path: Path::new(&task.dir)
+                                    .join(super::util::safe_filename(&file.name, "download"))
+                                    .to_string_lossy()
+                                    .to_string(),
+                                length: file
+                                    .segments
+                                    .iter()
+                                    .map(|segment| segment.bytes)
+                                    .sum::<u64>()
+                                    .to_string(),
+                                completed_length: file
+                                    .segments
+                                    .iter()
+                                    .map(|segment| segment.bytes)
+                                    .sum::<u64>()
+                                    .to_string(),
+                                selected: "true".to_string(),
+                                uris: Vec::new(),
+                            })
+                            .collect();
+                    }
+                    if task.files.is_empty() {
+                        path.metadata().map(|metadata| metadata.len()).unwrap_or(0)
+                    } else {
+                        task.files
+                            .iter()
+                            .filter_map(|file| file.completed_length.parse::<u64>().ok())
+                            .sum()
+                    }
+                },
+                |task, error| finish_usenet_failure(task, error, repair_failure),
+            )
+            .await;
+        });
+    }
+
     /// Start download workers for waiting tasks up to max concurrent limit
     async fn try_start_next(&self) {
         let (max_concurrent, options_snapshot) = {
@@ -1456,6 +1696,13 @@ impl TaskManager {
                 let merged = options_snapshot.merge_task_options(&task.options);
                 apply_select_file(&mut task.files, &task.options);
                 self.spawn_metalink_download(task, merged);
+                self.send_download_start(&task.gid);
+                started += 1;
+            } else if task.kind == TaskKind::Usenet && task.usenet.is_some() {
+                task.status = TaskStatus::Active;
+                task.usenet_stage = Some("connecting".to_string());
+                let merged = options_snapshot.merge_task_options(&task.options);
+                self.spawn_usenet_download(task, merged);
                 self.send_download_start(&task.gid);
                 started += 1;
             } else if matches!(
@@ -2555,6 +2802,7 @@ impl TaskManager {
             }
             task.error_code = None;
             task.error_message = None;
+            task.usenet_repair_failure = None;
             is_torrent = task.kind == TaskKind::Torrent;
             if is_torrent {
                 task.status = TaskStatus::Active;
@@ -3835,7 +4083,35 @@ mod tests {
             torrent_engine: Arc::new(RwLock::new(None)),
             global_speed_limiter,
             cookie_store,
+            usenet_connection_capacity: Arc::new(ProviderConnectionCapacityRegistry::default()),
         }
+    }
+
+    #[test]
+    fn usenet_failure_records_a_structured_par2_summary() {
+        let mut task = DownloadTask::new_usenet(
+            "ugid".into(),
+            "/dl".into(),
+            None,
+            None,
+            Map::new(),
+            Vec::new(),
+        );
+        let repair_failure = UsenetRepairFailure {
+            needed_blocks: 184,
+            available_blocks: 62,
+            partials_retained: true,
+        };
+
+        let error_code = finish_usenet_failure(
+            &mut task,
+            "PAR2 recovery is insufficient: need 184 blocks, have 62",
+            Some(repair_failure.clone()),
+        );
+
+        assert_eq!(error_code.to_string(), "554");
+        assert_eq!(task.usenet_stage.as_deref(), Some("error"));
+        assert_eq!(task.usenet_repair_failure, Some(repair_failure));
     }
 
     #[tokio::test]

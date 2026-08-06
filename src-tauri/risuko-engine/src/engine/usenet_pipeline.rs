@@ -1,0 +1,1592 @@
+//! Portable Usenet article assembly primitives
+
+use crate::engine::archive_safety::ArchiveLimits;
+use crate::engine::usenet::NzbSegment;
+use sha2::{Digest, Sha256};
+use std::collections::{BTreeMap, BTreeSet};
+use std::fmt;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
+use tokio_util::sync::CancellationToken;
+
+const RESUME_VERSION: u8 = 2;
+const HASH_BUFFER_BYTES: usize = 64 * 1024;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct YencAssemblyLimits {
+    max_file_bytes: u64,
+    max_task_bytes: u64,
+}
+
+impl YencAssemblyLimits {
+    pub fn new(max_file_bytes: u64, max_task_bytes: u64) -> Result<Self, String> {
+        if max_file_bytes == 0 || max_task_bytes == 0 {
+            return Err("yEnc assembly limits must be finite and non-zero".into());
+        }
+        Ok(Self {
+            max_file_bytes,
+            max_task_bytes,
+        })
+    }
+
+    pub const fn platform_defaults() -> Self {
+        let archive = if cfg!(target_os = "android") {
+            ArchiveLimits::android_defaults()
+        } else {
+            ArchiveLimits::desktop_defaults()
+        };
+        Self {
+            max_file_bytes: archive.max_entry_bytes,
+            max_task_bytes: archive.max_expanded_bytes,
+        }
+    }
+
+    pub const fn max_file_bytes(self) -> u64 {
+        self.max_file_bytes
+    }
+
+    pub const fn max_task_bytes(self) -> u64 {
+        self.max_task_bytes
+    }
+
+    fn validate_file_size(self, size: u64) -> Result<(), String> {
+        if size > self.max_file_bytes {
+            return Err(format!(
+                "yEnc file size {size} exceeds the per-file limit of {} bytes",
+                self.max_file_bytes
+            ));
+        }
+        Ok(())
+    }
+
+    fn reserve_file(self, budget: &mut YencAssemblyBudget, size: u64) -> Result<(), String> {
+        self.validate_file_size(size)?;
+        let total = budget
+            .reserved_bytes
+            .checked_add(size)
+            .ok_or_else(|| "yEnc task size overflowed its finite limit".to_string())?;
+        if total > self.max_task_bytes {
+            return Err(format!(
+                "yEnc task size {total} exceeds the task limit of {} bytes",
+                self.max_task_bytes
+            ));
+        }
+        budget.reserved_bytes = total;
+        Ok(())
+    }
+}
+
+impl Default for YencAssemblyLimits {
+    fn default() -> Self {
+        Self::platform_defaults()
+    }
+}
+
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct YencAssemblyBudget {
+    reserved_bytes: u64,
+}
+
+impl YencAssemblyBudget {
+    pub const fn reserved_bytes(&self) -> u64 {
+        self.reserved_bytes
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ResumeSegment {
+    pub offset: u64,
+    pub length: u64,
+    pub sha256: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ResumeSidecar {
+    pub version: u8,
+    pub manifest_sha256: String,
+    #[serde(default)]
+    pub completed_segments: BTreeSet<u32>,
+    #[serde(default)]
+    pub segment_receipts: BTreeMap<u32, ResumeSegment>,
+    pub completed_bytes: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_size: Option<u64>,
+    #[serde(default)]
+    pub repaired: bool,
+}
+
+impl ResumeSidecar {
+    pub fn new(manifest_sha256: String) -> Self {
+        Self {
+            version: RESUME_VERSION,
+            manifest_sha256,
+            completed_segments: BTreeSet::new(),
+            segment_receipts: BTreeMap::new(),
+            completed_bytes: 0,
+            expected_size: None,
+            repaired: false,
+        }
+    }
+
+    pub async fn load(path: &Path, manifest_sha256: &str) -> Result<Self, String> {
+        let bytes = match tokio::fs::read(path).await {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(Self::new(manifest_sha256.to_string()))
+            }
+            Err(error) => return Err(format!("read resume metadata: {error}")),
+        };
+        let parsed: Self = serde_json::from_slice(&bytes)
+            .map_err(|error| format!("parse resume metadata: {error}"))?;
+        if parsed.version != RESUME_VERSION || parsed.manifest_sha256 != manifest_sha256 {
+            return Ok(Self::new(manifest_sha256.to_string()));
+        }
+        Ok(parsed)
+    }
+
+    pub async fn save_atomic(&self, path: &Path) -> Result<(), String> {
+        let payload = serde_json::to_vec_pretty(self)
+            .map_err(|error| format!("serialize resume metadata: {error}"))?;
+        let temp = path.with_extension(format!(
+            "{}.tmp",
+            path.extension().and_then(|v| v.to_str()).unwrap_or("json")
+        ));
+        if let Some(parent) = path.parent() {
+            tokio::fs::create_dir_all(parent)
+                .await
+                .map_err(|error| format!("create resume metadata directory: {error}"))?;
+        }
+        let mut file = tokio::fs::File::create(&temp)
+            .await
+            .map_err(|error| format!("create resume metadata: {error}"))?;
+        file.write_all(&payload)
+            .await
+            .map_err(|error| format!("write resume metadata: {error}"))?;
+        file.sync_all()
+            .await
+            .map_err(|error| format!("flush resume metadata: {error}"))?;
+        drop(file);
+        tokio::fs::rename(&temp, path)
+            .await
+            .map_err(|error| format!("replace resume metadata: {error}"))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ArticleFetchError {
+    Unavailable(String),
+    Failed(String),
+}
+
+impl fmt::Display for ArticleFetchError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Unavailable(message) => write!(formatter, "article unavailable: {message}"),
+            Self::Failed(message) => formatter.write_str(message),
+        }
+    }
+}
+
+pub trait ArticleSource: Send + Sync {
+    fn fetch<'a>(
+        &'a self,
+        message_id: &'a str,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<Output = Result<DecodedYencPart, ArticleFetchError>>
+                + Send
+                + 'a,
+        >,
+    >;
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct YencRange {
+    pub start: u64,
+    pub end: u64,
+}
+
+impl YencRange {
+    fn len(self) -> Option<u64> {
+        self.end.checked_sub(self.start)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DecodedYencPart {
+    pub data: Vec<u8>,
+    pub range: YencRange,
+    pub file_size: Option<u64>,
+    pub has_explicit_range: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AssemblyReport {
+    pub output: PathBuf,
+    pub part_path: PathBuf,
+    pub sidecar_path: PathBuf,
+    pub manifest_sha256: String,
+    pub expected_size: Option<u64>,
+    pub completed_bytes: u64,
+    pub unavailable_segments: Vec<u32>,
+    pub complete: bool,
+}
+
+impl AssemblyReport {
+    pub fn source_path(&self) -> &Path {
+        if self.complete {
+            &self.output
+        } else {
+            &self.part_path
+        }
+    }
+}
+
+pub fn partial_path(output: &Path) -> PathBuf {
+    output.with_extension(format!(
+        "{}.part",
+        output
+            .extension()
+            .and_then(|value| value.to_str())
+            .unwrap_or("download")
+    ))
+}
+
+pub fn resume_sidecar_path(output: &Path) -> PathBuf {
+    output.with_extension(format!(
+        "{}.resume.json",
+        output
+            .extension()
+            .and_then(|value| value.to_str())
+            .unwrap_or("part")
+    ))
+}
+
+pub async fn resume_sidecar_matches(
+    output: &Path,
+    segments: &[NzbSegment],
+) -> Result<bool, String> {
+    let sidecar_path = resume_sidecar_path(output);
+    let bytes = match tokio::fs::read(&sidecar_path).await {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(format!("read resume metadata: {error}")),
+    };
+    let sidecar: ResumeSidecar = serde_json::from_slice(&bytes)
+        .map_err(|error| format!("parse resume metadata: {error}"))?;
+    Ok(sidecar.version == RESUME_VERSION && sidecar.manifest_sha256 == manifest_sha256(segments))
+}
+
+pub fn manifest_sha256(segments: &[NzbSegment]) -> String {
+    let mut hasher = Sha256::new();
+    for segment in segments {
+        hasher.update(segment.number.to_be_bytes());
+        hasher.update(segment.bytes.to_be_bytes());
+        hasher.update(segment.message_id.as_bytes());
+        hasher.update([0]);
+    }
+    hex::encode(hasher.finalize())
+}
+
+pub fn decode_yenc_part(input: &[u8]) -> Result<DecodedYencPart, String> {
+    let mut begin_header = None;
+    let mut part_header = None;
+    let mut end_header = None;
+    let mut in_payload = false;
+    let mut output = Vec::new();
+
+    for line in input
+        .split(|byte| *byte == b'\r' || *byte == b'\n')
+        .filter(|line| !line.is_empty())
+    {
+        if !in_payload {
+            if line.starts_with(b"=ybegin ") {
+                begin_header = Some(parse_yenc_header(line, "=ybegin")?);
+                in_payload = true;
+            }
+            continue;
+        }
+        if line.starts_with(b"=ypart ") {
+            if part_header.is_some() {
+                return Err("multiple =ypart headers in one yEnc article".into());
+            }
+            part_header = Some(parse_yenc_header(line, "=ypart")?);
+            continue;
+        }
+        if line.starts_with(b"=yend ") {
+            end_header = Some(parse_yenc_header(line, "=yend")?);
+            break;
+        }
+        decode_yenc_line(line, &mut output)?;
+    }
+
+    let begin_header = begin_header.ok_or_else(|| "article is not yEnc encoded".to_string())?;
+    let end_header = end_header.ok_or_else(|| "yEnc article has no =yend header".to_string())?;
+    let declared_total = header_u64(&begin_header, "size")?;
+    let declared_part_size = header_u64(&end_header, "size")?
+        .ok_or_else(|| "yEnc =yend header has no size".to_string())?;
+    if declared_part_size != output.len() as u64 {
+        return Err(format!(
+            "yEnc size mismatch: expected {declared_part_size}, got {}",
+            output.len()
+        ));
+    }
+    if let Some(expected_crc) = end_header.get("pcrc32") {
+        validate_crc32(&output, expected_crc, "pcrc32")?;
+    }
+
+    let multipart = begin_header.contains_key("part")
+        || begin_header.contains_key("total")
+        || part_header.is_some();
+    let (range, has_explicit_range) = match part_header {
+        Some(header) => {
+            let begin = header_u64(&header, "begin")?
+                .ok_or_else(|| "yEnc =ypart header has no begin".to_string())?;
+            let end_inclusive = header_u64(&header, "end")?
+                .ok_or_else(|| "yEnc =ypart header has no end".to_string())?;
+            if begin == 0 || end_inclusive < begin {
+                return Err("invalid yEnc =ypart range".into());
+            }
+            let range = YencRange {
+                start: begin - 1,
+                end: end_inclusive,
+            };
+            if range.len() != Some(output.len() as u64) {
+                return Err(format!(
+                    "yEnc =ypart range does not match decoded payload of {} bytes",
+                    output.len()
+                ));
+            }
+            (range, true)
+        }
+        None if multipart => return Err("multipart yEnc article is missing =ypart".into()),
+        None => (
+            YencRange {
+                start: 0,
+                end: output.len() as u64,
+            },
+            false,
+        ),
+    };
+    if multipart && declared_total.is_none() {
+        return Err("multipart yEnc article has no declared total size".into());
+    }
+    if let Some(size) = declared_total {
+        if range.end > size {
+            return Err("yEnc part exceeds declared file size".into());
+        }
+        if !has_explicit_range && size != output.len() as u64 {
+            return Err("single-part yEnc size does not match decoded payload".into());
+        }
+        if range.start == 0 && range.end == size {
+            if let Some(expected_crc) = end_header.get("crc32") {
+                validate_crc32(&output, expected_crc, "crc32")?;
+            }
+        }
+    }
+
+    Ok(DecodedYencPart {
+        data: output,
+        range,
+        file_size: declared_total,
+        has_explicit_range,
+    })
+}
+
+pub fn decode_yenc(input: &[u8]) -> Result<Vec<u8>, String> {
+    Ok(decode_yenc_part(input)?.data)
+}
+
+fn parse_yenc_header(line: &[u8], prefix: &str) -> Result<BTreeMap<String, String>, String> {
+    let text = std::str::from_utf8(line).map_err(|_| "yEnc header is not ASCII".to_string())?;
+    let remainder = text
+        .strip_prefix(prefix)
+        .ok_or_else(|| "invalid yEnc header".to_string())?;
+    let mut fields = BTreeMap::new();
+    for token in remainder.split_ascii_whitespace() {
+        let Some((key, value)) = token.split_once('=') else {
+            continue;
+        };
+        if key.is_empty() || value.is_empty() {
+            return Err("invalid yEnc header field".into());
+        }
+        fields.insert(key.to_ascii_lowercase(), value.to_string());
+    }
+    Ok(fields)
+}
+
+fn header_u64(header: &BTreeMap<String, String>, key: &str) -> Result<Option<u64>, String> {
+    header
+        .get(key)
+        .map(|value| {
+            value
+                .parse::<u64>()
+                .map_err(|_| format!("invalid yEnc {key} value"))
+        })
+        .transpose()
+}
+
+fn validate_crc32(data: &[u8], encoded: &str, field: &str) -> Result<(), String> {
+    if encoded.len() != 8 || !encoded.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(format!("invalid yEnc {field}"));
+    }
+    let expected = u32::from_str_radix(encoded, 16).map_err(|_| format!("invalid yEnc {field}"))?;
+    let actual = crc32(data);
+    if actual != expected {
+        return Err(format!(
+            "yEnc {field} mismatch: expected {expected:08x}, got {actual:08x}"
+        ));
+    }
+    Ok(())
+}
+
+fn decode_yenc_line(line: &[u8], output: &mut Vec<u8>) -> Result<(), String> {
+    let mut index = 0;
+    while index < line.len() {
+        let mut value = line[index];
+        index += 1;
+        if value == b'=' {
+            if index >= line.len() {
+                return Err("truncated yEnc escape".into());
+            }
+            value = line[index].wrapping_sub(64);
+            index += 1;
+        }
+        output.push(value.wrapping_sub(42));
+    }
+    Ok(())
+}
+
+fn crc32(bytes: &[u8]) -> u32 {
+    let mut crc = 0xffff_ffffu32;
+    for byte in bytes {
+        crc ^= *byte as u32;
+        for _ in 0..8 {
+            crc = if crc & 1 != 0 {
+                (crc >> 1) ^ 0xedb8_8320
+            } else {
+                crc >> 1
+            };
+        }
+    }
+    !crc
+}
+
+async fn validate_existing_receipts(
+    part_path: &Path,
+    sidecar: &mut ResumeSidecar,
+    limits: YencAssemblyLimits,
+) -> Result<(), String> {
+    let metadata = match tokio::fs::metadata(part_path).await {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            sidecar.completed_segments.clear();
+            sidecar.segment_receipts.clear();
+            sidecar.completed_bytes = 0;
+            return Ok(());
+        }
+        Err(error) => return Err(format!("read assembled part metadata: {error}")),
+    };
+    if !metadata.is_file() {
+        return Err("assembled part is not a regular file".into());
+    }
+    limits.validate_file_size(metadata.len())?;
+    let mut valid = BTreeMap::new();
+    for (&number, receipt) in &sidecar.segment_receipts {
+        let Some(range) = receipt_range(receipt) else {
+            continue;
+        };
+        if range.end > metadata.len() {
+            continue;
+        }
+        if hash_file_range(part_path, receipt.offset, receipt.length).await? == receipt.sha256 {
+            valid.insert(number, receipt.clone());
+        }
+    }
+    sidecar.completed_segments = valid.keys().copied().collect();
+    sidecar.completed_bytes = completed_receipt_bytes(&valid)?;
+    sidecar.segment_receipts = valid;
+    Ok(())
+}
+
+async fn hash_file_range(path: &Path, offset: u64, length: u64) -> Result<String, String> {
+    let mut file = tokio::fs::File::open(path)
+        .await
+        .map_err(|error| format!("open assembled part for validation: {error}"))?;
+    file.seek(std::io::SeekFrom::Start(offset))
+        .await
+        .map_err(|error| format!("seek assembled part for validation: {error}"))?;
+    let mut hasher = Sha256::new();
+    let mut remaining = length;
+    let mut buffer = vec![0u8; HASH_BUFFER_BYTES];
+    while remaining > 0 {
+        let wanted = remaining.min(buffer.len() as u64) as usize;
+        file.read_exact(&mut buffer[..wanted])
+            .await
+            .map_err(|error| format!("read assembled part for validation: {error}"))?;
+        hasher.update(&buffer[..wanted]);
+        remaining -= wanted as u64;
+    }
+    Ok(hex::encode(hasher.finalize()))
+}
+
+fn ranges_overlap(left: YencRange, right: YencRange) -> bool {
+    left.start < right.end && right.start < left.end
+}
+
+fn receipt_range(receipt: &ResumeSegment) -> Option<YencRange> {
+    receipt
+        .offset
+        .checked_add(receipt.length)
+        .map(|end| YencRange {
+            start: receipt.offset,
+            end,
+        })
+}
+
+fn completed_receipt_bytes(receipts: &BTreeMap<u32, ResumeSegment>) -> Result<u64, String> {
+    receipts.values().try_fold(0u64, |total, receipt| {
+        total
+            .checked_add(receipt.length)
+            .ok_or_else(|| "resume receipt byte count overflowed".to_string())
+    })
+}
+
+fn has_complete_receipt_coverage(
+    segments: &[NzbSegment],
+    sidecar: &ResumeSidecar,
+    file_len: u64,
+) -> bool {
+    let Some(expected_size) = sidecar.expected_size else {
+        return false;
+    };
+    if file_len != expected_size
+        || sidecar.completed_segments.len() != segments.len()
+        || sidecar.segment_receipts.len() != segments.len()
+        || !segments.iter().all(|segment| {
+            sidecar.completed_segments.contains(&segment.number)
+                && sidecar.segment_receipts.contains_key(&segment.number)
+        })
+    {
+        return false;
+    }
+
+    let mut ranges = Vec::with_capacity(sidecar.segment_receipts.len());
+    for receipt in sidecar.segment_receipts.values() {
+        let Some(range) = receipt_range(receipt) else {
+            return false;
+        };
+        ranges.push(range);
+    }
+    ranges.sort_unstable_by_key(|range| range.start);
+    let mut covered_to = 0u64;
+    for range in ranges {
+        if range.start != covered_to {
+            return false;
+        }
+        covered_to = range.end;
+    }
+    covered_to == expected_size
+}
+
+fn assembly_report(
+    output: &Path,
+    part_path: &Path,
+    sidecar_path: &Path,
+    manifest_sha256: &str,
+    sidecar: &ResumeSidecar,
+    unavailable_segments: Vec<u32>,
+    complete: bool,
+) -> AssemblyReport {
+    AssemblyReport {
+        output: output.to_path_buf(),
+        part_path: part_path.to_path_buf(),
+        sidecar_path: sidecar_path.to_path_buf(),
+        manifest_sha256: manifest_sha256.to_string(),
+        expected_size: sidecar.expected_size,
+        completed_bytes: sidecar.completed_bytes,
+        unavailable_segments,
+        complete,
+    }
+}
+
+async fn resize_assembled_part(
+    file: &mut tokio::fs::File,
+    expected_size: u64,
+    limits: YencAssemblyLimits,
+) -> Result<(), String> {
+    limits.validate_file_size(expected_size)?;
+    file.set_len(expected_size)
+        .await
+        .map_err(|error| format!("size assembled part: {error}"))
+}
+
+fn validate_decoded_part(
+    decoded: &DecodedYencPart,
+    limits: YencAssemblyLimits,
+) -> Result<u64, String> {
+    let length = decoded
+        .range
+        .len()
+        .ok_or_else(|| "yEnc part range is invalid".to_string())?;
+    if length != decoded.data.len() as u64 {
+        return Err("yEnc part range does not match the decoded payload".into());
+    }
+    limits.validate_file_size(decoded.range.end)?;
+    if let Some(size) = decoded.file_size {
+        limits.validate_file_size(size)?;
+        if decoded.range.end > size {
+            return Err("yEnc part exceeds the declared file size".into());
+        }
+    }
+    Ok(length)
+}
+
+/// Assemble all available articles and retain holes for unavailable segments
+pub async fn assemble_file_with_report<S: ArticleSource>(
+    output: &Path,
+    segments: &[NzbSegment],
+    source: &S,
+    cancel: &CancellationToken,
+    progress: Option<&AtomicU64>,
+) -> Result<AssemblyReport, String> {
+    let mut budget = YencAssemblyBudget::default();
+    assemble_file_with_report_with_limits(
+        output,
+        segments,
+        source,
+        cancel,
+        progress,
+        YencAssemblyLimits::default(),
+        &mut budget,
+    )
+    .await
+}
+
+pub async fn assemble_file_with_report_with_limits<S: ArticleSource>(
+    output: &Path,
+    segments: &[NzbSegment],
+    source: &S,
+    cancel: &CancellationToken,
+    progress: Option<&AtomicU64>,
+    limits: YencAssemblyLimits,
+    budget: &mut YencAssemblyBudget,
+) -> Result<AssemblyReport, String> {
+    assemble_file_with_report_with_limits_at_offset(
+        output, segments, source, cancel, progress, 0, limits, budget,
+    )
+    .await
+}
+
+/// Assemble articles while publishing progress relative to the whole task
+pub(crate) async fn assemble_file_with_report_with_limits_at_offset<S: ArticleSource>(
+    output: &Path,
+    segments: &[NzbSegment],
+    source: &S,
+    cancel: &CancellationToken,
+    progress: Option<&AtomicU64>,
+    progress_base: u64,
+    limits: YencAssemblyLimits,
+    budget: &mut YencAssemblyBudget,
+) -> Result<AssemblyReport, String> {
+    if segments.is_empty() {
+        return Err("cannot assemble a file with no segments".into());
+    }
+    let mut ordered = segments.to_vec();
+    ordered.sort_by_key(|segment| segment.number);
+    if ordered
+        .windows(2)
+        .any(|pair| pair[0].number == pair[1].number)
+    {
+        return Err("NZB file contains duplicate segment numbers".into());
+    }
+    let fingerprint = manifest_sha256(&ordered);
+    let sidecar_path = resume_sidecar_path(output);
+    let part_path = partial_path(output);
+    let mut sidecar = ResumeSidecar::load(&sidecar_path, &fingerprint).await?;
+    let mut size_reserved = false;
+    if let Some(size) = sidecar.expected_size {
+        limits.reserve_file(budget, size)?;
+        size_reserved = true;
+    }
+
+    match tokio::fs::metadata(output).await {
+        Ok(metadata) => {
+            if !metadata.is_file() {
+                return Err("finalized Usenet output is not a regular file".into());
+            }
+            limits.validate_file_size(metadata.len())?;
+            if sidecar.repaired {
+                if sidecar.expected_size != Some(metadata.len()) {
+                    return Err("repaired Usenet output does not match its resume metadata".into());
+                }
+                publish_assembly_progress(progress, progress_base, total_article_bytes(&ordered)?);
+                return Ok(assembly_report(
+                    output,
+                    &part_path,
+                    &sidecar_path,
+                    &fingerprint,
+                    &sidecar,
+                    Vec::new(),
+                    true,
+                ));
+            }
+
+            validate_existing_receipts(output, &mut sidecar, limits).await?;
+            if has_complete_receipt_coverage(&ordered, &sidecar, metadata.len()) {
+                publish_assembly_progress(
+                    progress,
+                    progress_base,
+                    completed_article_bytes(&ordered, &sidecar.completed_segments)?,
+                );
+                return Ok(assembly_report(
+                    output,
+                    &part_path,
+                    &sidecar_path,
+                    &fingerprint,
+                    &sidecar,
+                    Vec::new(),
+                    true,
+                ));
+            }
+            match tokio::fs::symlink_metadata(&part_path).await {
+                Ok(part_metadata) if part_metadata.file_type().is_file() => {
+                    tokio::fs::remove_file(output)
+                        .await
+                        .map_err(|error| format!("discard uncommitted Usenet output: {error}"))?;
+                }
+                Ok(_) => return Err("assembled part is not a regular file".into()),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    return Err(
+                        "finalized Usenet output does not match its resume receipts and has no resumable part"
+                            .into(),
+                    );
+                }
+                Err(error) => return Err(format!("read assembled part metadata: {error}")),
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(format!("read finalized Usenet output metadata: {error}")),
+    }
+
+    sidecar.repaired = false;
+    if let Some(parent) = part_path.parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(|error| format!("create output directory: {error}"))?;
+    }
+    validate_existing_receipts(&part_path, &mut sidecar, limits).await?;
+    if !size_reserved {
+        if let Some(size) = sidecar.expected_size {
+            limits.reserve_file(budget, size)?;
+        }
+    }
+    let mut file = tokio::fs::OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .truncate(false)
+        .open(&part_path)
+        .await
+        .map_err(|error| format!("open assembled part: {error}"))?;
+    if let Some(size) = sidecar.expected_size {
+        resize_assembled_part(&mut file, size, limits).await?;
+    }
+    publish_assembly_progress(
+        progress,
+        progress_base,
+        completed_article_bytes(&ordered, &sidecar.completed_segments)?,
+    );
+
+    let mut unavailable_segments = Vec::new();
+    for segment in &ordered {
+        if sidecar.completed_segments.contains(&segment.number) {
+            continue;
+        }
+        if cancel.is_cancelled() {
+            return Err("Download cancelled".into());
+        }
+        let decoded = match source.fetch(&segment.message_id).await {
+            Ok(decoded) => decoded,
+            Err(ArticleFetchError::Unavailable(_)) => {
+                unavailable_segments.push(segment.number);
+                continue;
+            }
+            Err(error) => return Err(error.to_string()),
+        };
+        if ordered.len() > 1 && !decoded.has_explicit_range {
+            return Err("multipart NZB file has yEnc data without =ypart offsets".into());
+        }
+        if ordered.len() > 1 && decoded.file_size.is_none() {
+            return Err("multipart NZB file has yEnc data without a declared total size".into());
+        }
+        let receipt_length = validate_decoded_part(&decoded, limits)?;
+        let expected_size = match (sidecar.expected_size, decoded.file_size) {
+            (Some(existing), Some(size)) if existing != size => {
+                return Err("yEnc parts disagree about total file size".into())
+            }
+            (Some(existing), _) => existing,
+            (None, Some(size)) => {
+                sidecar.expected_size = Some(size);
+                limits.reserve_file(budget, size)?;
+                size
+            }
+            (None, None) if ordered.len() == 1 && decoded.range.start == 0 => {
+                let size = decoded.range.end;
+                sidecar.expected_size = Some(size);
+                limits.reserve_file(budget, size)?;
+                size
+            }
+            (None, None) => {
+                return Err("yEnc file size is ambiguous without a declared total size".into())
+            }
+        };
+        if decoded.range.end > expected_size {
+            return Err("yEnc part exceeds the assembled file size".into());
+        }
+        let candidate_receipt = ResumeSegment {
+            offset: decoded.range.start,
+            length: receipt_length,
+            sha256: hex::encode(Sha256::digest(&decoded.data)),
+        };
+        if sidecar.segment_receipts.iter().any(|(&number, receipt)| {
+            number != segment.number
+                && match receipt_range(receipt) {
+                    Some(existing_range) => ranges_overlap(decoded.range, existing_range),
+                    None => true,
+                }
+        }) {
+            return Err("yEnc part overlaps a completed segment".into());
+        }
+        resize_assembled_part(&mut file, expected_size, limits).await?;
+        file.seek(std::io::SeekFrom::Start(decoded.range.start))
+            .await
+            .map_err(|error| format!("seek assembled part: {error}"))?;
+        file.write_all(&decoded.data)
+            .await
+            .map_err(|error| format!("write assembled part: {error}"))?;
+        file.sync_data()
+            .await
+            .map_err(|error| format!("flush assembled part: {error}"))?;
+        sidecar.completed_segments.insert(segment.number);
+        sidecar
+            .segment_receipts
+            .insert(segment.number, candidate_receipt);
+        sidecar.completed_bytes = completed_receipt_bytes(&sidecar.segment_receipts)?;
+        sidecar.save_atomic(&sidecar_path).await?;
+        publish_assembly_progress(
+            progress,
+            progress_base,
+            completed_article_bytes(&ordered, &sidecar.completed_segments)?,
+        );
+    }
+    file.sync_all()
+        .await
+        .map_err(|error| format!("flush assembled part: {error}"))?;
+    drop(file);
+
+    let part_len = tokio::fs::metadata(&part_path)
+        .await
+        .map_err(|error| format!("read assembled part metadata: {error}"))?
+        .len();
+    let complete = has_complete_receipt_coverage(&ordered, &sidecar, part_len);
+    if complete {
+        tokio::fs::rename(&part_path, output)
+            .await
+            .map_err(|error| format!("finalize assembled file: {error}"))?;
+    }
+    Ok(assembly_report(
+        output,
+        &part_path,
+        &sidecar_path,
+        &fingerprint,
+        &sidecar,
+        unavailable_segments,
+        complete,
+    ))
+}
+
+fn publish_assembly_progress(
+    progress: Option<&AtomicU64>,
+    progress_base: u64,
+    file_completed: u64,
+) {
+    if let Some(counter) = progress {
+        counter.store(
+            progress_base.saturating_add(file_completed),
+            Ordering::Relaxed,
+        );
+    }
+}
+
+fn total_article_bytes(segments: &[NzbSegment]) -> Result<u64, String> {
+    segments.iter().try_fold(0u64, |total, segment| {
+        total
+            .checked_add(segment.bytes)
+            .ok_or_else(|| "NZB article byte count overflowed".to_string())
+    })
+}
+
+fn completed_article_bytes(
+    segments: &[NzbSegment],
+    completed_segments: &BTreeSet<u32>,
+) -> Result<u64, String> {
+    segments
+        .iter()
+        .filter(|segment| completed_segments.contains(&segment.number))
+        .try_fold(0u64, |total, segment| {
+            total
+                .checked_add(segment.bytes)
+                .ok_or_else(|| "NZB article byte count overflowed".to_string())
+        })
+}
+
+/// Compatibility wrapper for callers that require every article to be present
+pub async fn assemble_file<S: ArticleSource>(
+    output: &Path,
+    segments: &[NzbSegment],
+    source: &S,
+    cancel: &CancellationToken,
+    progress: Option<&AtomicU64>,
+) -> Result<PathBuf, String> {
+    let report = assemble_file_with_report(output, segments, source, cancel, progress).await?;
+    if !report.complete {
+        return Err(format!(
+            "article unavailable for NZB segments {:?}",
+            report.unavailable_segments
+        ));
+    }
+    Ok(report.output)
+}
+
+/// Persist that a verified PAR2 repair promoted `report.output` successfully
+pub async fn mark_par2_repaired(report: &AssemblyReport) -> Result<(), String> {
+    let metadata = tokio::fs::metadata(&report.output)
+        .await
+        .map_err(|error| format!("read repaired output metadata: {error}"))?;
+    if !metadata.is_file() {
+        return Err("repaired output is not a regular file".into());
+    }
+    let mut sidecar = ResumeSidecar::load(&report.sidecar_path, &report.manifest_sha256).await?;
+    sidecar.expected_size = Some(metadata.len());
+    sidecar.completed_bytes = metadata.len();
+    sidecar.repaired = true;
+    sidecar.save_atomic(&report.sidecar_path).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    #[derive(Default)]
+    struct FakeSource {
+        responses: BTreeMap<String, Result<Vec<u8>, ArticleFetchError>>,
+    }
+
+    impl ArticleSource for FakeSource {
+        fn fetch<'a>(
+            &'a self,
+            message_id: &'a str,
+        ) -> std::pin::Pin<
+            Box<
+                dyn std::future::Future<Output = Result<DecodedYencPart, ArticleFetchError>>
+                    + Send
+                    + 'a,
+            >,
+        > {
+            let response =
+                self.responses.get(message_id).cloned().unwrap_or_else(|| {
+                    Err(ArticleFetchError::Failed("unexpected message ID".into()))
+                });
+            Box::pin(async move {
+                response.and_then(|article| {
+                    decode_yenc_part(&article).map_err(ArticleFetchError::Failed)
+                })
+            })
+        }
+    }
+
+    struct StaticDecodedSource {
+        part: DecodedYencPart,
+    }
+
+    impl ArticleSource for StaticDecodedSource {
+        fn fetch<'a>(
+            &'a self,
+            _message_id: &'a str,
+        ) -> std::pin::Pin<
+            Box<
+                dyn std::future::Future<Output = Result<DecodedYencPart, ArticleFetchError>>
+                    + Send
+                    + 'a,
+            >,
+        > {
+            let part = self.part.clone();
+            Box::pin(async move { Ok(part) })
+        }
+    }
+
+    struct ProgressInspectingSource<'progress> {
+        responses: BTreeMap<String, Result<Vec<u8>, ArticleFetchError>>,
+        progress: &'progress AtomicU64,
+        progress_before_second_fetch: AtomicU64,
+    }
+
+    impl ArticleSource for ProgressInspectingSource<'_> {
+        fn fetch<'a>(
+            &'a self,
+            message_id: &'a str,
+        ) -> std::pin::Pin<
+            Box<
+                dyn std::future::Future<Output = Result<DecodedYencPart, ArticleFetchError>>
+                    + Send
+                    + 'a,
+            >,
+        > {
+            if message_id == "two" {
+                self.progress_before_second_fetch
+                    .store(self.progress.load(Ordering::Relaxed), Ordering::Relaxed);
+            }
+            let response =
+                self.responses.get(message_id).cloned().unwrap_or_else(|| {
+                    Err(ArticleFetchError::Failed("unexpected message ID".into()))
+                });
+            Box::pin(async move {
+                response.and_then(|article| {
+                    decode_yenc_part(&article).map_err(ArticleFetchError::Failed)
+                })
+            })
+        }
+    }
+
+    fn encode_yenc_part(payload: &[u8], begin: u64, total_size: u64) -> Vec<u8> {
+        let end = begin + payload.len() as u64 - 1;
+        let mut encoded = format!(
+            "=ybegin part=1 total=3 line=128 size={total_size} name=x\r\n=ypart begin={begin} end={end}\r\n"
+        )
+        .into_bytes();
+        for &byte in payload {
+            let value = byte.wrapping_add(42);
+            if matches!(value, 0 | 10 | 13 | 61) {
+                encoded.push(b'=');
+                encoded.push(value.wrapping_add(64));
+            } else {
+                encoded.push(value);
+            }
+        }
+        encoded.extend_from_slice(
+            format!(
+                "\r\n=yend size={} pcrc32={:08x}\r\n",
+                payload.len(),
+                crc32(payload)
+            )
+            .as_bytes(),
+        );
+        encoded
+    }
+
+    #[test]
+    fn decodes_yenc_escapes() {
+        let payload = b"a\n=\r\0z";
+        let encoded = encode_yenc_part(payload, 1, payload.len() as u64);
+        assert_eq!(decode_yenc(&encoded).unwrap(), payload);
+    }
+
+    #[test]
+    fn rejects_multipart_yenc_without_placement() {
+        let article = b"=ybegin part=1 total=2 size=2 name=x\r\nkl\r\n=yend size=2\r\n";
+        assert!(decode_yenc_part(article).is_err());
+    }
+
+    #[test]
+    fn rejects_multipart_yenc_without_a_declared_total_size() {
+        let article = b"=ybegin part=1 total=2 line=128 name=x\r\n=ypart begin=1 end=2\r\nkl\r\n=yend size=2\r\n";
+        assert!(decode_yenc_part(article).is_err());
+    }
+
+    #[test]
+    fn manifest_is_stable() {
+        let segments = vec![NzbSegment {
+            number: 1,
+            bytes: 3,
+            message_id: "<a>".into(),
+        }];
+        assert_eq!(manifest_sha256(&segments).len(), 64);
+    }
+
+    #[tokio::test]
+    async fn resume_sidecar_round_trips() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("resume.json");
+        let mut state = ResumeSidecar::new("abc".into());
+        state.completed_segments.insert(2);
+        state.segment_receipts.insert(
+            2,
+            ResumeSegment {
+                offset: 0,
+                length: 9,
+                sha256: "x".into(),
+            },
+        );
+        state.completed_bytes = 9;
+        state.save_atomic(&path).await.unwrap();
+        assert_eq!(ResumeSidecar::load(&path, "abc").await.unwrap(), state);
+        assert_eq!(
+            ResumeSidecar::load(&path, "changed")
+                .await
+                .unwrap()
+                .completed_bytes,
+            0
+        );
+    }
+
+    #[tokio::test]
+    async fn keeps_sparse_holes_when_a_middle_article_is_unavailable() {
+        let dir = tempfile::tempdir().unwrap();
+        let output = dir.path().join("sample.bin");
+        let mut source = FakeSource::default();
+        source
+            .responses
+            .insert("one".into(), Ok(encode_yenc_part(b"AB", 1, 6)));
+        source.responses.insert(
+            "two".into(),
+            Err(ArticleFetchError::Unavailable("430".into())),
+        );
+        source
+            .responses
+            .insert("three".into(), Ok(encode_yenc_part(b"EF", 5, 6)));
+        let segments = vec![
+            NzbSegment {
+                number: 1,
+                bytes: 2,
+                message_id: "one".into(),
+            },
+            NzbSegment {
+                number: 2,
+                bytes: 2,
+                message_id: "two".into(),
+            },
+            NzbSegment {
+                number: 3,
+                bytes: 2,
+                message_id: "three".into(),
+            },
+        ];
+
+        let report =
+            assemble_file_with_report(&output, &segments, &source, &CancellationToken::new(), None)
+                .await
+                .unwrap();
+
+        assert!(!report.complete);
+        assert_eq!(report.unavailable_segments, vec![2]);
+        assert_eq!(
+            tokio::fs::read(report.part_path).await.unwrap(),
+            b"AB\0\0EF"
+        );
+        assert!(!output.exists());
+    }
+
+    #[tokio::test]
+    async fn publishes_nzb_article_bytes_at_the_task_progress_offset() {
+        let dir = tempfile::tempdir().unwrap();
+        let output = dir.path().join("sample.bin");
+        let progress = AtomicU64::new(7);
+        let mut responses = BTreeMap::new();
+        responses.insert("one".into(), Ok(encode_yenc_part(b"AB", 1, 4)));
+        responses.insert("two".into(), Ok(encode_yenc_part(b"CD", 3, 4)));
+        let source = ProgressInspectingSource {
+            responses,
+            progress: &progress,
+            progress_before_second_fetch: AtomicU64::new(0),
+        };
+        let segments = vec![
+            NzbSegment {
+                number: 1,
+                bytes: 17,
+                message_id: "one".into(),
+            },
+            NzbSegment {
+                number: 2,
+                bytes: 19,
+                message_id: "two".into(),
+            },
+        ];
+        let mut budget = YencAssemblyBudget::default();
+
+        let report = assemble_file_with_report_with_limits_at_offset(
+            &output,
+            &segments,
+            &source,
+            &CancellationToken::new(),
+            Some(&progress),
+            7,
+            YencAssemblyLimits::new(4, 4).unwrap(),
+            &mut budget,
+        )
+        .await
+        .unwrap();
+
+        assert!(report.complete);
+        assert_eq!(
+            source.progress_before_second_fetch.load(Ordering::Relaxed),
+            24
+        );
+        assert_eq!(progress.load(Ordering::Relaxed), 43);
+    }
+
+    #[tokio::test]
+    async fn restores_durable_article_progress_at_the_task_offset() {
+        let dir = tempfile::tempdir().unwrap();
+        let output = dir.path().join("sample.bin");
+        let segments = vec![
+            NzbSegment {
+                number: 1,
+                bytes: 17,
+                message_id: "one".into(),
+            },
+            NzbSegment {
+                number: 2,
+                bytes: 19,
+                message_id: "two".into(),
+            },
+        ];
+        tokio::fs::write(partial_path(&output), b"AB\0\0")
+            .await
+            .unwrap();
+        let mut sidecar = ResumeSidecar::new(manifest_sha256(&segments));
+        sidecar.expected_size = Some(4);
+        sidecar.completed_segments.insert(1);
+        sidecar.segment_receipts.insert(
+            1,
+            ResumeSegment {
+                offset: 0,
+                length: 2,
+                sha256: hex::encode(Sha256::digest(b"AB")),
+            },
+        );
+        sidecar.completed_bytes = 2;
+        sidecar
+            .save_atomic(&resume_sidecar_path(&output))
+            .await
+            .unwrap();
+
+        let progress = AtomicU64::new(7);
+        let mut responses = BTreeMap::new();
+        responses.insert("two".into(), Ok(encode_yenc_part(b"CD", 3, 4)));
+        let source = ProgressInspectingSource {
+            responses,
+            progress: &progress,
+            progress_before_second_fetch: AtomicU64::new(0),
+        };
+        let mut budget = YencAssemblyBudget::default();
+
+        let report = assemble_file_with_report_with_limits_at_offset(
+            &output,
+            &segments,
+            &source,
+            &CancellationToken::new(),
+            Some(&progress),
+            7,
+            YencAssemblyLimits::new(4, 4).unwrap(),
+            &mut budget,
+        )
+        .await
+        .unwrap();
+
+        assert!(report.complete);
+        assert_eq!(
+            source.progress_before_second_fetch.load(Ordering::Relaxed),
+            24
+        );
+        assert_eq!(progress.load(Ordering::Relaxed), 43);
+    }
+
+    #[tokio::test]
+    async fn does_not_finalize_when_every_segment_receipt_leaves_a_sparse_gap() {
+        let dir = tempfile::tempdir().unwrap();
+        let output = dir.path().join("sample.bin");
+        let mut source = FakeSource::default();
+        source
+            .responses
+            .insert("one".into(), Ok(encode_yenc_part(b"AB", 1, 6)));
+        source
+            .responses
+            .insert("two".into(), Ok(encode_yenc_part(b"EF", 5, 6)));
+        let segments = vec![
+            NzbSegment {
+                number: 1,
+                bytes: 2,
+                message_id: "one".into(),
+            },
+            NzbSegment {
+                number: 2,
+                bytes: 2,
+                message_id: "two".into(),
+            },
+        ];
+
+        let report =
+            assemble_file_with_report(&output, &segments, &source, &CancellationToken::new(), None)
+                .await
+                .unwrap();
+
+        assert!(!report.complete);
+        assert!(report.unavailable_segments.is_empty());
+        assert_eq!(
+            tokio::fs::read(report.part_path).await.unwrap(),
+            b"AB\0\0EF"
+        );
+        assert!(!output.exists());
+    }
+
+    #[tokio::test]
+    async fn rejects_an_oversized_declared_file_before_resizing_a_sparse_part() {
+        let dir = tempfile::tempdir().unwrap();
+        let output = dir.path().join("sample.bin");
+        let source = StaticDecodedSource {
+            part: DecodedYencPart {
+                data: b"A".to_vec(),
+                range: YencRange { start: 0, end: 1 },
+                file_size: Some(7),
+                has_explicit_range: false,
+            },
+        };
+        let segments = vec![NzbSegment {
+            number: 1,
+            bytes: 1,
+            message_id: "one".into(),
+        }];
+        let limits = YencAssemblyLimits::new(6, 12).unwrap();
+        let mut budget = YencAssemblyBudget::default();
+
+        let error = assemble_file_with_report_with_limits(
+            &output,
+            &segments,
+            &source,
+            &CancellationToken::new(),
+            None,
+            limits,
+            &mut budget,
+        )
+        .await
+        .unwrap_err();
+
+        assert!(error.contains("per-file limit"));
+        assert_eq!(
+            tokio::fs::metadata(partial_path(&output))
+                .await
+                .unwrap()
+                .len(),
+            0
+        );
+    }
+
+    #[tokio::test]
+    async fn rejects_an_oversized_yenc_offset_before_resizing_a_sparse_part() {
+        let dir = tempfile::tempdir().unwrap();
+        let output = dir.path().join("sample.bin");
+        let source = StaticDecodedSource {
+            part: DecodedYencPart {
+                data: b"A".to_vec(),
+                range: YencRange { start: 6, end: 7 },
+                file_size: None,
+                has_explicit_range: true,
+            },
+        };
+        let segments = vec![NzbSegment {
+            number: 1,
+            bytes: 1,
+            message_id: "one".into(),
+        }];
+        let limits = YencAssemblyLimits::new(6, 12).unwrap();
+        let mut budget = YencAssemblyBudget::default();
+
+        let error = assemble_file_with_report_with_limits(
+            &output,
+            &segments,
+            &source,
+            &CancellationToken::new(),
+            None,
+            limits,
+            &mut budget,
+        )
+        .await
+        .unwrap_err();
+
+        assert!(error.contains("per-file limit"));
+        assert_eq!(
+            tokio::fs::metadata(partial_path(&output))
+                .await
+                .unwrap()
+                .len(),
+            0
+        );
+    }
+
+    #[tokio::test]
+    async fn shared_budget_rejects_files_that_exceed_the_task_limit() {
+        let dir = tempfile::tempdir().unwrap();
+        let first_output = dir.path().join("first.bin");
+        let second_output = dir.path().join("second.bin");
+        let segments = vec![NzbSegment {
+            number: 1,
+            bytes: 4,
+            message_id: "one".into(),
+        }];
+        let limits = YencAssemblyLimits::new(6, 6).unwrap();
+        let mut budget = YencAssemblyBudget::default();
+        let first_source = StaticDecodedSource {
+            part: DecodedYencPart {
+                data: b"ABCD".to_vec(),
+                range: YencRange { start: 0, end: 4 },
+                file_size: Some(4),
+                has_explicit_range: false,
+            },
+        };
+        let second_source = StaticDecodedSource {
+            part: DecodedYencPart {
+                data: b"EFGH".to_vec(),
+                range: YencRange { start: 0, end: 4 },
+                file_size: Some(4),
+                has_explicit_range: false,
+            },
+        };
+
+        assemble_file_with_report_with_limits(
+            &first_output,
+            &segments,
+            &first_source,
+            &CancellationToken::new(),
+            None,
+            limits,
+            &mut budget,
+        )
+        .await
+        .unwrap();
+        let error = assemble_file_with_report_with_limits(
+            &second_output,
+            &segments,
+            &second_source,
+            &CancellationToken::new(),
+            None,
+            limits,
+            &mut budget,
+        )
+        .await
+        .unwrap_err();
+
+        assert!(error.contains("task limit"));
+        assert_eq!(budget.reserved_bytes(), 4);
+    }
+
+    #[tokio::test]
+    async fn normally_finalized_output_is_recognized_without_refetching_segments() {
+        let dir = tempfile::tempdir().unwrap();
+        let output = dir.path().join("sample.bin");
+        let segments = vec![NzbSegment {
+            number: 1,
+            bytes: 2,
+            message_id: "one".into(),
+        }];
+        let mut source = FakeSource::default();
+        source
+            .responses
+            .insert("one".into(), Ok(encode_yenc_part(b"OK", 1, 2)));
+
+        let initial =
+            assemble_file_with_report(&output, &segments, &source, &CancellationToken::new(), None)
+                .await
+                .unwrap();
+        assert!(initial.complete);
+
+        let resumed = assemble_file_with_report(
+            &output,
+            &segments,
+            &FakeSource::default(),
+            &CancellationToken::new(),
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert!(resumed.complete);
+    }
+
+    #[tokio::test]
+    async fn stale_promoted_output_reenters_the_repairable_partial_state() {
+        let dir = tempfile::tempdir().unwrap();
+        let output = dir.path().join("sample.bin");
+        let segments = vec![NzbSegment {
+            number: 1,
+            bytes: 2,
+            message_id: "one".into(),
+        }];
+        let sidecar = ResumeSidecar::new(manifest_sha256(&segments));
+        sidecar
+            .save_atomic(&resume_sidecar_path(&output))
+            .await
+            .unwrap();
+        tokio::fs::write(&output, b"OK").await.unwrap();
+        tokio::fs::write(partial_path(&output), b"\0\0")
+            .await
+            .unwrap();
+        let mut source = FakeSource::default();
+        source.responses.insert(
+            "one".into(),
+            Err(ArticleFetchError::Unavailable("430".into())),
+        );
+
+        let report =
+            assemble_file_with_report(&output, &segments, &source, &CancellationToken::new(), None)
+                .await
+                .unwrap();
+
+        assert!(!report.complete);
+        assert_eq!(report.unavailable_segments, vec![1]);
+        assert!(!output.exists());
+        assert_eq!(
+            tokio::fs::read(partial_path(&output)).await.unwrap(),
+            b"\0\0"
+        );
+    }
+
+    #[tokio::test]
+    async fn repaired_output_is_recognized_without_refetching_segments() {
+        let dir = tempfile::tempdir().unwrap();
+        let output = dir.path().join("sample.bin");
+        let segments = vec![NzbSegment {
+            number: 1,
+            bytes: 17,
+            message_id: "one".into(),
+        }];
+        let initial = AssemblyReport {
+            output: output.clone(),
+            part_path: partial_path(&output),
+            sidecar_path: resume_sidecar_path(&output),
+            manifest_sha256: manifest_sha256(&segments),
+            expected_size: Some(2),
+            completed_bytes: 0,
+            unavailable_segments: vec![1],
+            complete: false,
+        };
+        tokio::fs::write(&output, b"OK").await.unwrap();
+        mark_par2_repaired(&initial).await.unwrap();
+        let progress = AtomicU64::new(0);
+        let report = assemble_file_with_report(
+            &output,
+            &segments,
+            &FakeSource::default(),
+            &CancellationToken::new(),
+            Some(&progress),
+        )
+        .await
+        .unwrap();
+        assert!(report.complete);
+        assert_eq!(progress.load(Ordering::Relaxed), 17);
+    }
+}

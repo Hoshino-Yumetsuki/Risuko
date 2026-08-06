@@ -135,6 +135,26 @@ export default class Api {
 		);
 	}
 
+	saveUsenetCredentials(
+		profileId: string,
+		username?: string,
+		password?: string,
+	) {
+		return invoke("usenet_save_credentials", { profileId, username, password });
+	}
+
+	removeUsenetCredentials(profileId: string) {
+		return invoke("usenet_remove_credentials", { profileId });
+	}
+
+	hasUsenetCredentials(profileId: string) {
+		return invoke<boolean>("usenet_has_credentials", { profileId });
+	}
+
+	testUsenetProfile(profile: unknown) {
+		return invoke<string>("usenet_test_profile", { profile });
+	}
+
 	getOption(params: { gid: string } = { gid: "" }) {
 		const { gid } = params;
 		return invoke("get_option_engine", { gid }).then((data) =>
@@ -334,6 +354,18 @@ export default class Api {
 				paths,
 				options: engineOptions,
 			},
+		);
+	}
+
+	addNzbsByPaths(params: {
+		paths: string[];
+		options?: Record<string, unknown>;
+	}) {
+		const { paths, options } = params;
+		const engineOptions = formatOptionsForEngine(options);
+		return invoke<{ path: string; gid: string | null; error: string | null }[]>(
+			"add_nzbs_by_paths",
+			{ paths, options: engineOptions },
 		);
 	}
 

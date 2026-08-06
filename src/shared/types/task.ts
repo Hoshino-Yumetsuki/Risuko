@@ -21,6 +21,12 @@ interface BitTorrentInfo {
 	metaVersion?: "v1" | "v2" | "hybrid";
 }
 
+export interface UsenetRepairFailure {
+	neededBlocks: number;
+	availableBlocks: number;
+	partialsRetained: boolean;
+}
+
 export interface DownloadTask {
 	gid: string;
 	status: string;
@@ -50,6 +56,18 @@ export interface DownloadTask {
 	numPieces?: string;
 	options?: Record<string, string>;
 	tag?: string;
+	usenet?: {
+		options?: { profileId?: string; cleanupMode?: string };
+		files?: Array<{
+			name: string;
+			subject: string;
+			groups: string[];
+			segments: Array<{ number: number; bytes: number; messageId: string }>;
+		}>;
+	};
+	usenetStage?: string;
+	usenetWarning?: string;
+	usenetRepairFailure?: UsenetRepairFailure;
 	chunkProgress?: { completedLength: string; totalLength: string }[];
 }
 

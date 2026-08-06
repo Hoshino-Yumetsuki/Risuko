@@ -2782,8 +2782,7 @@ fn set_file_mtime(path: &Path, time: std::time::SystemTime) -> std::io::Result<(
     };
 
     #[cfg(not(windows))]
-    let file = fs::File::open(path)
-        .or_else(|_| fs::OpenOptions::new().write(true).open(path))?;
+    let file = fs::File::open(path).or_else(|_| fs::OpenOptions::new().write(true).open(path))?;
 
     file.set_times(times)
 }

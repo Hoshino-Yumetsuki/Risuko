@@ -57,7 +57,7 @@
       <div class="general-card-row" v-if="task.errorCode && task.errorCode !== '0'">
         <span class="general-card-label">{{ $t('task.task-error-info') }}</span>
         <span class="general-card-value general-card-value--error"
-          >{{ task.errorCode }} {{ task.errorMessage }}</span
+          >{{ task.errorCode }} {{ taskErrorMessage }}</span
         >
       </div>
     </div>
@@ -176,6 +176,25 @@ export default {
 		},
 		isBT() {
 			return checkTaskIsBT(this.task);
+		},
+		usenetRepairFailureMessage() {
+			const failure = this.task?.usenetRepairFailure;
+			if (!failure) {
+				return "";
+			}
+			const summary = this.$t("task.usenet-repair-insufficient", {
+				neededBlocks: failure.neededBlocks,
+				availableBlocks: failure.availableBlocks,
+			});
+			const nextStep = this.$t(
+				failure.partialsRetained
+					? "task.usenet-repair-partials-retained"
+					: "task.usenet-repair-partials-unavailable",
+			);
+			return `${summary} ${nextStep}`;
+		},
+		taskErrorMessage() {
+			return this.usenetRepairFailureMessage || this.task?.errorMessage || "";
 		},
 		displayDownloadSpeed() {
 			return Number(this.task?.downloadSpeed || 0);

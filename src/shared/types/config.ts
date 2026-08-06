@@ -1,4 +1,9 @@
 import type { SavedCredential } from "./credential";
+import type {
+	UsenetArchiveLimits,
+	UsenetCleanupMode,
+	UsenetProviderProfile,
+} from "./usenet";
 
 export const FONT_FAMILY_OPTIONS = [
 	"system",
@@ -80,6 +85,10 @@ export interface AppConfig {
 	historyDirectories?: string[];
 	favoriteDirectories?: string[];
 	savedCredentials?: SavedCredential[];
+	usenetProfiles?: UsenetProviderProfile[];
+	usenetArchiveLimits?: UsenetArchiveLimits;
+	usenetCleanupMode?: UsenetCleanupMode;
+	usenetLimitsAdjusted?: boolean;
 	protocols?: {
 		magnet?: boolean | string;
 		thunder?: boolean | string;

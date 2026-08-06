@@ -241,6 +241,12 @@ export default {
 	"download-pause-message": "暫停下載 {{taskName}}",
 	"download-stop-message": "{{taskName}} 下載中止",
 	"download-error-message": "{{taskName}} 下載錯誤",
+	"usenet-repair-insufficient":
+		"PAR2 修復資料不足：需要 {{neededBlocks}} 個區塊，但目前只有 {{availableBlocks}} 個。",
+	"usenet-repair-partials-retained":
+		"已保留部分檔案。新增完整度較高的提供者後重試。",
+	"usenet-repair-partials-unavailable":
+		"部分檔案已不可用。請嘗試其他 NZB，或使用完整度較高的提供者重新下載。",
 	"media-tool-required":
 		'任務"{{taskName}}"：媒體站點下載需要 yt-dlp。請先安裝 yt-dlp，並確認已加入 PATH。',
 	"media-auth-required":

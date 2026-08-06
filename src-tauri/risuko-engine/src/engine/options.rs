@@ -55,6 +55,9 @@ impl EngineOptions {
             "task-routing-rules",
             "file-category-dirs",
             "max-worker-retries",
+            "usenet-profiles",
+            "usenet-archive-limits",
+            "usenet-cleanup-mode",
         ] {
             if let Some(v) = user.get(key) {
                 global.insert(key.into(), v.clone());

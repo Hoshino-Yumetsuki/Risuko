@@ -19,6 +19,74 @@ let pushTimer: ReturnType<typeof setTimeout> | null = null;
 const pendingCategories = new Set<string>();
 const STATS_CATEGORY = "stats";
 
+function mergeUsenetProfiles(
+	localValue: unknown,
+	remoteValue: unknown,
+): unknown[] {
+	const local = Array.isArray(localValue) ? localValue : [];
+	const remote = Array.isArray(remoteValue) ? remoteValue : [];
+	const byId = new Map<string, Record<string, unknown>>();
+	for (const value of [...local, ...remote]) {
+		if (!value || typeof value !== "object" || Array.isArray(value)) {
+			continue;
+		}
+		const profile = value as Record<string, unknown>;
+		const id = typeof profile.id === "string" ? profile.id : "";
+		if (!id) {
+			continue;
+		}
+		const previous = byId.get(id);
+		const currentAt =
+			typeof profile.updatedAt === "number" ? profile.updatedAt : 0;
+		const previousAt =
+			typeof previous?.updatedAt === "number" ? previous.updatedAt : 0;
+		if (!previous || currentAt >= previousAt) {
+			byId.set(id, { ...profile });
+		}
+	}
+	return [...byId.values()];
+}
+
+function mergeUsenetCategory(
+	localData: Record<string, unknown>,
+	remoteData: Record<string, unknown>,
+): Record<string, unknown> {
+	const defaults: Record<string, number> = {
+		maxEntries: 500_000,
+		maxExpandedBytes: 2 * 1024 ** 4,
+		maxEntryBytes: 512 * 1024 ** 3,
+		maxNestingDepth: 16,
+		maxCompressionRatio: 1000,
+		freeSpaceReserveBytes: 10 * 1024 ** 3,
+		maxActiveSeconds: 6 * 60 * 60,
+	};
+	const limits = remoteData["usenet-archive-limits"];
+	let adjusted = false;
+	if (limits && typeof limits === "object" && !Array.isArray(limits)) {
+		const clamped = { ...(limits as Record<string, unknown>) };
+		for (const [key, fallback] of Object.entries(defaults)) {
+			const value = Number(clamped[key]);
+			if (!Number.isFinite(value) || value <= 0) {
+				clamped[key] = fallback;
+				adjusted = true;
+			} else if (value > fallback * 4) {
+				clamped[key] = fallback * 4;
+				adjusted = true;
+			}
+		}
+		remoteData = { ...remoteData, "usenet-archive-limits": clamped };
+	}
+	return {
+		...remoteData,
+		"usenet-profiles": mergeUsenetProfiles(
+			localData["usenet-profiles"],
+			remoteData["usenet-profiles"],
+		),
+		"usenet-limits-adjusted":
+			adjusted || remoteData["usenet-limits-adjusted"] === true,
+	};
+}
+
 export const useSyncStore = defineStore("sync", {
 	state: (): SyncState => ({
 		syncing: false,
@@ -72,6 +140,10 @@ export const useSyncStore = defineStore("sync", {
 			if (categoryId === STATS_CATEGORY) {
 				await api.mergeDownloadStats(data);
 				return;
+			}
+			if (categoryId === "usenet") {
+				const localData = await this.extractCategoryData(categoryId);
+				data = mergeUsenetCategory(localData, data);
 			}
 			await usePreferenceStore().save(data, { skipSync: true });
 		},
@@ -144,6 +216,8 @@ export const useSyncStore = defineStore("sync", {
 					if (remoteData) {
 						if (categoryId === STATS_CATEGORY) {
 							await this.applyCategoryData(categoryId, remoteData);
+						} else if (categoryId === "usenet") {
+							await this.applyCategoryData(categoryId, remoteData);
 						} else {
 							Object.assign(merged, remoteData);
 						}
@@ -212,6 +286,8 @@ export const useSyncStore = defineStore("sync", {
 					if (!hasLocal && hasRemote && remoteData) {
 						if (categoryId === STATS_CATEGORY) {
 							await this.applyCategoryData(categoryId, remoteData);
+						} else if (categoryId === "usenet") {
+							await this.applyCategoryData(categoryId, remoteData);
 						} else {
 							Object.assign(toPull, remoteData);
 						}
@@ -230,6 +306,8 @@ export const useSyncStore = defineStore("sync", {
 					if (localTimestamp === undefined && hasRemote && remoteData) {
 						if (categoryId === STATS_CATEGORY) {
 							await this.applyCategoryData(categoryId, remoteData);
+						} else if (categoryId === "usenet") {
+							await this.applyCategoryData(categoryId, remoteData);
 						} else {
 							Object.assign(toPull, remoteData);
 						}
@@ -245,6 +323,8 @@ export const useSyncStore = defineStore("sync", {
 							}
 						} else if (remoteTimestamp > localTimestamp && remoteData) {
 							if (categoryId === STATS_CATEGORY) {
+								await this.applyCategoryData(categoryId, remoteData);
+							} else if (categoryId === "usenet") {
 								await this.applyCategoryData(categoryId, remoteData);
 							} else {
 								Object.assign(toPull, remoteData);

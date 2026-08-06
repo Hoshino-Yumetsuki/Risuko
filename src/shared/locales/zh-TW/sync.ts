@@ -52,6 +52,7 @@ export default {
 	"category-ports": "連接埠",
 	"category-ftp": "FTP / SFTP",
 	"category-g2-gnutella": "G2 / Gnutella",
+	"category-usenet": "Usenet",
 	"category-misc": "其他",
 	login: "登入",
 	logout: "登出",

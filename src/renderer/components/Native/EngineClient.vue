@@ -619,9 +619,18 @@ export default {
 					/yt-dlp[^:]*:\s*command\s+not\s+found/i.test(
 						String(errorMessage || ""),
 					);
+				const usenetRepairFailure = task.usenetRepairFailure;
+				const isTerminalUsenetError = [
+					"550",
+					"551",
+					"552",
+					"553",
+					"554",
+				].includes(normalizedErrorCode);
 
 				if (
 					!isMissingYtDlp &&
+					!isTerminalUsenetError &&
 					normalizedErrorCode !== "541" &&
 					normalizedErrorCode !== "542"
 				) {
@@ -635,12 +644,23 @@ export default {
 					message = this.$t("task.media-auth-required", { taskName });
 				} else if (normalizedErrorCode === "542") {
 					message = this.$t("task.media-format-unavailable", { taskName });
+				} else if (usenetRepairFailure) {
+					const summary = this.$t("task.usenet-repair-insufficient", {
+						neededBlocks: usenetRepairFailure.neededBlocks,
+						availableBlocks: usenetRepairFailure.availableBlocks,
+					});
+					const nextStep = this.$t(
+						usenetRepairFailure.partialsRetained
+							? "task.usenet-repair-partials-retained"
+							: "task.usenet-repair-partials-unavailable",
+					);
+					message = `${summary} ${nextStep}`;
 				} else {
 					message = this.$t("task.download-error-message", { taskName });
 				}
 				const link = `https://risuko.app/docs/reference/error-codes#${errorCode}`;
 				this.$msg.error({
-					duration: isMissingYtDlp ? 9000 : 5000,
+					duration: isMissingYtDlp || usenetRepairFailure ? 9000 : 5000,
 					message: `${message} (${errorCode}) ${link}`,
 				});
 			});

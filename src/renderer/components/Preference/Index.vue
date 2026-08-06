@@ -56,6 +56,7 @@ import {
 	ChevronDown,
 	Cloud,
 	Palette,
+	Radio,
 	RefreshCw,
 	SlidersHorizontal,
 	Wrench,
@@ -104,6 +105,12 @@ export default {
 					title: this.$t("preferences.advanced"),
 					route: "/preference/advanced",
 					icon: Wrench,
+				},
+				{
+					key: "usenet",
+					title: this.$t("preferences.usenet"),
+					route: "/preference/usenet",
+					icon: Radio,
 				},
 				{
 					key: "cloud-sinks",
