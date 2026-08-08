@@ -515,7 +515,7 @@ pub async fn fetch_for_nzb(uri: &str, options: &Map<String, Value>) -> Result<Ve
     let mut bytes = Vec::with_capacity(response.content_length().unwrap_or(0).min(CAP) as usize);
     let mut stream = response.bytes_stream();
     let body_timeout = parse_duration_secs_option(
-        options.get("lowest-speed-limit-timeout"),
+        options.get("nzb-body-timeout"),
         DEFAULT_NZB_BODY_TIMEOUT_SECS,
     );
     let mut total = 0u64;
