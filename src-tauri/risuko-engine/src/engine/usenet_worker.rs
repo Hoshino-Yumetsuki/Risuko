@@ -178,6 +178,11 @@ impl ActiveTimeTracker {
 }
 
 impl ArticleSource for NntpArticleSource {
+    fn fetch_concurrency(&self) -> usize {
+        self.connection_capacity
+            .effective_capacity(self.pool.profiles())
+    }
+
     fn fetch<'a>(
         &'a self,
         message_id: &'a str,
@@ -953,31 +958,44 @@ fn output_lock_path(output: &Path) -> Result<PathBuf, String> {
 }
 
 async fn output_slot_is_available(output: &Path) -> Result<bool, String> {
-    for (index, path) in [
-        output.to_path_buf(),
-        partial_path(output),
-        resume_sidecar_path(output),
-    ]
-    .into_iter()
-    .enumerate()
-    {
+    for path in [output.to_path_buf(), partial_path(output)] {
         match tokio::fs::symlink_metadata(&path).await {
-            Ok(_) if index == 2 => match tokio::fs::read(&path).await {
-                Ok(bytes) if serde_json::from_slice::<ResumeSidecar>(&bytes).is_err() => continue,
-                Ok(_) => return Ok(false),
-                Err(error) => {
-                    return Err(format!(
-                        "read Usenet resume metadata {}: {error}",
-                        path.display()
-                    ))
-                }
-            },
             Ok(_) => return Ok(false),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => return Err(format!("inspect Usenet output {}: {error}", path.display())),
         }
     }
-    Ok(true)
+
+    let sidecar_path = resume_sidecar_path(output);
+    match tokio::fs::symlink_metadata(&sidecar_path).await {
+        Ok(metadata) => {
+            // A sidecar directory is occupied even though it cannot be parsed as JSON.
+            if metadata.file_type().is_dir() {
+                return Ok(false);
+            }
+            match tokio::fs::read(&sidecar_path).await {
+                Ok(bytes) if serde_json::from_slice::<ResumeSidecar>(&bytes).is_err() => Ok(true),
+                Ok(_) => Ok(false),
+                Err(error)
+                    if metadata.file_type().is_symlink()
+                        && error.kind() == std::io::ErrorKind::NotFound =>
+                {
+                    // A broken sidecar symlink still reserves the deterministic slot.
+                    Ok(false)
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::IsADirectory => Ok(false),
+                Err(error) => Err(format!(
+                    "read Usenet resume metadata {}: {error}",
+                    sidecar_path.display()
+                )),
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(true),
+        Err(error) => Err(format!(
+            "inspect Usenet resume metadata {}: {error}",
+            sidecar_path.display()
+        )),
+    }
 }
 
 async fn persist_par2_repair_state(
@@ -1993,6 +2011,28 @@ mod tests {
             .unwrap();
 
         assert_eq!(reservation.output, output);
+    }
+
+    #[tokio::test]
+    async fn resume_sidecar_directory_occupies_output_slot() {
+        let dir = tempfile::tempdir().unwrap();
+        let output = dir.path().join("sample.bin");
+        tokio::fs::create_dir(resume_sidecar_path(&output))
+            .await
+            .unwrap();
+
+        assert!(!output_slot_is_available(&output).await.unwrap());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn broken_resume_sidecar_symlink_occupies_output_slot() {
+        let dir = tempfile::tempdir().unwrap();
+        let output = dir.path().join("sample.bin");
+        let sidecar = resume_sidecar_path(&output);
+        std::os::unix::fs::symlink(dir.path().join("missing-sidecar"), &sidecar).unwrap();
+
+        assert!(!output_slot_is_available(&output).await.unwrap());
     }
 
     #[tokio::test]

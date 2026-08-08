@@ -138,7 +138,7 @@ export default {
 	"mirror-hint":
 		"Додайте URL дзеркал, що вказують на той самий файл, щоб завантажувати з кількох джерел одночасно.",
 	"usenet-repair-insufficient":
-		"Даних для відновлення PAR2 недостатньо: потрібно блоків — {{neededBlocks}}, доступно лише {{availableBlocks}}.",
+		"Даних для відновлення PAR2 недостатньо: потрібно {{neededBlocks}} блоків, але доступно лише {{availableBlocks}}.",
 	"usenet-repair-partials-retained":
 		"Часткові файли збережено. Додайте провайдера з кращою повнотою та повторіть спробу.",
 	"usenet-repair-partials-unavailable":

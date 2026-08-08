@@ -140,7 +140,7 @@ export default {
 	"usenet-repair-insufficient":
 		"PAR2 kurtarma verisi yetersiz: {{neededBlocks}} blok gerekiyor, ancak yalnızca {{availableBlocks}} mevcut.",
 	"usenet-repair-partials-retained":
-		"Kısmi dosyalar korundu. Daha iyi tamamlanmışlığa sahip bir sağlayıcı ekleyip tekrar deneyin.",
+		"Kısmi dosyalar korundu. Tamamlanma oranı daha yüksek bir sağlayıcı ekleyip tekrar deneyin.",
 	"usenet-repair-partials-unavailable":
-		"Kısmi dosyalar kullanılamıyor. Farklı bir NZB deneyin veya tamamlanmışlığı daha iyi bir sağlayıcıyla yeniden indirin.",
+		"Kısmi dosyalar kullanılamıyor. Farklı bir NZB deneyin veya tamamlanma oranı daha yüksek bir sağlayıcıyla yeniden indirin.",
 };

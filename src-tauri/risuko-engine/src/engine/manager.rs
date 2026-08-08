@@ -214,7 +214,10 @@ fn usenet_stage_rank(stage: &str) -> u8 {
         "repairing" | "verifying" => 3,
         "complete" => 4,
         "error" => 5,
-        _ => 0,
+        unknown => {
+            tracing::warn!(stage = unknown, "unrecognised Usenet progress stage");
+            0
+        }
     }
 }
 

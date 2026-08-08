@@ -141,5 +141,5 @@ export default {
 	"usenet-repair-partials-retained":
 		"Các tệp một phần đã được giữ lại. Thêm nhà cung cấp có độ hoàn thiện tốt hơn rồi thử lại.",
 	"usenet-repair-partials-unavailable":
-		"Không có các tệp một phần. Hãy thử NZB khác hoặc tải lại với nhà cung cấp có độ hoàn thiện tốt hơn.",
+		"Các tệp một phần không khả dụng. Hãy thử NZB khác hoặc tải lại với nhà cung cấp có độ hoàn thiện tốt hơn.",
 };

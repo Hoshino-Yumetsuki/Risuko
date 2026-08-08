@@ -16,10 +16,10 @@ const RESUME_VERSION: u8 = 2;
 const HASH_BUFFER_BYTES: usize = 64 * 1024;
 const CHECKPOINT_SEGMENT_INTERVAL: usize = 8;
 const CHECKPOINT_TIME_INTERVAL: Duration = Duration::from_secs(5);
-// Keep a small, deterministic number of decoded articles in memory while
-// preserving enough overlap to hide individual article latency. Manifest
-// byte counts are metadata and must not be used as a memory bound.
-const FETCH_CONCURRENCY: usize = 4;
+// Test/dummy sources use a conservative default; network sources override
+// this with their provider connection budget. Manifest byte counts are
+// metadata and must not be used as a memory bound.
+const DEFAULT_FETCH_CONCURRENCY: usize = 4;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct YencAssemblyLimits {
@@ -211,6 +211,10 @@ pub trait ArticleSource: Send + Sync {
                 + 'a,
         >,
     >;
+
+    fn fetch_concurrency(&self) -> usize {
+        DEFAULT_FETCH_CONCURRENCY
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -834,9 +838,10 @@ pub(crate) async fn assemble_file_with_report_with_limits_at_offset<S: ArticleSo
         .iter()
         .filter(|segment| !sidecar.completed_segments.contains(&segment.number))
         .collect::<Vec<_>>();
+    let fetch_concurrency = source.fetch_concurrency().max(1);
     let mut batch_start = 0;
     while batch_start < pending_segments.len() {
-        let batch_end = (batch_start + FETCH_CONCURRENCY).min(pending_segments.len());
+        let batch_end = (batch_start + fetch_concurrency).min(pending_segments.len());
         let batch = &pending_segments[batch_start..batch_end];
         let mut fetches = FuturesUnordered::new();
         for (order, segment) in batch.iter().enumerate() {
@@ -1411,7 +1416,9 @@ mod tests {
 
         assert!(report.complete);
         assert_eq!(tokio::fs::metadata(&output).await.unwrap().len(), 8 * 1024);
-        assert!(max_active.load(Ordering::Relaxed) <= FETCH_CONCURRENCY);
+        let max_active = max_active.load(Ordering::Relaxed);
+        assert!(max_active > 1);
+        assert!(max_active <= DEFAULT_FETCH_CONCURRENCY);
     }
 
     #[tokio::test]

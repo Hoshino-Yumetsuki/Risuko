@@ -148,6 +148,15 @@ fn sync_fallback_parent(parent: &Path) -> Result<(), String> {
         .read(true)
         .open(parent)
         .and_then(|directory| directory.sync_all())
+        .or_else(|error| {
+            if matches!(
+                error.kind(),
+                std::io::ErrorKind::Unsupported | std::io::ErrorKind::InvalidInput
+            ) {
+                return Ok(());
+            }
+            Err(error)
+        })
         .map_err(|error| format!("sync credential fallback directory: {error}"))
 }
 
