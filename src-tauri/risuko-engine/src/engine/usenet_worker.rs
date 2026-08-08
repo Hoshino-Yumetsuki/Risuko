@@ -178,11 +178,6 @@ impl ActiveTimeTracker {
 }
 
 impl ArticleSource for NntpArticleSource {
-    fn fetch_concurrency(&self) -> usize {
-        self.connection_capacity
-            .effective_capacity(self.pool.profiles())
-    }
-
     fn fetch<'a>(
         &'a self,
         message_id: &'a str,
@@ -969,21 +964,15 @@ async fn output_slot_is_available(output: &Path) -> Result<bool, String> {
     let sidecar_path = resume_sidecar_path(output);
     match tokio::fs::symlink_metadata(&sidecar_path).await {
         Ok(metadata) => {
-            // A sidecar directory is occupied even though it cannot be parsed as JSON.
-            if metadata.file_type().is_dir() {
+            // Only regular files can be parsed as resume metadata. Treat
+            // FIFOs, devices, directories, and symlinks as occupied so
+            // reservation never blocks on an arbitrary filesystem object.
+            if !metadata.file_type().is_file() {
                 return Ok(false);
             }
             match tokio::fs::read(&sidecar_path).await {
                 Ok(bytes) if serde_json::from_slice::<ResumeSidecar>(&bytes).is_err() => Ok(true),
                 Ok(_) => Ok(false),
-                Err(error)
-                    if metadata.file_type().is_symlink()
-                        && error.kind() == std::io::ErrorKind::NotFound =>
-                {
-                    // A broken sidecar symlink still reserves the deterministic slot.
-                    Ok(false)
-                }
-                Err(error) if error.kind() == std::io::ErrorKind::IsADirectory => Ok(false),
                 Err(error) => Err(format!(
                     "read Usenet resume metadata {}: {error}",
                     sidecar_path.display()

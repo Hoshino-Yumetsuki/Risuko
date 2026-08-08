@@ -212,6 +212,25 @@ fn verify_with_cancel(
     dir: &Path,
     cancel: Option<&CancellationToken>,
 ) -> Result<rust_par2::VerifyResult, Par2Error> {
+    verify_with_cancel_inner(file_set, dir, cancel, None)
+}
+
+#[cfg(test)]
+fn verify_with_cancel_hook(
+    file_set: &rust_par2::Par2FileSet,
+    dir: &Path,
+    cancel: Option<&CancellationToken>,
+    hook: &mut dyn FnMut(),
+) -> Result<rust_par2::VerifyResult, Par2Error> {
+    verify_with_cancel_inner(file_set, dir, cancel, Some(hook))
+}
+
+fn verify_with_cancel_inner(
+    file_set: &rust_par2::Par2FileSet,
+    dir: &Path,
+    cancel: Option<&CancellationToken>,
+    mut hook: Option<&mut dyn FnMut()>,
+) -> Result<rust_par2::VerifyResult, Par2Error> {
     let mut files: Vec<_> = file_set.files.values().collect();
     files.sort_by_key(|file| &file.filename);
     let mut intact = Vec::new();
@@ -244,7 +263,11 @@ fn verify_with_cancel(
             continue;
         }
 
-        let hash = match md5_file_with_cancel(&path, cancel) {
+        let hash = match if let Some(hook) = hook.as_mut() {
+            md5_file_with_cancel(&path, cancel, Some(&mut **hook))
+        } else {
+            md5_file_with_cancel(&path, cancel, None)
+        } {
             Ok(hash) => Some(hash),
             Err(Par2Error::Cancelled) => return Err(Par2Error::Cancelled),
             Err(_) => None,
@@ -301,6 +324,7 @@ fn blocks_for_size(size: u64, slice_size: u64) -> u32 {
 fn md5_file_with_cancel(
     path: &Path,
     cancel: Option<&CancellationToken>,
+    mut hook: Option<&mut dyn FnMut()>,
 ) -> Result<[u8; 16], Par2Error> {
     let mut file = fs::File::open(path)?;
     let mut hasher = Md5::new();
@@ -312,6 +336,9 @@ fn md5_file_with_cancel(
             break;
         }
         hasher.update(&buffer[..read]);
+        if let Some(hook) = hook.as_deref_mut() {
+            hook();
+        }
     }
     Ok(hasher.finalize().into())
 }
@@ -1994,6 +2021,40 @@ mod tests {
         cancel.cancel();
 
         let error = verify_with_cancel(&file_set, dir.path(), Some(&cancel)).unwrap_err();
+
+        assert!(matches!(error, Par2Error::Cancelled));
+    }
+
+    #[test]
+    fn cancellation_during_par2_hashing_is_observed_between_chunks() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("data.bin");
+        let size = VERIFY_HASH_BUFFER_BYTES * 2;
+        fs::write(&path, vec![7u8; size as usize]).unwrap();
+        let file_id = [1u8; 16];
+        let file_set = rust_par2::Par2FileSet {
+            recovery_set_id: [2u8; 16],
+            slice_size: size,
+            file_order: vec![file_id],
+            files: HashMap::from([(
+                file_id,
+                rust_par2::Par2File {
+                    file_id,
+                    hash: [0u8; 16],
+                    hash_16k: [0u8; 16],
+                    size,
+                    filename: "data.bin".into(),
+                    slices: Vec::new(),
+                },
+            )]),
+            recovery_block_count: 0,
+            creator: None,
+        };
+        let cancel = CancellationToken::new();
+        let cancel_for_hook = cancel.clone();
+        let mut hook = move || cancel_for_hook.cancel();
+        let error =
+            verify_with_cancel_hook(&file_set, dir.path(), Some(&cancel), &mut hook).unwrap_err();
 
         assert!(matches!(error, Par2Error::Cancelled));
     }

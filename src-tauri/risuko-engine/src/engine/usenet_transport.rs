@@ -582,17 +582,6 @@ pub struct ProviderConnectionCapacityRegistry {
 }
 
 impl ProviderConnectionCapacityRegistry {
-    /// Return the maximum simultaneous connection budget for the eligible
-    /// profiles used by one task.
-    pub fn effective_capacity(&self, profiles: &[UsenetProviderProfile]) -> usize {
-        profiles
-            .iter()
-            .filter(|profile| profile.enabled && profile.deleted_at.is_none())
-            .map(|profile| profile.max_connections as usize)
-            .fold(0, usize::saturating_add)
-            .max(1)
-    }
-
     pub fn try_acquire(
         &self,
         profile: &UsenetProviderProfile,

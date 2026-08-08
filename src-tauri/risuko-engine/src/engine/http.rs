@@ -267,6 +267,8 @@ impl PieceQueue {
 
 /// aria2 default: 60s connect timeout when not configured
 const DEFAULT_CONNECT_TIMEOUT_SECS: u64 = 60;
+/// Default maximum idle time between chunks of an NZB response body.
+const DEFAULT_NZB_BODY_TIMEOUT_SECS: u64 = 30;
 /// aria2 default for `--lowest-speed-limit-timeout`: 30s of below-threshold
 /// transfer before the worker is considered stalled
 const DEFAULT_LOWEST_SPEED_TIMEOUT_SECS: u64 = 30;
@@ -512,9 +514,13 @@ pub async fn fetch_for_nzb(uri: &str, options: &Map<String, Value>) -> Result<Ve
 
     let mut bytes = Vec::with_capacity(response.content_length().unwrap_or(0).min(CAP) as usize);
     let mut stream = response.bytes_stream();
+    let body_timeout = parse_duration_secs_option(
+        options.get("lowest-speed-limit-timeout"),
+        DEFAULT_NZB_BODY_TIMEOUT_SECS,
+    );
     let mut total = 0u64;
     loop {
-        let item = tokio::time::timeout(header_timeout, stream.next())
+        let item = tokio::time::timeout(body_timeout, stream.next())
             .await
             .map_err(|_| "NZB response body timed out".to_string())?;
         let Some(item) = item else { break };
