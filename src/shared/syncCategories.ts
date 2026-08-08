@@ -129,7 +129,6 @@ const namedCategories: SyncCategory[] = [
 			"low-speed-threshold",
 			"lowest-speed-limit",
 			"lowest-speed-limit-timeout",
-			"nzb-body-timeout",
 		],
 	},
 	{
@@ -220,6 +219,7 @@ const namedCategories: SyncCategory[] = [
 			"usenet-archive-limits",
 			"usenet-cleanup-mode",
 			"usenet-limits-adjusted",
+			"nzb-body-timeout",
 		],
 	},
 	{
