@@ -129,7 +129,7 @@
                     <SelectItem value="delete-par2">
                       {{ $t('preferences.usenet-cleanup-par2') }}
                     </SelectItem>
-                    <SelectItem value="delete-par2-and-archives">
+                    <SelectItem value="delete-par2-and-archives" disabled>
                       {{ $t('preferences.usenet-cleanup-all') }}
                     </SelectItem>
                   </SelectContent>
@@ -304,7 +304,7 @@
         <DialogHeader>
           <DialogTitle>{{ profileDialogTitle }}</DialogTitle>
           <p id="usenet-profile-description" class="dialog-subtitle">
-            {{ $t('preferences.usenet-profile-dialog-tips') }}
+            {{ $t(preferenceStore.vaultEnabled ? 'preferences.usenet-profile-dialog-tips-vault' : 'preferences.usenet-profile-dialog-tips') }}
           </p>
         </DialogHeader>
 
@@ -722,6 +722,19 @@ export default defineComponent({
 				}),
 			);
 		},
+		async restoreProfiles(
+			storedProfiles: UsenetProviderProfile[],
+			originalError: unknown,
+		): Promise<never> {
+			try {
+				await this.preferenceStore.save({ usenetProfiles: storedProfiles });
+			} catch (rollbackError) {
+				throw new Error(
+					`${this.errorMessage(originalError)} (profile rollback failed: ${this.errorMessage(rollbackError)})`,
+				);
+			}
+			throw originalError;
+		},
 		openCreateProfile() {
 			this.profileForm = emptyProfileForm();
 			this.profileFormError = "";
@@ -854,7 +867,9 @@ export default defineComponent({
 				updatedAt: now,
 			};
 
-			const storedProfiles = this.preferenceStore.config.usenetProfiles || [];
+			const storedProfiles = [
+				...(this.preferenceStore.config.usenetProfiles || []),
+			];
 			const existingIndex = storedProfiles.findIndex(
 				(item) => item.id === profile.id,
 			);
@@ -868,15 +883,7 @@ export default defineComponent({
 			try {
 				await this.preferenceStore.save({ usenetProfiles: nextProfiles });
 				if (this.profileForm.authMode === "anonymous") {
-					try {
-						await api.removeUsenetCredentials(profile.id);
-						this.credentialStatuses[profile.id] = false;
-					} catch (credentialError) {
-						await this.preferenceStore.save({
-							usenetProfiles: storedProfiles,
-						});
-						throw credentialError;
-					}
+					await api.removeUsenetCredentials(profile.id);
 				} else if (
 					this.profileForm.username.trim() &&
 					this.profileForm.password
@@ -886,13 +893,20 @@ export default defineComponent({
 						this.profileForm.username.trim(),
 						this.profileForm.password,
 					);
-					this.credentialStatuses[profile.id] = true;
 				}
 
+				this.credentialStatuses[profile.id] =
+					this.profileForm.authMode !== "anonymous";
 				this.profileDialogOpen = false;
 				toast.success(this.$t("preferences.usenet-profile-saved") as string);
 			} catch (error) {
-				this.profileFormError = this.errorMessage(error);
+				let reportedError: unknown = error;
+				try {
+					await this.restoreProfiles(storedProfiles, error);
+				} catch (rollbackError) {
+					reportedError = rollbackError;
+				}
+				this.profileFormError = this.errorMessage(reportedError);
 			} finally {
 				this.savingProfile = false;
 			}
@@ -944,24 +958,31 @@ export default defineComponent({
 			}
 
 			const now = Date.now();
-			const nextProfiles = (
-				this.preferenceStore.config.usenetProfiles || []
-			).map((item) =>
+			const storedProfiles = [
+				...(this.preferenceStore.config.usenetProfiles || []),
+			];
+			const nextProfiles = storedProfiles.map((item) =>
 				item.id === profile.id
 					? { ...item, enabled: false, deletedAt: now, updatedAt: now }
 					: item,
 			);
 			try {
+				await this.preferenceStore.save({ usenetProfiles: nextProfiles });
 				await api.removeUsenetCredentials(profile.id);
 				delete this.credentialStatuses[profile.id];
-				await this.preferenceStore.save({ usenetProfiles: nextProfiles });
 				toast.success(
 					this.$t("preferences.usenet-profile-removed", {
 						name: profile.name,
 					}) as string,
 				);
 			} catch (error) {
-				toast.error(this.errorMessage(error));
+				let reportedError: unknown = error;
+				try {
+					await this.restoreProfiles(storedProfiles, error);
+				} catch (rollbackError) {
+					reportedError = rollbackError;
+				}
+				toast.error(this.errorMessage(reportedError));
 			}
 		},
 		bytesToGiB(bytes: number): number {

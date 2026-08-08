@@ -48,7 +48,6 @@ pub fn decode_yenc(input: &[u8]) -> Result<Vec<u8>, YEncError> {
     let text = input;
     let begin = find_line(text, b"=ybegin ").ok_or(YEncError::MissingBegin)?;
     let end = find_line_after(text, b"=yend ", begin.1).ok_or(YEncError::MissingEnd)?;
-    let begin_header = parse_header(&text[begin.0..begin.1]);
     let end_header = parse_header(&text[end.0..end.1]);
     let expected_size = match end_header.get("size") {
         Some(value) => Some(
@@ -92,12 +91,11 @@ pub fn decode_yenc(input: &[u8]) -> Result<Vec<u8>, YEncError> {
     }
     if let Some(crc) = expected_crc {
         let expected = u32::from_str_radix(crc, 16).map_err(|_| YEncError::InvalidCrc)?;
-        let actual = crc32(&out);
+        let actual = crate::engine::usenet_pipeline::crc32(&out);
         if actual != expected {
             return Err(YEncError::CrcMismatch { expected, actual });
         }
     }
-    let _ = begin_header; // Header fields are validated by presence above
     Ok(out)
 }
 
@@ -172,21 +170,6 @@ fn parse_header(line: &[u8]) -> std::collections::HashMap<String, String> {
         .filter_map(|item| item.split_once('='))
         .map(|(key, value)| (key.to_ascii_lowercase(), value.to_string()))
         .collect()
-}
-
-fn crc32(bytes: &[u8]) -> u32 {
-    let mut crc = 0xffff_ffffu32;
-    for &byte in bytes {
-        crc ^= byte as u32;
-        for _ in 0..8 {
-            crc = if crc & 1 != 0 {
-                (crc >> 1) ^ 0xedb8_8320
-            } else {
-                crc >> 1
-            };
-        }
-    }
-    !crc
 }
 
 /// Archive entry type supplied by a format reader
@@ -299,7 +282,8 @@ where
                     use std::os::unix::fs::PermissionsExt;
                     perms.set_mode(perms.mode() & 0o666);
                 }
-                fs::set_permissions(&path, perms).map_err(ArchivePipelineError::Io)?;
+                file.set_permissions(perms)
+                    .map_err(ArchivePipelineError::Io)?;
                 files_written += 1;
             }
             _ => unreachable!(),
@@ -528,7 +512,10 @@ impl UsenetResumeState {
                 .and_then(|e| e.to_str())
                 .map_or(String::new(), |e| format!("{e}."))
         ));
-        fs::write(&tmp, bytes)?;
+        let mut file = fs::File::create(&tmp)?;
+        file.write_all(&bytes)?;
+        file.sync_all()?;
+        drop(file);
         fs::rename(tmp, path)
     }
 }
@@ -556,7 +543,7 @@ mod tests {
             format!(
                 "\r\n=yend size={} crc32={:08x}\r\n",
                 bytes.len(),
-                crc32(bytes)
+                crate::engine::usenet_pipeline::crc32(bytes)
             )
             .as_bytes(),
         );

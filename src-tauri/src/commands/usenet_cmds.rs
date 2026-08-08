@@ -1,9 +1,13 @@
 //! Usenet provider commands
 
+use fs4::FileExt;
 use risuko_engine::engine::usenet::{UsenetCredentialResolver, UsenetProviderProfile};
 use risuko_engine::engine::usenet_transport::NntpConnection;
 use serde_json::{json, Map, Value};
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tauri::State;
 
@@ -19,14 +23,6 @@ pub struct VaultCredentialResolver {
 }
 
 impl VaultCredentialResolver {
-    #[allow(dead_code)]
-    pub fn new(vault: Arc<crate::managers::vault::VaultManager>) -> Self {
-        let config_dir = dirs::config_dir()
-            .map(|path| path.join("dev.risuko.app"))
-            .unwrap_or_else(|| PathBuf::from("."));
-        Self::with_config_dir(vault, config_dir)
-    }
-
     pub fn with_config_dir(
         vault: Arc<crate::managers::vault::VaultManager>,
         config_dir: PathBuf,
@@ -80,29 +76,158 @@ fn load_fallback(path: &Path) -> Result<Map<String, Value>, String> {
     }
 }
 
-fn save_fallback(path: &Path, profile_id: &str, credentials: &Value) -> Result<(), String> {
-    let mut entries = load_fallback(path)?;
-    entries.insert(profile_id.to_string(), credentials.clone());
-    let data = serde_json::to_string_pretty(&entries).map_err(|e| e.to_string())?;
+static FALLBACK_MUTEX: std::sync::LazyLock<std::sync::Mutex<()>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(()));
+static FALLBACK_TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+fn with_fallback_lock<T>(
+    path: &Path,
+    operation: impl FnOnce() -> Result<T, String>,
+) -> Result<T, String> {
+    let _process_guard = FALLBACK_MUTEX
+        .lock()
+        .map_err(|_| "Credential fallback lock poisoned".to_string())?;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
-    std::fs::write(path, data).map_err(|e| e.to_string())
+    let lock_path = path.with_file_name(format!(
+        ".{}.lock",
+        path.file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("credentials")
+    ));
+    let lock_file = OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .open(&lock_path)
+        .map_err(|e| e.to_string())?;
+    FileExt::lock(&lock_file).map_err(|e| e.to_string())?;
+    let result = operation();
+    let _ = FileExt::unlock(&lock_file);
+    result
+}
+
+fn write_fallback_atomic(path: &Path, data: &str) -> Result<(), String> {
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("credentials.json");
+    let temp_path = parent.join(format!(
+        ".{name}.tmp-{}-{}",
+        std::process::id(),
+        FALLBACK_TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
+    ));
+    let result = (|| {
+        let mut options = OpenOptions::new();
+        options.create_new(true).write(true).truncate(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file = options.open(&temp_path).map_err(|e| e.to_string())?;
+        file.write_all(data.as_bytes()).map_err(|e| e.to_string())?;
+        file.sync_all().map_err(|e| e.to_string())?;
+        drop(file);
+        set_owner_only_permissions(&temp_path)?;
+        replace_fallback_file(&temp_path, path)
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temp_path);
+    }
+    result
+}
+
+#[cfg(unix)]
+fn set_owner_only_permissions(path: &Path) -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(path, PermissionsExt::from_mode(0o600)).map_err(|e| e.to_string())
+}
+
+#[cfg(windows)]
+fn set_owner_only_permissions(path: &Path) -> Result<(), String> {
+    let username = std::env::var("USERNAME")
+        .map_err(|_| "Windows user name is unavailable for credential ACL".to_string())?;
+    let status = std::process::Command::new("icacls")
+        .arg(path)
+        .args(["/inheritance:r", "/grant:r"])
+        .arg(format!("{username}:F"))
+        .status()
+        .map_err(|e| format!("apply credential ACL: {e}"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("icacls exited with status {status}"))
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
+fn set_owner_only_permissions(_path: &Path) -> Result<(), String> {
+    Ok(())
+}
+
+#[cfg(windows)]
+fn replace_fallback_file(temp: &Path, path: &Path) -> Result<(), String> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::{
+        MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
+    };
+
+    let source = temp
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    let destination = path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    let result = unsafe {
+        MoveFileExW(
+            source.as_ptr(),
+            destination.as_ptr(),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+        )
+    };
+    if result == 0 {
+        Err(std::io::Error::last_os_error().to_string())
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(not(windows))]
+fn replace_fallback_file(temp: &Path, path: &Path) -> Result<(), String> {
+    std::fs::rename(temp, path).map_err(|e| e.to_string())
+}
+
+fn save_fallback(path: &Path, profile_id: &str, credentials: &Value) -> Result<(), String> {
+    with_fallback_lock(path, || {
+        let mut entries = load_fallback(path)?;
+        entries.insert(profile_id.to_string(), credentials.clone());
+        let data = serde_json::to_string_pretty(&entries).map_err(|e| e.to_string())?;
+        write_fallback_atomic(path, &data)
+    })
 }
 
 fn remove_fallback(path: &Path, profile_id: &str) -> Result<(), String> {
-    let mut entries = load_fallback(path)?;
-    entries.remove(profile_id);
-    if entries.is_empty() {
-        match std::fs::remove_file(path) {
-            Ok(()) => Ok(()),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(error) => Err(error.to_string()),
+    with_fallback_lock(path, || {
+        let mut entries = load_fallback(path)?;
+        entries.remove(profile_id);
+        if entries.is_empty() {
+            match std::fs::remove_file(path) {
+                Ok(()) => Ok(()),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                Err(error) => Err(error.to_string()),
+            }
+        } else {
+            let data = serde_json::to_string_pretty(&entries).map_err(|e| e.to_string())?;
+            write_fallback_atomic(path, &data)
         }
-    } else {
-        let data = serde_json::to_string_pretty(&entries).map_err(|e| e.to_string())?;
-        std::fs::write(path, data).map_err(|e| e.to_string())
-    }
+    })
 }
 
 fn resolver_for_state(state: &AppState) -> Result<VaultCredentialResolver, String> {
@@ -245,6 +370,14 @@ mod tests {
         save_fallback(&path, "primary", &credentials).unwrap();
         let entries = load_fallback(&path).unwrap();
         assert_eq!(entries.get("primary"), Some(&credentials));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
 
         remove_fallback(&path, "primary").unwrap();
         assert!(!path.exists());

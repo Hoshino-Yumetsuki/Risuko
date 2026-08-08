@@ -494,34 +494,41 @@ pub async fn fetch_for_metalink_probe(
 /// responses cannot bypass the payload cap.
 pub async fn fetch_for_nzb(uri: &str, options: &Map<String, Value>) -> Result<Vec<u8>, String> {
     const CAP: u64 = 16 * 1024 * 1024;
-    let client = build_client(options, true, None)?;
+    const FETCH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+    let client = build_client(options, true, load_cookie_jar(options))?;
     let mut headers = build_headers(options);
     apply_netrc_auth(&mut headers, uri, options);
-    let response = client
-        .get(uri)
-        .headers(headers)
-        .send()
-        .await
-        .map_err(|e| format!("NZB URL fetch failed: {e}"))?
-        .error_for_status()
-        .map_err(|e| format!("NZB URL returned an error: {e}"))?;
+    let fetch = async {
+        let response = client
+            .get(uri)
+            .headers(headers)
+            .send()
+            .await
+            .map_err(|e| format!("NZB URL fetch failed: {e}"))?
+            .error_for_status()
+            .map_err(|e| format!("NZB URL returned an error: {e}"))?;
 
-    if response.content_length().is_some_and(|length| length > CAP) {
-        return Err("NZB URL payload too large".to_string());
-    }
-
-    let mut bytes = Vec::with_capacity(response.content_length().unwrap_or(0).min(CAP) as usize);
-    let mut stream = response.bytes_stream();
-    let mut total = 0u64;
-    while let Some(item) = stream.next().await {
-        let chunk = item.map_err(|e| format!("NZB URL body read failed: {e}"))?;
-        total = total.saturating_add(chunk.len() as u64);
-        if total > CAP {
+        if response.content_length().is_some_and(|length| length > CAP) {
             return Err("NZB URL payload too large".to_string());
         }
-        bytes.extend_from_slice(&chunk);
-    }
-    Ok(bytes)
+
+        let mut bytes =
+            Vec::with_capacity(response.content_length().unwrap_or(0).min(CAP) as usize);
+        let mut stream = response.bytes_stream();
+        let mut total = 0u64;
+        while let Some(item) = stream.next().await {
+            let chunk = item.map_err(|e| format!("NZB URL body read failed: {e}"))?;
+            total = total.saturating_add(chunk.len() as u64);
+            if total > CAP {
+                return Err("NZB URL payload too large".to_string());
+            }
+            bytes.extend_from_slice(&chunk);
+        }
+        Ok(bytes)
+    };
+    tokio::time::timeout(FETCH_TIMEOUT, fetch)
+        .await
+        .map_err(|_| "NZB URL fetch timed out".to_string())?
 }
 
 /// Build a HTTP Client with common settings applied from options

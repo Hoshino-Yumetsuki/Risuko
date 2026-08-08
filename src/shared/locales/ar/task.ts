@@ -132,4 +132,10 @@ export default {
 	"mirror-placeholder": "رابط المرآة (نفس الملف، خادم آخر)",
 	"mirror-hint":
 		"أضف روابط مرآة تشير إلى نفس الملف للتنزيل من عدة مصادر في وقت واحد.",
+	"usenet-repair-insufficient":
+		"PAR2 recovery is insufficient: {{neededBlocks}} blocks are needed, but only {{availableBlocks}} are available.",
+	"usenet-repair-partials-retained":
+		"Partial files were kept. Add a provider with better completion, then retry.",
+	"usenet-repair-partials-unavailable":
+		"Partial files are unavailable. Try a different NZB or download again with a provider that has better completion.",
 };

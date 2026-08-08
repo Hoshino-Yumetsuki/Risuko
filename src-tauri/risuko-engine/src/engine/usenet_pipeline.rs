@@ -2,16 +2,20 @@
 
 use crate::engine::archive_safety::ArchiveLimits;
 use crate::engine::usenet::NzbSegment;
+use futures_util::{stream::FuturesUnordered, StreamExt};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 use tokio_util::sync::CancellationToken;
 
 const RESUME_VERSION: u8 = 2;
 const HASH_BUFFER_BYTES: usize = 64 * 1024;
+const CHECKPOINT_SEGMENT_INTERVAL: usize = 8;
+const CHECKPOINT_TIME_INTERVAL: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct YencAssemblyLimits {
@@ -139,8 +143,10 @@ impl ResumeSidecar {
             }
             Err(error) => return Err(format!("read resume metadata: {error}")),
         };
-        let parsed: Self = serde_json::from_slice(&bytes)
-            .map_err(|error| format!("parse resume metadata: {error}"))?;
+        let parsed: Self = match serde_json::from_slice(&bytes) {
+            Ok(parsed) => parsed,
+            Err(_) => return Ok(Self::new(manifest_sha256.to_string())),
+        };
         if parsed.version != RESUME_VERSION || parsed.manifest_sha256 != manifest_sha256 {
             return Ok(Self::new(manifest_sha256.to_string()));
         }
@@ -448,7 +454,7 @@ fn decode_yenc_line(line: &[u8], output: &mut Vec<u8>) -> Result<(), String> {
         .map_err(|error| error.to_string())
 }
 
-fn crc32(bytes: &[u8]) -> u32 {
+pub(crate) fn crc32(bytes: &[u8]) -> u32 {
     let mut crc = 0xffff_ffffu32;
     for byte in bytes {
         crc ^= *byte as u32;
@@ -482,6 +488,9 @@ async fn validate_existing_receipts(
         return Err("assembled part is not a regular file".into());
     }
     limits.validate_file_size(metadata.len())?;
+    let mut file = tokio::fs::File::open(part_path)
+        .await
+        .map_err(|error| format!("open assembled part for validation: {error}"))?;
     let mut valid = BTreeMap::new();
     for (&number, receipt) in &sidecar.segment_receipts {
         let Some(range) = receipt_range(receipt) else {
@@ -490,7 +499,7 @@ async fn validate_existing_receipts(
         if range.end > metadata.len() {
             continue;
         }
-        if hash_file_range(part_path, receipt.offset, receipt.length).await? == receipt.sha256 {
+        if hash_file_range(&mut file, receipt.offset, receipt.length).await? == receipt.sha256 {
             valid.insert(number, receipt.clone());
         }
     }
@@ -500,10 +509,11 @@ async fn validate_existing_receipts(
     Ok(())
 }
 
-async fn hash_file_range(path: &Path, offset: u64, length: u64) -> Result<String, String> {
-    let mut file = tokio::fs::File::open(path)
-        .await
-        .map_err(|error| format!("open assembled part for validation: {error}"))?;
+async fn hash_file_range(
+    file: &mut tokio::fs::File,
+    offset: u64,
+    length: u64,
+) -> Result<String, String> {
     file.seek(std::io::SeekFrom::Start(offset))
         .await
         .map_err(|error| format!("seek assembled part for validation: {error}"))?;
@@ -783,6 +793,9 @@ pub(crate) async fn assemble_file_with_report_with_limits_at_offset<S: ArticleSo
     if let Some(size) = sidecar.expected_size {
         resize_assembled_part(&mut file, size, limits).await?;
     }
+    let mut resized_expected_size = sidecar.expected_size;
+    let mut segments_since_checkpoint = 0usize;
+    let mut last_checkpoint = Instant::now();
     publish_assembly_progress(
         progress,
         progress_base,
@@ -790,87 +803,159 @@ pub(crate) async fn assemble_file_with_report_with_limits_at_offset<S: ArticleSo
     );
 
     let mut unavailable_segments = Vec::new();
-    for segment in &ordered {
-        if sidecar.completed_segments.contains(&segment.number) {
-            continue;
-        }
-        if cancel.is_cancelled() {
-            return Err("Download cancelled".into());
-        }
-        let decoded = match source.fetch(&segment.message_id).await {
-            Ok(decoded) => decoded,
-            Err(ArticleFetchError::Unavailable(_)) => {
-                unavailable_segments.push(segment.number);
-                continue;
-            }
-            Err(error) => return Err(error.to_string()),
-        };
-        if ordered.len() > 1 && !decoded.has_explicit_range {
-            return Err("multipart NZB file has yEnc data without =ypart offsets".into());
-        }
-        if ordered.len() > 1 && decoded.file_size.is_none() {
-            return Err("multipart NZB file has yEnc data without a declared total size".into());
-        }
-        let receipt_length = validate_decoded_part(&decoded, limits)?;
-        let expected_size = match (sidecar.expected_size, decoded.file_size) {
-            (Some(existing), Some(size)) if existing != size => {
-                return Err("yEnc parts disagree about total file size".into())
-            }
-            (Some(existing), _) => existing,
-            (None, Some(size)) => {
-                sidecar.expected_size = Some(size);
-                limits.reserve_file(budget, size)?;
-                size
-            }
-            (None, None) if ordered.len() == 1 && decoded.range.start == 0 => {
-                let size = decoded.range.end;
-                sidecar.expected_size = Some(size);
-                limits.reserve_file(budget, size)?;
-                size
-            }
-            (None, None) => {
-                return Err("yEnc file size is ambiguous without a declared total size".into())
-            }
-        };
-        if decoded.range.end > expected_size {
-            return Err("yEnc part exceeds the assembled file size".into());
-        }
-        let candidate_receipt = ResumeSegment {
-            offset: decoded.range.start,
-            length: receipt_length,
-            sha256: hex::encode(Sha256::digest(&decoded.data)),
-        };
-        if sidecar.segment_receipts.iter().any(|(&number, receipt)| {
-            number != segment.number
-                && match receipt_range(receipt) {
-                    Some(existing_range) => ranges_overlap(decoded.range, existing_range),
-                    None => true,
-                }
-        }) {
-            return Err("yEnc part overlaps a completed segment".into());
-        }
-        resize_assembled_part(&mut file, expected_size, limits).await?;
-        file.seek(std::io::SeekFrom::Start(decoded.range.start))
-            .await
-            .map_err(|error| format!("seek assembled part: {error}"))?;
-        file.write_all(&decoded.data)
-            .await
-            .map_err(|error| format!("write assembled part: {error}"))?;
+
+    async fn checkpoint(
+        file: &mut tokio::fs::File,
+        sidecar: &ResumeSidecar,
+        sidecar_path: &Path,
+    ) -> Result<(), String> {
         file.sync_data()
             .await
             .map_err(|error| format!("flush assembled part: {error}"))?;
-        sidecar.completed_segments.insert(segment.number);
-        sidecar
-            .segment_receipts
-            .insert(segment.number, candidate_receipt);
-        sidecar.completed_bytes = completed_receipt_bytes(&sidecar.segment_receipts)?;
-        sidecar.save_atomic(&sidecar_path).await?;
-        publish_assembly_progress(
-            progress,
-            progress_base,
-            completed_article_bytes(&ordered, &sidecar.completed_segments)?,
-        );
+        sidecar.save_atomic(sidecar_path).await
     }
+
+    macro_rules! return_after_checkpoint {
+        ($error:expr) => {{
+            checkpoint(&mut file, &sidecar, &sidecar_path).await?;
+            return Err($error);
+        }};
+    }
+
+    // Keep network fetches in flight while yielding decoded parts in manifest
+    // order. The source's connection registry and profile caps remain the
+    // authoritative bounds; this small window avoids unbounded buffering.
+    let pending_segments = ordered
+        .iter()
+        .filter(|segment| !sidecar.completed_segments.contains(&segment.number))
+        .collect::<Vec<_>>();
+    for batch in pending_segments.chunks(8) {
+        let mut fetches = FuturesUnordered::new();
+        for (order, segment) in batch.iter().enumerate() {
+            let number = segment.number;
+            let message_id = segment.message_id.clone();
+            fetches.push(async move {
+                let result = source.fetch(&message_id).await;
+                (order, number, result)
+            });
+        }
+        let mut fetched = Vec::with_capacity(batch.len());
+        while let Some(result) = fetches.next().await {
+            fetched.push(result);
+        }
+        fetched.sort_by_key(|(order, _, _)| *order);
+        for (_, segment_number, fetch_result) in fetched {
+            let segment = ordered
+                .iter()
+                .find(|segment| segment.number == segment_number)
+                .ok_or_else(|| "fetched segment is missing from the manifest".to_string())?;
+            if cancel.is_cancelled() {
+                return_after_checkpoint!("Download cancelled".into());
+            }
+            let decoded = match fetch_result {
+                Ok(decoded) => decoded,
+                Err(ArticleFetchError::Unavailable(_)) => {
+                    unavailable_segments.push(segment.number);
+                    continue;
+                }
+                Err(error) => return_after_checkpoint!(error.to_string()),
+            };
+            if ordered.len() > 1 && !decoded.has_explicit_range {
+                return_after_checkpoint!(
+                    "multipart NZB file has yEnc data without =ypart offsets".into()
+                );
+            }
+            if ordered.len() > 1 && decoded.file_size.is_none() {
+                return_after_checkpoint!(
+                    "multipart NZB file has yEnc data without a declared total size".into()
+                );
+            }
+            let receipt_length = match validate_decoded_part(&decoded, limits) {
+                Ok(length) => length,
+                Err(error) => return_after_checkpoint!(error),
+            };
+            let expected_size = match (sidecar.expected_size, decoded.file_size) {
+                (Some(existing), Some(size)) if existing != size => {
+                    return_after_checkpoint!("yEnc parts disagree about total file size".into())
+                }
+                (Some(existing), _) => existing,
+                (None, Some(size)) => {
+                    sidecar.expected_size = Some(size);
+                    if let Err(error) = limits.reserve_file(budget, size) {
+                        return_after_checkpoint!(error);
+                    }
+                    size
+                }
+                (None, None) if ordered.len() == 1 && decoded.range.start == 0 => {
+                    let size = decoded.range.end;
+                    sidecar.expected_size = Some(size);
+                    if let Err(error) = limits.reserve_file(budget, size) {
+                        return_after_checkpoint!(error);
+                    }
+                    size
+                }
+                (None, None) => {
+                    return_after_checkpoint!(
+                        "yEnc file size is ambiguous without a declared total size".into()
+                    )
+                }
+            };
+            if decoded.range.end > expected_size {
+                return_after_checkpoint!("yEnc part exceeds the assembled file size".into());
+            }
+            let candidate_receipt = ResumeSegment {
+                offset: decoded.range.start,
+                length: receipt_length,
+                sha256: hex::encode(Sha256::digest(&decoded.data)),
+            };
+            if sidecar.segment_receipts.iter().any(|(&number, receipt)| {
+                number != segment.number
+                    && match receipt_range(receipt) {
+                        Some(existing_range) => ranges_overlap(decoded.range, existing_range),
+                        None => true,
+                    }
+            }) {
+                return_after_checkpoint!("yEnc part overlaps a completed segment".into());
+            }
+            if resized_expected_size != Some(expected_size) {
+                if let Err(error) = resize_assembled_part(&mut file, expected_size, limits).await {
+                    return_after_checkpoint!(error);
+                }
+                resized_expected_size = Some(expected_size);
+            }
+            if let Err(error) = file
+                .seek(std::io::SeekFrom::Start(decoded.range.start))
+                .await
+            {
+                return_after_checkpoint!(format!("seek assembled part: {error}"));
+            }
+            if let Err(error) = file.write_all(&decoded.data).await {
+                return_after_checkpoint!(format!("write assembled part: {error}"));
+            }
+            sidecar.completed_segments.insert(segment.number);
+            sidecar
+                .segment_receipts
+                .insert(segment.number, candidate_receipt);
+            sidecar.completed_bytes = match completed_receipt_bytes(&sidecar.segment_receipts) {
+                Ok(bytes) => bytes,
+                Err(error) => return_after_checkpoint!(error),
+            };
+            segments_since_checkpoint = segments_since_checkpoint.saturating_add(1);
+            if segments_since_checkpoint >= CHECKPOINT_SEGMENT_INTERVAL
+                || last_checkpoint.elapsed() >= CHECKPOINT_TIME_INTERVAL
+            {
+                checkpoint(&mut file, &sidecar, &sidecar_path).await?;
+                segments_since_checkpoint = 0;
+                last_checkpoint = Instant::now();
+            }
+            publish_assembly_progress(
+                progress,
+                progress_base,
+                completed_article_bytes(&ordered, &sidecar.completed_segments)?,
+            );
+        }
+    }
+    checkpoint(&mut file, &sidecar, &sidecar_path).await?;
     file.sync_all()
         .await
         .map_err(|error| format!("flush assembled part: {error}"))?;
@@ -960,6 +1045,8 @@ pub async fn mark_par2_repaired(report: &AssemblyReport) -> Result<(), String> {
     }
     let mut sidecar = ResumeSidecar::load(&report.sidecar_path, &report.manifest_sha256).await?;
     sidecar.expected_size = Some(metadata.len());
+    sidecar.completed_segments.clear();
+    sidecar.segment_receipts.clear();
     sidecar.completed_bytes = metadata.len();
     sidecar.repaired = true;
     sidecar.save_atomic(&report.sidecar_path).await
@@ -1133,6 +1220,18 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn malformed_resume_metadata_starts_a_fresh_sidecar() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("resume.json");
+        tokio::fs::write(&path, b"{truncated").await.unwrap();
+
+        assert_eq!(
+            ResumeSidecar::load(&path, "manifest").await.unwrap(),
+            ResumeSidecar::new("manifest".into())
+        );
+    }
+
+    #[tokio::test]
     async fn keeps_sparse_holes_when_a_middle_article_is_unavailable() {
         let dir = tempfile::tempdir().unwrap();
         let output = dir.path().join("sample.bin");
@@ -1222,7 +1321,7 @@ mod tests {
         assert!(report.complete);
         assert_eq!(
             source.progress_before_second_fetch.load(Ordering::Relaxed),
-            24
+            7
         );
         assert_eq!(progress.load(Ordering::Relaxed), 43);
     }
@@ -1562,8 +1661,24 @@ mod tests {
             unavailable_segments: vec![1],
             complete: false,
         };
+        let mut stale = ResumeSidecar::new(initial.manifest_sha256.clone());
+        stale.completed_segments.insert(1);
+        stale.segment_receipts.insert(
+            1,
+            ResumeSegment {
+                offset: 0,
+                length: 2,
+                sha256: hex::encode(Sha256::digest(b"OK")),
+            },
+        );
+        stale.save_atomic(&initial.sidecar_path).await.unwrap();
         tokio::fs::write(&output, b"OK").await.unwrap();
         mark_par2_repaired(&initial).await.unwrap();
+        let persisted = ResumeSidecar::load(&initial.sidecar_path, &initial.manifest_sha256)
+            .await
+            .unwrap();
+        assert!(persisted.completed_segments.is_empty());
+        assert!(persisted.segment_receipts.is_empty());
         let progress = AtomicU64::new(0);
         let report = assemble_file_with_report(
             &output,

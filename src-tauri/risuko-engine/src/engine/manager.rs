@@ -23,6 +23,7 @@ use super::task::{
 };
 use super::torrent::{self, TorrentEngine};
 use super::upload::UploadFileSnapshot;
+use super::usenet::UsenetProviderProfile;
 use super::usenet_transport::{ProviderConnectionCapacityRegistry, ProviderConnectionLease};
 use std::collections::HashSet;
 
@@ -935,7 +936,10 @@ impl TaskManager {
                     .ok_or_else(|| format!("NZB file {:?} byte count overflowed", file.name))?;
                 Ok(DownloadFile {
                     index: (index + 1).to_string(),
-                    path: format!("{}/{}", dir, file.name),
+                    path: Path::new(&dir)
+                        .join(super::util::safe_filename(&file.name, "download"))
+                        .to_string_lossy()
+                        .to_string(),
                     length: length.to_string(),
                     completed_length: "0".to_string(),
                     selected: "true".to_string(),
@@ -962,13 +966,12 @@ impl TaskManager {
         ] {
             options.remove(key);
         }
-        if let Some(Value::Array(profiles)) = options.get_mut("usenet-profiles") {
-            for profile in profiles {
-                if let Value::Object(profile) = profile {
-                    for key in ["username", "password", "user", "pass"] {
-                        profile.remove(key);
-                    }
-                }
+        for key in ["usenet-profiles", "usenetProfiles"] {
+            if let Some(value) = options.get_mut(key) {
+                let profiles: Vec<UsenetProviderProfile> = serde_json::from_value(value.clone())
+                    .map_err(|error| format!("Invalid Usenet provider profiles: {error}"))?;
+                *value = serde_json::to_value(profiles)
+                    .map_err(|error| format!("Invalid Usenet provider profiles: {error}"))?;
             }
         }
         if let Some(value) = options.get("usenet-archive-limits") {
@@ -1554,7 +1557,7 @@ impl TaskManager {
         let active = self.active_downloads.clone();
         let events = self.events.clone();
         let connection_capacity = self.usenet_connection_capacity.clone();
-        let output_paths = Arc::new(parking_lot::Mutex::new(Vec::<PathBuf>::new()));
+        let output_paths = Arc::new(parking_lot::Mutex::new(HashMap::<usize, PathBuf>::new()));
         let output_paths_for_worker = output_paths.clone();
         let counters = Counters::new(task.total_length, 0);
         let worker_epoch = next_worker_epoch();
@@ -1575,6 +1578,23 @@ impl TaskManager {
                 counters.cancel_token.clone(),
                 super::usenet_credential_resolver().await,
                 connection_capacity,
+                Some(Arc::new({
+                    let tasks = tasks.clone();
+                    let gid = gid.clone();
+                    move |stage: &str| {
+                        let tasks = tasks.clone();
+                        let gid = gid.clone();
+                        let stage = stage.to_string();
+                        tokio::spawn(async move {
+                            let mut tasks = tasks.write().await;
+                            if let Some(task) = tasks.iter_mut().find(|task| task.gid == gid) {
+                                if task.status == TaskStatus::Active {
+                                    task.usenet_stage = Some(stage);
+                                }
+                            }
+                        });
+                    }
+                })),
             )
             .await;
             let repair_failure = result
@@ -1583,7 +1603,7 @@ impl TaskManager {
                 .and_then(|error| error.repair_failure().cloned());
             let result = result
                 .map(|(path, outputs)| {
-                    *output_paths_for_worker.lock() = outputs;
+                    *output_paths_for_worker.lock() = outputs.into_iter().collect();
                     path
                 })
                 .map_err(|error| error.to_string());
@@ -1606,32 +1626,33 @@ impl TaskManager {
                             .files
                             .iter()
                             .enumerate()
-                            .map(|(index, file)| DownloadFile {
-                                index: (index + 1).to_string(),
-                                path: output_paths
-                                    .get(index)
-                                    .cloned()
-                                    .unwrap_or_else(|| {
-                                        Path::new(&task.dir).join(super::util::safe_filename(
-                                            &file.name, "download",
-                                        ))
-                                    })
-                                    .to_string_lossy()
-                                    .to_string(),
-                                length: file
-                                    .segments
-                                    .iter()
-                                    .map(|segment| segment.bytes)
-                                    .sum::<u64>()
-                                    .to_string(),
-                                completed_length: file
-                                    .segments
-                                    .iter()
-                                    .map(|segment| segment.bytes)
-                                    .sum::<u64>()
-                                    .to_string(),
-                                selected: "true".to_string(),
-                                uris: Vec::new(),
+                            .filter_map(|(index, file)| {
+                                let mapped = output_paths.get(&index).cloned();
+                                if mapped.as_ref().is_some_and(|path| !path.exists()) {
+                                    return None;
+                                }
+                                let path = mapped.unwrap_or_else(|| {
+                                    Path::new(&task.dir)
+                                        .join(super::util::safe_filename(&file.name, "download"))
+                                });
+                                Some(DownloadFile {
+                                    index: (index + 1).to_string(),
+                                    path: path.to_string_lossy().to_string(),
+                                    length: file
+                                        .segments
+                                        .iter()
+                                        .map(|segment| segment.bytes)
+                                        .sum::<u64>()
+                                        .to_string(),
+                                    completed_length: file
+                                        .segments
+                                        .iter()
+                                        .map(|segment| segment.bytes)
+                                        .sum::<u64>()
+                                        .to_string(),
+                                    selected: "true".to_string(),
+                                    uris: Vec::new(),
+                                })
                             })
                             .collect();
                     }

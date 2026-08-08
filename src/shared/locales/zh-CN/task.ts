@@ -301,4 +301,10 @@ export default {
 	"clipboard-download-prompt": "下载此链接？",
 	"clipboard-download-accept": "下载",
 	"clipboard-download-ignore": "忽略",
+	"usenet-repair-insufficient":
+		"PAR2 recovery is insufficient: {{neededBlocks}} blocks are needed, but only {{availableBlocks}} are available.",
+	"usenet-repair-partials-retained":
+		"Partial files were kept. Add a provider with better completion, then retry.",
+	"usenet-repair-partials-unavailable":
+		"Partial files are unavailable. Try a different NZB or download again with a provider that has better completion.",
 };

@@ -13,6 +13,8 @@ export default {
 		"Add at least one provider before importing an NZB download.",
 	"usenet-edit-profile": "Edit Profile",
 	"usenet-profile-dialog-tips":
+		"Profile settings may sync between devices. Credentials remain local to this device.",
+	"usenet-profile-dialog-tips-vault":
 		"Profile settings may sync between devices. Credentials stay in this device's secure keychain.",
 	"usenet-profile-name": "Profile name",
 	"usenet-profile-name-placeholder": "Primary provider",

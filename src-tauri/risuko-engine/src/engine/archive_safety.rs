@@ -105,6 +105,7 @@ pub fn validate_limits_override(
             || requested.max_entry_bytes > defaults.max_entry_bytes
             || requested.max_nesting_depth > defaults.max_nesting_depth
             || requested.max_compression_ratio > defaults.max_compression_ratio
+            || requested.free_space_reserve_bytes < defaults.free_space_reserve_bytes
             || requested.max_active_seconds > defaults.max_active_seconds)
     {
         return Err(ArchiveSafetyError::OverrideConfirmation);
@@ -293,6 +294,22 @@ mod tests {
         assert_eq!(
             validate_limits_override(defaults, requested, true),
             Err(ArchiveSafetyError::HardCeiling)
+        );
+    }
+
+    #[test]
+    fn requires_confirmation_to_reduce_free_space_reserve() {
+        let defaults = limits();
+        let mut requested = defaults;
+        requested.free_space_reserve_bytes = 0;
+
+        assert_eq!(
+            validate_limits_override(defaults, requested, false),
+            Err(ArchiveSafetyError::OverrideConfirmation)
+        );
+        assert_eq!(
+            validate_limits_override(defaults, requested, true),
+            Ok(requested)
         );
     }
 

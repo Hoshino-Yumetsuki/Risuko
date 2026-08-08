@@ -18,6 +18,8 @@ pub struct UsenetProviderProfile {
     pub allow_plain: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deleted_at: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -364,6 +366,7 @@ mod tests {
             max_connections: 4,
             allow_plain: false,
             deleted_at: None,
+            updated_at: None,
         };
         assert!(validate_provider_profile(&profile).is_err());
         profile.allow_plain = true;

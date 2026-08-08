@@ -131,4 +131,10 @@ export default {
 	"mirror-placeholder": "Tükör URL (ugyanaz a fájl, másik kiszolgáló)",
 	"mirror-hint":
 		"Adjon hozzá ugyanarra a fájlra mutató tükör URL-eket, hogy egyszerre több forrásból tölthessen le.",
+	"usenet-repair-insufficient":
+		"PAR2 recovery is insufficient: {{neededBlocks}} blocks are needed, but only {{availableBlocks}} are available.",
+	"usenet-repair-partials-retained":
+		"Partial files were kept. Add a provider with better completion, then retry.",
+	"usenet-repair-partials-unavailable":
+		"Partial files are unavailable. Try a different NZB or download again with a provider that has better completion.",
 };

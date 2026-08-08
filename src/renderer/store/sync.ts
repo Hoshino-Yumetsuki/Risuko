@@ -1,9 +1,14 @@
 import { getCategoriesForKey, syncCategories } from "@shared/syncCategories";
+import {
+	ANDROID_USENET_ARCHIVE_LIMITS,
+	DEFAULT_USENET_ARCHIVE_LIMITS,
+} from "@shared/types/usenet";
 import { changeKeysToKebabCase, getApiErrorMessage } from "@shared/utils";
 import logger from "@shared/utils/logger";
 import axios from "axios";
 import { defineStore } from "pinia";
 import api from "@/api";
+import is from "@/shims/platform";
 import { useAuthStore } from "./auth";
 import { usePreferenceStore } from "./preference";
 
@@ -37,10 +42,16 @@ function mergeUsenetProfiles(
 		}
 		const previous = byId.get(id);
 		const currentAt =
-			typeof profile.updatedAt === "number" ? profile.updatedAt : 0;
+			typeof profile.updatedAt === "number" &&
+			Number.isFinite(profile.updatedAt)
+				? profile.updatedAt
+				: 0;
 		const previousAt =
-			typeof previous?.updatedAt === "number" ? previous.updatedAt : 0;
-		if (!previous || currentAt >= previousAt) {
+			typeof previous?.updatedAt === "number" &&
+			Number.isFinite(previous.updatedAt)
+				? previous.updatedAt
+				: 0;
+		if (!previous || currentAt > previousAt) {
 			byId.set(id, { ...profile });
 		}
 	}
@@ -51,27 +62,27 @@ function mergeUsenetCategory(
 	localData: Record<string, unknown>,
 	remoteData: Record<string, unknown>,
 ): Record<string, unknown> {
-	const defaults: Record<string, number> = {
-		maxEntries: 500_000,
-		maxExpandedBytes: 2 * 1024 ** 4,
-		maxEntryBytes: 512 * 1024 ** 3,
-		maxNestingDepth: 16,
-		maxCompressionRatio: 1000,
-		freeSpaceReserveBytes: 10 * 1024 ** 3,
-		maxActiveSeconds: 6 * 60 * 60,
-	};
+	const defaults: Record<string, number> = is.android()
+		? { ...ANDROID_USENET_ARCHIVE_LIMITS }
+		: { ...DEFAULT_USENET_ARCHIVE_LIMITS };
 	const limits = remoteData["usenet-archive-limits"];
 	let adjusted = false;
 	if (limits && typeof limits === "object" && !Array.isArray(limits)) {
 		const clamped = { ...(limits as Record<string, unknown>) };
 		for (const [key, fallback] of Object.entries(defaults)) {
 			const value = Number(clamped[key]);
-			if (!Number.isFinite(value) || value <= 0) {
+			if (
+				!Number.isFinite(value) ||
+				!Number.isSafeInteger(value) ||
+				value <= 0
+			) {
 				clamped[key] = fallback;
 				adjusted = true;
 			} else if (value > fallback * 4) {
 				clamped[key] = fallback * 4;
 				adjusted = true;
+			} else {
+				clamped[key] = value;
 			}
 		}
 		remoteData = { ...remoteData, "usenet-archive-limits": clamped };

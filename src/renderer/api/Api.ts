@@ -363,10 +363,10 @@ export default class Api {
 	}) {
 		const { paths, options } = params;
 		const { usenetArchiveLimits, ...scalarOptions } = options || {};
-		const engineOptions = formatOptionsForEngine(scalarOptions);
+		const engineOptions: Record<string, unknown> =
+			formatOptionsForEngine(scalarOptions);
 		if (usenetArchiveLimits !== undefined) {
-			engineOptions["usenet-archive-limits"] =
-				JSON.stringify(usenetArchiveLimits);
+			engineOptions["usenet-archive-limits"] = usenetArchiveLimits;
 		}
 		return invoke<{ path: string; gid: string | null; error: string | null }[]>(
 			"add_nzbs_by_paths",

@@ -139,4 +139,10 @@ export default {
 	"mirror-placeholder": "URL serwera lustrzanego (ten sam plik, inny serwer)",
 	"mirror-hint":
 		"Dodaj adresy URL serwerów lustrzanych wskazujące ten sam plik, aby pobierać z wielu źródeł równolegle.",
+	"usenet-repair-insufficient":
+		"PAR2 recovery is insufficient: {{neededBlocks}} blocks are needed, but only {{availableBlocks}} are available.",
+	"usenet-repair-partials-retained":
+		"Partial files were kept. Add a provider with better completion, then retry.",
+	"usenet-repair-partials-unavailable":
+		"Partial files are unavailable. Try a different NZB or download again with a provider that has better completion.",
 };

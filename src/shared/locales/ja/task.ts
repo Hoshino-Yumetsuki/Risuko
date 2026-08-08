@@ -136,4 +136,10 @@ export default {
 	"mirror-placeholder": "ミラーURL(同じファイル、別のサーバー)",
 	"mirror-hint":
 		"同じファイルを指すミラーURLを追加すると、複数のソースから並列でダウンロードできます。",
+	"usenet-repair-insufficient":
+		"PAR2 recovery is insufficient: {{neededBlocks}} blocks are needed, but only {{availableBlocks}} are available.",
+	"usenet-repair-partials-retained":
+		"Partial files were kept. Add a provider with better completion, then retry.",
+	"usenet-repair-partials-unavailable":
+		"Partial files are unavailable. Try a different NZB or download again with a provider that has better completion.",
 };

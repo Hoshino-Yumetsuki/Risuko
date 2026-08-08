@@ -644,7 +644,7 @@ pub async fn add_metalinks_by_paths(
 
 fn is_plain_http_mirror_uri(uri: &str, options: &Map<String, Value>) -> bool {
     let is_http = uri.starts_with("http://") || uri.starts_with("https://");
-    if !is_http {
+    if !is_http || is_nzb_url(uri) {
         return false;
     }
     if torrent::is_magnet_uri(uri)
@@ -1540,5 +1540,18 @@ mod tests {
         assert!(is_nzb_url("https://example.com/file.NZB?token=abc"));
         assert!(!is_nzb_url("ftp://example.com/file.nzb"));
         assert!(!is_nzb_url("nntp://example.com/file.nzb"));
+    }
+
+    #[test]
+    fn nzb_urls_are_not_grouped_as_http_mirrors() {
+        let opts = Map::new();
+        assert!(!is_plain_http_mirror_uri(
+            "https://one.example/file.nzb",
+            &opts
+        ));
+        assert!(!is_plain_http_mirror_uri(
+            "https://two.example/file.nzb?token=x",
+            &opts
+        ));
     }
 }

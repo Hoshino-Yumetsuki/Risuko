@@ -100,7 +100,6 @@ struct NntpArticleSource {
 #[derive(Default)]
 struct ProfileSessionCache {
     sessions: Mutex<HashMap<String, Arc<AsyncMutex<ProfileSession>>>>,
-    fetch_lock: AsyncMutex<()>,
 }
 
 #[derive(Default)]
@@ -192,7 +191,6 @@ impl ArticleSource for NntpArticleSource {
         Box::pin(async move {
             ensure_usenet_active_time(&self.active_time, self.max_active_seconds)
                 .map_err(ArticleFetchError::Failed)?;
-            let _fetch_lock = self.profile_sessions.fetch_lock.lock().await;
             let message_id = message_id.to_string();
             let preferred_profile_id = self
                 .preferred_profile_id
@@ -481,6 +479,7 @@ fn article_fetch_error(error: NntpError) -> ArticleFetchError {
 }
 
 struct AssembledTaskFile {
+    index: usize,
     name: String,
     is_parity: bool,
     report: AssemblyReport,
@@ -489,7 +488,23 @@ struct AssembledTaskFile {
 
 struct OutputReservation {
     output: PathBuf,
-    _lock_file: fs::File,
+    lock_path: PathBuf,
+    lock_file: Option<fs::File>,
+}
+
+impl Drop for OutputReservation {
+    fn drop(&mut self) {
+        drop(self.lock_file.take());
+        let _ = fs::remove_file(&self.lock_path);
+    }
+}
+
+type StageCallback = Arc<dyn Fn(&str) + Send + Sync>;
+
+fn report_stage(stage: &Option<StageCallback>, value: &str) {
+    if let Some(callback) = stage {
+        callback(value);
+    }
 }
 
 pub fn profiles_from_options(
@@ -519,6 +534,7 @@ pub async fn run_usenet_download_with_resolver(
         cancel,
         resolver,
         Arc::new(ProviderConnectionCapacityRegistry::default()),
+        None,
     )
     .await
     .map(|(path, _)| path)
@@ -533,7 +549,8 @@ pub(crate) async fn run_usenet_download_with_resolver_and_capacity(
     cancel: CancellationToken,
     resolver: Arc<dyn UsenetCredentialResolver>,
     connection_capacity: Arc<ProviderConnectionCapacityRegistry>,
-) -> Result<(PathBuf, Vec<PathBuf>), UsenetDownloadError> {
+    stage: Option<StageCallback>,
+) -> Result<(PathBuf, Vec<(usize, PathBuf)>), UsenetDownloadError> {
     let metadata: &UsenetTaskData = task
         .usenet
         .as_ref()
@@ -572,7 +589,8 @@ pub(crate) async fn run_usenet_download_with_resolver_and_capacity(
 
     let mut assembled = Vec::new();
     let mut promoted_outputs = Vec::new();
-    for file in &metadata.files {
+    report_stage(&stage, "fetching");
+    for (index, file) in metadata.files.iter().enumerate() {
         ensure_usenet_active_time(&active_time, archive_limits.max_active_seconds)?;
         if cancel.is_cancelled() {
             return Err("Download cancelled".to_string().into());
@@ -590,6 +608,7 @@ pub(crate) async fn run_usenet_download_with_resolver_and_capacity(
         let reservation = reserve_output_path(&destination, &name, &segments).await?;
         let output = reservation.output.clone();
         let local_before = completed.load(Ordering::Relaxed);
+        report_stage(&stage, "assembling");
         let report = assemble_file_with_report_with_limits_at_offset(
             &output,
             &segments,
@@ -603,6 +622,7 @@ pub(crate) async fn run_usenet_download_with_resolver_and_capacity(
         .await?;
         ensure_usenet_active_time(&active_time, archive_limits.max_active_seconds)?;
         assembled.push(AssembledTaskFile {
+            index,
             is_parity: is_par2_name(&name),
             name,
             report,
@@ -642,6 +662,14 @@ pub(crate) async fn run_usenet_download_with_resolver_and_capacity(
         .into());
     }
     if !data_files.is_empty() && !parity_files.is_empty() {
+        report_stage(
+            &stage,
+            if needs_repair {
+                "repairing"
+            } else {
+                "verifying"
+            },
+        );
         let request = Par2RepairRequest {
             destination: destination.clone(),
             data_files,
@@ -655,9 +683,10 @@ pub(crate) async fn run_usenet_download_with_resolver_and_capacity(
             active_started_at: Some(Instant::now()),
             active_elapsed_before_repair: Some(active_time.active_elapsed()),
         };
-        let repair_cancel = cancel.clone();
+        let repair_cancel = cancel.child_token();
+        let repair_cancel_for_worker = repair_cancel.clone();
         let mut repair_task = tokio::task::spawn_blocking(move || {
-            verify_or_repair_with_cancel(&request, Some(&repair_cancel))
+            verify_or_repair_with_cancel(&request, Some(&repair_cancel_for_worker))
         });
         let remaining = Duration::from_secs(archive_limits.max_active_seconds)
             .checked_sub(active_time.active_elapsed())
@@ -666,14 +695,16 @@ pub(crate) async fn run_usenet_download_with_resolver_and_capacity(
             })?;
         let repair = tokio::select! {
             _ = cancel.cancelled() => {
-                repair_task.abort();
+                repair_cancel.cancel();
+                let _ = (&mut repair_task).await;
                 return Err(String::from("Download cancelled").into());
             }
             result = tokio::time::timeout(remaining, &mut repair_task) => {
                 match result {
                     Ok(joined) => joined.map_err(|error| format!("PAR2 repair worker failed: {error}"))?,
                     Err(_) => {
-                        repair_task.abort();
+                        repair_cancel.cancel();
+                        let _ = (&mut repair_task).await;
                         return Err(String::from(
                             "archive limit: Usenet task exceeded the active-time limit",
                         )
@@ -706,9 +737,9 @@ pub(crate) async fn run_usenet_download_with_resolver_and_capacity(
     ensure_usenet_active_time(&active_time, archive_limits.max_active_seconds)?;
     completed.store(expected_total, Ordering::Relaxed);
     let cleanup_mode = cleanup_mode_for_task(metadata, options);
-    let archive_extraction_verified = false;
-    let (par2_inputs, archive_inputs) =
-        cleanup_inputs(&assembled, archive_extraction_verified, &promoted_outputs);
+    // This worker assembles and verifies NZB data but does not extract archives,
+    // so archive-volume cleanup is intentionally disabled in cleanup_inputs.
+    let (par2_inputs, archive_inputs) = cleanup_inputs(&assembled, false, &promoted_outputs);
     if let Err(error) = cleanup_after_success(cleanup_mode, true, &par2_inputs, &archive_inputs) {
         tracing::warn!(
             mode = ?cleanup_mode,
@@ -716,6 +747,7 @@ pub(crate) async fn run_usenet_download_with_resolver_and_capacity(
             "Usenet cleanup after verified success was incomplete"
         );
     }
+    report_stage(&stage, "complete");
     Ok((
         assembled
             .first()
@@ -723,7 +755,7 @@ pub(crate) async fn run_usenet_download_with_resolver_and_capacity(
             .unwrap_or_else(|| destination.clone()),
         assembled
             .iter()
-            .map(|file| file.report.output.clone())
+            .map(|file| (file.index, file.report.output.clone()))
             .collect(),
     ))
 }
@@ -734,7 +766,15 @@ fn cleanup_mode_for_task(metadata: &UsenetTaskData, options: &Map<String, Value>
         .cleanup_mode
         .as_deref()
         .or_else(|| options.get("usenet-cleanup-mode").and_then(Value::as_str));
-    CleanupMode::from_setting(configured)
+    let mode = CleanupMode::from_setting(configured);
+    if mode == CleanupMode::DeletePar2AndVolumes {
+        tracing::warn!(
+            "Usenet archive-volume cleanup is unsupported because this worker does not verify extraction"
+        );
+        CleanupMode::DeletePar2
+    } else {
+        mode
+    }
 }
 
 fn cleanup_inputs(
@@ -884,7 +924,8 @@ async fn try_reserve_output(output: &Path) -> Result<Option<OutputReservation>, 
         match FileExt::try_lock(&lock_file) {
             Ok(()) => Ok(Some(OutputReservation {
                 output,
-                _lock_file: lock_file,
+                lock_path,
+                lock_file: Some(lock_file),
             })),
             Err(TryLockError::WouldBlock) => Ok(None),
             Err(TryLockError::Error(error)) => Err(format!(
@@ -1037,6 +1078,7 @@ mod tests {
             max_connections: 1,
             allow_plain: true,
             deleted_at: None,
+            updated_at: None,
         }
     }
 
@@ -2020,6 +2062,20 @@ mod tests {
     }
 
     #[test]
+    fn archive_volume_cleanup_is_explicitly_unsupported_without_extraction_verification() {
+        let metadata = UsenetTaskData::default();
+        let mut options = Map::new();
+        options.insert(
+            "usenet-cleanup-mode".into(),
+            Value::String("delete-par2-and-volumes".into()),
+        );
+        assert_eq!(
+            cleanup_mode_for_task(&metadata, &options),
+            CleanupMode::DeletePar2
+        );
+    }
+
+    #[test]
     fn cleanup_inputs_include_final_and_partial_archive_paths_only() {
         let dir = tempfile::tempdir().unwrap();
         let par2_output = dir.path().join("release.vol00+01.par2");
@@ -2031,6 +2087,7 @@ mod tests {
         let lock = fs::File::create(dir.path().join("lock")).unwrap();
         let assembled = vec![
             AssembledTaskFile {
+                index: 0,
                 name: "release.vol00+01.par2".into(),
                 is_parity: true,
                 report: AssemblyReport {
@@ -2045,10 +2102,12 @@ mod tests {
                 },
                 _reservation: OutputReservation {
                     output: par2_output,
-                    _lock_file: lock,
+                    lock_path: dir.path().join("lock"),
+                    lock_file: Some(lock),
                 },
             },
             AssembledTaskFile {
+                index: 1,
                 name: "release.part01.rar".into(),
                 is_parity: false,
                 report: AssemblyReport {
@@ -2063,7 +2122,8 @@ mod tests {
                 },
                 _reservation: OutputReservation {
                     output: rar_output,
-                    _lock_file: fs::File::create(dir.path().join("lock-2")).unwrap(),
+                    lock_path: dir.path().join("lock-2"),
+                    lock_file: Some(fs::File::create(dir.path().join("lock-2")).unwrap()),
                 },
             },
         ];
@@ -2081,6 +2141,7 @@ mod tests {
         let output = dir.path().join("release.part01.rar");
         let lock = fs::File::create(dir.path().join("lock")).unwrap();
         let assembled = vec![AssembledTaskFile {
+            index: 0,
             name: "release.part01.rar".into(),
             is_parity: false,
             report: AssemblyReport {
@@ -2095,7 +2156,8 @@ mod tests {
             },
             _reservation: OutputReservation {
                 output,
-                _lock_file: lock,
+                lock_path: dir.path().join("lock"),
+                lock_file: Some(lock),
             },
         }];
 
@@ -2109,6 +2171,7 @@ mod tests {
         let output = dir.path().join("release.vol00+01.par2");
         let lock = fs::File::create(dir.path().join("lock")).unwrap();
         let assembled = vec![AssembledTaskFile {
+            index: 0,
             name: "release.vol00+01.par2".into(),
             is_parity: true,
             report: AssemblyReport {
@@ -2123,7 +2186,8 @@ mod tests {
             },
             _reservation: OutputReservation {
                 output,
-                _lock_file: lock,
+                lock_path: dir.path().join("lock"),
+                lock_file: Some(lock),
             },
         }];
 
@@ -2137,6 +2201,7 @@ mod tests {
         let output = dir.path().join("release.part01.rar");
         let lock = fs::File::create(dir.path().join("lock")).unwrap();
         let assembled = vec![AssembledTaskFile {
+            index: 0,
             name: "release.part01.rar".into(),
             is_parity: false,
             report: AssemblyReport {
@@ -2151,11 +2216,26 @@ mod tests {
             },
             _reservation: OutputReservation {
                 output: output.clone(),
-                _lock_file: lock,
+                lock_path: dir.path().join("lock"),
+                lock_file: Some(lock),
             },
         }];
 
         let (_, archives) = cleanup_inputs(&assembled, true, &[output]);
         assert_eq!(archives.len(), 2);
+    }
+
+    #[test]
+    fn output_reservation_removes_lock_file_on_drop() {
+        let dir = tempfile::tempdir().unwrap();
+        let lock_path = dir.path().join("reservation.lock");
+        let reservation = OutputReservation {
+            output: dir.path().join("output"),
+            lock_path: lock_path.clone(),
+            lock_file: Some(fs::File::create(&lock_path).unwrap()),
+        };
+        assert!(lock_path.exists());
+        drop(reservation);
+        assert!(!lock_path.exists());
     }
 }

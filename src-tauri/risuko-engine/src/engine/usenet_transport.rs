@@ -10,6 +10,7 @@ use std::io;
 use std::net::IpAddr;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::sync::OnceLock;
 use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader, ReadBuf};
@@ -22,6 +23,7 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
 const IO_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_LINE: usize = 64 * 1024;
 const MAX_ARTICLE_BYTES: usize = 256 * 1024 * 1024;
+const MAX_MULTILINE_LINES: usize = MAX_ARTICLE_BYTES / MAX_LINE;
 const HEALTH_COOLDOWN: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -227,6 +229,12 @@ impl NntpConnection {
     }
 
     async fn upgrade_tls(mut self, host: &str) -> Result<Self, NntpError> {
+        if !self.reader.buffer().is_empty() {
+            return Err(NntpError::Protocol {
+                code: 0,
+                message: "STARTTLS response left buffered plaintext".into(),
+            });
+        }
         let stream = self.reader.into_inner();
         let tls = timeout(
             IO_TIMEOUT,
@@ -394,7 +402,10 @@ impl NntpConnection {
             if line == "." {
                 break;
             }
-            total_bytes = total_bytes.saturating_add(line.len());
+            if lines.len() >= MAX_MULTILINE_LINES {
+                return Err(NntpError::ArticleTooLarge);
+            }
+            total_bytes = total_bytes.saturating_add(line.len().saturating_add(1));
             if total_bytes > MAX_ARTICLE_BYTES {
                 return Err(NntpError::ArticleTooLarge);
             }
@@ -444,17 +455,22 @@ impl NntpConnection {
 }
 
 fn tls_connector() -> TlsConnector {
-    static INSTALL_PROVIDER: std::sync::Once = std::sync::Once::new();
-    INSTALL_PROVIDER.call_once(|| {
-        let _ = rustls::crypto::ring::default_provider().install_default();
-    });
-    let mut roots = RootCertStore::empty();
-    roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-    TlsConnector::from(Arc::new(
-        ClientConfig::builder()
-            .with_root_certificates(roots)
-            .with_no_client_auth(),
-    ))
+    static CONNECTOR: OnceLock<TlsConnector> = OnceLock::new();
+    CONNECTOR
+        .get_or_init(|| {
+            static INSTALL_PROVIDER: std::sync::Once = std::sync::Once::new();
+            INSTALL_PROVIDER.call_once(|| {
+                let _ = rustls::crypto::ring::default_provider().install_default();
+            });
+            let mut roots = RootCertStore::empty();
+            roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+            TlsConnector::from(Arc::new(
+                ClientConfig::builder()
+                    .with_root_certificates(roots)
+                    .with_no_client_auth(),
+            ))
+        })
+        .clone()
 }
 
 fn server_name(host: &str) -> Result<ServerName<'static>, NntpError> {
@@ -913,6 +929,7 @@ mod tests {
             max_connections: 2,
             allow_plain: true,
             deleted_at: None,
+            updated_at: None,
         }
     }
 
@@ -1146,6 +1163,52 @@ mod tests {
             Err(NntpError::ResponseTooLong)
         ));
         server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn bounds_capabilities_empty_line_count() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut reader = BufReader::new(stream);
+            reader
+                .get_mut()
+                .write_all(b"200 test server ready\r\n")
+                .await
+                .unwrap();
+            let mut command = String::new();
+            reader.read_line(&mut command).await.unwrap();
+            let mut response = b"101 capabilities\r\n".to_vec();
+            response.extend(std::iter::repeat_n(b'\n', MAX_MULTILINE_LINES + 1));
+            response.extend_from_slice(b".\r\n");
+            reader.get_mut().write_all(&response).await.unwrap();
+        });
+
+        let mut p = profile("bounded-lines", 0);
+        p.port = port;
+        let mut connection = NntpConnection::connect(&p, None).await.unwrap();
+        assert!(matches!(
+            connection.capabilities().await,
+            Err(NntpError::ArticleTooLarge)
+        ));
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn rejects_starttls_when_plaintext_is_buffered() {
+        let (mut peer, stream) = tokio::io::duplex(64);
+        peer.write_all(b"pending plaintext").await.unwrap();
+        let mut connection = NntpConnection {
+            reader: BufReader::new(BoxedStream(Box::new(stream))),
+            profile_id: "buffered".into(),
+            greeted: true,
+        };
+        connection.reader.fill_buf().await.unwrap();
+
+        let error = connection.upgrade_tls("localhost").await.unwrap_err();
+
+        assert!(matches!(error, NntpError::Protocol { code: 0, .. }));
     }
 
     #[tokio::test]

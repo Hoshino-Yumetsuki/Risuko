@@ -131,7 +131,11 @@ impl FileUsenetCredentialResolver {
 #[async_trait::async_trait]
 impl usenet::UsenetCredentialResolver for FileUsenetCredentialResolver {
     async fn resolve(&self, profile_id: &str) -> Result<Option<usenet::UsenetCredentials>, String> {
-        let text = match std::fs::read_to_string(&self.path) {
+        let path = self.path.clone();
+        let text = match tokio::task::spawn_blocking(move || std::fs::read_to_string(path))
+            .await
+            .map_err(|error| format!("Failed to read Usenet credentials: {error}"))?
+        {
             Ok(text) => text,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Err(error) => return Err(format!("Failed to read Usenet credentials: {error}")),

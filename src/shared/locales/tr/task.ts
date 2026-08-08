@@ -137,4 +137,10 @@ export default {
 	"mirror-placeholder": "Yansı URL'si (aynı dosya, başka sunucu)",
 	"mirror-hint":
 		"Birden fazla kaynaktan paralel indirmek için aynı dosyaya işaret eden yansı URL'leri ekleyin.",
+	"usenet-repair-insufficient":
+		"PAR2 recovery is insufficient: {{neededBlocks}} blocks are needed, but only {{availableBlocks}} are available.",
+	"usenet-repair-partials-retained":
+		"Partial files were kept. Add a provider with better completion, then retry.",
+	"usenet-repair-partials-unavailable":
+		"Partial files are unavailable. Try a different NZB or download again with a provider that has better completion.",
 };

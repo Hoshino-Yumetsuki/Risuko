@@ -171,8 +171,6 @@ pub fn verify_or_repair_with_cancel(
         .map_err(|error| Par2Error::Repair(error.to_string()))?;
     check_cancel(cancel)?;
     check_active_time(request)?;
-    check_cancel(cancel)?;
-    check_active_time(request)?;
     let post_repair = rust_par2::verify(&file_set, &repair_dir);
     check_active_time(request)?;
     if !post_repair.all_correct() {
@@ -361,6 +359,9 @@ fn validate_repair_resources(
     verification: &rust_par2::VerifyResult,
     file_set: &rust_par2::Par2FileSet,
 ) -> Result<(), Par2Error> {
+    // This estimate matches rust-par2 0.1.3: its recovery blocks, repair
+    // matrix, paired repair buffers, and verification worker buffers are all
+    // live during repair.
     let needed = verification.blocks_needed();
     let available = verification.recovery_blocks_available;
     if needed > MAX_PAR2_REPAIR_BLOCKS || available > MAX_PAR2_RECOVERY_BLOCKS {
@@ -509,6 +510,7 @@ fn validate_par2_packets(path: &Path) -> Result<ParityFileStats, Par2Error> {
     let mut position = 0u64;
     let mut stats = ParityFileStats::default();
     let mut recovery_set_id = None;
+    let mut buffer = vec![0u8; SPARSE_COPY_BUFFER_BYTES];
     while position < file_size {
         if file_size - position < PAR2_HEADER_BYTES {
             return Err(Par2Error::Malformed(format!(
@@ -602,7 +604,7 @@ fn validate_par2_packets(path: &Path) -> Result<ParityFileStats, Par2Error> {
                     ));
                 }
             } else if packet_type == *PAR2_TYPE_IFSC {
-                if body_len < 16 || !(body_len - 16).is_multiple_of(20) {
+                if body_len < 16 || (body_len - 16) % 20 != 0 {
                     return Err(Par2Error::Malformed(format!(
                         "{} contains malformed PAR2 slice checksums",
                         path.display()
@@ -643,7 +645,6 @@ fn validate_par2_packets(path: &Path) -> Result<ParityFileStats, Par2Error> {
                 }
             }
         }
-        let mut buffer = [0u8; SPARSE_COPY_BUFFER_BYTES];
         while remaining > 0 {
             let count = remaining.min(buffer.len() as u64) as usize;
             reader.read_exact(&mut buffer[..count])?;
@@ -737,7 +738,7 @@ fn validate_file_set(
 ) -> Result<SourceStats, Par2Error> {
     if file_set.slice_size == 0
         || file_set.slice_size > MAX_PAR2_SLICE_BYTES
-        || !file_set.slice_size.is_multiple_of(2)
+        || file_set.slice_size % 2 != 0
     {
         return Err(Par2Error::Limits("invalid PAR2 slice size".into()));
     }
@@ -773,7 +774,10 @@ fn validate_file_set(
             )));
         }
         let Some(input) = data_by_name.get(&file.filename) else {
-            return Err(Par2Error::UnsafePath(file.filename.clone()));
+            return Err(Par2Error::Malformed(format!(
+                "PAR2 source file {} is not an NZB output",
+                file.filename
+            )));
         };
         if input.expected_size.is_some_and(|size| size != file.size) {
             return Err(Par2Error::Malformed(format!(
@@ -882,7 +886,7 @@ fn stage_parity_files(
     for (index, source) in parity_files.iter().enumerate() {
         check_cancel(cancel)?;
         let destination = stage.join(format!("parity-{index:05}.par2"));
-        link_or_copy(source, &destination)?;
+        link_or_copy(source, &destination, cancel)?;
     }
     Ok(())
 }
@@ -901,7 +905,7 @@ fn stage_data_files(
             .ok_or_else(|| Par2Error::UnsafePath(file.filename.clone()))?;
         let destination = stage.join(&file.filename);
         if intact_names.is_some_and(|names| names.contains(file.filename.as_str())) {
-            link_or_copy(&input.source_path, &destination)?;
+            link_or_copy(&input.source_path, &destination, cancel)?;
         } else {
             sparse_copy(&input.source_path, &destination, cancel)?;
         }
@@ -909,7 +913,12 @@ fn stage_data_files(
     Ok(())
 }
 
-fn link_or_copy(source: &Path, destination: &Path) -> Result<(), Par2Error> {
+fn link_or_copy(
+    source: &Path,
+    destination: &Path,
+    cancel: Option<&CancellationToken>,
+) -> Result<(), Par2Error> {
+    check_cancel(cancel)?;
     ensure_regular_file(source)?;
     match fs::hard_link(source, destination) {
         Ok(()) => Ok(()),
@@ -919,17 +928,32 @@ fn link_or_copy(source: &Path, destination: &Path) -> Result<(), Par2Error> {
                 destination.display()
             )))
         }
-        Err(_) => {
-            let mut reader = fs::File::open(source)?;
-            let mut writer = fs::OpenOptions::new()
-                .create_new(true)
-                .write(true)
-                .open(destination)?;
-            io::copy(&mut reader, &mut writer)?;
-            writer.sync_all()?;
-            Ok(())
-        }
+        Err(_) => copy_file_with_cancel(source, destination, cancel),
     }
+}
+
+fn copy_file_with_cancel(
+    source: &Path,
+    destination: &Path,
+    cancel: Option<&CancellationToken>,
+) -> Result<(), Par2Error> {
+    check_cancel(cancel)?;
+    let mut reader = BufReader::new(fs::File::open(source)?);
+    let mut writer = fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(destination)?;
+    let mut buffer = vec![0u8; SPARSE_COPY_BUFFER_BYTES];
+    loop {
+        check_cancel(cancel)?;
+        let read = reader.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        writer.write_all(&buffer[..read])?;
+    }
+    writer.sync_all()?;
+    Ok(())
 }
 
 fn sparse_copy(
@@ -1103,21 +1127,6 @@ mod tests {
         Md5::digest(bytes).into()
     }
 
-    fn crc32(bytes: &[u8]) -> u32 {
-        let mut crc = 0xffff_ffffu32;
-        for byte in bytes {
-            crc ^= *byte as u32;
-            for _ in 0..8 {
-                crc = if crc & 1 != 0 {
-                    (crc >> 1) ^ 0xedb8_8320
-                } else {
-                    crc >> 1
-                };
-            }
-        }
-        !crc
-    }
-
     fn write_fixture(parity_dir: &Path, name: &str, data: &[u8], recovery: bool) -> Vec<PathBuf> {
         let set_id = [0x5a; 16];
         let file_id = [0x11; 16];
@@ -1148,7 +1157,7 @@ mod tests {
             let mut block = vec![0u8; slice_size];
             block[..chunk.len()].copy_from_slice(chunk);
             ifsc.extend_from_slice(&md5(&block));
-            ifsc.extend_from_slice(&crc32(&block).to_le_bytes());
+            ifsc.extend_from_slice(&crate::engine::usenet_pipeline::crc32(&block).to_le_bytes());
             blocks.push(block);
         }
         index.extend_from_slice(&build_packet(set_id, TYPE_IFSC, &ifsc));
@@ -1291,6 +1300,52 @@ mod tests {
 
         assert!(matches!(error, Par2Error::InsufficientRecovery { .. }));
         assert_eq!(fs::read(dir.path().join("data.bin.part")).unwrap(), partial);
+    }
+
+    #[test]
+    fn cancellation_stops_the_buffered_link_fallback_before_creating_output() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("source.bin");
+        let destination = dir.path().join("staged.bin");
+        fs::write(&source, vec![1u8; SPARSE_COPY_BUFFER_BYTES * 2]).unwrap();
+        let cancel = CancellationToken::new();
+        cancel.cancel();
+
+        let error = copy_file_with_cancel(&source, &destination, Some(&cancel)).unwrap_err();
+
+        assert!(matches!(error, Par2Error::Cancelled));
+        assert!(!destination.exists());
+    }
+
+    #[test]
+    fn skips_an_index_that_references_a_missing_nzb_output() {
+        let input_dir = tempfile::tempdir().unwrap();
+        let bad_dir = tempfile::tempdir().unwrap();
+        let good_dir = tempfile::tempdir().unwrap();
+        let data = b"ABCDEFGH";
+        let source = input_dir.path().join("data.bin.part");
+        fs::write(&source, data).unwrap();
+        let bad = write_fixture(bad_dir.path(), "missing.bin", data, false);
+        let good = write_fixture(good_dir.path(), "data.bin", data, false);
+        let inputs = vec![Par2InputFile {
+            manifest_name: "data.bin".into(),
+            source_path: source,
+            output_path: input_dir.path().join("data.bin"),
+            expected_size: Some(data.len() as u64),
+        }];
+        let data_by_name = validate_input_files(&inputs, platform_limits()).unwrap();
+        let parity = validate_parity_files(&[bad[0].clone(), good[0].clone()]).unwrap();
+
+        let (file_set, _) = parse_index(
+            &parity.files,
+            &data_by_name,
+            &BTreeSet::new(),
+            platform_limits(),
+        )
+        .unwrap();
+
+        assert_eq!(file_set.files.len(), 1);
+        assert_eq!(file_set.files.values().next().unwrap().filename, "data.bin");
     }
 
     #[test]
