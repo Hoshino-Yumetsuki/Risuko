@@ -142,9 +142,9 @@ export default {
 	"mirror-hint":
 		"Προσθέστε URL καθρεφτών που δείχνουν στο ίδιο αρχείο για λήψη από πολλές πηγές ταυτόχρονα.",
 	"usenet-repair-insufficient":
-		"PAR2 recovery is insufficient: {{neededBlocks}} blocks are needed, but only {{availableBlocks}} are available.",
+		"Η ανάκτηση PAR2 είναι ανεπαρκής: απαιτούνται {{neededBlocks}} μπλοκ, αλλά είναι διαθέσιμα μόνο {{availableBlocks}}.",
 	"usenet-repair-partials-retained":
-		"Partial files were kept. Add a provider with better completion, then retry.",
+		"Τα μερικά αρχεία διατηρήθηκαν. Προσθέστε έναν πάροχο με καλύτερη πληρότητα και δοκιμάστε ξανά.",
 	"usenet-repair-partials-unavailable":
-		"Partial files are unavailable. Try a different NZB or download again with a provider that has better completion.",
+		"Τα μερικά αρχεία δεν είναι διαθέσιμα. Δοκιμάστε διαφορετικό NZB ή κατεβάστε ξανά με πάροχο καλύτερης πληρότητας.",
 };

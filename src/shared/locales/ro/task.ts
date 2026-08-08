@@ -141,9 +141,9 @@ export default {
 	"mirror-hint":
 		"Adaugă URL-uri de oglindă care indică același fișier pentru a descărca din mai multe surse în paralel.",
 	"usenet-repair-insufficient":
-		"PAR2 recovery is insufficient: {{neededBlocks}} blocks are needed, but only {{availableBlocks}} are available.",
+		"Recuperarea PAR2 este insuficientă: sunt necesare {{neededBlocks}} blocuri, dar sunt disponibile doar {{availableBlocks}}.",
 	"usenet-repair-partials-retained":
-		"Partial files were kept. Add a provider with better completion, then retry.",
+		"Fișierele parțiale au fost păstrate. Adăugați un furnizor cu o completitudine mai bună și încercați din nou.",
 	"usenet-repair-partials-unavailable":
-		"Partial files are unavailable. Try a different NZB or download again with a provider that has better completion.",
+		"Fișierele parțiale nu sunt disponibile. Încercați un NZB diferit sau descărcați din nou de la un furnizor cu o completitudine mai bună.",
 };

@@ -11,7 +11,7 @@ use crate::engine::usenet_par2::{
 use crate::engine::usenet_pipeline::{
     assemble_file_with_report_with_limits_at_offset, decode_yenc_part, mark_par2_repaired,
     partial_path, resume_sidecar_matches, resume_sidecar_path, ArticleFetchError, ArticleSource,
-    AssemblyReport, DecodedYencPart, YencAssemblyBudget, YencAssemblyLimits,
+    AssemblyReport, DecodedYencPart, ResumeSidecar, YencAssemblyBudget, YencAssemblyLimits,
 };
 use crate::engine::usenet_transport::{
     NntpConnection, NntpError, ProviderConnectionCapacityRegistry, ProviderConnectionLease,
@@ -488,14 +488,13 @@ struct AssembledTaskFile {
 
 struct OutputReservation {
     output: PathBuf,
-    lock_path: PathBuf,
+    _lock_path: PathBuf,
     lock_file: Option<fs::File>,
 }
 
 impl Drop for OutputReservation {
     fn drop(&mut self) {
         drop(self.lock_file.take());
-        let _ = fs::remove_file(&self.lock_path);
     }
 }
 
@@ -924,7 +923,7 @@ async fn try_reserve_output(output: &Path) -> Result<Option<OutputReservation>, 
         match FileExt::try_lock(&lock_file) {
             Ok(()) => Ok(Some(OutputReservation {
                 output,
-                lock_path,
+                _lock_path: lock_path,
                 lock_file: Some(lock_file),
             })),
             Err(TryLockError::WouldBlock) => Ok(None),
@@ -954,12 +953,25 @@ fn output_lock_path(output: &Path) -> Result<PathBuf, String> {
 }
 
 async fn output_slot_is_available(output: &Path) -> Result<bool, String> {
-    for path in [
+    for (index, path) in [
         output.to_path_buf(),
         partial_path(output),
         resume_sidecar_path(output),
-    ] {
+    ]
+    .into_iter()
+    .enumerate()
+    {
         match tokio::fs::symlink_metadata(&path).await {
+            Ok(_) if index == 2 => match tokio::fs::read(&path).await {
+                Ok(bytes) if serde_json::from_slice::<ResumeSidecar>(&bytes).is_err() => continue,
+                Ok(_) => return Ok(false),
+                Err(error) => {
+                    return Err(format!(
+                        "read Usenet resume metadata {}: {error}",
+                        path.display()
+                    ))
+                }
+            },
             Ok(_) => return Ok(false),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => return Err(format!("inspect Usenet output {}: {error}", path.display())),
@@ -1964,6 +1976,26 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn malformed_resume_sidecar_is_replaced_by_a_fresh_reservation() {
+        let dir = tempfile::tempdir().unwrap();
+        let output = dir.path().join("sample.bin");
+        let segments = vec![NzbSegment {
+            number: 1,
+            bytes: 2,
+            message_id: "one".into(),
+        }];
+        tokio::fs::write(resume_sidecar_path(&output), b"{truncated")
+            .await
+            .unwrap();
+
+        let reservation = reserve_output_path(dir.path(), "sample.bin", &segments)
+            .await
+            .unwrap();
+
+        assert_eq!(reservation.output, output);
+    }
+
+    #[tokio::test]
     async fn reserves_a_distinct_output_for_concurrent_tasks() {
         let dir = tempfile::tempdir().unwrap();
         let segments = vec![NzbSegment {
@@ -2102,7 +2134,7 @@ mod tests {
                 },
                 _reservation: OutputReservation {
                     output: par2_output,
-                    lock_path: dir.path().join("lock"),
+                    _lock_path: dir.path().join("lock"),
                     lock_file: Some(lock),
                 },
             },
@@ -2122,7 +2154,7 @@ mod tests {
                 },
                 _reservation: OutputReservation {
                     output: rar_output,
-                    lock_path: dir.path().join("lock-2"),
+                    _lock_path: dir.path().join("lock-2"),
                     lock_file: Some(fs::File::create(dir.path().join("lock-2")).unwrap()),
                 },
             },
@@ -2156,7 +2188,7 @@ mod tests {
             },
             _reservation: OutputReservation {
                 output,
-                lock_path: dir.path().join("lock"),
+                _lock_path: dir.path().join("lock"),
                 lock_file: Some(lock),
             },
         }];
@@ -2186,7 +2218,7 @@ mod tests {
             },
             _reservation: OutputReservation {
                 output,
-                lock_path: dir.path().join("lock"),
+                _lock_path: dir.path().join("lock"),
                 lock_file: Some(lock),
             },
         }];
@@ -2216,7 +2248,7 @@ mod tests {
             },
             _reservation: OutputReservation {
                 output: output.clone(),
-                lock_path: dir.path().join("lock"),
+                _lock_path: dir.path().join("lock"),
                 lock_file: Some(lock),
             },
         }];
@@ -2226,16 +2258,16 @@ mod tests {
     }
 
     #[test]
-    fn output_reservation_removes_lock_file_on_drop() {
+    fn output_reservation_keeps_lock_file_on_drop() {
         let dir = tempfile::tempdir().unwrap();
         let lock_path = dir.path().join("reservation.lock");
         let reservation = OutputReservation {
             output: dir.path().join("output"),
-            lock_path: lock_path.clone(),
+            _lock_path: lock_path.clone(),
             lock_file: Some(fs::File::create(&lock_path).unwrap()),
         };
         assert!(lock_path.exists());
         drop(reservation);
-        assert!(!lock_path.exists());
+        assert!(lock_path.exists());
     }
 }

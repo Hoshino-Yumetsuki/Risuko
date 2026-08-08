@@ -134,9 +134,9 @@ export default {
 	"mirror-hint":
 		"같은 파일을 가리키는 미러 URL을 추가하면 여러 소스에서 동시에 다운로드할 수 있습니다.",
 	"usenet-repair-insufficient":
-		"PAR2 recovery is insufficient: {{neededBlocks}} blocks are needed, but only {{availableBlocks}} are available.",
+		"PAR2 복구 데이터가 부족합니다. {{neededBlocks}}개 블록이 필요하지만 {{availableBlocks}}개만 사용할 수 있습니다.",
 	"usenet-repair-partials-retained":
-		"Partial files were kept. Add a provider with better completion, then retry.",
+		"부분 파일을 보존했습니다. 완성도가 더 높은 제공자를 추가한 후 다시 시도하세요.",
 	"usenet-repair-partials-unavailable":
-		"Partial files are unavailable. Try a different NZB or download again with a provider that has better completion.",
+		"부분 파일을 사용할 수 없습니다. 다른 NZB를 시도하거나 완성도가 더 높은 제공자를 통해 다시 다운로드하세요.",
 };

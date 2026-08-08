@@ -132,9 +132,9 @@ export default {
 	"mirror-hint":
 		"Adjon hozzá ugyanarra a fájlra mutató tükör URL-eket, hogy egyszerre több forrásból tölthessen le.",
 	"usenet-repair-insufficient":
-		"PAR2 recovery is insufficient: {{neededBlocks}} blocks are needed, but only {{availableBlocks}} are available.",
+		"A PAR2-helyreállítás nem elegendő: {{neededBlocks}} blokk szükséges, de csak {{availableBlocks}} érhető el.",
 	"usenet-repair-partials-retained":
-		"Partial files were kept. Add a provider with better completion, then retry.",
+		"A részleges fájlokat megtartottuk. Adjon hozzá jobb teljességű szolgáltatót, majd próbálja újra.",
 	"usenet-repair-partials-unavailable":
-		"Partial files are unavailable. Try a different NZB or download again with a provider that has better completion.",
+		"A részleges fájlok nem érhetők el. Próbáljon másik NZB-t, vagy töltse le újra jobb teljességű szolgáltatón keresztül.",
 };

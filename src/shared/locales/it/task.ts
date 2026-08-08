@@ -140,9 +140,9 @@ export default {
 	"mirror-hint":
 		"Aggiungi URL di mirror che puntano allo stesso file per scaricare da più fonti in parallelo.",
 	"usenet-repair-insufficient":
-		"PAR2 recovery is insufficient: {{neededBlocks}} blocks are needed, but only {{availableBlocks}} are available.",
+		"Il recupero PAR2 è insufficiente: sono necessari {{neededBlocks}} blocchi, ma ne sono disponibili solo {{availableBlocks}}.",
 	"usenet-repair-partials-retained":
-		"Partial files were kept. Add a provider with better completion, then retry.",
+		"I file parziali sono stati conservati. Aggiungi un provider con una completezza migliore, quindi riprova.",
 	"usenet-repair-partials-unavailable":
-		"Partial files are unavailable. Try a different NZB or download again with a provider that has better completion.",
+		"I file parziali non sono disponibili. Prova un NZB diverso o scarica di nuovo con un provider con una completezza migliore.",
 };

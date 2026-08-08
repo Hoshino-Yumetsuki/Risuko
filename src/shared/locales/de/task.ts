@@ -141,9 +141,9 @@ export default {
 	"mirror-hint":
 		"Fügen Sie Spiegel-URLs hinzu, die auf dieselbe Datei verweisen, um von mehreren Quellen gleichzeitig herunterzuladen.",
 	"usenet-repair-insufficient":
-		"PAR2 recovery is insufficient: {{neededBlocks}} blocks are needed, but only {{availableBlocks}} are available.",
+		"Die PAR2-Wiederherstellung ist unzureichend: {{neededBlocks}} Blöcke werden benötigt, aber nur {{availableBlocks}} sind verfügbar.",
 	"usenet-repair-partials-retained":
-		"Partial files were kept. Add a provider with better completion, then retry.",
+		"Teilweise Dateien wurden behalten. Fügen Sie einen Anbieter mit besserer Vollständigkeit hinzu und versuchen Sie es erneut.",
 	"usenet-repair-partials-unavailable":
-		"Partial files are unavailable. Try a different NZB or download again with a provider that has better completion.",
+		"Teilweise Dateien sind nicht verfügbar. Versuchen Sie ein anderes NZB oder laden Sie erneut mit einem Anbieter mit besserer Vollständigkeit herunter.",
 };

@@ -138,9 +138,9 @@ export default {
 	"mirror-hint":
 		"Додайте URL дзеркал, що вказують на той самий файл, щоб завантажувати з кількох джерел одночасно.",
 	"usenet-repair-insufficient":
-		"PAR2 recovery is insufficient: {{neededBlocks}} blocks are needed, but only {{availableBlocks}} are available.",
+		"Даних для відновлення PAR2 недостатньо: потрібно блоків — {{neededBlocks}}, доступно лише {{availableBlocks}}.",
 	"usenet-repair-partials-retained":
-		"Partial files were kept. Add a provider with better completion, then retry.",
+		"Часткові файли збережено. Додайте провайдера з кращою повнотою та повторіть спробу.",
 	"usenet-repair-partials-unavailable":
-		"Partial files are unavailable. Try a different NZB or download again with a provider that has better completion.",
+		"Часткові файли недоступні. Спробуйте інший NZB або завантажте знову через провайдера з кращою повнотою.",
 };

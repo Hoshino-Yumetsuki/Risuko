@@ -133,9 +133,9 @@ export default {
 	"mirror-hint":
 		"أضف روابط مرآة تشير إلى نفس الملف للتنزيل من عدة مصادر في وقت واحد.",
 	"usenet-repair-insufficient":
-		"PAR2 recovery is insufficient: {{neededBlocks}} blocks are needed, but only {{availableBlocks}} are available.",
+		"استرداد PAR2 غير كافٍ: يلزم {{neededBlocks}} كتلة، لكن المتاح هو {{availableBlocks}} فقط.",
 	"usenet-repair-partials-retained":
-		"Partial files were kept. Add a provider with better completion, then retry.",
+		"تم الاحتفاظ بالملفات الجزئية. أضف مزودًا باكتمال أفضل، ثم أعد المحاولة.",
 	"usenet-repair-partials-unavailable":
-		"Partial files are unavailable. Try a different NZB or download again with a provider that has better completion.",
+		"الملفات الجزئية غير متاحة. جرّب NZB مختلفًا أو أعد التنزيل باستخدام مزود باكتمال أفضل.",
 };

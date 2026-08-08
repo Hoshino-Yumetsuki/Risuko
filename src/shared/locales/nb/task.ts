@@ -139,9 +139,9 @@ export default {
 	"mirror-hint":
 		"Legg til speil-URL-er som peker til samme fil for å laste ned fra flere kilder samtidig.",
 	"usenet-repair-insufficient":
-		"PAR2 recovery is insufficient: {{neededBlocks}} blocks are needed, but only {{availableBlocks}} are available.",
+		"PAR2-gjenopprettingen er utilstrekkelig: {{neededBlocks}} blokker trengs, men bare {{availableBlocks}} er tilgjengelige.",
 	"usenet-repair-partials-retained":
-		"Partial files were kept. Add a provider with better completion, then retry.",
+		"Delvise filer ble beholdt. Legg til en leverandør med bedre fullstendighet, og prøv igjen.",
 	"usenet-repair-partials-unavailable":
-		"Partial files are unavailable. Try a different NZB or download again with a provider that has better completion.",
+		"Delvise filer er ikke tilgjengelige. Prøv en annen NZB, eller last ned på nytt med en leverandør med bedre fullstendighet.",
 };

@@ -137,9 +137,9 @@ export default {
 	"mirror-hint":
 		"Thêm các URL máy chủ gương trỏ đến cùng một tệp để tải xuống từ nhiều nguồn song song.",
 	"usenet-repair-insufficient":
-		"PAR2 recovery is insufficient: {{neededBlocks}} blocks are needed, but only {{availableBlocks}} are available.",
+		"Dữ liệu khôi phục PAR2 không đủ: cần {{neededBlocks}} khối nhưng chỉ có {{availableBlocks}} khối.",
 	"usenet-repair-partials-retained":
-		"Partial files were kept. Add a provider with better completion, then retry.",
+		"Các tệp một phần đã được giữ lại. Thêm nhà cung cấp có độ hoàn thiện tốt hơn rồi thử lại.",
 	"usenet-repair-partials-unavailable":
-		"Partial files are unavailable. Try a different NZB or download again with a provider that has better completion.",
+		"Không có các tệp một phần. Hãy thử NZB khác hoặc tải lại với nhà cung cấp có độ hoàn thiện tốt hơn.",
 };

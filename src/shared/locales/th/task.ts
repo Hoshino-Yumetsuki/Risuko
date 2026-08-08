@@ -129,9 +129,9 @@ export default {
 	"mirror-placeholder": "URL มิเรอร์ (ไฟล์เดียวกัน เซิร์ฟเวอร์อื่น)",
 	"mirror-hint": "เพิ่ม URL มิเรอร์ที่ชี้ไปยังไฟล์เดียวกันเพื่อดาวน์โหลดจากหลายแหล่งพร้อมกัน",
 	"usenet-repair-insufficient":
-		"PAR2 recovery is insufficient: {{neededBlocks}} blocks are needed, but only {{availableBlocks}} are available.",
+		"ข้อมูลกู้คืน PAR2 ไม่เพียงพอ: ต้องใช้ {{neededBlocks}} บล็อก แต่มีเพียง {{availableBlocks}} บล็อกเท่านั้น",
 	"usenet-repair-partials-retained":
-		"Partial files were kept. Add a provider with better completion, then retry.",
+		"เก็บไฟล์บางส่วนไว้แล้ว เพิ่มผู้ให้บริการที่มีความสมบูรณ์ดีกว่า แล้วลองอีกครั้ง",
 	"usenet-repair-partials-unavailable":
-		"Partial files are unavailable. Try a different NZB or download again with a provider that has better completion.",
+		"ไฟล์บางส่วนไม่พร้อมใช้งาน ลองใช้ NZB อื่นหรือดาวน์โหลดอีกครั้งผ่านผู้ให้บริการที่มีความสมบูรณ์ดีกว่า",
 };

@@ -136,9 +136,9 @@ export default {
 	"mirror-hint":
 		"Tambahkan URL mirror yang menunjuk ke berkas yang sama untuk mengunduh dari beberapa sumber secara paralel.",
 	"usenet-repair-insufficient":
-		"PAR2 recovery is insufficient: {{neededBlocks}} blocks are needed, but only {{availableBlocks}} are available.",
+		"Pemulihan PAR2 tidak mencukupi: diperlukan {{neededBlocks}} blok, tetapi hanya {{availableBlocks}} yang tersedia.",
 	"usenet-repair-partials-retained":
-		"Partial files were kept. Add a provider with better completion, then retry.",
+		"Berkas parsial dipertahankan. Tambahkan penyedia dengan kelengkapan yang lebih baik, lalu coba lagi.",
 	"usenet-repair-partials-unavailable":
-		"Partial files are unavailable. Try a different NZB or download again with a provider that has better completion.",
+		"Berkas parsial tidak tersedia. Coba NZB lain atau unduh kembali dengan penyedia yang memiliki kelengkapan lebih baik.",
 };

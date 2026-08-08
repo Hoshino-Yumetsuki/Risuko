@@ -134,9 +134,9 @@ export default {
 	"mirror-hint":
 		"نشانی‌های آینه را که به همان فایل اشاره می‌کنند اضافه کنید تا از چند منبع به‌طور همزمان دانلود کنید.",
 	"usenet-repair-insufficient":
-		"PAR2 recovery is insufficient: {{neededBlocks}} blocks are needed, but only {{availableBlocks}} are available.",
+		"بازیابی PAR2 کافی نیست: {{neededBlocks}} بلوک لازم است، اما فقط {{availableBlocks}} بلوک در دسترس است.",
 	"usenet-repair-partials-retained":
-		"Partial files were kept. Add a provider with better completion, then retry.",
+		"فایل‌های ناقص حفظ شدند. ارائه‌دهنده‌ای با تکمیل بهتر اضافه کنید و دوباره تلاش کنید.",
 	"usenet-repair-partials-unavailable":
-		"Partial files are unavailable. Try a different NZB or download again with a provider that has better completion.",
+		"فایل‌های ناقص در دسترس نیستند. NZB دیگری را امتحان کنید یا با ارائه‌دهنده‌ای با تکمیل بهتر دوباره دانلود کنید.",
 };

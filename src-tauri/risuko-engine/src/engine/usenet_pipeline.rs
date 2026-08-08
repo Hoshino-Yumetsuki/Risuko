@@ -16,6 +16,7 @@ const RESUME_VERSION: u8 = 2;
 const HASH_BUFFER_BYTES: usize = 64 * 1024;
 const CHECKPOINT_SEGMENT_INTERVAL: usize = 8;
 const CHECKPOINT_TIME_INTERVAL: Duration = Duration::from_secs(5);
+const FETCH_BUFFER_LIMIT_BYTES: u64 = 64 * 1024 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct YencAssemblyLimits {
@@ -281,8 +282,10 @@ pub async fn resume_sidecar_matches(
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
         Err(error) => return Err(format!("read resume metadata: {error}")),
     };
-    let sidecar: ResumeSidecar = serde_json::from_slice(&bytes)
-        .map_err(|error| format!("parse resume metadata: {error}"))?;
+    let sidecar: ResumeSidecar = match serde_json::from_slice(&bytes) {
+        Ok(sidecar) => sidecar,
+        Err(_) => return Ok(false),
+    };
     Ok(sidecar.version == RESUME_VERSION && sidecar.manifest_sha256 == manifest_sha256(segments))
 }
 
@@ -796,11 +799,10 @@ pub(crate) async fn assemble_file_with_report_with_limits_at_offset<S: ArticleSo
     let mut resized_expected_size = sidecar.expected_size;
     let mut segments_since_checkpoint = 0usize;
     let mut last_checkpoint = Instant::now();
-    publish_assembly_progress(
-        progress,
-        progress_base,
-        completed_article_bytes(&ordered, &sidecar.completed_segments)?,
-    );
+    let mut completed_receipt_bytes = sidecar.completed_bytes;
+    let mut completed_article_bytes =
+        completed_article_bytes(&ordered, &sidecar.completed_segments)?;
+    publish_assembly_progress(progress, progress_base, completed_article_bytes);
 
     let mut unavailable_segments = Vec::new();
 
@@ -823,20 +825,32 @@ pub(crate) async fn assemble_file_with_report_with_limits_at_offset<S: ArticleSo
     }
 
     // Keep network fetches in flight while yielding decoded parts in manifest
-    // order. The source's connection registry and profile caps remain the
-    // authoritative bounds; this small window avoids unbounded buffering.
+    // order. Bound each batch by the manifest article bytes so completed
+    // decoded payloads cannot accumulate without limit while waiting for order.
     let pending_segments = ordered
         .iter()
         .filter(|segment| !sidecar.completed_segments.contains(&segment.number))
         .collect::<Vec<_>>();
-    for batch in pending_segments.chunks(8) {
+    let mut batch_start = 0;
+    while batch_start < pending_segments.len() {
+        let mut batch_end = batch_start + 1;
+        let mut batch_bytes = pending_segments[batch_start].bytes;
+        while batch_end < pending_segments.len() {
+            let next_bytes = pending_segments[batch_end].bytes;
+            if batch_bytes.saturating_add(next_bytes) > FETCH_BUFFER_LIMIT_BYTES {
+                break;
+            }
+            batch_bytes = batch_bytes.saturating_add(next_bytes);
+            batch_end += 1;
+        }
+        let batch = &pending_segments[batch_start..batch_end];
         let mut fetches = FuturesUnordered::new();
         for (order, segment) in batch.iter().enumerate() {
-            let number = segment.number;
+            let segment = (*segment).clone();
             let message_id = segment.message_id.clone();
             fetches.push(async move {
                 let result = source.fetch(&message_id).await;
-                (order, number, result)
+                (order, segment, result)
             });
         }
         let mut fetched = Vec::with_capacity(batch.len());
@@ -844,11 +858,7 @@ pub(crate) async fn assemble_file_with_report_with_limits_at_offset<S: ArticleSo
             fetched.push(result);
         }
         fetched.sort_by_key(|(order, _, _)| *order);
-        for (_, segment_number, fetch_result) in fetched {
-            let segment = ordered
-                .iter()
-                .find(|segment| segment.number == segment_number)
-                .ok_or_else(|| "fetched segment is missing from the manifest".to_string())?;
+        for (_, segment, fetch_result) in fetched {
             if cancel.is_cancelled() {
                 return_after_checkpoint!("Download cancelled".into());
             }
@@ -935,11 +945,17 @@ pub(crate) async fn assemble_file_with_report_with_limits_at_offset<S: ArticleSo
             sidecar.completed_segments.insert(segment.number);
             sidecar
                 .segment_receipts
-                .insert(segment.number, candidate_receipt);
-            sidecar.completed_bytes = match completed_receipt_bytes(&sidecar.segment_receipts) {
-                Ok(bytes) => bytes,
-                Err(error) => return_after_checkpoint!(error),
+                .insert(segment.number, candidate_receipt.clone());
+            completed_receipt_bytes =
+                match completed_receipt_bytes.checked_add(candidate_receipt.length) {
+                    Some(bytes) => bytes,
+                    None => return_after_checkpoint!("resume receipt byte count overflowed".into()),
+                };
+            completed_article_bytes = match completed_article_bytes.checked_add(segment.bytes) {
+                Some(bytes) => bytes,
+                None => return_after_checkpoint!("NZB article byte count overflowed".into()),
             };
+            sidecar.completed_bytes = completed_receipt_bytes;
             segments_since_checkpoint = segments_since_checkpoint.saturating_add(1);
             if segments_since_checkpoint >= CHECKPOINT_SEGMENT_INTERVAL
                 || last_checkpoint.elapsed() >= CHECKPOINT_TIME_INTERVAL
@@ -948,12 +964,9 @@ pub(crate) async fn assemble_file_with_report_with_limits_at_offset<S: ArticleSo
                 segments_since_checkpoint = 0;
                 last_checkpoint = Instant::now();
             }
-            publish_assembly_progress(
-                progress,
-                progress_base,
-                completed_article_bytes(&ordered, &sidecar.completed_segments)?,
-            );
+            publish_assembly_progress(progress, progress_base, completed_article_bytes);
         }
+        batch_start = batch_end;
     }
     checkpoint(&mut file, &sidecar, &sidecar_path).await?;
     file.sync_all()

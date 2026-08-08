@@ -142,9 +142,9 @@ export default {
 	"mirror-hint":
 		"Afegeix URL de rèpliques que apuntin al mateix fitxer per descarregar des de múltiples fonts en paral·lel.",
 	"usenet-repair-insufficient":
-		"PAR2 recovery is insufficient: {{neededBlocks}} blocks are needed, but only {{availableBlocks}} are available.",
+		"La recuperació PAR2 és insuficient: calen {{neededBlocks}} blocs, però només n'hi ha {{availableBlocks}} disponibles.",
 	"usenet-repair-partials-retained":
-		"Partial files were kept. Add a provider with better completion, then retry.",
+		"S'han conservat els fitxers parcials. Afegiu un proveïdor amb una completitud millor i torneu-ho a provar.",
 	"usenet-repair-partials-unavailable":
-		"Partial files are unavailable. Try a different NZB or download again with a provider that has better completion.",
+		"Els fitxers parcials no estan disponibles. Proveu un NZB diferent o torneu a baixar-los amb un proveïdor amb una completitud millor.",
 };

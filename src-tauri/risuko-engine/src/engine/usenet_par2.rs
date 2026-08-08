@@ -133,7 +133,7 @@ pub fn verify_or_repair_with_cancel(
 
     check_cancel(cancel)?;
     check_active_time(request)?;
-    let verification = rust_par2::verify(&file_set, &probe);
+    let verification = verify_with_cancel(&file_set, &probe, cancel)?;
     check_cancel(cancel)?;
     check_active_time(request)?;
     if verification.all_correct() {
@@ -167,17 +167,13 @@ pub fn verify_or_repair_with_cancel(
     stage_data_files(&repair_dir, &file_set, &data_by_name, Some(&intact), cancel)?;
     check_cancel(cancel)?;
     check_active_time(request)?;
-    let repair = rust_par2::repair_from_verify(&file_set, &repair_dir, &verification)
-        .map_err(|error| Par2Error::Repair(error.to_string()))?;
+    let repair = repair_from_verify_with_cancel(&file_set, &repair_dir, &verification, cancel)
+        .map_err(|error| match error {
+            Par2Error::Cancelled => Par2Error::Cancelled,
+            error => Par2Error::Repair(error.to_string()),
+        })?;
     check_cancel(cancel)?;
     check_active_time(request)?;
-    let post_repair = rust_par2::verify(&file_set, &repair_dir);
-    check_active_time(request)?;
-    if !post_repair.all_correct() {
-        return Err(Par2Error::Repair(format!(
-            "post-repair verification failed: {post_repair}"
-        )));
-    }
 
     let changed_names: BTreeSet<String> = verification
         .damaged
@@ -206,6 +202,604 @@ fn check_cancel(cancel: Option<&CancellationToken>) -> Result<(), Par2Error> {
     } else {
         Ok(())
     }
+}
+
+// rust-par2's public verify/repair entry points are intentionally blocking and
+// do not expose a cancellation hook. Keep the work in this module chunked so
+// a worker cancellation can be observed during hashing, decoding, and writes.
+fn verify_with_cancel(
+    file_set: &rust_par2::Par2FileSet,
+    dir: &Path,
+    cancel: Option<&CancellationToken>,
+) -> Result<rust_par2::VerifyResult, Par2Error> {
+    let mut files: Vec<_> = file_set.files.values().collect();
+    files.sort_by_key(|file| &file.filename);
+    let mut intact = Vec::new();
+    let mut damaged = Vec::new();
+    let mut missing = Vec::new();
+
+    for file in files {
+        check_cancel(cancel)?;
+        let path = dir.join(&file.filename);
+        let metadata = match fs::metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(_) => {
+                missing.push(rust_par2::MissingFile {
+                    filename: file.filename.clone(),
+                    expected_size: file.size,
+                    block_count: blocks_for_size(file.size, file_set.slice_size),
+                });
+                continue;
+            }
+        };
+        if metadata.len() != file.size {
+            let total = blocks_for_size(file.size, file_set.slice_size);
+            damaged.push(rust_par2::DamagedFile {
+                filename: file.filename.clone(),
+                size: metadata.len(),
+                damaged_block_count: total,
+                total_block_count: total,
+                damaged_block_indices: (0..total).collect(),
+            });
+            continue;
+        }
+
+        let hash = match md5_file_with_cancel(&path, cancel) {
+            Ok(hash) => Some(hash),
+            Err(Par2Error::Cancelled) => return Err(Par2Error::Cancelled),
+            Err(_) => None,
+        };
+        if hash == Some(file.hash) {
+            intact.push(rust_par2::VerifiedFile {
+                filename: file.filename.clone(),
+                size: file.size,
+            });
+            continue;
+        }
+        let total = blocks_for_size(file.size, file_set.slice_size);
+        let bad_indices = if hash.is_none() {
+            (0..total).collect()
+        } else {
+            match damaged_blocks_with_cancel(&path, &file.slices, file_set.slice_size, cancel) {
+                Ok(indices) => indices,
+                Err(Par2Error::Cancelled) => return Err(Par2Error::Cancelled),
+                Err(_) => (0..file.slices.len() as u32).collect(),
+            }
+        };
+        damaged.push(rust_par2::DamagedFile {
+            filename: file.filename.clone(),
+            size: metadata.len(),
+            damaged_block_count: bad_indices.len() as u32,
+            total_block_count: total,
+            damaged_block_indices: bad_indices,
+        });
+    }
+
+    let recovery_blocks_available = recovery_block_count_with_cancel(dir, file_set, cancel)?;
+    let blocks_needed = damaged
+        .iter()
+        .map(|file| file.damaged_block_count)
+        .sum::<u32>()
+        .saturating_add(missing.iter().map(|file| file.block_count).sum::<u32>());
+    Ok(rust_par2::VerifyResult {
+        intact,
+        damaged,
+        missing,
+        recovery_blocks_available,
+        repair_possible: blocks_needed <= recovery_blocks_available,
+    })
+}
+
+fn blocks_for_size(size: u64, slice_size: u64) -> u32 {
+    if slice_size == 0 {
+        0
+    } else {
+        size.div_ceil(slice_size) as u32
+    }
+}
+
+fn md5_file_with_cancel(
+    path: &Path,
+    cancel: Option<&CancellationToken>,
+) -> Result<[u8; 16], Par2Error> {
+    let mut file = fs::File::open(path)?;
+    let mut hasher = Md5::new();
+    let mut buffer = vec![0u8; VERIFY_HASH_BUFFER_BYTES as usize];
+    loop {
+        check_cancel(cancel)?;
+        let read = file.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    Ok(hasher.finalize().into())
+}
+
+fn damaged_blocks_with_cancel(
+    path: &Path,
+    slices: &[rust_par2::SliceChecksum],
+    slice_size: u64,
+    cancel: Option<&CancellationToken>,
+) -> Result<Vec<u32>, Par2Error> {
+    if slices.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut file = fs::File::open(path)?;
+    let mut buffer = vec![0u8; slice_size as usize];
+    let mut damaged = Vec::new();
+    for (index, expected) in slices.iter().enumerate() {
+        check_cancel(cancel)?;
+        let read = file.read(&mut buffer)?;
+        if read == 0 {
+            damaged.extend(index as u32..slices.len() as u32);
+            break;
+        }
+        let mut hasher = Md5::new();
+        hasher.update(&buffer[..read]);
+        if read < buffer.len() {
+            hasher.update(vec![0u8; buffer.len() - read]);
+        }
+        let hash: [u8; 16] = hasher.finalize().into();
+        if hash != expected.md5 {
+            damaged.push(index as u32);
+        }
+    }
+    Ok(damaged)
+}
+
+fn recovery_block_count_with_cancel(
+    dir: &Path,
+    file_set: &rust_par2::Par2FileSet,
+    cancel: Option<&CancellationToken>,
+) -> Result<u32, Par2Error> {
+    let mut count = 0u32;
+    let read_dir = match fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(_) => return Ok(file_set.recovery_block_count),
+    };
+    let mut entries = read_dir
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("par2"))
+        })
+        .collect::<Vec<_>>();
+    entries.sort();
+    for path in entries {
+        check_cancel(cancel)?;
+        if let Ok(parsed) = rust_par2::parse(&path) {
+            if parsed.recovery_set_id == file_set.recovery_set_id {
+                count = count.saturating_add(parsed.recovery_block_count);
+            }
+        }
+    }
+    Ok(if count == 0 {
+        file_set.recovery_block_count
+    } else {
+        count
+    })
+}
+
+fn repair_from_verify_with_cancel(
+    file_set: &rust_par2::Par2FileSet,
+    dir: &Path,
+    verification: &rust_par2::VerifyResult,
+    cancel: Option<&CancellationToken>,
+) -> Result<rust_par2::RepairResult, Par2Error> {
+    check_cancel(cancel)?;
+    if verification.all_correct() {
+        return Err(Par2Error::Repair(
+            "No damage detected — nothing to repair".into(),
+        ));
+    }
+    let blocks_needed = verification.blocks_needed() as usize;
+    let recovery_blocks = load_recovery_blocks_with_cancel(
+        dir,
+        &file_set.recovery_set_id,
+        file_set.slice_size,
+        cancel,
+    )?;
+    if recovery_blocks.len() < blocks_needed {
+        return Err(Par2Error::Repair(format!(
+            "Insufficient recovery data: need {}, have {}",
+            blocks_needed,
+            recovery_blocks.len()
+        )));
+    }
+
+    let block_map = CancellableBlockMap::new(file_set);
+    let damaged_indices = cancellable_damaged_indices(verification, &block_map);
+    let damaged_count = damaged_indices.len();
+    let recovery_to_use = recovery_blocks
+        .iter()
+        .take(damaged_count)
+        .collect::<Vec<_>>();
+    let recovery_exponents = recovery_to_use
+        .iter()
+        .map(|block| block.exponent)
+        .collect::<Vec<_>>();
+    let constants = rust_par2::matrix::par2_input_constants(block_map.total_blocks as usize);
+    let mut matrix = rust_par2::matrix::GfMatrix::zeros(damaged_count, damaged_count);
+    for (row, exponent) in recovery_exponents.iter().copied().enumerate() {
+        check_cancel(cancel)?;
+        for (column, index) in damaged_indices.iter().copied().enumerate() {
+            matrix.set(row, column, rust_par2::gf::pow(constants[index], exponent));
+        }
+    }
+    let inverse = invert_matrix_with_cancel(&matrix, cancel)?;
+    let slice_size = file_set.slice_size as usize;
+    let damaged_set = damaged_indices.iter().copied().collect::<HashSet<_>>();
+    let mut adjusted = recovery_to_use
+        .iter()
+        .map(|block| block.data.clone())
+        .collect::<Vec<_>>();
+    let intact_indices = (0..block_map.total_blocks as usize)
+        .filter(|index| !damaged_set.contains(index))
+        .collect::<Vec<_>>();
+    let mut file_handles = HashMap::new();
+    for batch in intact_indices.chunks(PAR2_REPAIR_BATCH_BLOCKS as usize) {
+        check_cancel(cancel)?;
+        let batch_data = batch
+            .iter()
+            .map(|&index| {
+                read_source_block_with_cancel(
+                    dir,
+                    &block_map,
+                    index,
+                    slice_size,
+                    &mut file_handles,
+                    cancel,
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        for (row, adjusted_block) in adjusted.iter_mut().enumerate() {
+            let coefficients = batch
+                .iter()
+                .map(|&index| rust_par2::gf::pow(constants[index], recovery_exponents[row]))
+                .collect::<Vec<_>>();
+            for (source, coefficient) in batch_data.iter().zip(coefficients) {
+                mul_add_cancellable(adjusted_block, source, coefficient, cancel)?;
+            }
+        }
+    }
+
+    let adjusted_refs = adjusted.iter().map(Vec::as_slice).collect::<Vec<_>>();
+    let mut outputs = (0..damaged_count)
+        .map(|_| vec![0u8; slice_size])
+        .collect::<Vec<_>>();
+    for (row, output) in outputs.iter_mut().enumerate() {
+        check_cancel(cancel)?;
+        for column in 0..damaged_count {
+            mul_add_cancellable(
+                output,
+                adjusted_refs[column],
+                inverse.get(row, column),
+                cancel,
+            )?;
+        }
+    }
+
+    let repaired_blocks = damaged_indices
+        .iter()
+        .copied()
+        .zip(outputs)
+        .collect::<Vec<_>>();
+    let mut files_touched = HashSet::new();
+    for (global_index, data) in &repaired_blocks {
+        check_cancel(cancel)?;
+        let (filename, offset, write_len) = block_map.global_to_file(*global_index, slice_size);
+        let path = dir.join(&filename);
+        let mut file = fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(&path)?;
+        let expected_size = block_map
+            .files
+            .iter()
+            .find(|entry| entry.filename == filename)
+            .map(|entry| entry.file_size)
+            .unwrap_or_default();
+        if file.metadata()?.len() < expected_size {
+            file.set_len(expected_size)?;
+        }
+        file.seek(SeekFrom::Start(offset as u64))?;
+        file.write_all(&data[..write_len])?;
+        files_touched.insert(filename);
+    }
+
+    let post_repair = verify_with_cancel(file_set, dir, cancel)?;
+    if !post_repair.all_correct() {
+        return Err(Par2Error::Repair(format!(
+            "Verification after repair failed: {post_repair}"
+        )));
+    }
+    Ok(rust_par2::RepairResult {
+        success: true,
+        blocks_repaired: repaired_blocks.len() as u32,
+        files_repaired: files_touched.len(),
+        message: "All files repaired and verified".into(),
+    })
+}
+
+fn invert_matrix_with_cancel(
+    matrix: &rust_par2::matrix::GfMatrix,
+    cancel: Option<&CancellationToken>,
+) -> Result<rust_par2::matrix::GfMatrix, Par2Error> {
+    if matrix.rows != matrix.cols {
+        return Err(Par2Error::Repair("Decode matrix is not square".into()));
+    }
+    let size = matrix.rows;
+    let mut augmented = rust_par2::matrix::GfMatrix::zeros(size, size * 2);
+    for row in 0..size {
+        for column in 0..size {
+            augmented.set(row, column, matrix.get(row, column));
+        }
+        augmented.set(row, size + row, 1);
+    }
+    for column in 0..size {
+        check_cancel(cancel)?;
+        let pivot = (column..size)
+            .find(|&row| augmented.get(row, column) != 0)
+            .ok_or_else(|| Par2Error::Repair("Decode matrix is singular".into()))?;
+        if pivot != column {
+            for index in 0..size * 2 {
+                let value = augmented.get(column, index);
+                augmented.set(column, index, augmented.get(pivot, index));
+                augmented.set(pivot, index, value);
+            }
+        }
+        let inverse = rust_par2::gf::inv(augmented.get(column, column));
+        for index in 0..size * 2 {
+            augmented.set(
+                column,
+                index,
+                rust_par2::gf::mul(augmented.get(column, index), inverse),
+            );
+        }
+        for row in 0..size {
+            if row == column {
+                continue;
+            }
+            let factor = augmented.get(row, column);
+            if factor == 0 {
+                continue;
+            }
+            for index in 0..size * 2 {
+                let value = rust_par2::gf::mul(factor, augmented.get(column, index));
+                augmented.set(row, index, augmented.get(row, index) ^ value);
+            }
+        }
+    }
+    let mut inverse = rust_par2::matrix::GfMatrix::zeros(size, size);
+    for row in 0..size {
+        for column in 0..size {
+            inverse.set(row, column, augmented.get(row, size + column));
+        }
+    }
+    Ok(inverse)
+}
+
+fn mul_add_cancellable(
+    destination: &mut [u8],
+    source: &[u8],
+    coefficient: u16,
+    cancel: Option<&CancellationToken>,
+) -> Result<(), Par2Error> {
+    const CHUNK_BYTES: usize = 1024 * 1024;
+    for (destination, source) in destination
+        .chunks_mut(CHUNK_BYTES)
+        .zip(source.chunks(CHUNK_BYTES))
+    {
+        check_cancel(cancel)?;
+        rust_par2::gf_simd_public::mul_add_buffer(destination, source, coefficient);
+    }
+    Ok(())
+}
+
+fn load_recovery_blocks_with_cancel(
+    dir: &Path,
+    set_id: &[u8; 16],
+    slice_size: u64,
+    cancel: Option<&CancellationToken>,
+) -> Result<Vec<rust_par2::recovery::RecoveryBlock>, Par2Error> {
+    let mut paths = fs::read_dir(dir)?
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("par2"))
+        })
+        .collect::<Vec<_>>();
+    paths.sort();
+    let mut blocks = Vec::new();
+    for path in paths {
+        check_cancel(cancel)?;
+        let mut file = fs::File::open(path)?;
+        let file_size = file.metadata()?.len();
+        let mut position = 0u64;
+        let mut header = [0u8; PAR2_HEADER_BYTES as usize];
+        while position + PAR2_HEADER_BYTES <= file_size {
+            check_cancel(cancel)?;
+            file.seek(SeekFrom::Start(position))?;
+            if file.read_exact(&mut header).is_err() {
+                break;
+            }
+            if &header[..8] != PAR2_MAGIC {
+                position = position.saturating_add(4);
+                continue;
+            }
+            let packet_length = u64::from_le_bytes(header[8..16].try_into().unwrap());
+            if packet_length < PAR2_HEADER_BYTES || packet_length % 4 != 0 {
+                position = position.saturating_add(4);
+                continue;
+            }
+            if header[32..48] != *set_id || &header[48..64] != b"PAR 2.0\0RecvSlic" {
+                position = position.saturating_add(packet_length);
+                continue;
+            }
+            let body_length = packet_length - PAR2_HEADER_BYTES;
+            let expected_body = 4u64.saturating_add(slice_size);
+            if body_length >= expected_body && expected_body <= usize::MAX as u64 {
+                file.seek(SeekFrom::Start(position + PAR2_HEADER_BYTES))?;
+                let mut body = vec![0u8; expected_body as usize];
+                read_exact_with_cancel(&mut file, &mut body, cancel)?;
+                blocks.push(rust_par2::recovery::RecoveryBlock {
+                    exponent: u32::from_le_bytes(body[..4].try_into().unwrap()),
+                    data: body[4..].to_vec(),
+                });
+            }
+            position = position.saturating_add(packet_length);
+        }
+    }
+    blocks.sort_by_key(|block| block.exponent);
+    Ok(blocks)
+}
+
+fn read_exact_with_cancel(
+    file: &mut fs::File,
+    buffer: &mut [u8],
+    cancel: Option<&CancellationToken>,
+) -> Result<(), Par2Error> {
+    let mut offset = 0;
+    while offset < buffer.len() {
+        check_cancel(cancel)?;
+        let read = file.read(&mut buffer[offset..])?;
+        if read == 0 {
+            return Err(Par2Error::Io(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "short PAR2 recovery packet",
+            )));
+        }
+        offset += read;
+    }
+    Ok(())
+}
+
+struct CancellableBlockMap {
+    files: Vec<CancellableBlockFile>,
+    total_blocks: u32,
+}
+
+struct CancellableBlockFile {
+    filename: String,
+    file_size: u64,
+    block_count: u32,
+    start_block: u32,
+}
+
+impl CancellableBlockMap {
+    fn new(file_set: &rust_par2::Par2FileSet) -> Self {
+        let ordered = if file_set.file_order.is_empty() {
+            let mut files = file_set.files.values().collect::<Vec<_>>();
+            files.sort_by_key(|file| file.file_id);
+            files
+        } else {
+            file_set
+                .file_order
+                .iter()
+                .filter_map(|id| file_set.files.get(id))
+                .collect::<Vec<_>>()
+        };
+        let mut start_block = 0u32;
+        let mut files = Vec::with_capacity(ordered.len());
+        for file in ordered {
+            let block_count = blocks_for_size(file.size, file_set.slice_size);
+            files.push(CancellableBlockFile {
+                filename: file.filename.clone(),
+                file_size: file.size,
+                block_count,
+                start_block,
+            });
+            start_block = start_block.saturating_add(block_count);
+        }
+        Self {
+            files,
+            total_blocks: start_block,
+        }
+    }
+
+    fn global_to_file(&self, global_index: usize, slice_size: usize) -> (String, usize, usize) {
+        let global = global_index as u32;
+        for file in &self.files {
+            if global >= file.start_block && global < file.start_block + file.block_count {
+                let local = (global - file.start_block) as usize;
+                let offset = local * slice_size;
+                let remaining = file.file_size as usize - offset;
+                return (file.filename.clone(), offset, remaining.min(slice_size));
+            }
+        }
+        panic!("global PAR2 block index {global_index} is out of range");
+    }
+}
+
+fn cancellable_damaged_indices(
+    verification: &rust_par2::VerifyResult,
+    block_map: &CancellableBlockMap,
+) -> Vec<usize> {
+    let mut indices = Vec::new();
+    for damaged in &verification.damaged {
+        if let Some(file) = block_map
+            .files
+            .iter()
+            .find(|file| file.filename == damaged.filename)
+        {
+            if damaged.damaged_block_indices.is_empty() {
+                indices.extend(
+                    (file.start_block..file.start_block + file.block_count)
+                        .map(|index| index as usize),
+                );
+            } else {
+                indices.extend(damaged.damaged_block_indices.iter().filter_map(|&index| {
+                    (index < file.block_count).then_some((file.start_block + index) as usize)
+                }));
+            }
+        }
+    }
+    for missing in &verification.missing {
+        if let Some(file) = block_map
+            .files
+            .iter()
+            .find(|file| file.filename == missing.filename)
+        {
+            indices.extend(
+                (file.start_block..file.start_block + file.block_count).map(|index| index as usize),
+            );
+        }
+    }
+    indices.sort_unstable();
+    indices.dedup();
+    indices.into_iter().map(|index| index as usize).collect()
+}
+
+fn read_source_block_with_cancel(
+    dir: &Path,
+    block_map: &CancellableBlockMap,
+    global_index: usize,
+    slice_size: usize,
+    file_handles: &mut HashMap<String, fs::File>,
+    cancel: Option<&CancellationToken>,
+) -> Result<Vec<u8>, Par2Error> {
+    let (filename, offset, _) = block_map.global_to_file(global_index, slice_size);
+    let handle = match file_handles.entry(filename.clone()) {
+        std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
+        std::collections::hash_map::Entry::Vacant(entry) => {
+            entry.insert(fs::File::open(dir.join(&filename))?)
+        }
+    };
+    handle.seek(SeekFrom::Start(offset as u64))?;
+    let mut buffer = vec![0u8; slice_size];
+    let mut read_total = 0;
+    while read_total < slice_size {
+        check_cancel(cancel)?;
+        match handle.read(&mut buffer[read_total..])? {
+            0 => break,
+            read => read_total += read,
+        }
+    }
+    Ok(buffer)
 }
 
 fn check_active_time(request: &Par2RepairRequest) -> Result<(), Par2Error> {
@@ -937,6 +1531,15 @@ fn copy_file_with_cancel(
     destination: &Path,
     cancel: Option<&CancellationToken>,
 ) -> Result<(), Par2Error> {
+    copy_file_with_cancel_inner(source, destination, cancel, None)
+}
+
+fn copy_file_with_cancel_inner(
+    source: &Path,
+    destination: &Path,
+    cancel: Option<&CancellationToken>,
+    after_write: Option<&dyn Fn()>,
+) -> Result<(), Par2Error> {
     check_cancel(cancel)?;
     let mut reader = BufReader::new(fs::File::open(source)?);
     let mut writer = fs::OpenOptions::new()
@@ -944,16 +1547,27 @@ fn copy_file_with_cancel(
         .write(true)
         .open(destination)?;
     let mut buffer = vec![0u8; SPARSE_COPY_BUFFER_BYTES];
-    loop {
-        check_cancel(cancel)?;
-        let read = reader.read(&mut buffer)?;
-        if read == 0 {
-            break;
+    let result = (|| {
+        loop {
+            check_cancel(cancel)?;
+            let read = reader.read(&mut buffer)?;
+            if read == 0 {
+                break;
+            }
+            writer.write_all(&buffer[..read])?;
+            if let Some(after_write) = after_write {
+                after_write();
+            }
+            check_cancel(cancel)?;
         }
-        writer.write_all(&buffer[..read])?;
+        writer.sync_all()?;
+        Ok(())
+    })();
+    drop(writer);
+    if result.is_err() {
+        let _ = fs::remove_file(destination);
     }
-    writer.sync_all()?;
-    Ok(())
+    result
 }
 
 fn sparse_copy(
@@ -1315,6 +1929,66 @@ mod tests {
 
         assert!(matches!(error, Par2Error::Cancelled));
         assert!(!destination.exists());
+    }
+
+    #[test]
+    fn cancellation_after_a_buffer_write_removes_the_partial_output() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("source.bin");
+        let destination = dir.path().join("staged.bin");
+        fs::write(&source, vec![1u8; SPARSE_COPY_BUFFER_BYTES * 2]).unwrap();
+        let cancel = CancellationToken::new();
+        let cancel_after_first_write = || cancel.cancel();
+        let error = copy_file_with_cancel_inner(
+            &source,
+            &destination,
+            Some(&cancel),
+            Some(&cancel_after_first_write),
+        )
+        .unwrap_err();
+
+        assert!(matches!(error, Par2Error::Cancelled));
+        assert!(!destination.exists());
+    }
+
+    #[test]
+    fn cancellation_during_par2_verification_is_observed_between_hash_chunks() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("data.bin");
+        let size = 128 * 1024 * 1024;
+        fs::write(&path, vec![7u8; size]).unwrap();
+        let file_id = [1u8; 16];
+        let file_set = rust_par2::Par2FileSet {
+            recovery_set_id: [2u8; 16],
+            slice_size: size as u64,
+            file_order: vec![file_id],
+            files: HashMap::from([(
+                file_id,
+                rust_par2::Par2File {
+                    file_id,
+                    hash: [0u8; 16],
+                    hash_16k: [0u8; 16],
+                    size: size as u64,
+                    filename: "data.bin".into(),
+                    slices: Vec::new(),
+                },
+            )]),
+            recovery_block_count: 0,
+            creator: None,
+        };
+        let cancel = CancellationToken::new();
+        let cancel_for_thread = cancel.clone();
+        let canceller = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(2));
+            cancel_for_thread.cancel();
+        });
+        let started = Instant::now();
+
+        let error = verify_with_cancel(&file_set, dir.path(), Some(&cancel)).unwrap_err();
+
+        canceller.join().unwrap();
+        assert!(matches!(error, Par2Error::Cancelled));
+        assert!(started.elapsed() < Duration::from_secs(1));
     }
 
     #[test]
