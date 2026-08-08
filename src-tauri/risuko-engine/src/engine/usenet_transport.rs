@@ -313,9 +313,12 @@ impl NntpConnection {
         if response.code != 220 && response.code != 221 && response.code != 222 {
             return Err(article_error(response));
         }
-        let lines = self.read_multiline_bytes().await?;
         let mut bytes = Vec::new();
-        for line in lines {
+        loop {
+            let line = self.read_line_bytes().await?;
+            if line == b"." {
+                break;
+            }
             let line = if line.first() == Some(&b'.') {
                 &line[1..]
             } else {
@@ -373,19 +376,7 @@ impl NntpConnection {
 
     async fn read_line(&mut self) -> Result<String, NntpError> {
         let mut line = Vec::new();
-        let read = timeout(IO_TIMEOUT, self.reader.read_until(b'\n', &mut line))
-            .await
-            .map_err(|_| NntpError::Timeout)?
-            .map_err(NntpError::Io)?;
-        if read == 0 {
-            return Err(NntpError::Io(io::Error::new(
-                io::ErrorKind::UnexpectedEof,
-                "NNTP server closed the connection",
-            )));
-        }
-        if line.len() > MAX_LINE {
-            return Err(NntpError::ResponseTooLong);
-        }
+        self.read_line_into(&mut line).await?;
         while matches!(line.last(), Some(b'\r' | b'\n')) {
             line.pop();
         }
@@ -397,53 +388,58 @@ impl NntpConnection {
 
     async fn read_multiline(&mut self) -> Result<Vec<String>, NntpError> {
         let mut lines = Vec::new();
+        let mut total_bytes = 0usize;
         loop {
             let line = self.read_line().await?;
             if line == "." {
                 break;
             }
-            lines.push(line);
-            if lines.len() > MAX_ARTICLE_BYTES / 2 {
+            total_bytes = total_bytes.saturating_add(line.len());
+            if total_bytes > MAX_ARTICLE_BYTES {
                 return Err(NntpError::ArticleTooLarge);
             }
-        }
-        Ok(lines)
-    }
-
-    async fn read_multiline_bytes(&mut self) -> Result<Vec<Vec<u8>>, NntpError> {
-        let mut lines = Vec::new();
-        loop {
-            let line = self.read_line_bytes().await?;
-            if line == b"." {
-                break;
-            }
             lines.push(line);
-            if lines.len() > MAX_ARTICLE_BYTES / 2 {
-                return Err(NntpError::ArticleTooLarge);
-            }
         }
         Ok(lines)
     }
 
     async fn read_line_bytes(&mut self) -> Result<Vec<u8>, NntpError> {
         let mut line = Vec::new();
-        let read = timeout(IO_TIMEOUT, self.reader.read_until(b'\n', &mut line))
-            .await
-            .map_err(|_| NntpError::Timeout)?
-            .map_err(NntpError::Io)?;
-        if read == 0 {
-            return Err(NntpError::Io(io::Error::new(
-                io::ErrorKind::UnexpectedEof,
-                "NNTP server closed the connection",
-            )));
-        }
-        if line.len() > MAX_LINE {
-            return Err(NntpError::ResponseTooLong);
-        }
+        self.read_line_into(&mut line).await?;
         while matches!(line.last(), Some(b'\r' | b'\n')) {
             line.pop();
         }
         Ok(line)
+    }
+
+    /// Read at most `MAX_LINE` bytes without allowing an unterminated line to
+    /// grow an unbounded temporary buffer.
+    async fn read_line_into(&mut self, line: &mut Vec<u8>) -> Result<(), NntpError> {
+        loop {
+            let available = timeout(IO_TIMEOUT, self.reader.fill_buf())
+                .await
+                .map_err(|_| NntpError::Timeout)?
+                .map_err(NntpError::Io)?;
+            if available.is_empty() {
+                if line.is_empty() {
+                    return Err(NntpError::Io(io::Error::new(
+                        io::ErrorKind::UnexpectedEof,
+                        "NNTP server closed the connection",
+                    )));
+                }
+                return Ok(());
+            }
+            let newline = available.iter().position(|byte| *byte == b'\n');
+            let take = newline.map_or(available.len(), |index| index + 1);
+            if line.len().saturating_add(take) > MAX_LINE {
+                return Err(NntpError::ResponseTooLong);
+            }
+            line.extend_from_slice(&available[..take]);
+            self.reader.consume(take);
+            if newline.is_some() {
+                return Ok(());
+            }
+        }
     }
 }
 
@@ -499,9 +495,13 @@ fn invalid_article_id() -> NntpError {
 }
 
 fn validate_profile(profile: &UsenetProviderProfile) -> Result<(), NntpError> {
-    if profile.id.trim().is_empty() || profile.host.trim().is_empty() || profile.port == 0 {
+    if profile.id.trim().is_empty()
+        || profile.host.trim().is_empty()
+        || profile.port == 0
+        || profile.max_connections == 0
+    {
         return Err(NntpError::InvalidProfile(
-            "id, host, and a non-zero port are required".into(),
+            "id, host, a non-zero port, and a positive connection limit are required".into(),
         ));
     }
     match profile.security_mode.as_str() {
@@ -1110,6 +1110,53 @@ mod tests {
             b"hello\n.dot\n"
         );
         server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn rejects_an_unterminated_response_line_without_buffering_past_the_cap() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut reader = BufReader::new(stream);
+            reader
+                .get_mut()
+                .write_all(b"200 test server ready\r\n")
+                .await
+                .unwrap();
+            let mut command = String::new();
+            reader.read_line(&mut command).await.unwrap();
+            reader
+                .get_mut()
+                .write_all(b"220 article follows\r\n")
+                .await
+                .unwrap();
+            reader
+                .get_mut()
+                .write_all(&vec![b'x'; MAX_LINE + 1])
+                .await
+                .unwrap();
+        });
+
+        let mut p = profile("bounded", 0);
+        p.port = port;
+        let mut connection = NntpConnection::connect(&p, None).await.unwrap();
+        assert!(matches!(
+            connection.article("id@example").await,
+            Err(NntpError::ResponseTooLong)
+        ));
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn rejects_zero_connection_capacity_at_the_registry_boundary() {
+        let registry = ProviderConnectionCapacityRegistry::default();
+        let mut p = profile("zero", 0);
+        p.max_connections = 0;
+        assert!(matches!(
+            registry.acquire(&p).await,
+            Err(NntpError::InvalidProfile(_))
+        ));
     }
 
     #[tokio::test]

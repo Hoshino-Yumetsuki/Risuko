@@ -128,9 +128,11 @@ pub fn verify_or_repair_with_cancel(
         .map_err(Par2Error::Io)?;
     let probe = stage.path().join("probe");
     fs::create_dir(&probe)?;
-    stage_parity_files(&probe, &request.parity_files)?;
-    stage_data_files(&probe, &file_set, &data_by_name, None)?;
+    stage_parity_files(&probe, &request.parity_files, cancel)?;
+    stage_data_files(&probe, &file_set, &data_by_name, None, cancel)?;
 
+    check_cancel(cancel)?;
+    check_active_time(request)?;
     let verification = rust_par2::verify(&file_set, &probe);
     check_cancel(cancel)?;
     check_active_time(request)?;
@@ -161,10 +163,14 @@ pub fn verify_or_repair_with_cancel(
     fs::remove_dir_all(&probe)?;
     let repair_dir = stage.path().join("repair");
     fs::create_dir(&repair_dir)?;
-    stage_parity_files(&repair_dir, &request.parity_files)?;
-    stage_data_files(&repair_dir, &file_set, &data_by_name, Some(&intact))?;
+    stage_parity_files(&repair_dir, &request.parity_files, cancel)?;
+    stage_data_files(&repair_dir, &file_set, &data_by_name, Some(&intact), cancel)?;
+    check_cancel(cancel)?;
+    check_active_time(request)?;
     let repair = rust_par2::repair_from_verify(&file_set, &repair_dir, &verification)
         .map_err(|error| Par2Error::Repair(error.to_string()))?;
+    check_cancel(cancel)?;
+    check_active_time(request)?;
     check_cancel(cancel)?;
     check_active_time(request)?;
     let post_repair = rust_par2::verify(&file_set, &repair_dir);
@@ -868,8 +874,13 @@ fn ensure_regular_file(path: &Path) -> Result<(), Par2Error> {
     Ok(())
 }
 
-fn stage_parity_files(stage: &Path, parity_files: &[PathBuf]) -> Result<(), Par2Error> {
+fn stage_parity_files(
+    stage: &Path,
+    parity_files: &[PathBuf],
+    cancel: Option<&CancellationToken>,
+) -> Result<(), Par2Error> {
     for (index, source) in parity_files.iter().enumerate() {
+        check_cancel(cancel)?;
         let destination = stage.join(format!("parity-{index:05}.par2"));
         link_or_copy(source, &destination)?;
     }
@@ -881,8 +892,10 @@ fn stage_data_files(
     file_set: &rust_par2::Par2FileSet,
     data_by_name: &HashMap<String, &Par2InputFile>,
     intact_names: Option<&HashSet<&str>>,
+    cancel: Option<&CancellationToken>,
 ) -> Result<(), Par2Error> {
     for file in file_set.files.values() {
+        check_cancel(cancel)?;
         let input = data_by_name
             .get(&file.filename)
             .ok_or_else(|| Par2Error::UnsafePath(file.filename.clone()))?;
@@ -890,7 +903,7 @@ fn stage_data_files(
         if intact_names.is_some_and(|names| names.contains(file.filename.as_str())) {
             link_or_copy(&input.source_path, &destination)?;
         } else {
-            sparse_copy(&input.source_path, &destination)?;
+            sparse_copy(&input.source_path, &destination, cancel)?;
         }
     }
     Ok(())
@@ -919,7 +932,11 @@ fn link_or_copy(source: &Path, destination: &Path) -> Result<(), Par2Error> {
     }
 }
 
-fn sparse_copy(source: &Path, destination: &Path) -> Result<(), Par2Error> {
+fn sparse_copy(
+    source: &Path,
+    destination: &Path,
+    cancel: Option<&CancellationToken>,
+) -> Result<(), Par2Error> {
     ensure_regular_file(source)?;
     let source_length = fs::metadata(source)?.len();
     let mut reader = BufReader::new(fs::File::open(source)?);
@@ -930,6 +947,7 @@ fn sparse_copy(source: &Path, destination: &Path) -> Result<(), Par2Error> {
     let mut buffer = vec![0u8; SPARSE_COPY_BUFFER_BYTES];
     let mut written = 0u64;
     loop {
+        check_cancel(cancel)?;
         let read = reader.read(&mut buffer)?;
         if read == 0 {
             break;

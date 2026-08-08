@@ -19,6 +19,7 @@ import {
 } from "lodash";
 
 export { bytesToSize } from "./format";
+export { formatUsenetRepairFailure } from "./usenet";
 
 // human message from an axios-style error, with a 429 special-case
 // and a caller-supplied fallback; shared by the sync + share stores

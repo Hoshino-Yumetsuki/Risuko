@@ -598,6 +598,9 @@ export default defineComponent({
 						left.name.localeCompare(right.name),
 				);
 		},
+		profileIds(): string {
+			return this.profiles.map((profile) => profile.id).join("\u0000");
+		},
 		cleanupMode: {
 			get(): UsenetCleanupMode {
 				return this.preferenceStore.config.usenetCleanupMode || "keep-all";
@@ -676,7 +679,14 @@ export default defineComponent({
 		if (this.archiveLimitsAdjusted) {
 			this.limitsExpanded = true;
 		}
-		this.refreshCredentialStatuses();
+	},
+	watch: {
+		profileIds: {
+			handler() {
+				this.refreshCredentialStatuses();
+			},
+			immediate: true,
+		},
 	},
 	methods: {
 		errorMessage(error: unknown): string {
@@ -844,10 +854,29 @@ export default defineComponent({
 				updatedAt: now,
 			};
 
+			const storedProfiles = this.preferenceStore.config.usenetProfiles || [];
+			const existingIndex = storedProfiles.findIndex(
+				(item) => item.id === profile.id,
+			);
+			const nextProfiles = [...storedProfiles];
+			if (existingIndex >= 0) {
+				nextProfiles.splice(existingIndex, 1, profile);
+			} else {
+				nextProfiles.push(profile);
+			}
+
 			try {
+				await this.preferenceStore.save({ usenetProfiles: nextProfiles });
 				if (this.profileForm.authMode === "anonymous") {
-					await api.removeUsenetCredentials(profile.id);
-					this.credentialStatuses[profile.id] = false;
+					try {
+						await api.removeUsenetCredentials(profile.id);
+						this.credentialStatuses[profile.id] = false;
+					} catch (credentialError) {
+						await this.preferenceStore.save({
+							usenetProfiles: storedProfiles,
+						});
+						throw credentialError;
+					}
 				} else if (
 					this.profileForm.username.trim() &&
 					this.profileForm.password
@@ -860,17 +889,6 @@ export default defineComponent({
 					this.credentialStatuses[profile.id] = true;
 				}
 
-				const storedProfiles = this.preferenceStore.config.usenetProfiles || [];
-				const existingIndex = storedProfiles.findIndex(
-					(item) => item.id === profile.id,
-				);
-				const nextProfiles = [...storedProfiles];
-				if (existingIndex >= 0) {
-					nextProfiles.splice(existingIndex, 1, profile);
-				} else {
-					nextProfiles.push(profile);
-				}
-				await this.preferenceStore.save({ usenetProfiles: nextProfiles });
 				this.profileDialogOpen = false;
 				toast.success(this.$t("preferences.usenet-profile-saved") as string);
 			} catch (error) {
@@ -934,13 +952,9 @@ export default defineComponent({
 					: item,
 			);
 			try {
+				await api.removeUsenetCredentials(profile.id);
+				delete this.credentialStatuses[profile.id];
 				await this.preferenceStore.save({ usenetProfiles: nextProfiles });
-				try {
-					await api.removeUsenetCredentials(profile.id);
-					delete this.credentialStatuses[profile.id];
-				} catch (credentialError) {
-					toast.error(this.errorMessage(credentialError));
-				}
 				toast.success(
 					this.$t("preferences.usenet-profile-removed", {
 						name: profile.name,

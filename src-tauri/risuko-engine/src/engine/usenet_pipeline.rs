@@ -444,20 +444,8 @@ fn validate_crc32(data: &[u8], encoded: &str, field: &str) -> Result<(), String>
 }
 
 fn decode_yenc_line(line: &[u8], output: &mut Vec<u8>) -> Result<(), String> {
-    let mut index = 0;
-    while index < line.len() {
-        let mut value = line[index];
-        index += 1;
-        if value == b'=' {
-            if index >= line.len() {
-                return Err("truncated yEnc escape".into());
-            }
-            value = line[index].wrapping_sub(64);
-            index += 1;
-        }
-        output.push(value.wrapping_sub(42));
-    }
-    Ok(())
+    crate::engine::archive_pipeline::decode_yenc_line(line, output)
+        .map_err(|error| error.to_string())
 }
 
 fn crc32(bytes: &[u8]) -> u32 {

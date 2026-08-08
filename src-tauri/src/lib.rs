@@ -271,8 +271,17 @@ pub fn run() {
         let upload_mgr = app.state::<state::AppState>().upload_sinks.clone();
         upload_mgr.set_event_sink(event_sink_clone.clone());
         let vault = app.state::<state::AppState>().vault.clone();
+        let config_dir = app
+            .state::<state::AppState>()
+            .config
+            .lock()
+            .map_err(|_| "Configuration lock poisoned")?
+            .config_dir()
+            .to_path_buf();
         tauri::async_runtime::block_on(risuko_engine::engine::set_usenet_credential_resolver(
-            std::sync::Arc::new(commands::usenet_cmds::VaultCredentialResolver::new(vault)),
+            std::sync::Arc::new(
+                commands::usenet_cmds::VaultCredentialResolver::with_config_dir(vault, config_dir),
+            ),
         ));
 
         {

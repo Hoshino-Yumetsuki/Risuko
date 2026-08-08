@@ -952,6 +952,7 @@ fn list_methods() -> Value {
         "addUri",
         "addMedia",
         "addTorrent",
+        "addNzb",
         "addEd2k",
         "remove",
         "forceRemove",
@@ -1302,5 +1303,15 @@ mod tests {
         let params = vec![json!("gid"), json!("not_array")];
         let keys = get_keys(&params, 1);
         assert!(keys.is_empty());
+    }
+
+    #[test]
+    fn list_methods_advertises_nzb_endpoint() {
+        let methods = list_methods();
+        assert!(methods
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|method| method.as_str() == Some("risuko.addNzb")));
     }
 }

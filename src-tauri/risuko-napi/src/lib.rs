@@ -61,6 +61,8 @@ pub async fn start_engine(config: Option<EngineConfig>) -> Result<()> {
     let system_config = load_config(&config_dir.join("system.json"), defaults::system_defaults());
     let user_config = load_config(&config_dir.join("user.json"), defaults::user_defaults());
 
+    risuko_engine::engine::set_file_usenet_credential_resolver(config_dir.clone()).await;
+
     let mut options = EngineOptions::from_config(&system_config, &user_config);
 
     if let Some(port) = config.as_ref().and_then(|c| c.rpc_port) {

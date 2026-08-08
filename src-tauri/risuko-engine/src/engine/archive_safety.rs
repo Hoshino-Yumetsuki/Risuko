@@ -128,7 +128,11 @@ pub fn validate_limits_override_value(
         max_entries: read("maxEntries", defaults.max_entries)?,
         max_expanded_bytes: read("maxExpandedBytes", defaults.max_expanded_bytes)?,
         max_entry_bytes: read("maxEntryBytes", defaults.max_entry_bytes)?,
-        max_nesting_depth: read("maxNestingDepth", defaults.max_nesting_depth as u64)? as u32,
+        max_nesting_depth: u32::try_from(read(
+            "maxNestingDepth",
+            defaults.max_nesting_depth as u64,
+        )?)
+        .map_err(|_| ArchiveSafetyError::HardCeiling)?,
         max_compression_ratio: read("maxCompressionRatio", defaults.max_compression_ratio)?,
         free_space_reserve_bytes: read("freeSpaceReserveBytes", defaults.free_space_reserve_bytes)?,
         max_active_seconds: read("maxActiveSeconds", defaults.max_active_seconds)?,
@@ -169,7 +173,12 @@ pub fn validate_member_path(path: &str) -> Result<(), ArchiveSafetyError> {
 }
 
 fn is_reserved_windows_name(part: &str) -> bool {
-    let stem = part.split('.').next().unwrap_or(part).to_ascii_uppercase();
+    let stem = part
+        .split('.')
+        .next()
+        .unwrap_or(part)
+        .trim_end_matches(|character| character == ' ' || character == '.')
+        .to_ascii_uppercase();
     matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
         || ((stem.starts_with("COM") || stem.starts_with("LPT"))
             && stem[3..].parse::<u8>().is_ok_and(|n| (1..=9).contains(&n)))
@@ -193,10 +202,16 @@ pub fn check_limits(
     if usage.nesting_depth > limits.max_nesting_depth {
         return Err(ArchiveSafetyError::NestingDepth);
     }
-    if compressed_bytes > 0
-        && usage.expanded_bytes / compressed_bytes.max(1) > limits.max_compression_ratio
-    {
+    if usage.expanded_bytes > 0 && compressed_bytes == 0 {
         return Err(ArchiveSafetyError::CompressionRatio);
+    }
+    if compressed_bytes > 0 {
+        let max_expanded = compressed_bytes
+            .checked_mul(limits.max_compression_ratio)
+            .unwrap_or(u64::MAX);
+        if usage.expanded_bytes > max_expanded {
+            return Err(ArchiveSafetyError::CompressionRatio);
+        }
     }
     if free_space_bytes.is_some_and(|free| free < limits.free_space_reserve_bytes) {
         return Err(ArchiveSafetyError::FreeSpaceReserve);
@@ -225,7 +240,16 @@ mod tests {
 
     #[test]
     fn rejects_unsafe_member_paths() {
-        for path in ["../x", "/tmp/x", "C:/x", "a\\b", "CON.txt", "a/\u{7f}b"] {
+        for path in [
+            "../x",
+            "/tmp/x",
+            "C:/x",
+            "a\\b",
+            "CON.txt",
+            "NUL ",
+            "CON .txt",
+            "a/\u{7f}b",
+        ] {
             assert_eq!(
                 validate_member_path(path),
                 Err(ArchiveSafetyError::UnsafePath)
@@ -270,5 +294,36 @@ mod tests {
             validate_limits_override(defaults, requested, true),
             Err(ArchiveSafetyError::HardCeiling)
         );
+    }
+
+    #[test]
+    fn rejects_nesting_depth_values_that_do_not_fit_the_engine_type() {
+        let defaults = limits();
+        let value = serde_json::json!({ "maxNestingDepth": u64::from(u32::MAX) + 1 });
+        assert_eq!(
+            validate_limits_override_value(defaults, &value, true),
+            Err(ArchiveSafetyError::HardCeiling)
+        );
+    }
+
+    #[test]
+    fn compression_ratio_uses_exact_overflow_safe_comparison() {
+        let mut configured = limits();
+        configured.max_expanded_bytes = u64::MAX;
+        let mut usage = ArchiveUsage {
+            expanded_bytes: 101,
+            ..Default::default()
+        };
+        assert_eq!(
+            check_limits(configured, usage, 10, Some(100)),
+            Err(ArchiveSafetyError::CompressionRatio)
+        );
+        usage.expanded_bytes = 1;
+        assert_eq!(
+            check_limits(configured, usage, 0, Some(100)),
+            Err(ArchiveSafetyError::CompressionRatio)
+        );
+        usage.expanded_bytes = 0;
+        assert!(check_limits(configured, usage, 0, Some(100)).is_ok());
     }
 }

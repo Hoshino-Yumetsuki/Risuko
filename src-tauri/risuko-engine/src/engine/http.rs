@@ -489,6 +489,41 @@ pub async fn fetch_for_metalink_probe(
         .map_err(|_| "metalink probe timed out".to_string())?
 }
 
+/// Fetch an NZB URL using the same HTTP client and request headers as a
+/// regular HTTP task. The response is consumed incrementally so chunked
+/// responses cannot bypass the payload cap.
+pub async fn fetch_for_nzb(uri: &str, options: &Map<String, Value>) -> Result<Vec<u8>, String> {
+    const CAP: u64 = 16 * 1024 * 1024;
+    let client = build_client(options, true, None)?;
+    let mut headers = build_headers(options);
+    apply_netrc_auth(&mut headers, uri, options);
+    let response = client
+        .get(uri)
+        .headers(headers)
+        .send()
+        .await
+        .map_err(|e| format!("NZB URL fetch failed: {e}"))?
+        .error_for_status()
+        .map_err(|e| format!("NZB URL returned an error: {e}"))?;
+
+    if response.content_length().is_some_and(|length| length > CAP) {
+        return Err("NZB URL payload too large".to_string());
+    }
+
+    let mut bytes = Vec::with_capacity(response.content_length().unwrap_or(0).min(CAP) as usize);
+    let mut stream = response.bytes_stream();
+    let mut total = 0u64;
+    while let Some(item) = stream.next().await {
+        let chunk = item.map_err(|e| format!("NZB URL body read failed: {e}"))?;
+        total = total.saturating_add(chunk.len() as u64);
+        if total > CAP {
+            return Err("NZB URL payload too large".to_string());
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    Ok(bytes)
+}
+
 /// Build a HTTP Client with common settings applied from options
 ///
 /// `decompress` is off for range requests, which must receive raw bytes at

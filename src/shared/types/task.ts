@@ -1,3 +1,5 @@
+import type { UsenetTaskOptions } from "./usenet";
+
 interface FileUri {
 	uri: string;
 	status: string;
@@ -57,7 +59,7 @@ export interface DownloadTask {
 	options?: Record<string, string>;
 	tag?: string;
 	usenet?: {
-		options?: { profileId?: string; cleanupMode?: string };
+		options?: UsenetTaskOptions;
 		files?: Array<{
 			name: string;
 			subject: string;

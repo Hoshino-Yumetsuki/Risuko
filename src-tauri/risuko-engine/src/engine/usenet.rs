@@ -137,7 +137,7 @@ struct RawSegments {
 
 #[derive(Debug, Deserialize)]
 struct RawSegment {
-    #[serde(rename = "@bytes", default)]
+    #[serde(rename = "@bytes")]
     bytes: u64,
     #[serde(rename = "@number")]
     number: u32,
@@ -188,10 +188,8 @@ pub fn parse(bytes: &[u8]) -> Result<NzbDocument, String> {
     let mut files = Vec::with_capacity(raw.files.len());
     for raw_file in raw.files {
         let subject = raw_file.subject.trim().to_string();
-        let name = subject_filename(&subject);
-        if name.is_empty() {
-            return Err("NZB file has no usable filename".into());
-        }
+        let name = subject_filename(&subject)
+            .ok_or_else(|| "NZB file has no usable filename".to_string())?;
         let groups = raw_file
             .groups
             .map(|groups| {
@@ -222,6 +220,11 @@ pub fn parse(bytes: &[u8]) -> Result<NzbDocument, String> {
                 }
                 if segment.number == 0 {
                     return Err(format!("NZB file {name:?} has segment number 0"));
+                }
+                if segment.bytes == 0 {
+                    return Err(format!(
+                        "NZB file {name:?} has a segment with no byte count"
+                    ));
                 }
                 Ok(NzbSegment {
                     number: segment.number,
@@ -263,7 +266,7 @@ pub fn parse(bytes: &[u8]) -> Result<NzbDocument, String> {
     })
 }
 
-fn subject_filename(subject: &str) -> String {
+fn subject_filename(subject: &str) -> Option<String> {
     let mut value = subject.trim();
     if let Some((_, suffix)) = value.rsplit_once(" - ") {
         value = suffix.trim();
@@ -283,7 +286,8 @@ fn subject_filename(subject: &str) -> String {
         .file_name()
         .map(|name| name.to_string_lossy().to_string())
         .unwrap_or(value);
-    crate::engine::util::safe_filename(&base, "download")
+    let safe = crate::engine::util::safe_filename(&base, "");
+    (!safe.is_empty()).then_some(safe)
 }
 
 #[cfg(test)]
@@ -327,9 +331,24 @@ mod tests {
         assert_eq!(
             subject_filename(
                 r#"reftestnzb 100MB [01/13] - "rar-files.part01.rar" yEnc (1/37) 26214400"#,
-            ),
-            "rar-files.part01.rar"
+            )
+            .as_deref(),
+            Some("rar-files.part01.rar")
         );
+    }
+
+    #[test]
+    fn rejects_missing_or_zero_segment_byte_counts() {
+        let missing = br#"<nzb><file subject="x.bin"><groups><group>a</group></groups><segments><segment number="1">a</segment></segments></file></nzb>"#;
+        assert!(parse(missing).is_err());
+        let zero = br#"<nzb><file subject="x.bin"><groups><group>a</group></groups><segments><segment bytes="0" number="1">a</segment></segments></file></nzb>"#;
+        assert!(parse(zero).is_err());
+    }
+
+    #[test]
+    fn rejects_subjects_without_a_usable_filename() {
+        let empty = br#"<nzb><file subject="..."><groups><group>a</group></groups><segments><segment bytes="1" number="1">a</segment></segments></file></nzb>"#;
+        assert!(parse(empty).is_err());
     }
 
     #[test]

@@ -63,6 +63,7 @@ pub const STARTUP_ONLY_KEYS: &[&str] = &[
     "bt-listen-v6",
 ];
 
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
@@ -90,7 +91,79 @@ pub async fn set_usenet_credential_resolver(
     *USENET_CREDENTIAL_RESOLVER.write().await = Some(resolver);
 }
 
+/// Install a file-backed resolver for hosts that own the engine lifecycle
+/// (standalone/headless and NAPI). Unlike `ensure_*`, this refreshes the path
+/// on every host start so a reused process cannot retain an old config dir.
+pub async fn set_file_usenet_credential_resolver(config_dir: impl Into<PathBuf>) {
+    set_usenet_credential_resolver(Arc::new(FileUsenetCredentialResolver::new(config_dir))).await;
+}
+
+/// Install the file-backed resolver only when the host has not supplied a
+/// stronger resolver (for example, the Tauri OS-keychain resolver).
+pub async fn ensure_file_usenet_credential_resolver(config_dir: impl Into<PathBuf>) {
+    let mut guard = USENET_CREDENTIAL_RESOLVER.write().await;
+    if guard.is_none() {
+        *guard = Some(Arc::new(FileUsenetCredentialResolver::new(config_dir)));
+    }
+}
+
+/// Location of the durable plaintext fallback used when an OS keychain is
+/// unavailable. The file is deliberately separate from user.json so secrets
+/// do not cross the normal renderer configuration boundary.
+pub fn usenet_credential_fallback_path(config_dir: &Path) -> PathBuf {
+    config_dir.join("usenet-credentials.json")
+}
+
+/// File-backed credential resolver for standalone and NAPI hosts. Tauri uses
+/// the same file only as a fallback behind its keychain resolver.
+pub struct FileUsenetCredentialResolver {
+    path: PathBuf,
+}
+
+impl FileUsenetCredentialResolver {
+    pub fn new(config_dir: impl Into<PathBuf>) -> Self {
+        Self {
+            path: usenet_credential_fallback_path(&config_dir.into()),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl usenet::UsenetCredentialResolver for FileUsenetCredentialResolver {
+    async fn resolve(&self, profile_id: &str) -> Result<Option<usenet::UsenetCredentials>, String> {
+        let text = match std::fs::read_to_string(&self.path) {
+            Ok(text) => text,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(format!("Failed to read Usenet credentials: {error}")),
+        };
+        let root: serde_json::Value = serde_json::from_str(&text)
+            .map_err(|error| format!("Failed to parse Usenet credentials: {error}"))?;
+        let Some(entry) = root.get(profile_id).and_then(serde_json::Value::as_object) else {
+            return Ok(None);
+        };
+        let username = entry
+            .get("username")
+            .and_then(serde_json::Value::as_str)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+        let password = entry
+            .get("password")
+            .and_then(serde_json::Value::as_str)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+        if username.is_none() && password.is_none() {
+            Ok(None)
+        } else {
+            Ok(Some(usenet::UsenetCredentials { username, password }))
+        }
+    }
+}
+
 pub async fn usenet_credential_resolver() -> std::sync::Arc<dyn usenet::UsenetCredentialResolver> {
+    // Host entry points call `ensure_file_usenet_credential_resolver` (or
+    // install their own resolver) before creating a manager. Keep the
+    // anonymous fallback for direct library users that intentionally construct
+    // a manager without a host credential store.
     USENET_CREDENTIAL_RESOLVER
         .read()
         .await
@@ -178,6 +251,7 @@ pub async fn start_engine(
     }
 
     let config_dir = config.config_dir().to_path_buf();
+    ensure_file_usenet_credential_resolver(config_dir.clone()).await;
     let system = config.get_system_config();
     let user = config.get_user_config();
     let options = EngineOptions::from_config(system, user);
@@ -402,4 +476,32 @@ pub async fn restart_engine(
 pub async fn get_manager() -> Option<Arc<TaskManager>> {
     let guard = ENGINE_INSTANCE.lock().await;
     guard.as_ref().map(|i| i.manager.clone())
+}
+
+#[cfg(test)]
+mod credential_tests {
+    use super::*;
+    use crate::engine::usenet::UsenetCredentialResolver;
+    use serde_json::json;
+    use tempfile::TempDir;
+
+    #[tokio::test]
+    async fn file_resolver_reads_durable_credentials() {
+        let dir = TempDir::new().unwrap();
+        let path = usenet_credential_fallback_path(dir.path());
+        std::fs::write(
+            &path,
+            serde_json::to_vec(&json!({
+                "primary": { "username": "alice", "password": "secret" }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let resolver = FileUsenetCredentialResolver::new(dir.path());
+        let credentials = resolver.resolve("primary").await.unwrap().unwrap();
+        assert_eq!(credentials.username.as_deref(), Some("alice"));
+        assert_eq!(credentials.password.as_deref(), Some("secret"));
+        assert!(resolver.resolve("missing").await.unwrap().is_none());
+    }
 }

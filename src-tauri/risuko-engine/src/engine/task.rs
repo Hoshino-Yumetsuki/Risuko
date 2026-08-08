@@ -746,19 +746,31 @@ impl DownloadTask {
         }
 
         if self.kind == TaskKind::Usenet {
-            if let Some(ref usenet) = self.usenet {
-                m.insert(
-                    "usenet".into(),
-                    serde_json::to_value(usenet).unwrap_or_default(),
-                );
+            let want_usenet_manifest = keys.is_empty() || keys.iter().any(|key| key == "usenet");
+            if want_usenet_manifest {
+                if let Some(ref usenet) = self.usenet {
+                    m.insert(
+                        "usenet".into(),
+                        serde_json::to_value(usenet).unwrap_or_default(),
+                    );
+                }
             }
-            if let Some(stage) = &self.usenet_stage {
+            if (keys.is_empty() || keys.iter().any(|key| key == "usenetStage"))
+                && self.usenet_stage.is_some()
+            {
+                let stage = self.usenet_stage.as_ref().expect("checked above");
                 m.insert("usenetStage".into(), Value::String(stage.clone()));
             }
-            if let Some(warning) = &self.usenet_warning {
+            if (keys.is_empty() || keys.iter().any(|key| key == "usenetWarning"))
+                && self.usenet_warning.is_some()
+            {
+                let warning = self.usenet_warning.as_ref().expect("checked above");
                 m.insert("usenetWarning".into(), Value::String(warning.clone()));
             }
-            if let Some(repair_failure) = &self.usenet_repair_failure {
+            if (keys.is_empty() || keys.iter().any(|key| key == "usenetRepairFailure"))
+                && self.usenet_repair_failure.is_some()
+            {
+                let repair_failure = self.usenet_repair_failure.as_ref().expect("checked above");
                 m.insert(
                     "usenetRepairFailure".into(),
                     serde_json::to_value(repair_failure).unwrap_or_default(),
@@ -1109,6 +1121,40 @@ mod tests {
         assert_eq!(obj.len(), 2);
         assert!(obj.contains_key("gid"));
         assert!(obj.contains_key("status"));
+    }
+
+    #[test]
+    fn rpc_status_stage_request_skips_usenet_manifest() {
+        let mut task = DownloadTask::new_usenet(
+            "ugid".into(),
+            "/dl".into(),
+            None,
+            None,
+            Map::new(),
+            Vec::new(),
+        )
+        .with_usenet_data(UsenetTaskData {
+            options: UsenetTaskOptions::default(),
+            files: vec![UsenetTaskFile {
+                name: "large.nzb.file".into(),
+                subject: "large.nzb.file".into(),
+                groups: vec!["alt.binaries.example".into()],
+                segments: vec![UsenetTaskSegment {
+                    number: 1,
+                    bytes: 1,
+                    message_id: "example".into(),
+                }],
+            }],
+        });
+        task.usenet_stage = Some("assembling".into());
+
+        let status = task.to_rpc_status(&["usenetStage".to_string()]);
+        let object = status.as_object().unwrap();
+        assert_eq!(
+            object.get("usenetStage"),
+            Some(&Value::String("assembling".into()))
+        );
+        assert!(!object.contains_key("usenet"));
     }
 
     #[test]

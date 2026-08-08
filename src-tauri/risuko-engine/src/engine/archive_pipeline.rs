@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArchiveFormat {
@@ -76,20 +76,10 @@ pub fn decode_yenc(input: &[u8]) -> Result<Vec<u8>, YEncError> {
                 break;
             }
         }
-        let mut escaped = false;
-        for &byte in line {
-            if escaped {
-                out.push(byte.wrapping_sub(64));
-                escaped = false;
-            } else if byte == b'=' {
-                escaped = true;
-            } else {
-                out.push(byte.wrapping_sub(42));
-            }
-        }
-        if escaped {
-            return Err(YEncError::DanglingEscape);
-        }
+        decode_yenc_line(line, &mut out).map_err(|error| match error {
+            "truncated yEnc escape" => YEncError::DanglingEscape,
+            _ => YEncError::InvalidHeader,
+        })?;
         cursor = skip_line(text, line_end);
     }
     if let Some(size) = expected_size {
@@ -109,6 +99,25 @@ pub fn decode_yenc(input: &[u8]) -> Result<Vec<u8>, YEncError> {
     }
     let _ = begin_header; // Header fields are validated by presence above
     Ok(out)
+}
+
+/// Decode one yEnc payload line. The worker's multipart decoder uses this
+/// shared primitive so escaped bytes have identical semantics everywhere.
+pub(crate) fn decode_yenc_line(input: &[u8], output: &mut Vec<u8>) -> Result<(), &'static str> {
+    let mut index = 0;
+    while index < input.len() {
+        let mut value = input[index];
+        index += 1;
+        if value == b'=' {
+            if index >= input.len() {
+                return Err("truncated yEnc escape");
+            }
+            value = input[index].wrapping_sub(64);
+            index += 1;
+        }
+        output.push(value.wrapping_sub(42));
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -216,6 +225,25 @@ pub fn extract_members<I>(
 where
     I: IntoIterator<Item = ArchiveMember>,
 {
+    extract_members_with_started_at(
+        members,
+        destination,
+        limits,
+        free_space_bytes,
+        Instant::now(),
+    )
+}
+
+fn extract_members_with_started_at<I>(
+    members: I,
+    destination: &Path,
+    limits: ArchiveLimits,
+    free_space_bytes: Option<u64>,
+    started_at: Instant,
+) -> Result<ExtractionReport, ArchivePipelineError>
+where
+    I: IntoIterator<Item = ArchiveMember>,
+{
     fs::create_dir_all(destination).map_err(ArchivePipelineError::Io)?;
     let mut usage = ArchiveUsage::default();
     let mut compressed_bytes = 0u64;
@@ -235,6 +263,7 @@ where
         usage.max_entry_bytes = usage.max_entry_bytes.max(member.data.len() as u64);
         usage.nesting_depth = usage.nesting_depth.max(member.depth);
         compressed_bytes = compressed_bytes.saturating_add(member.compressed_bytes);
+        usage.active_seconds = started_at.elapsed().as_secs();
         check_limits(limits, usage, compressed_bytes, free_space_bytes)
             .map_err(ArchivePipelineError::Safety)?;
         let mut path = destination.join(&member.path);
@@ -246,13 +275,17 @@ where
                 fs::create_dir_all(&path).map_err(ArchivePipelineError::Io)?
             }
             ArchiveEntryKind::File => {
-                if path.exists() {
+                if path_exists(&path) {
                     path = collision_path(&path);
                 }
                 if let Some(parent) = path.parent() {
                     fs::create_dir_all(parent).map_err(ArchivePipelineError::Io)?;
                 }
-                let mut file = fs::File::create(&path).map_err(ArchivePipelineError::Io)?;
+                let mut file = fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(&path)
+                    .map_err(ArchivePipelineError::Io)?;
                 file.write_all(&member.data)
                     .map_err(ArchivePipelineError::Io)?;
                 file.sync_all().map_err(ArchivePipelineError::Io)?;
@@ -271,6 +304,9 @@ where
             }
             _ => unreachable!(),
         }
+        usage.active_seconds = started_at.elapsed().as_secs();
+        check_limits(limits, usage, compressed_bytes, free_space_bytes)
+            .map_err(ArchivePipelineError::Safety)?;
     }
     Ok(ExtractionReport {
         usage,
@@ -290,11 +326,15 @@ fn collision_path(path: &Path) -> PathBuf {
             None => format!("{stem} ({index})"),
         };
         let candidate = path.with_file_name(name);
-        if !candidate.exists() {
+        if !path_exists(&candidate) {
             return candidate;
         }
     }
     path.with_file_name(format!("{stem}.{}", uuid::Uuid::new_v4().simple()))
+}
+
+fn path_exists(path: &Path) -> bool {
+    fs::symlink_metadata(path).is_ok()
 }
 
 fn has_symlink_ancestor(destination: &Path, relative: &str) -> Result<bool, ArchivePipelineError> {
@@ -526,8 +566,13 @@ mod tests {
     #[test]
     fn decodes_yenc_and_checks_crc() {
         let source = b"hello\0world\n";
-        assert_eq!(decode_yenc(&yenc_encode(source)).unwrap(), source);
-        let mut corrupt = yenc_encode(source);
+        let encoded = yenc_encode(source);
+        assert_eq!(decode_yenc(&encoded).unwrap(), source);
+        assert_eq!(
+            crate::engine::usenet_pipeline::decode_yenc(&encoded).unwrap(),
+            source
+        );
+        let mut corrupt = encoded;
         let crc_offset = corrupt
             .windows(6)
             .position(|window| window == b"crc32=")
@@ -602,6 +647,72 @@ mod tests {
                 ArchiveSafetyError::ExpandedBytes | ArchiveSafetyError::EntryBytes
             ))
         ));
+    }
+
+    #[test]
+    fn extraction_accounts_for_elapsed_active_time() {
+        let dir = tempdir().unwrap();
+        let limits = ArchiveLimits {
+            max_entries: 1,
+            max_expanded_bytes: 10,
+            max_entry_bytes: 10,
+            max_nesting_depth: 1,
+            max_compression_ratio: 10,
+            free_space_reserve_bytes: 0,
+            max_active_seconds: 0,
+        };
+        let result = extract_members_with_started_at(
+            [ArchiveMember {
+                path: "x".into(),
+                kind: ArchiveEntryKind::File,
+                data: vec![1],
+                compressed_bytes: 1,
+                depth: 0,
+            }],
+            dir.path(),
+            limits,
+            None,
+            Instant::now() - Duration::from_secs(1),
+        );
+        assert!(matches!(
+            result,
+            Err(ArchivePipelineError::Safety(ArchiveSafetyError::ActiveTime))
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_a_dangling_symlink_at_the_output_path() {
+        use std::os::unix::fs::symlink;
+
+        let destination = tempdir().unwrap();
+        let outside = tempdir().unwrap();
+        let output = destination.path().join("x");
+        symlink(outside.path().join("missing"), &output).unwrap();
+        let limits = ArchiveLimits {
+            max_entries: 1,
+            max_expanded_bytes: 10,
+            max_entry_bytes: 10,
+            max_nesting_depth: 1,
+            max_compression_ratio: 10,
+            free_space_reserve_bytes: 0,
+            max_active_seconds: 10,
+        };
+
+        let result = extract_members(
+            [ArchiveMember {
+                path: "x".into(),
+                kind: ArchiveEntryKind::File,
+                data: vec![1],
+                compressed_bytes: 1,
+                depth: 0,
+            }],
+            destination.path(),
+            limits,
+            None,
+        );
+        assert!(matches!(result, Err(ArchivePipelineError::UnsafeEntry(_))));
+        assert!(!outside.path().join("missing").exists());
     }
 
     #[test]

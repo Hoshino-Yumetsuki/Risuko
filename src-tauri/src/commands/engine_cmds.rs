@@ -567,6 +567,13 @@ async fn add_nzb_by_path_inner(path: &str, options: Option<Value>) -> Result<Str
 }
 
 fn is_nzb_url(uri: &str) -> bool {
+    let Some(scheme_end) = uri.find("://") else {
+        return false;
+    };
+    let scheme = &uri[..scheme_end];
+    if !scheme.eq_ignore_ascii_case("http") && !scheme.eq_ignore_ascii_case("https") {
+        return false;
+    }
     let path = uri.split(['?', '#']).next().unwrap_or(uri);
     path.rsplit('/')
         .next()
@@ -575,31 +582,8 @@ fn is_nzb_url(uri: &str) -> bool {
         .ends_with(".nzb")
 }
 
-async fn fetch_nzb_url(uri: &str) -> Result<Vec<u8>, String> {
-    const MAX_NZB_BYTES: usize = 16 * 1024 * 1024;
-    let client = risuko_http::Client::new();
-    let response = client
-        .get(uri)
-        .send()
-        .await
-        .map_err(|e| format!("NZB URL fetch failed: {e}"))?
-        .error_for_status()
-        .map_err(|e| format!("NZB URL returned an error: {e}"))?;
-    if response
-        .content_length()
-        .is_some_and(|length| length > MAX_NZB_BYTES as u64)
-    {
-        return Err("NZB URL payload too large".to_string());
-    }
-    let bytes = response
-        .bytes()
-        .await
-        .map_err(|e| format!("NZB URL body read failed: {e}"))?
-        .to_vec();
-    if bytes.len() > MAX_NZB_BYTES {
-        return Err("NZB URL payload too large".to_string());
-    }
-    Ok(bytes)
+async fn fetch_nzb_url(uri: &str, options: &Map<String, Value>) -> Result<Vec<u8>, String> {
+    engine::http::fetch_for_nzb(uri, options).await
 }
 
 #[tauri::command]
@@ -705,6 +689,12 @@ pub async fn add_uri(
     };
 
     let manager = engine::get_manager().await.ok_or("Engine not running")?;
+    let global_options = manager
+        .get_global_option()
+        .await
+        .as_object()
+        .cloned()
+        .unwrap_or_default();
 
     // Mirror group
     let mut distinct_outs = out_list
@@ -805,7 +795,12 @@ pub async fn add_uri(
         let result = if torrent::is_magnet_uri(uri) {
             manager.add_magnet_task(uri, task_options).await
         } else if is_nzb_url(uri) {
-            match fetch_nzb_url(uri).await {
+            // URL imports happen before the task is created, so explicitly
+            // merge global defaults to preserve proxy, headers, cookies, and
+            // other HTTP request settings for this fetch.
+            let mut fetch_options = global_options.clone();
+            fetch_options.extend(task_options.clone());
+            match fetch_nzb_url(uri, &fetch_options).await {
                 Ok(bytes) => manager.add_nzb_task(bytes, task_options).await,
                 Err(error) => Err(error),
             }
@@ -1537,5 +1532,13 @@ mod tests {
             "http://example.com/video.mp4",
             &opts
         ));
+    }
+
+    #[test]
+    fn nzb_url_route_only_matches_http() {
+        assert!(is_nzb_url("http://example.com/file.nzb"));
+        assert!(is_nzb_url("https://example.com/file.NZB?token=abc"));
+        assert!(!is_nzb_url("ftp://example.com/file.nzb"));
+        assert!(!is_nzb_url("nntp://example.com/file.nzb"));
     }
 }

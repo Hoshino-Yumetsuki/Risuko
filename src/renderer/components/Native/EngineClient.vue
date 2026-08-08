@@ -5,6 +5,7 @@
 <script lang="ts">
 import type { DownloadTask } from "@shared/types/task";
 import {
+	formatUsenetRepairFailure,
 	getTaskName,
 	parseBooleanConfig,
 	taskBenefitsFromLowSpeedRecovery,
@@ -645,16 +646,10 @@ export default {
 				} else if (normalizedErrorCode === "542") {
 					message = this.$t("task.media-format-unavailable", { taskName });
 				} else if (usenetRepairFailure) {
-					const summary = this.$t("task.usenet-repair-insufficient", {
-						neededBlocks: usenetRepairFailure.neededBlocks,
-						availableBlocks: usenetRepairFailure.availableBlocks,
-					});
-					const nextStep = this.$t(
-						usenetRepairFailure.partialsRetained
-							? "task.usenet-repair-partials-retained"
-							: "task.usenet-repair-partials-unavailable",
+					message = formatUsenetRepairFailure(
+						usenetRepairFailure,
+						(key, params) => this.$t(key, params),
 					);
-					message = `${summary} ${nextStep}`;
 				} else {
 					message = this.$t("task.download-error-message", { taskName });
 				}

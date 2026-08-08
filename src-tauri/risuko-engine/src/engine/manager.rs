@@ -1,6 +1,6 @@
 use serde_json::{Map, Value};
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -146,7 +146,7 @@ async fn finish_task(
                     path.display()
                 );
                 task.status = TaskStatus::Complete;
-                if task.files.is_empty() {
+                if task.kind != TaskKind::Usenet {
                     task.files = vec![DownloadFile {
                         index: "1".to_string(),
                         path: path.to_string_lossy().to_string(),
@@ -923,31 +923,33 @@ impl TaskManager {
         let (dir, tag) = self
             .resolve_routing_for_task(&options, &filename_hint)
             .await;
-        let files = document
+        let files: Vec<DownloadFile> = document
             .files
             .iter()
             .enumerate()
-            .map(|(index, file)| DownloadFile {
-                index: (index + 1).to_string(),
-                path: format!("{}/{}", dir, file.name),
-                length: file
+            .map(|(index, file)| {
+                let length = file
                     .segments
                     .iter()
-                    .map(|segment| segment.bytes)
-                    .sum::<u64>()
-                    .to_string(),
-                completed_length: "0".to_string(),
-                selected: "true".to_string(),
-                uris: file
-                    .segments
-                    .iter()
-                    .map(|segment| FileUri {
-                        uri: format!("nntp://{}", segment.message_id),
-                        status: "waiting".to_string(),
-                    })
-                    .collect(),
+                    .try_fold(0u64, |total, segment| total.checked_add(segment.bytes))
+                    .ok_or_else(|| format!("NZB file {:?} byte count overflowed", file.name))?;
+                Ok(DownloadFile {
+                    index: (index + 1).to_string(),
+                    path: format!("{}/{}", dir, file.name),
+                    length: length.to_string(),
+                    completed_length: "0".to_string(),
+                    selected: "true".to_string(),
+                    uris: file
+                        .segments
+                        .iter()
+                        .map(|segment| FileUri {
+                            uri: format!("nntp://{}", segment.message_id),
+                            status: "waiting".to_string(),
+                        })
+                        .collect(),
+                })
             })
-            .collect();
+            .collect::<Result<_, String>>()?;
         let gid = generate_gid();
         let mut options = options;
         for key in [
@@ -1552,6 +1554,8 @@ impl TaskManager {
         let active = self.active_downloads.clone();
         let events = self.events.clone();
         let connection_capacity = self.usenet_connection_capacity.clone();
+        let output_paths = Arc::new(parking_lot::Mutex::new(Vec::<PathBuf>::new()));
+        let output_paths_for_worker = output_paths.clone();
         let counters = Counters::new(task.total_length, 0);
         let worker_epoch = next_worker_epoch();
         tokio::spawn(async move {
@@ -1563,7 +1567,7 @@ impl TaskManager {
                     Arc::new(parking_lot::Mutex::new(None)),
                 ),
             );
-            let result = super::usenet_worker::run_usenet_download(
+            let result = super::usenet_worker::run_usenet_download_with_resolver_and_capacity(
                 &task_snapshot,
                 &merged_options,
                 counters.completed.clone(),
@@ -1577,7 +1581,12 @@ impl TaskManager {
                 .as_ref()
                 .err()
                 .and_then(|error| error.repair_failure().cloned());
-            let result = result.map_err(|error| error.to_string());
+            let result = result
+                .map(|(path, outputs)| {
+                    *output_paths_for_worker.lock() = outputs;
+                    path
+                })
+                .map_err(|error| error.to_string());
             finish_task(
                 &tasks,
                 &active,
@@ -1590,6 +1599,7 @@ impl TaskManager {
                 |_| {},
                 |task, path| {
                     task.usenet_repair_failure = None;
+                    let output_paths = output_paths.lock().clone();
                     if let Some(metadata) = task.usenet.as_ref() {
                         task.usenet_stage = Some("complete".to_string());
                         task.files = metadata
@@ -1598,8 +1608,14 @@ impl TaskManager {
                             .enumerate()
                             .map(|(index, file)| DownloadFile {
                                 index: (index + 1).to_string(),
-                                path: Path::new(&task.dir)
-                                    .join(super::util::safe_filename(&file.name, "download"))
+                                path: output_paths
+                                    .get(index)
+                                    .cloned()
+                                    .unwrap_or_else(|| {
+                                        Path::new(&task.dir).join(super::util::safe_filename(
+                                            &file.name, "download",
+                                        ))
+                                    })
                                     .to_string_lossy()
                                     .to_string(),
                                 length: file

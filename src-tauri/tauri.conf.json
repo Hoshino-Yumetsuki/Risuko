@@ -51,6 +51,11 @@
 				"ext": ["meta4", "metalink"],
 				"mimeType": "application/metalink4+xml",
 				"description": "Metalink file"
+			},
+			{
+				"ext": ["nzb"],
+				"mimeType": "application/x-nzb",
+				"description": "NZB file"
 			}
 		],
 		"macOS": {

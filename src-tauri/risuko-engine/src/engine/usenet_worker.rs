@@ -406,13 +406,27 @@ impl NntpArticleSource {
                 .try_acquire(profile)?
                 .ok_or(NntpError::CapacityUnavailable),
             ConnectionAdmission::Wait => {
+                let remaining = self.remaining_active_time()?;
                 tokio::select! {
                     biased;
                     _ = self.cancel.cancelled() => Err(NntpError::Cancelled),
-                    lease = self.connection_capacity.acquire(profile) => lease,
+                    lease = tokio::time::timeout(
+                        remaining,
+                        self.connection_capacity.acquire(profile),
+                    ) => match lease {
+                        Ok(result) => result,
+                        Err(_) => Err(active_time_limit_error()),
+                    },
                 }
             }
         }
+    }
+
+    fn remaining_active_time(&self) -> Result<Duration, NntpError> {
+        let limit = Duration::from_secs(self.max_active_seconds);
+        limit
+            .checked_sub(self.active_time.active_elapsed())
+            .ok_or_else(active_time_limit_error)
     }
 
     async fn connect_with_cancel(
@@ -450,6 +464,13 @@ fn ensure_usenet_active_time(
     }
 }
 
+fn active_time_limit_error() -> NntpError {
+    NntpError::Protocol {
+        code: 0,
+        message: "archive limit: Usenet task exceeded the active-time limit".into(),
+    }
+}
+
 fn article_fetch_error(error: NntpError) -> ArticleFetchError {
     match error {
         NntpError::ArticleUnavailable { .. } | NntpError::ArticleCorrupt { .. } => {
@@ -482,27 +503,6 @@ pub fn profiles_from_options(
         .map_err(|error| format!("Invalid Usenet provider profiles: {error}"))
 }
 
-pub(crate) async fn run_usenet_download(
-    task: &DownloadTask,
-    options: &Map<String, Value>,
-    completed: Arc<AtomicU64>,
-    total: Arc<AtomicU64>,
-    cancel: CancellationToken,
-    resolver: Arc<dyn UsenetCredentialResolver>,
-    connection_capacity: Arc<ProviderConnectionCapacityRegistry>,
-) -> Result<PathBuf, UsenetDownloadError> {
-    run_usenet_download_with_resolver_and_capacity(
-        task,
-        options,
-        completed,
-        total,
-        cancel,
-        resolver,
-        connection_capacity,
-    )
-    .await
-}
-
 pub async fn run_usenet_download_with_resolver(
     task: &DownloadTask,
     options: &Map<String, Value>,
@@ -521,10 +521,11 @@ pub async fn run_usenet_download_with_resolver(
         Arc::new(ProviderConnectionCapacityRegistry::default()),
     )
     .await
+    .map(|(path, _)| path)
     .map_err(|error| error.to_string())
 }
 
-async fn run_usenet_download_with_resolver_and_capacity(
+pub(crate) async fn run_usenet_download_with_resolver_and_capacity(
     task: &DownloadTask,
     options: &Map<String, Value>,
     completed: Arc<AtomicU64>,
@@ -532,7 +533,7 @@ async fn run_usenet_download_with_resolver_and_capacity(
     cancel: CancellationToken,
     resolver: Arc<dyn UsenetCredentialResolver>,
     connection_capacity: Arc<ProviderConnectionCapacityRegistry>,
-) -> Result<PathBuf, UsenetDownloadError> {
+) -> Result<(PathBuf, Vec<PathBuf>), UsenetDownloadError> {
     let metadata: &UsenetTaskData = task
         .usenet
         .as_ref()
@@ -545,7 +546,7 @@ async fn run_usenet_download_with_resolver_and_capacity(
         }
     }
     let pool = Arc::new(ProviderPool::new(profiles).map_err(|error| error.to_string())?);
-    let archive_limits = archive_limits_for_task(metadata)?;
+    let archive_limits = archive_limits_for_task(metadata, options)?;
     let active_time = ActiveTimeTracker::new();
     let source = NntpArticleSource {
         pool,
@@ -655,11 +656,32 @@ async fn run_usenet_download_with_resolver_and_capacity(
             active_elapsed_before_repair: Some(active_time.active_elapsed()),
         };
         let repair_cancel = cancel.clone();
-        let repair = tokio::task::spawn_blocking(move || {
+        let mut repair_task = tokio::task::spawn_blocking(move || {
             verify_or_repair_with_cancel(&request, Some(&repair_cancel))
-        })
-        .await
-        .map_err(|error| format!("PAR2 repair worker failed: {error}"))?
+        });
+        let remaining = Duration::from_secs(archive_limits.max_active_seconds)
+            .checked_sub(active_time.active_elapsed())
+            .ok_or_else(|| {
+                "archive limit: Usenet task exceeded the active-time limit".to_string()
+            })?;
+        let repair = tokio::select! {
+            _ = cancel.cancelled() => {
+                repair_task.abort();
+                return Err(String::from("Download cancelled").into());
+            }
+            result = tokio::time::timeout(remaining, &mut repair_task) => {
+                match result {
+                    Ok(joined) => joined.map_err(|error| format!("PAR2 repair worker failed: {error}"))?,
+                    Err(_) => {
+                        repair_task.abort();
+                        return Err(String::from(
+                            "archive limit: Usenet task exceeded the active-time limit",
+                        )
+                        .into());
+                    }
+                }
+            }
+        }
         .map_err(|error| UsenetDownloadError::from_par2_error(error, &unavailable))?;
         persist_par2_repair_state(&assembled, &repair.promoted_outputs).await?;
         promoted_outputs = repair.promoted_outputs.clone();
@@ -694,10 +716,16 @@ async fn run_usenet_download_with_resolver_and_capacity(
             "Usenet cleanup after verified success was incomplete"
         );
     }
-    Ok(assembled
-        .first()
-        .map(|file| file.report.output.clone())
-        .unwrap_or(destination))
+    Ok((
+        assembled
+            .first()
+            .map(|file| file.report.output.clone())
+            .unwrap_or_else(|| destination.clone()),
+        assembled
+            .iter()
+            .map(|file| file.report.output.clone())
+            .collect(),
+    ))
 }
 
 fn cleanup_mode_for_task(metadata: &UsenetTaskData, options: &Map<String, Value>) -> CleanupMode {
@@ -760,15 +788,25 @@ fn task_article_bytes(metadata: &UsenetTaskData) -> Result<u64, String> {
 
 fn archive_limits_for_task(
     metadata: &UsenetTaskData,
+    options: &Map<String, Value>,
 ) -> Result<crate::engine::archive_safety::ArchiveLimits, String> {
     let defaults = platform_limits();
-    let Some(value) = metadata.options.archive_limits.as_ref() else {
+    let value = metadata
+        .options
+        .archive_limits
+        .as_ref()
+        .or_else(|| options.get("usenet-archive-limits"));
+    let Some(value) = value else {
         return Ok(defaults);
     };
     crate::engine::archive_safety::validate_limits_override_value(
         defaults,
         value,
-        metadata.options.archive_limit_override_confirmed,
+        metadata.options.archive_limit_override_confirmed
+            || options
+                .get("usenet-archive-limit-override-confirmed")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
     )
     .map_err(|error| format!("Invalid Usenet archive limits: {error:?}"))
 }
@@ -1931,6 +1969,25 @@ mod tests {
         };
 
         assert!(ensure_usenet_active_time(&tracker, 1).is_err());
+    }
+
+    #[test]
+    fn capacity_wait_reports_the_archive_limit_when_no_active_time_remains() {
+        let resolver = Arc::new(RecordingResolver {
+            credentials: HashMap::new(),
+            calls: Mutex::new(Vec::new()),
+        });
+        let mut source = source_for_test(vec![profile("primary", 1, 0)], resolver);
+        source.max_active_seconds = 1;
+        source.active_time = ActiveTimeTracker {
+            started_at: Instant::now() - Duration::from_secs(2),
+            credential_wait: Arc::new(Mutex::new(Duration::ZERO)),
+        };
+
+        assert!(matches!(
+            source.remaining_active_time(),
+            Err(NntpError::Protocol { message, .. }) if message.contains("archive limit")
+        ));
     }
 
     #[test]

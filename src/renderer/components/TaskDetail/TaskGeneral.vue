@@ -112,6 +112,7 @@ import {
 	bytesToSize,
 	checkTaskIsBT,
 	checkTaskIsSeeder,
+	formatUsenetRepairFailure,
 	getTaskName,
 	getTaskUri,
 	localeDateTimeFormat,
@@ -182,16 +183,9 @@ export default {
 			if (!failure) {
 				return "";
 			}
-			const summary = this.$t("task.usenet-repair-insufficient", {
-				neededBlocks: failure.neededBlocks,
-				availableBlocks: failure.availableBlocks,
-			});
-			const nextStep = this.$t(
-				failure.partialsRetained
-					? "task.usenet-repair-partials-retained"
-					: "task.usenet-repair-partials-unavailable",
+			return formatUsenetRepairFailure(failure, (key, params) =>
+				this.$t(key, params),
 			);
-			return `${summary} ${nextStep}`;
 		},
 		taskErrorMessage() {
 			return this.usenetRepairFailureMessage || this.task?.errorMessage || "";
