@@ -271,6 +271,12 @@ export default {
 	"download-pause-message": "Paused downloading {{taskName}}",
 	"download-stop-message": "Stopped downloading {{taskName}}",
 	"download-error-message": "Error occurred when downloading {{taskName}}",
+	"usenet-repair-insufficient":
+		"PAR2 recovery is insufficient: {{neededBlocks}} blocks are needed, but only {{availableBlocks}} are available.",
+	"usenet-repair-partials-retained":
+		"Partial files were kept. Add a provider with better completion, then retry.",
+	"usenet-repair-partials-unavailable":
+		"Partial files are unavailable. Try a different NZB or download again with a provider that has better completion.",
 	"media-tool-required":
 		'Task "{{taskName}}": yt-dlp is required for media-site downloads. Please install yt-dlp and ensure it is available in PATH.',
 	"media-auth-required":

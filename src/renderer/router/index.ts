@@ -65,6 +65,10 @@ export default createRouter({
 							component: () => import("@/components/Preference/Advanced.vue"),
 						},
 						{
+							path: "usenet",
+							component: () => import("@/components/Preference/Usenet.vue"),
+						},
+						{
 							path: "cloud-sinks",
 							component: () => import("@/components/Preference/CloudSinks.vue"),
 						},

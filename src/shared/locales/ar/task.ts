@@ -132,4 +132,10 @@ export default {
 	"mirror-placeholder": "رابط المرآة (نفس الملف، خادم آخر)",
 	"mirror-hint":
 		"أضف روابط مرآة تشير إلى نفس الملف للتنزيل من عدة مصادر في وقت واحد.",
+	"usenet-repair-insufficient":
+		"استرداد PAR2 غير كافٍ: يلزم {{neededBlocks}} كتلة، لكن المتاح هو {{availableBlocks}} فقط.",
+	"usenet-repair-partials-retained":
+		"تم الاحتفاظ بالملفات الجزئية. أضف مزودًا باكتمال أفضل، ثم أعد المحاولة.",
+	"usenet-repair-partials-unavailable":
+		"الملفات الجزئية غير متاحة. جرّب NZB مختلفًا أو أعد التنزيل باستخدام مزود باكتمال أفضل.",
 };

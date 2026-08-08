@@ -135,4 +135,10 @@ export default {
 	"mirror-placeholder": "URL mirror (berkas sama, server lain)",
 	"mirror-hint":
 		"Tambahkan URL mirror yang menunjuk ke berkas yang sama untuk mengunduh dari beberapa sumber secara paralel.",
+	"usenet-repair-insufficient":
+		"Pemulihan PAR2 tidak mencukupi: diperlukan {{neededBlocks}} blok, tetapi hanya {{availableBlocks}} yang tersedia.",
+	"usenet-repair-partials-retained":
+		"Berkas parsial dipertahankan. Tambahkan penyedia dengan kelengkapan yang lebih baik, lalu coba lagi.",
+	"usenet-repair-partials-unavailable":
+		"Berkas parsial tidak tersedia. Coba NZB lain atau unduh kembali dengan penyedia yang memiliki kelengkapan lebih baik.",
 };

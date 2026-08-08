@@ -2,6 +2,115 @@ export default {
 	basic: "Basic",
 	advanced: "Advanced",
 	cloudSinks: "Cloud Sinks",
+	usenet: "Usenet",
+	"usenet-tips": "Manage NNTP providers and safe archive cleanup defaults.",
+	"usenet-profiles": "Provider Profiles",
+	"usenet-profiles-tips":
+		"Configure provider priority, security, authentication, and connection limits.",
+	"usenet-add-profile": "Add Profile",
+	"usenet-no-profiles": "No provider profiles configured.",
+	"usenet-no-profiles-tips":
+		"Add at least one provider before importing an NZB download.",
+	"usenet-edit-profile": "Edit Profile",
+	"usenet-profile-dialog-tips":
+		"Profile settings may sync between devices. Credentials remain local to this device.",
+	"usenet-profile-dialog-tips-vault":
+		"Profile settings may sync between devices. Credentials stay in this device's secure keychain.",
+	"usenet-profile-name": "Profile name",
+	"usenet-profile-name-placeholder": "Primary provider",
+	"usenet-profile-host": "NNTP host",
+	"usenet-profile-port": "Port",
+	"usenet-security": "Connection security",
+	"usenet-tls": "Implicit TLS",
+	"usenet-tls-short": "TLS",
+	"usenet-starttls": "STARTTLS",
+	"usenet-plain": "Plain NNTP",
+	"usenet-authentication": "Authentication",
+	"usenet-auth-credentials": "Username and password",
+	"usenet-auth-anonymous": "Anonymous",
+	"usenet-username": "Username",
+	"usenet-password": "Password",
+	"usenet-credentials-saved": "Credentials saved",
+	"usenet-credentials-unavailable": "Credential status unavailable",
+	"usenet-credentials-saved-tips":
+		"Credentials are already saved. Leave both fields empty to keep them unchanged.",
+	"usenet-plain-warning-title": "Unencrypted connection",
+	"usenet-plain-opt-in":
+		"I understand and want to allow plain NNTP for this profile.",
+	"usenet-plain-warning":
+		"Plain NNTP does not encrypt credentials or downloaded data. Use it only when your provider explicitly requires it.",
+	"usenet-enabled": "Enabled",
+	"usenet-enabled-tips":
+		"Disabled profiles are kept but are not used for downloads.",
+	"usenet-disabled": "Disabled",
+	"usenet-priority": "Priority",
+	"usenet-priority-tips":
+		"Lower values are tried first. Equal priorities share the load.",
+	"usenet-priority-value": "Priority {{value}}",
+	"usenet-max-connections": "Maximum connections",
+	"usenet-max-connections-tips":
+		"The connection cap for this provider profile.",
+	"usenet-connections-value": "{{value}} connections",
+	"usenet-test": "Test",
+	"usenet-edit": "Edit profile",
+	"usenet-remove": "Remove",
+	"usenet-remove-title": "Remove provider profile?",
+	"usenet-remove-confirm":
+		"{{name}} will no longer be available for downloads. Its saved credentials will also be removed from this device.",
+	"usenet-profile-saved": "Provider profile saved.",
+	"usenet-profile-removed": "{{name}} was removed.",
+	"usenet-test-success": "Connected to {{name}}.",
+	"usenet-test-failed": "Connection failed: {{message}}",
+	"usenet-validation-name": "Enter a profile name.",
+	"usenet-validation-host": "Enter an NNTP host.",
+	"usenet-validation-port": "Port must be between 1 and 65535.",
+	"usenet-validation-plain": "Confirm the plain NNTP warning before saving.",
+	"usenet-validation-priority": "Priority must be zero or greater.",
+	"usenet-validation-connections": "Connections must be between 1 and 128.",
+	"usenet-validation-credentials":
+		"Enter both a username and password, or choose anonymous authentication.",
+	"usenet-validation-credential-status":
+		"Credential status is unavailable. Try again before changing this profile.",
+	"usenet-cleanup": "Successful cleanup",
+	"usenet-cleanup-tips":
+		"Cleanup runs only after complete assembly and successful extraction.",
+	"usenet-cleanup-action": "After verified success",
+	"usenet-cleanup-keep": "Keep all inputs",
+	"usenet-cleanup-keep-tips": "Retains PAR2 files and every archive volume.",
+	"usenet-cleanup-par2": "Delete PAR2 files",
+	"usenet-cleanup-par2-tips":
+		"Removes parity files but keeps downloaded archive volumes.",
+	"usenet-cleanup-all": "Delete PAR2 and archive volumes",
+	"usenet-cleanup-all-tips":
+		"Removes parity files and archive volumes after extraction succeeds.",
+	"usenet-archive-safety": "Archive safety",
+	"usenet-limits-defaults":
+		"Task-wide limits protect storage and processing during verification and extraction.",
+	"usenet-desktop-limits": "Desktop limits",
+	"usenet-android-limits": "Android limits",
+	"usenet-limits-summary":
+		"{{entries}} entries · {{total}} total expansion · {{perEntry}} per entry",
+	"usenet-limits-secondary-summary":
+		"{{ratio}}:1 ratio · {{depth}} nested levels · {{reserve}} free-space reserve · {{hours}} active hours",
+	"usenet-customize-limits": "Customize limits",
+	"usenet-hide-limits": "Hide limits",
+	"usenet-limits-adjusted": "Synced limits were adjusted",
+	"usenet-limits-adjusted-tips":
+		"One or more values exceeded this platform's hard ceiling and were reduced.",
+	"usenet-max-entries": "Maximum entries",
+	"usenet-max-expanded": "Total expanded size",
+	"usenet-max-entry": "Single-entry size",
+	"usenet-max-depth": "Nesting depth",
+	"usenet-max-ratio": "Compression ratio",
+	"usenet-free-space-reserve": "Free-space reserve",
+	"usenet-max-active-time": "Active processing time",
+	"usenet-unit-entries": "entries",
+	"usenet-unit-levels": "levels",
+	"usenet-unit-hours": "hours",
+	"usenet-limits-hard-cap":
+		"Values cannot exceed four times the platform defaults. Per-task overrides remain separately confirmed.",
+	"usenet-restore-limits": "Restore platform defaults",
+	"usenet-limits-restored": "Archive limits restored to platform defaults.",
 	save: "Save & Apply",
 	"save-success-message": "Preferences saved successfully",
 	"save-fail-message": "Preferences failed to save",
@@ -65,6 +174,7 @@ export default {
 	"http-reliability-tips":
 		"Tune connect timeout and stalled-transfer detection for HTTP/HTTPS/FTP downloads.",
 	"connect-timeout": "Connect timeout",
+	"nzb-body-timeout": "NZB body timeout",
 	"lowest-speed-limit": "Lowest speed limit",
 	"lowest-speed-limit-timeout": "Stall timeout",
 	"lowest-speed-limit-help":

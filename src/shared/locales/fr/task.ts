@@ -135,4 +135,10 @@ export default {
 	"mirror-placeholder": "URL du miroir (même fichier, autre serveur)",
 	"mirror-hint":
 		"Ajoutez des URL de miroirs pointant vers le même fichier pour télécharger depuis plusieurs sources en parallèle.",
+	"usenet-repair-insufficient":
+		"La récupération PAR2 est insuffisante : {{neededBlocks}} blocs sont nécessaires, mais seuls {{availableBlocks}} sont disponibles.",
+	"usenet-repair-partials-retained":
+		"Les fichiers partiels ont été conservés. Ajoutez un fournisseur avec une meilleure complétude, puis réessayez.",
+	"usenet-repair-partials-unavailable":
+		"Les fichiers partiels ne sont pas disponibles. Essayez un autre NZB ou téléchargez à nouveau avec un fournisseur offrant une meilleure complétude.",
 };

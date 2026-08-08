@@ -1,3 +1,5 @@
+import type { UsenetTaskOptions } from "./usenet";
+
 interface FileUri {
 	uri: string;
 	status: string;
@@ -19,6 +21,12 @@ interface BitTorrentInfo {
 	infoHash?: string;
 	infoHashV2?: string;
 	metaVersion?: "v1" | "v2" | "hybrid";
+}
+
+export interface UsenetRepairFailure {
+	neededBlocks: number;
+	availableBlocks: number;
+	partialsRetained: boolean;
 }
 
 export interface DownloadTask {
@@ -50,6 +58,18 @@ export interface DownloadTask {
 	numPieces?: string;
 	options?: Record<string, string>;
 	tag?: string;
+	usenet?: {
+		options?: UsenetTaskOptions;
+		files?: Array<{
+			name: string;
+			subject: string;
+			groups: string[];
+			segments: Array<{ number: number; bytes: number; messageId: string }>;
+		}>;
+	};
+	usenetStage?: string;
+	usenetWarning?: string;
+	usenetRepairFailure?: UsenetRepairFailure;
 	chunkProgress?: { completedLength: string; totalLength: string }[];
 }
 

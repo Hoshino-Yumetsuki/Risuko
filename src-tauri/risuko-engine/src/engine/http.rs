@@ -267,6 +267,8 @@ impl PieceQueue {
 
 /// aria2 default: 60s connect timeout when not configured
 const DEFAULT_CONNECT_TIMEOUT_SECS: u64 = 60;
+/// Default maximum idle time between chunks of an NZB response body.
+const DEFAULT_NZB_BODY_TIMEOUT_SECS: u64 = 30;
 /// aria2 default for `--lowest-speed-limit-timeout`: 30s of below-threshold
 /// transfer before the worker is considered stalled
 const DEFAULT_LOWEST_SPEED_TIMEOUT_SECS: u64 = 30;
@@ -487,6 +489,49 @@ pub async fn fetch_for_metalink_probe(
     tokio::time::timeout(PROBE_TIMEOUT, fetch)
         .await
         .map_err(|_| "metalink probe timed out".to_string())?
+}
+
+/// Fetch an NZB URL using the same HTTP client and request headers as a
+/// regular HTTP task. The response is consumed incrementally so chunked
+/// responses cannot bypass the payload cap.
+pub async fn fetch_for_nzb(uri: &str, options: &Map<String, Value>) -> Result<Vec<u8>, String> {
+    const CAP: u64 = 16 * 1024 * 1024;
+    let client = build_client(options, true, load_cookie_jar(options))?;
+    let mut headers = build_headers(options);
+    apply_netrc_auth(&mut headers, uri, options);
+    let header_timeout =
+        parse_duration_secs_option(options.get("connect-timeout"), DEFAULT_CONNECT_TIMEOUT_SECS);
+    let response = tokio::time::timeout(header_timeout, client.get(uri).headers(headers).send())
+        .await
+        .map_err(|_| "NZB URL response timed out".to_string())?
+        .map_err(|e| format!("NZB URL fetch failed: {e}"))?
+        .error_for_status()
+        .map_err(|e| format!("NZB URL returned an error: {e}"))?;
+
+    if response.content_length().is_some_and(|length| length > CAP) {
+        return Err("NZB URL payload too large".to_string());
+    }
+
+    let mut bytes = Vec::with_capacity(response.content_length().unwrap_or(0).min(CAP) as usize);
+    let mut stream = response.bytes_stream();
+    let body_timeout = parse_duration_secs_option(
+        options.get("nzb-body-timeout"),
+        DEFAULT_NZB_BODY_TIMEOUT_SECS,
+    );
+    let mut total = 0u64;
+    loop {
+        let item = tokio::time::timeout(body_timeout, stream.next())
+            .await
+            .map_err(|_| "NZB response body timed out".to_string())?;
+        let Some(item) = item else { break };
+        let chunk = item.map_err(|e| format!("NZB URL body read failed: {e}"))?;
+        total = total.saturating_add(chunk.len() as u64);
+        if total > CAP {
+            return Err("NZB URL payload too large".to_string());
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    Ok(bytes)
 }
 
 /// Build a HTTP Client with common settings applied from options
@@ -2782,8 +2827,7 @@ fn set_file_mtime(path: &Path, time: std::time::SystemTime) -> std::io::Result<(
     };
 
     #[cfg(not(windows))]
-    let file = fs::File::open(path)
-        .or_else(|_| fs::OpenOptions::new().write(true).open(path))?;
+    let file = fs::File::open(path).or_else(|_| fs::OpenOptions::new().write(true).open(path))?;
 
     file.set_times(times)
 }

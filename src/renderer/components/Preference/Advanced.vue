@@ -530,6 +530,12 @@
               </div>
               <div class="settings-select-item">
                 <label class="settings-select-item-label">
+                  {{ $t('preferences.nzb-body-timeout') }} ({{ $t('preferences.unit-seconds') }})
+                </label>
+                <NumberInput v-model="form.nzbBodyTimeout" :min="1" :max="3600" :step="1" />
+              </div>
+              <div class="settings-select-item">
+                <label class="settings-select-item-label">
                   {{ $t('preferences.lowest-speed-limit') }} ({{ $t('preferences.unit-kib-per-sec') }})
                 </label>
                 <NumberInput v-model="form.lowestSpeedLimit" :min="0" :max="1048576" :step="1" />
@@ -1351,6 +1357,7 @@ const initForm = (config) => {
 		btEncryptionPolicy,
 		btListenV6,
 		connectTimeout,
+		nzbBodyTimeout,
 		lowestSpeedLimit,
 		lowestSpeedLimitTimeout,
 		fileAllocation,
@@ -1403,6 +1410,7 @@ const initForm = (config) => {
 		btEncryptionPolicy: btEncryptionPolicy || "prefer",
 		btListenV6: parseBooleanConfig(btListenV6, false),
 		connectTimeout: connectTimeout ?? 60,
+		nzbBodyTimeout: nzbBodyTimeout ?? 30,
 		lowestSpeedLimit: Math.round((Number(lowestSpeedLimit) || 0) / 1024),
 		lowestSpeedLimitTimeout: lowestSpeedLimitTimeout ?? 30,
 		fileAllocation: fileAllocation || "falloc",
@@ -1902,6 +1910,7 @@ export default {
 				"btMaxOutstandingPerPeer",
 				"btUpnpLease",
 				"connectTimeout",
+				"nzbBodyTimeout",
 				"lowestSpeedLimit",
 				"lowestSpeedLimitTimeout",
 			]) {
@@ -1917,6 +1926,8 @@ export default {
 						ok = Number.isFinite(n) && n >= 60 && n <= 86400;
 					} else if (key === "connectTimeout") {
 						ok = Number.isFinite(n) && n >= 1 && n <= 600;
+					} else if (key === "nzbBodyTimeout") {
+						ok = Number.isFinite(n) && n >= 1 && n <= 3600;
 					} else if (key === "lowestSpeedLimitTimeout") {
 						ok = Number.isFinite(n) && n >= 1 && n <= 3600;
 					} else if (key === "lowestSpeedLimit") {

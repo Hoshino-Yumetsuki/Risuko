@@ -13,4 +13,5 @@ pub mod rss_cmds;
 pub mod share_cmds;
 pub mod stats_cmds;
 pub mod upload_cmds;
+pub mod usenet_cmds;
 pub mod vault_cmds;

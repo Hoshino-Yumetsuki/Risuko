@@ -136,4 +136,10 @@ export default {
 	"mirror-placeholder": "URL máy chủ gương (cùng tệp, máy chủ khác)",
 	"mirror-hint":
 		"Thêm các URL máy chủ gương trỏ đến cùng một tệp để tải xuống từ nhiều nguồn song song.",
+	"usenet-repair-insufficient":
+		"Dữ liệu khôi phục PAR2 không đủ: cần {{neededBlocks}} khối nhưng chỉ có {{availableBlocks}} khối.",
+	"usenet-repair-partials-retained":
+		"Các tệp một phần đã được giữ lại. Thêm nhà cung cấp có độ hoàn thiện tốt hơn rồi thử lại.",
+	"usenet-repair-partials-unavailable":
+		"Các tệp một phần không khả dụng. Hãy thử NZB khác hoặc tải lại với nhà cung cấp có độ hoàn thiện tốt hơn.",
 };

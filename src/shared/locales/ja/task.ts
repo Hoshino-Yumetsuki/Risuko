@@ -136,4 +136,10 @@ export default {
 	"mirror-placeholder": "ミラーURL(同じファイル、別のサーバー)",
 	"mirror-hint":
 		"同じファイルを指すミラーURLを追加すると、複数のソースから並列でダウンロードできます。",
+	"usenet-repair-insufficient":
+		"PAR2 の復旧に必要なブロックが不足しています。必要数は {{neededBlocks}} 個ですが、利用できるのは {{availableBlocks}} 個しかありません。",
+	"usenet-repair-partials-retained":
+		"部分ファイルは保持されています。より完全性の高いプロバイダーを追加して、もう一度お試しください。",
+	"usenet-repair-partials-unavailable":
+		"部分ファイルを利用できません。別の NZB を試すか、より完全性の高いプロバイダーで再度ダウンロードしてください。",
 };

@@ -753,6 +753,14 @@ export const useTaskStore = defineStore("task", {
 			appStore.updateAddTaskOptions({});
 			return results;
 		},
+		async addNzbs(data: { paths: string[]; options: Record<string, unknown> }) {
+			const { paths, options } = data;
+			const results = await api.addNzbsByPaths({ paths, options });
+			this.fetchList();
+			const appStore = useAppStore();
+			appStore.updateAddTaskOptions({});
+			return results;
+		},
 		getTaskOption(gid: string) {
 			return api.getOption({ gid }).catch((err: unknown) => {
 				logger.warn("[Risuko] getTaskOption failed:", (err as Error).message);

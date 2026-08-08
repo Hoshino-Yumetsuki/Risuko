@@ -526,6 +526,94 @@ async fn add_metalink_by_path_inner(path: &str, options: Option<Value>) -> Resul
     manager.add_metalink_task(bytes, options).await
 }
 
+async fn add_nzb_by_path_inner(path: &str, options: Option<Value>) -> Result<String, String> {
+    let path = path.trim();
+    let fs_path = Path::new(path);
+    let is_nzb = fs_path
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(|ext| ext.eq_ignore_ascii_case("nzb"))
+        == Some(true);
+    if path.is_empty() || !is_nzb {
+        return Err("NZB file (.nzb) required".to_string());
+    }
+    const MAX_NZB_BYTES: u64 = 16 * 1024 * 1024;
+    let meta = tokio::fs::metadata(fs_path)
+        .await
+        .map_err(|e| e.to_string())?;
+    if meta.len() > MAX_NZB_BYTES {
+        return Err("NZB file too large".to_string());
+    }
+    let bytes = tokio::fs::read(fs_path).await.map_err(|e| e.to_string())?;
+    if bytes.is_empty() {
+        return Err("NZB payload is empty".to_string());
+    }
+    let mut options = match options.unwrap_or(Value::Object(Map::new())) {
+        Value::Object(map) => map,
+        _ => Map::new(),
+    };
+    options.insert(
+        "usenet-source-name".to_string(),
+        Value::String(
+            fs_path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("download.nzb")
+                .to_string(),
+        ),
+    );
+    let manager = engine::get_manager().await.ok_or("Engine not running")?;
+    manager.add_nzb_task(bytes, options).await
+}
+
+fn is_nzb_url(uri: &str) -> bool {
+    let Some(scheme_end) = uri.find("://") else {
+        return false;
+    };
+    let scheme = &uri[..scheme_end];
+    if !scheme.eq_ignore_ascii_case("http") && !scheme.eq_ignore_ascii_case("https") {
+        return false;
+    }
+    let path = uri.split(['?', '#']).next().unwrap_or(uri);
+    path.rsplit('/')
+        .next()
+        .unwrap_or("")
+        .to_ascii_lowercase()
+        .ends_with(".nzb")
+}
+
+async fn fetch_nzb_url(uri: &str, options: &Map<String, Value>) -> Result<Vec<u8>, String> {
+    engine::http::fetch_for_nzb(uri, options).await
+}
+
+#[tauri::command]
+pub async fn add_nzbs_by_paths(
+    _handle: AppHandle,
+    _state: tauri::State<'_, crate::state::AppState>,
+    paths: Vec<String>,
+    options: Option<Value>,
+) -> Result<Vec<BatchAddResult>, String> {
+    if paths.is_empty() {
+        return Err("NZB file (.nzb) required".to_string());
+    }
+    let mut results = Vec::with_capacity(paths.len());
+    for path in paths.iter() {
+        match add_nzb_by_path_inner(path, options.clone()).await {
+            Ok(gid) => results.push(BatchAddResult {
+                path: path.clone(),
+                gid: Some(gid),
+                error: None,
+            }),
+            Err(err) => results.push(BatchAddResult {
+                path: path.clone(),
+                gid: None,
+                error: Some(err),
+            }),
+        }
+    }
+    Ok(results)
+}
+
 #[tauri::command]
 pub async fn add_metalinks_by_paths(
     _handle: AppHandle,
@@ -556,7 +644,7 @@ pub async fn add_metalinks_by_paths(
 
 fn is_plain_http_mirror_uri(uri: &str, options: &Map<String, Value>) -> bool {
     let is_http = uri.starts_with("http://") || uri.starts_with("https://");
-    if !is_http {
+    if !is_http || is_nzb_url(uri) {
         return false;
     }
     if torrent::is_magnet_uri(uri)
@@ -601,6 +689,12 @@ pub async fn add_uri(
     };
 
     let manager = engine::get_manager().await.ok_or("Engine not running")?;
+    let global_options = manager
+        .get_global_option()
+        .await
+        .as_object()
+        .cloned()
+        .unwrap_or_default();
 
     // Mirror group
     let mut distinct_outs = out_list
@@ -700,6 +794,16 @@ pub async fn add_uri(
         // Check if this is a magnet link
         let result = if torrent::is_magnet_uri(uri) {
             manager.add_magnet_task(uri, task_options).await
+        } else if is_nzb_url(uri) {
+            // URL imports happen before the task is created, so explicitly
+            // merge global defaults to preserve proxy, headers, cookies, and
+            // other HTTP request settings for this fetch.
+            let mut fetch_options = global_options.clone();
+            fetch_options.extend(task_options.clone());
+            match fetch_nzb_url(uri, &fetch_options).await {
+                Ok(bytes) => manager.add_nzb_task(bytes, task_options).await,
+                Err(error) => Err(error),
+            }
         } else if is_m3u8 {
             manager.add_m3u8_task(uri, task_options).await
         } else if engine::ed2k::is_ed2k_uri(uri) {
@@ -1426,6 +1530,27 @@ mod tests {
         opts.insert("force-ytdlp".to_string(), Value::Bool(true));
         assert!(!is_plain_http_mirror_uri(
             "http://example.com/video.mp4",
+            &opts
+        ));
+    }
+
+    #[test]
+    fn nzb_url_route_only_matches_http() {
+        assert!(is_nzb_url("http://example.com/file.nzb"));
+        assert!(is_nzb_url("https://example.com/file.NZB?token=abc"));
+        assert!(!is_nzb_url("ftp://example.com/file.nzb"));
+        assert!(!is_nzb_url("nntp://example.com/file.nzb"));
+    }
+
+    #[test]
+    fn nzb_urls_are_not_grouped_as_http_mirrors() {
+        let opts = Map::new();
+        assert!(!is_plain_http_mirror_uri(
+            "https://one.example/file.nzb",
+            &opts
+        ));
+        assert!(!is_plain_http_mirror_uri(
+            "https://two.example/file.nzb?token=x",
             &opts
         ));
     }

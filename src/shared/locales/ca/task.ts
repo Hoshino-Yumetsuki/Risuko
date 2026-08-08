@@ -141,4 +141,10 @@ export default {
 	"mirror-placeholder": "URL de la rèplica (mateix fitxer, un altre servidor)",
 	"mirror-hint":
 		"Afegeix URL de rèpliques que apuntin al mateix fitxer per descarregar des de múltiples fonts en paral·lel.",
+	"usenet-repair-insufficient":
+		"La recuperació PAR2 és insuficient: calen {{neededBlocks}} blocs, però només n'hi ha {{availableBlocks}} disponibles.",
+	"usenet-repair-partials-retained":
+		"S'han conservat els fitxers parcials. Afegiu un proveïdor amb una completitud millor i torneu-ho a provar.",
+	"usenet-repair-partials-unavailable":
+		"Els fitxers parcials no estan disponibles. Proveu un NZB diferent o torneu a baixar-los amb un proveïdor amb una completitud millor.",
 };

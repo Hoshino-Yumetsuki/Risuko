@@ -29,6 +29,7 @@ pub async fn start_headless_engine(
 
     let config_dir = get_config_dir();
     std::fs::create_dir_all(&config_dir)?;
+    risuko_engine::engine::set_file_usenet_credential_resolver(config_dir.clone()).await;
 
     let system_config = load_config(&config_dir.join("system.json"), defaults::system_defaults());
     let user_config = load_config(&config_dir.join("user.json"), defaults::user_defaults());

@@ -267,19 +267,23 @@ pub fn run() {
             risuko_engine::engine::should_start_embedded_engine(&config)
         };
 
-        // Push the live Tauri event sink into the upload manager so upload
-        // events reach the frontend (we built it with a NoopEventSink before
-        // AppHandle was available). Runs regardless of whether the embedded
-        // engine auto-starts, so the sink-config UI still gets upload events
-        // when the user starts the engine later
         let event_sink_clone = event_sink.clone();
         let upload_mgr = app.state::<state::AppState>().upload_sinks.clone();
         upload_mgr.set_event_sink(event_sink_clone.clone());
+        let vault = app.state::<state::AppState>().vault.clone();
+        let config_dir = app
+            .state::<state::AppState>()
+            .config
+            .lock()
+            .map_err(|_| "Configuration lock poisoned")?
+            .config_dir()
+            .to_path_buf();
+        tauri::async_runtime::block_on(risuko_engine::engine::set_usenet_credential_resolver(
+            std::sync::Arc::new(
+                commands::usenet_cmds::VaultCredentialResolver::with_config_dir(vault, config_dir),
+            ),
+        ));
 
-        // Inject SFTP/FTP/WebDAV/S3 secrets stored in the OS keychain
-        // back into the upload manager. The on-disk records omit them
-        // (`skip_serializing` on the protocol Configs) so without this
-        // pass the user has to re-enter every password after a restart
         {
             let vault = app.state::<state::AppState>().vault.clone();
             tauri::async_runtime::block_on(commands::upload_cmds::rehydrate_upload_sinks(
@@ -442,6 +446,7 @@ pub fn run() {
         commands::engine_cmds::add_torrent_by_path,
         commands::engine_cmds::add_torrents_by_paths,
         commands::engine_cmds::add_metalinks_by_paths,
+        commands::engine_cmds::add_nzbs_by_paths,
         commands::engine_cmds::resolve_magnet,
         commands::engine_cmds::evaluate_low_speed_tasks,
         commands::engine_cmds::plan_auto_retry,
@@ -538,6 +543,10 @@ pub fn run() {
         commands::vault_cmds::vault_put_credential,
         commands::vault_cmds::vault_get_credential,
         commands::vault_cmds::vault_remove_credential,
+        commands::usenet_cmds::usenet_save_credentials,
+        commands::usenet_cmds::usenet_remove_credentials,
+        commands::usenet_cmds::usenet_has_credentials,
+        commands::usenet_cmds::usenet_test_profile,
         commands::share_cmds::share_start_send,
         commands::share_cmds::share_start_receive,
         commands::share_cmds::share_cancel,

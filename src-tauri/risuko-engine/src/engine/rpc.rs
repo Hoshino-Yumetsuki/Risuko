@@ -627,6 +627,27 @@ fn dispatch_method<'a>(
                 Ok(Value::String(gid))
             }
 
+            "risuko.addNzb" => {
+                let nzb_b64 = params
+                    .first()
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| RpcError::from("NZB data required".to_string()))?;
+                let nzb_data = base64::engine::general_purpose::STANDARD
+                    .decode(nzb_b64)
+                    .map_err(|e| RpcError::from(format!("Invalid base64: {e}")))?;
+                let options = params
+                    .get(1)
+                    .and_then(|v| v.as_object())
+                    .cloned()
+                    .unwrap_or_default();
+                let gid = state
+                    .manager
+                    .add_nzb_task(nzb_data, options)
+                    .await
+                    .map_err(RpcError::from)?;
+                Ok(Value::String(gid))
+            }
+
             "risuko.addEd2k" => {
                 let uri = params
                     .first()
@@ -931,6 +952,7 @@ fn list_methods() -> Value {
         "addUri",
         "addMedia",
         "addTorrent",
+        "addNzb",
         "addEd2k",
         "remove",
         "forceRemove",
@@ -1281,5 +1303,15 @@ mod tests {
         let params = vec![json!("gid"), json!("not_array")];
         let keys = get_keys(&params, 1);
         assert!(keys.is_empty());
+    }
+
+    #[test]
+    fn list_methods_advertises_nzb_endpoint() {
+        let methods = list_methods();
+        assert!(methods
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|method| method.as_str() == Some("risuko.addNzb")));
     }
 }

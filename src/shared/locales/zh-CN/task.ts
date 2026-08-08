@@ -301,4 +301,10 @@ export default {
 	"clipboard-download-prompt": "下载此链接？",
 	"clipboard-download-accept": "下载",
 	"clipboard-download-ignore": "忽略",
+	"usenet-repair-insufficient":
+		"PAR2 恢复数据不足：需要 {{neededBlocks}} 个数据块，但只有 {{availableBlocks}} 个可用。",
+	"usenet-repair-partials-retained":
+		"已保留部分文件。请添加完整度更高的提供商，然后重试。",
+	"usenet-repair-partials-unavailable":
+		"部分文件不可用。请尝试其他 NZB，或使用完整度更高的提供商重新下载。",
 };

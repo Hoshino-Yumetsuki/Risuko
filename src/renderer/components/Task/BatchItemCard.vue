@@ -116,7 +116,7 @@
             </div>
           </div>
         </div>
-        <div v-else-if="item.kind === 'metalink'" class="rounded-md border border-dashed border-border/60 px-3 py-4 text-xs text-muted-foreground">
+        <div v-else-if="item.kind === 'metalink' || item.kind === 'nzb'" class="rounded-md border border-dashed border-border/60 px-3 py-4 text-xs text-muted-foreground">
           <div class="break-all font-mono">{{ item.path }}</div>
         </div>
         <div v-else class="rounded-md border border-dashed border-border/60 px-3 py-4 text-xs text-muted-foreground">
@@ -244,7 +244,11 @@ export default {
 	},
 	computed: {
 		kindIcon() {
-			if (this.item.kind === "torrent" || this.item.kind === "metalink") {
+			if (
+				this.item.kind === "torrent" ||
+				this.item.kind === "metalink" ||
+				this.item.kind === "nzb"
+			) {
 				return FileArchive;
 			}
 			if (this.item.kind === "magnet") {

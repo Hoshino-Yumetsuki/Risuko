@@ -138,4 +138,10 @@ export default {
 	"mirror-placeholder": "Speil-URL (samme fil, annen tjener)",
 	"mirror-hint":
 		"Legg til speil-URL-er som peker til samme fil for å laste ned fra flere kilder samtidig.",
+	"usenet-repair-insufficient":
+		"PAR2-gjenopprettingen er utilstrekkelig: {{neededBlocks}} blokker trengs, men bare {{availableBlocks}} er tilgjengelige.",
+	"usenet-repair-partials-retained":
+		"Delvise filer ble beholdt. Legg til en leverandør med bedre fullstendighet, og prøv igjen.",
+	"usenet-repair-partials-unavailable":
+		"Delvise filer er ikke tilgjengelige. Prøv en annen NZB, eller last ned på nytt med en leverandør med bedre fullstendighet.",
 };

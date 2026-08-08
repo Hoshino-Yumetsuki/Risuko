@@ -140,4 +140,10 @@ export default {
 	"mirror-placeholder": "Spiegel-URL (gleiche Datei, anderer Server)",
 	"mirror-hint":
 		"Fügen Sie Spiegel-URLs hinzu, die auf dieselbe Datei verweisen, um von mehreren Quellen gleichzeitig herunterzuladen.",
+	"usenet-repair-insufficient":
+		"Die PAR2-Wiederherstellung ist unzureichend: {{neededBlocks}} Blöcke werden benötigt, aber nur {{availableBlocks}} sind verfügbar.",
+	"usenet-repair-partials-retained":
+		"Unvollständige Dateien wurden behalten. Fügen Sie einen Anbieter mit besserer Vollständigkeit hinzu und versuchen Sie es erneut.",
+	"usenet-repair-partials-unavailable":
+		"Teilweise Dateien sind nicht verfügbar. Versuchen Sie ein anderes NZB oder laden Sie erneut mit einem Anbieter mit besserer Vollständigkeit herunter.",
 };

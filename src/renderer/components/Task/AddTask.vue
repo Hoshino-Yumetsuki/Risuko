@@ -757,8 +757,8 @@ export default {
 					multiple: true,
 					filters: [
 						{
-							name: "Torrent / Metalink",
-							extensions: ["torrent", "meta4", "metalink"],
+							name: "Torrent / Metalink / NZB",
+							extensions: ["torrent", "meta4", "metalink", "nzb"],
 						},
 					],
 				});
@@ -892,6 +892,7 @@ export default {
 			const metalinkItems = items.filter(
 				(it) => it.kind === "metalink" && it.path,
 			);
+			const nzbItems = items.filter((it) => it.kind === "nzb" && it.path);
 			const uriItems = items.filter(
 				(it) => it.kind === "uri" || it.kind === "magnet",
 			);
@@ -930,6 +931,17 @@ export default {
 				const r = await this.submitPathBatch(metalinkItems, () =>
 					taskStore.addMetalinks({
 						paths: metalinkItems.map((it) => it.path as string),
+						options: this.buildSharedOptions(),
+					}),
+				);
+				okCount += r.ok;
+				failCount += r.fail;
+			}
+
+			if (nzbItems.length > 0) {
+				const r = await this.submitPathBatch(nzbItems, () =>
+					taskStore.addNzbs({
+						paths: nzbItems.map((it) => it.path as string),
 						options: this.buildSharedOptions(),
 					}),
 				);

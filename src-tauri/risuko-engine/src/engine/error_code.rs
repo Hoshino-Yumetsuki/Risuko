@@ -67,6 +67,11 @@ impl ErrorCode {
     pub const MEDIA_TOOL_NOT_FOUND: Self = Self(540);
     pub const MEDIA_AUTH_REQUIRED: Self = Self(541);
     pub const MEDIA_FORMAT_UNAVAILABLE: Self = Self(542);
+    pub const USENET_AUTH_FAILED: Self = Self(550);
+    pub const USENET_ARTICLE_UNAVAILABLE: Self = Self(551);
+    pub const USENET_ARCHIVE_UNSAFE: Self = Self(552);
+    pub const USENET_ARCHIVE_LIMIT: Self = Self(553);
+    pub const USENET_REPAIR_FAILED: Self = Self(554);
 
     // -- Internal --
     pub const ENGINE_NOT_RUNNING: Self = Self(900);
@@ -216,6 +221,48 @@ pub fn classify_error(msg: &str, protocol: &str) -> ErrorCode {
             }
             if lower.contains("segment") {
                 return ErrorCode::M3U8_SEGMENT_FAILED;
+            }
+        }
+        "usenet" => {
+            if lower.contains("auth") || lower.contains("credential") {
+                return ErrorCode::USENET_AUTH_FAILED;
+            }
+            if lower.contains("archive safety:") {
+                if lower.contains("unsafepath") {
+                    return ErrorCode::USENET_ARCHIVE_UNSAFE;
+                }
+                if [
+                    "entrycount",
+                    "expandedbytes",
+                    "entrybytes",
+                    "nestingdepth",
+                    "compressionratio",
+                    "freespacereserve",
+                    "activetime",
+                ]
+                .iter()
+                .any(|variant| lower.contains(variant))
+                {
+                    return ErrorCode::USENET_ARCHIVE_LIMIT;
+                }
+            }
+            if lower.contains("unsafe archive")
+                || lower.contains("unsafe path")
+                || lower.contains("unsafe par2")
+            {
+                return ErrorCode::USENET_ARCHIVE_UNSAFE;
+            }
+            if lower.contains("archive limit")
+                || lower.contains("archive bomb")
+                || lower.contains("par2 safety limit")
+            {
+                return ErrorCode::USENET_ARCHIVE_LIMIT;
+            }
+            if lower.contains("par2") || lower.contains("repair") {
+                return ErrorCode::USENET_REPAIR_FAILED;
+            }
+            if lower.contains("article") || lower.contains("message id") {
+                return ErrorCode::USENET_ARTICLE_UNAVAILABLE;
             }
         }
         "ftp" | "sftp" => {
@@ -430,6 +477,36 @@ mod tests {
         assert_eq!(
             classify_error("HTTP Error 403: age-restricted content", "media"),
             ErrorCode::MEDIA_AUTH_REQUIRED
+        );
+    }
+
+    #[test]
+    fn classifies_par2_safety_failures_as_usenet_archive_failures() {
+        assert_eq!(
+            classify_error("PAR2 safety limit: too many recovery blocks", "usenet"),
+            ErrorCode::USENET_ARCHIVE_LIMIT
+        );
+        assert_eq!(
+            classify_error("unsafe PAR2 filename: ../escape.bin", "usenet"),
+            ErrorCode::USENET_ARCHIVE_UNSAFE
+        );
+    }
+
+    #[test]
+    fn classifies_formatted_archive_pipeline_safety_failures() {
+        use crate::engine::archive_pipeline::ArchivePipelineError;
+        use crate::engine::archive_safety::ArchiveSafetyError;
+
+        let unsafe_path = ArchivePipelineError::Safety(ArchiveSafetyError::UnsafePath).to_string();
+        assert_eq!(
+            classify_error(&unsafe_path, "usenet"),
+            ErrorCode::USENET_ARCHIVE_UNSAFE
+        );
+
+        let expanded = ArchivePipelineError::Safety(ArchiveSafetyError::ExpandedBytes).to_string();
+        assert_eq!(
+            classify_error(&expanded, "usenet"),
+            ErrorCode::USENET_ARCHIVE_LIMIT
         );
     }
 }

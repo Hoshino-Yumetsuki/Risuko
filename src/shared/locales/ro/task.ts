@@ -140,4 +140,10 @@ export default {
 	"mirror-placeholder": "URL oglindă (același fișier, alt server)",
 	"mirror-hint":
 		"Adaugă URL-uri de oglindă care indică același fișier pentru a descărca din mai multe surse în paralel.",
+	"usenet-repair-insufficient":
+		"Recuperarea PAR2 este insuficientă: sunt necesare {{neededBlocks}} blocuri, dar sunt disponibile doar {{availableBlocks}}.",
+	"usenet-repair-partials-retained":
+		"Fișierele parțiale au fost păstrate. Adăugați un furnizor cu o completitudine mai bună și încercați din nou.",
+	"usenet-repair-partials-unavailable":
+		"Fișierele parțiale nu sunt disponibile. Încercați un NZB diferit sau descărcați din nou de la un furnizor cu o completitudine mai bună.",
 };

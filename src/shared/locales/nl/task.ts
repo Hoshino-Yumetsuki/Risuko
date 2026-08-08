@@ -140,4 +140,10 @@ export default {
 	"mirror-placeholder": "Spiegel-URL (zelfde bestand, andere server)",
 	"mirror-hint":
 		"Voeg spiegel-URL's toe die naar hetzelfde bestand verwijzen om van meerdere bronnen tegelijk te downloaden.",
+	"usenet-repair-insufficient":
+		"PAR2-herstelgegevens zijn onvoldoende: er zijn {{neededBlocks}} blokken nodig, maar slechts {{availableBlocks}} zijn beschikbaar.",
+	"usenet-repair-partials-retained":
+		"Gedeeltelijke bestanden zijn bewaard. Voeg een provider met een betere volledigheid toe en probeer het opnieuw.",
+	"usenet-repair-partials-unavailable":
+		"Gedeeltelijke bestanden zijn niet beschikbaar. Probeer een andere NZB of download opnieuw met een provider met een betere volledigheid.",
 };
