@@ -63,6 +63,7 @@ export default {
 	"http-reliability": "HTTP / 网络可靠性",
 	"http-reliability-tips": "调整 HTTP/HTTPS/FTP 下载的连接超时与停滞检测。",
 	"connect-timeout": "连接超时",
+	"nzb-body-timeout": "NZB 响应体超时",
 	"lowest-speed-limit": "最低速度阈值",
 	"lowest-speed-limit-timeout": "停滞超时",
 	"lowest-speed-limit-help":

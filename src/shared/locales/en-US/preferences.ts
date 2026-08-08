@@ -174,6 +174,7 @@ export default {
 	"http-reliability-tips":
 		"Tune connect timeout and stalled-transfer detection for HTTP/HTTPS/FTP downloads.",
 	"connect-timeout": "Connect timeout",
+	"nzb-body-timeout": "NZB body timeout",
 	"lowest-speed-limit": "Lowest speed limit",
 	"lowest-speed-limit-timeout": "Stall timeout",
 	"lowest-speed-limit-help":

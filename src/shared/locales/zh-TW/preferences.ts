@@ -52,6 +52,7 @@ export default {
 	"http-reliability": "HTTP / 網路可靠性",
 	"http-reliability-tips": "調整 HTTP/HTTPS/FTP 下載的連線逾時與停滯偵測。",
 	"connect-timeout": "連線逾時",
+	"nzb-body-timeout": "NZB 回應內容逾時",
 	"lowest-speed-limit": "最低速度閾值",
 	"lowest-speed-limit-timeout": "停滯逾時",
 	"lowest-speed-limit-help":

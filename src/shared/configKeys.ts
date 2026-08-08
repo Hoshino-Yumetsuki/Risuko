@@ -120,6 +120,7 @@ const systemKeys = [
 	"load-cookies",
 	"lowest-speed-limit",
 	"lowest-speed-limit-timeout",
+	"nzb-body-timeout",
 	"max-concurrent-downloads",
 	"max-download-limit",
 	"max-overall-download-limit",

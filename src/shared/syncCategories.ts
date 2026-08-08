@@ -129,6 +129,7 @@ const namedCategories: SyncCategory[] = [
 			"low-speed-threshold",
 			"lowest-speed-limit",
 			"lowest-speed-limit-timeout",
+			"nzb-body-timeout",
 		],
 	},
 	{
