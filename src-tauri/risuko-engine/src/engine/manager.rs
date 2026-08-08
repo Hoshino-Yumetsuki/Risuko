@@ -206,6 +206,24 @@ fn finish_usenet_failure(
     classify_error(error, "usenet")
 }
 
+fn usenet_stage_rank(stage: &str) -> u8 {
+    match stage {
+        "connecting" => 0,
+        "fetching" => 1,
+        "assembling" => 2,
+        "repairing" | "verifying" => 3,
+        "complete" => 4,
+        "error" => 5,
+        _ => 0,
+    }
+}
+
+fn should_update_usenet_stage(current: Option<&str>, next: &str) -> bool {
+    current
+        .map(|current| usenet_stage_rank(next) >= usenet_stage_rank(current))
+        .unwrap_or(true)
+}
+
 async fn metalink_finish(
     tasks: &Arc<RevLock>,
     active: &Arc<RwLock<HashMap<String, ActiveDownload>>>,
@@ -1588,7 +1606,12 @@ impl TaskManager {
                         tokio::spawn(async move {
                             let mut tasks = tasks.write().await;
                             if let Some(task) = tasks.iter_mut().find(|task| task.gid == gid) {
-                                if task.status == TaskStatus::Active {
+                                if task.status == TaskStatus::Active
+                                    && should_update_usenet_stage(
+                                        task.usenet_stage.as_deref(),
+                                        &stage,
+                                    )
+                                {
                                     task.usenet_stage = Some(stage);
                                 }
                             }
@@ -4149,6 +4172,15 @@ mod tests {
         assert_eq!(error_code.to_string(), "554");
         assert_eq!(task.usenet_stage.as_deref(), Some("error"));
         assert_eq!(task.usenet_repair_failure, Some(repair_failure));
+    }
+
+    #[test]
+    fn usenet_stage_updates_cannot_regress() {
+        assert!(should_update_usenet_stage(Some("assembling"), "repairing"));
+        assert!(!should_update_usenet_stage(Some("verifying"), "assembling"));
+        assert!(!should_update_usenet_stage(Some("complete"), "fetching"));
+        assert!(!should_update_usenet_stage(Some("error"), "complete"));
+        assert!(should_update_usenet_stage(None, "fetching"));
     }
 
     #[tokio::test]

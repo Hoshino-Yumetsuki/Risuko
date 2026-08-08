@@ -16,7 +16,10 @@ const RESUME_VERSION: u8 = 2;
 const HASH_BUFFER_BYTES: usize = 64 * 1024;
 const CHECKPOINT_SEGMENT_INTERVAL: usize = 8;
 const CHECKPOINT_TIME_INTERVAL: Duration = Duration::from_secs(5);
-const FETCH_BUFFER_LIMIT_BYTES: u64 = 64 * 1024 * 1024;
+// Keep a small, deterministic number of decoded articles in memory while
+// preserving enough overlap to hide individual article latency. Manifest
+// byte counts are metadata and must not be used as a memory bound.
+const FETCH_CONCURRENCY: usize = 4;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct YencAssemblyLimits {
@@ -825,24 +828,15 @@ pub(crate) async fn assemble_file_with_report_with_limits_at_offset<S: ArticleSo
     }
 
     // Keep network fetches in flight while yielding decoded parts in manifest
-    // order. Bound each batch by the manifest article bytes so completed
-    // decoded payloads cannot accumulate without limit while waiting for order.
+    // order. The fixed batch size bounds completed decoded payloads without
+    // trusting potentially inaccurate manifest byte counts.
     let pending_segments = ordered
         .iter()
         .filter(|segment| !sidecar.completed_segments.contains(&segment.number))
         .collect::<Vec<_>>();
     let mut batch_start = 0;
     while batch_start < pending_segments.len() {
-        let mut batch_end = batch_start + 1;
-        let mut batch_bytes = pending_segments[batch_start].bytes;
-        while batch_end < pending_segments.len() {
-            let next_bytes = pending_segments[batch_end].bytes;
-            if batch_bytes.saturating_add(next_bytes) > FETCH_BUFFER_LIMIT_BYTES {
-                break;
-            }
-            batch_bytes = batch_bytes.saturating_add(next_bytes);
-            batch_end += 1;
-        }
+        let batch_end = (batch_start + FETCH_CONCURRENCY).min(pending_segments.len());
         let batch = &pending_segments[batch_start..batch_end];
         let mut fetches = FuturesUnordered::new();
         for (order, segment) in batch.iter().enumerate() {
@@ -1068,7 +1062,8 @@ pub async fn mark_par2_repaired(report: &AssemblyReport) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+    use std::sync::Arc;
 
     #[derive(Default)]
     struct FakeSource {
@@ -1146,6 +1141,57 @@ mod tests {
             Box::pin(async move {
                 response.and_then(|article| {
                     decode_yenc_part(&article).map_err(ArticleFetchError::Failed)
+                })
+            })
+        }
+    }
+
+    struct ConcurrencyTrackingSource {
+        active: Arc<AtomicUsize>,
+        max_active: Arc<AtomicUsize>,
+        part_size: u64,
+    }
+
+    impl ArticleSource for ConcurrencyTrackingSource {
+        fn fetch<'a>(
+            &'a self,
+            message_id: &'a str,
+        ) -> std::pin::Pin<
+            Box<
+                dyn std::future::Future<Output = Result<DecodedYencPart, ArticleFetchError>>
+                    + Send
+                    + 'a,
+            >,
+        > {
+            let index = message_id.parse::<u64>().unwrap();
+            let active = Arc::clone(&self.active);
+            let max_active = Arc::clone(&self.max_active);
+            let part_size = self.part_size;
+            Box::pin(async move {
+                let current = active.fetch_add(1, Ordering::Relaxed) + 1;
+                let mut observed = max_active.load(Ordering::Relaxed);
+                while current > observed {
+                    match max_active.compare_exchange_weak(
+                        observed,
+                        current,
+                        Ordering::Relaxed,
+                        Ordering::Relaxed,
+                    ) {
+                        Ok(_) => break,
+                        Err(next) => observed = next,
+                    }
+                }
+                tokio::time::sleep(Duration::from_millis(5)).await;
+                active.fetch_sub(1, Ordering::Relaxed);
+                let start = index * part_size;
+                Ok(DecodedYencPart {
+                    data: vec![b'A' + index as u8; part_size as usize],
+                    range: YencRange {
+                        start,
+                        end: start + part_size,
+                    },
+                    file_size: Some(part_size * 8),
+                    has_explicit_range: true,
                 })
             })
         }
@@ -1337,6 +1383,35 @@ mod tests {
             7
         );
         assert_eq!(progress.load(Ordering::Relaxed), 43);
+    }
+
+    #[tokio::test]
+    async fn bounds_fetches_when_manifest_counts_are_too_small() {
+        let dir = tempfile::tempdir().unwrap();
+        let output = dir.path().join("sample.bin");
+        let active = Arc::new(AtomicUsize::new(0));
+        let max_active = Arc::new(AtomicUsize::new(0));
+        let source = ConcurrencyTrackingSource {
+            active: Arc::clone(&active),
+            max_active: Arc::clone(&max_active),
+            part_size: 1024,
+        };
+        let segments = (0..8)
+            .map(|index| NzbSegment {
+                number: index as u32 + 1,
+                bytes: 1,
+                message_id: index.to_string(),
+            })
+            .collect::<Vec<_>>();
+
+        let report =
+            assemble_file_with_report(&output, &segments, &source, &CancellationToken::new(), None)
+                .await
+                .unwrap();
+
+        assert!(report.complete);
+        assert_eq!(tokio::fs::metadata(&output).await.unwrap().len(), 8 * 1024);
+        assert!(max_active.load(Ordering::Relaxed) <= FETCH_CONCURRENCY);
     }
 
     #[tokio::test]

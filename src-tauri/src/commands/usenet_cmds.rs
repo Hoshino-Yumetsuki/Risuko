@@ -132,12 +132,28 @@ fn write_fallback_atomic(path: &Path, data: &str) -> Result<(), String> {
         file.sync_all().map_err(|e| e.to_string())?;
         drop(file);
         set_owner_only_permissions(&temp_path)?;
-        replace_fallback_file(&temp_path, path)
+        replace_fallback_file(&temp_path, path)?;
+        sync_fallback_parent(parent)?;
+        Ok(())
     })();
     if result.is_err() {
         let _ = std::fs::remove_file(&temp_path);
     }
     result
+}
+
+#[cfg(unix)]
+fn sync_fallback_parent(parent: &Path) -> Result<(), String> {
+    OpenOptions::new()
+        .read(true)
+        .open(parent)
+        .and_then(|directory| directory.sync_all())
+        .map_err(|error| format!("sync credential fallback directory: {error}"))
+}
+
+#[cfg(not(unix))]
+fn sync_fallback_parent(_parent: &Path) -> Result<(), String> {
+    Ok(())
 }
 
 #[cfg(unix)]
