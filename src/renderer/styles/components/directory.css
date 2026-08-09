@@ -63,6 +63,10 @@
 		line-height: inherit;
 		text-align: left;
 		cursor: pointer;
+	}
+	.directory-list .directory-path-label {
+		flex: 1;
+		min-width: 0;
 		overflow: hidden;
 		white-space: nowrap;
 		text-overflow: ellipsis;

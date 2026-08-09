@@ -152,6 +152,6 @@ export default {
 	"filter-image": "Chọn tệp hình ảnh",
 	"filter-document": "Chọn tệp tài liệu",
 	"batch-remove-item": "Xóa",
-	"torrent-preview-folder-toggle": "Chuyển thư mục",
+	"torrent-preview-folder-toggle": "Chuyển đổi lựa chọn thư mục",
 	"clear-filter": "Xóa bộ lọc",
 };

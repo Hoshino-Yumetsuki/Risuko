@@ -2,6 +2,8 @@ export default {
 	"sort-ascending": "오름차순",
 	"sort-descending": "내림차순",
 	"torrent-preview-folder-select": "선택",
+	"torrent-preview-folder-deselect": "선택 해제",
+	"torrent-preview-folder-loading": "불러오는 중...",
 	active: "다운로드 중",
 	waiting: "대기 중",
 	stopped: "중단됨",

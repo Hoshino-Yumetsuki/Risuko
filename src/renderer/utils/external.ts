@@ -84,7 +84,7 @@ export async function openExternalUrl(value: unknown): Promise<boolean> {
 		if (typeof browser?.open !== "function") {
 			return false;
 		}
-		browser.open(url, "_blank", "noopener,noreferrer");
+		return Boolean(browser.open(url, "_blank", "noopener,noreferrer"));
 	}
 	return true;
 }

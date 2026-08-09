@@ -22,7 +22,6 @@ import {
 	fetchBtTrackerFromSource,
 	reduceTrackerString,
 } from "@shared/utils/tracker";
-import { invoke } from "@tauri-apps/api/core";
 import { isEmpty } from "lodash";
 import { defineStore } from "pinia";
 import api from "@/api";
@@ -394,16 +393,8 @@ export const usePreferenceStore = defineStore("preference", {
 		fetchBtTracker(trackerSource: string[] = []) {
 			const { proxy = { enable: false } } = this.config;
 			logger.log("fetchBtTracker", trackerSource, proxy);
-			const resolveProxy = (url: string) =>
-				invoke<string | null>("resolve_configured_proxy", {
-					scope: "update-trackers",
-					url,
-				});
-			return fetchBtTrackerFromSource(
-				trackerSource,
-				proxy,
-				resolveProxy,
-				(urls) => api.fetchTrackerSources(urls),
+			return fetchBtTrackerFromSource(trackerSource, proxy, undefined, (urls) =>
+				api.fetchTrackerSources(urls),
 			);
 		},
 		async autoSyncTracker() {

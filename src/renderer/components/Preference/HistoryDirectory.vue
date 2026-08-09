@@ -30,7 +30,7 @@
               :aria-label="directory"
               @click.stop="() => handleSelectItem(directory)"
             >
-              {{ directory }}
+              <span class="directory-path-label">{{ directory }}</span>
             </button>
             <span class="directory-actions">
               <button
@@ -64,7 +64,7 @@
               :aria-label="directory"
               @click.stop="() => handleSelectItem(directory)"
             >
-              {{ directory }}
+              <span class="directory-path-label">{{ directory }}</span>
             </button>
             <span class="directory-actions">
               <button

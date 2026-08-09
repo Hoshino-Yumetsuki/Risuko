@@ -33,3 +33,20 @@ test("finds a valid persisted source URL without exposing other URI schemes", ()
 test("does not invoke an external opener for invalid URLs", async () => {
 	assert.equal(await openExternalUrl("javascript:alert(1)"), false);
 });
+
+test("reports a blocked browser popup as a failed open", async () => {
+	const originalWindow = globalThis.window;
+	Object.defineProperty(globalThis, "window", {
+		configurable: true,
+		value: { open: () => null },
+	});
+
+	try {
+		assert.equal(await openExternalUrl("https://example.com"), false);
+	} finally {
+		Object.defineProperty(globalThis, "window", {
+			configurable: true,
+			value: originalWindow,
+		});
+	}
+});

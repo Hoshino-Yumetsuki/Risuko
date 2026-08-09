@@ -6,7 +6,7 @@ export default {
 	"sort-newest": "Legújabb elöl",
 	"sort-oldest": "Legrégebbi elöl",
 	"sort-size-desc": "Legnagyobb elöl",
-	"sort-rule-match": "Találatok",
+	"sort-rule-match": "Egyezők előre",
 	"mark-all-read": "Összes megjelölése olvasottként",
 	"density-compact": "Kompakt",
 	"density-comfortable": "Kényelmes",

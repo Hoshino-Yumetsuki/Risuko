@@ -47,7 +47,7 @@ export default {
 	"logs-loading": "Chargement des journaux...",
 	"logs-no-files": "Aucun fichier journal trouvé",
 	"logs-empty": "Aucune entrée ne correspond aux filtres",
-	"logs-error": "Impossible de lire les journaux: {{error}}",
+	"logs-error": "Impossible de lire les journaux : {{error}}",
 	"logs-truncated":
 		"Seule la partie récente et limitée de ce fichier est affichée.",
 	"log-levels": {
