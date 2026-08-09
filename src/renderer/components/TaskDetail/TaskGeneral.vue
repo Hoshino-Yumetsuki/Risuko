@@ -54,11 +54,26 @@
         <span class="general-card-label">{{ $t('task.schedule-start-at') }}</span>
         <span class="general-card-value">{{ scheduledStartText }}</span>
       </div>
-      <div class="general-card-row" v-if="task.errorCode && task.errorCode !== '0'">
+      <div
+        class="general-card-row"
+        v-if="(task.errorCode && task.errorCode !== '0') || taskErrorMessage"
+      >
         <span class="general-card-label">{{ $t('task.task-error-info') }}</span>
-        <span class="general-card-value general-card-value--error"
-          >{{ task.errorCode }} {{ taskErrorMessage }}</span
-        >
+        <span class="general-card-value general-card-value--error flex flex-wrap items-center gap-2">
+          <span class="min-w-0">{{ task.errorCode }} {{ taskErrorMessage }}</span>
+          <Button
+            v-if="sourceUrl"
+            variant="outline"
+            size="sm"
+            class="ml-2 shrink-0"
+            :title="$t('task.open-source-url')"
+            :aria-label="$t('task.open-source-url')"
+            @click="openSourceUrl"
+          >
+            <ExternalLink :size="13" />
+            {{ $t('task.open-source-url') }}
+          </Button>
+        </span>
       </div>
     </div>
     <div
@@ -74,9 +89,18 @@
     <div v-if="isBT" class="general-card">
       <div class="general-card-row">
         <span class="general-card-label">{{ $t('task.task-info-hash') }}</span>
-        <span class="general-card-value mono"
-          >{{ task.infoHash }} <i class="copy-link" @click="handleCopyClick"><Link :size="12" /></i
-        ></span>
+        <span class="general-card-value mono">
+          {{ task.infoHash }}
+          <button
+            type="button"
+            class="copy-link"
+            :title="$t('task.copy-link')"
+            :aria-label="$t('task.copy-link')"
+            @click="handleCopyClick"
+          >
+            <Link :size="12" aria-hidden="true" />
+          </button>
+        </span>
       </div>
       <div v-if="task.infoHashV2" class="general-card-row">
         <span class="general-card-label">{{ $t('task.task-info-hash-v2') }}</span>
@@ -106,7 +130,7 @@
   </div>
 </template>
 <script lang="ts">
-import { Clock, Link, Magnet } from "@lucide/vue";
+import { Clock, ExternalLink, Link, Magnet } from "@lucide/vue";
 import { APP_THEME, TASK_STATUS } from "@shared/constants";
 import {
 	bytesToSize,
@@ -121,10 +145,12 @@ import {
 } from "@shared/utils";
 import ShowInFolder from "@/components/Native/ShowInFolder.vue";
 import TaskStatus from "@/components/Task/TaskStatus.vue";
+import { Button } from "@/components/ui/button";
 import is from "@/shims/platform";
 import { useAppStore } from "@/store/app";
 import { usePreferenceStore } from "@/store/preference";
 import { copyText } from "@/utils/clipboard";
+import { findHttpSourceUrl, openExternalUrl } from "@/utils/external";
 import { getTaskRevealDir, getTaskRevealPath } from "@/utils/native";
 
 export default {
@@ -132,7 +158,9 @@ export default {
 	components: {
 		[ShowInFolder.name]: ShowInFolder,
 		[TaskStatus.name]: TaskStatus,
+		Button,
 		Magnet,
+		ExternalLink,
 		Link,
 		Clock,
 	},
@@ -189,6 +217,9 @@ export default {
 		},
 		taskErrorMessage() {
 			return this.usenetRepairFailureMessage || this.task?.errorMessage || "";
+		},
+		sourceUrl(): string {
+			return findHttpSourceUrl(this.task);
 		},
 		displayDownloadSpeed() {
 			return Number(this.task?.downloadSpeed || 0);
@@ -279,6 +310,9 @@ export default {
 				.catch(() => {
 					this.$msg.error(this.$t("task.copy-link-failed"));
 				});
+		},
+		openSourceUrl() {
+			void openExternalUrl(this.sourceUrl);
 		},
 	},
 	beforeUnmount() {

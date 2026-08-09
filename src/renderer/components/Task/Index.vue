@@ -16,12 +16,17 @@
               type="text"
               class="task-filter-field"
               :placeholder="$t('task.filter-placeholder')"
+              :title="$t('task.filter-placeholder')"
+              :aria-label="$t('task.filter-placeholder')"
               :value="filterText"
               @input="onFilterInput"
             />
             <button
+              type="button"
               v-if="filterText"
               class="task-filter-clear"
+              :title="$t('task.clear-filter')"
+              :aria-label="$t('task.clear-filter')"
               @click="onFilterClear"
             >
               <X :size="12" />
@@ -61,15 +66,17 @@
               </SelectItem>
             </SelectContent>
           </Select>
-          <i
+          <button
+            type="button"
             v-if="sortBy !== 'default'"
             class="task-action task-sort-order"
             @click="onToggleSortOrder"
             :title="sortOrder === 'asc' ? $t('task.sort-ascending') : $t('task.sort-descending')"
+            :aria-label="sortOrder === 'asc' ? $t('task.sort-ascending') : $t('task.sort-descending')"
           >
             <ArrowUpNarrowWide v-if="sortOrder === 'asc'" :size="14" />
             <ArrowDownNarrowWide v-else :size="14" />
-          </i>
+          </button>
           <Select :model-value="`${tasksPerPage}`" @update:model-value="onTasksPerPageChange">
             <SelectTrigger size="sm" class="task-toolbar-select">
               <SelectValue />

@@ -1,6 +1,11 @@
 <script setup lang="ts">
 import { computed } from "vue";
+import { useAttrs } from "vue";
 import { Button, type ButtonVariants } from "../button";
+
+defineOptions({ inheritAttrs: false });
+
+const attrs = useAttrs();
 
 const props = withDefaults(
 	defineProps<{
@@ -40,9 +45,11 @@ const mappedSize = computed<ButtonVariants["size"]>(() => {
 
 <template>
   <Button
+    v-bind="attrs"
     class="ui-button"
     :variant="mappedVariant"
     :size="mappedSize"
+    :type="type"
     :disabled="disabled"
   >
     <slot />

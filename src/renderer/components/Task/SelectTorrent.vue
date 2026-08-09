@@ -36,6 +36,8 @@
             <Checkbox
               :model-value="previewLoadedSelectionState"
               :disabled="previewLoadedFileIndices.length === 0"
+              :aria-label="$t('task.select-all-task')"
+              :title="$t('task.select-all-task')"
               @update:model-value="toggleLoadedPreviewSelection"
             />
           </span>
@@ -54,12 +56,16 @@
               <Checkbox
                 v-if="row.type === 'file'"
                 :model-value="isPreviewFileSelected(row)"
+                :title="`${$t('task.file-name')}: ${row.name}`"
+                :aria-label="`${$t('task.file-name')}: ${row.name}`"
                 @update:model-value="(checked) => togglePreviewFileSelection(row, checked)"
               />
               <Checkbox
                 v-else-if="row.type === 'folder'"
                 :model-value="previewFolderSelectionState(row)"
                 :disabled="row.loading || !hasPreviewFolderSelectableRange(row)"
+                :title="`${$t('task.torrent-preview-folder-select')}: ${row.name}`"
+                :aria-label="`${$t('task.torrent-preview-folder-select')}: ${row.name}`"
                 @update:model-value="(checked) => togglePreviewFolderSelection(row, checked)"
               />
               <span v-else class="torrent-preview-checkbox-placeholder"></span>
@@ -69,6 +75,8 @@
               type="button"
               class="torrent-preview-toggle"
               :disabled="row.loading || isBusy"
+              :title="$t('task.torrent-preview-folder-toggle')"
+              :aria-label="$t('task.torrent-preview-folder-toggle')"
               @click="togglePreviewFolder(row.path)"
             >
               <ChevronRight :size="12" :class="{ 'is-expanded': row.expanded }" />

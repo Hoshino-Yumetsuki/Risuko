@@ -252,6 +252,18 @@ fn build_client(options: &Map<String, Value>) -> Result<risuko_http::Client, Str
         }
     }
 
+    if let Some(no_proxy) = options
+        .get("no-proxy")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        let matcher = risuko_http::NoProxy::parse(no_proxy);
+        if !matcher.is_empty() {
+            builder = builder.no_proxy(matcher);
+        }
+    }
+
     builder
         .build()
         .map_err(|e| format!("Failed to build HTTP client: {e}"))

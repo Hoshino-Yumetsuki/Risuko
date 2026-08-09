@@ -12,7 +12,7 @@ use tauri::{
 use tauri::{App, AppHandle};
 
 #[cfg(not(target_os = "android"))]
-use super::{emit_command, flyout, menu::get_menu_text, show_and_emit};
+use super::{flyout, menu::get_menu_text, show_and_emit};
 
 #[cfg(not(target_os = "android"))]
 fn tray_event_rect(event: &TrayIconEvent) -> Option<(&tauri::Rect, (f64, f64))> {
@@ -42,29 +42,31 @@ fn build_tray_menu(
     let show = item("tray-show", "Show Risuko")?;
     let quick_panel = item("tray-quick-panel", "Quick Panel")?;
     let manual = item("tray-manual", "Manual")?;
-    let check_updates = item("tray-check-updates", "Check for Updates...")?;
     let sep2 = PredefinedMenuItem::separator(handle)?;
     let task_list = item("tray-task-list", "Task List")?;
     let preferences = item("tray-preferences", "Preferences...")?;
     let sep3 = PredefinedMenuItem::separator(handle)?;
     let quit = item("tray-quit", "Quit")?;
 
-    let menu = MenuBuilder::new(handle)
-        .items(&[
-            &new_task,
-            &new_bt_task,
-            &open_file,
-            &sep1,
-            &show,
-            &quick_panel,
-            &manual,
-            &check_updates,
-            &sep2,
-            &task_list,
-            &preferences,
-            &sep3,
-            &quit,
-        ])
+    #[allow(unused_mut)]
+    let mut builder = MenuBuilder::new(handle).items(&[
+        &new_task,
+        &new_bt_task,
+        &open_file,
+        &sep1,
+        &show,
+        &quick_panel,
+        &manual,
+    ]);
+
+    #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+    {
+        let check_updates = item("tray-check-updates", "Check for Updates...")?;
+        builder = builder.item(&check_updates);
+    }
+
+    let menu = builder
+        .items(&[&sep2, &task_list, &preferences, &sep3, &quit])
         .build()?;
 
     Ok(menu)
@@ -118,9 +120,10 @@ pub fn setup_tray(app: &App) -> Result<(), Box<dyn std::error::Error>> {
                 }
                 "tray-quick-panel" => flyout::toggle_flyout(app),
                 "tray-manual" => {
-                    let _ = open::that("https://github.com/YueMiyuki/Risuko/wiki");
+                    let _ = open::that("https://risuko.app/docs");
                 }
-                "tray-check-updates" => emit_command(app, "application:check-for-updates"),
+                #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+                "tray-check-updates" => show_and_emit(app, "application:check-for-updates"),
                 "tray-task-list" => show_and_emit(app, "application:task-list"),
                 "tray-preferences" => show_and_emit(app, "application:preferences"),
                 "tray-quit" => {

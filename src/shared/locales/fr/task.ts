@@ -1,4 +1,7 @@
 export default {
+	"sort-ascending": "Croissant",
+	"sort-descending": "Décroissant",
+	"torrent-preview-folder-select": "Sélectionner",
 	active: "Actives",
 	waiting: "En attente",
 	stopped: "Stopées",
@@ -141,4 +144,13 @@ export default {
 		"Les fichiers partiels ont été conservés. Ajoutez un fournisseur avec une meilleure complétude, puis réessayez.",
 	"usenet-repair-partials-unavailable":
 		"Les fichiers partiels ne sont pas disponibles. Essayez un autre NZB ou téléchargez à nouveau avec un fournisseur offrant une meilleure complétude.",
+	"open-source-url": "Ouvrir l’URL source",
+	"more-actions": "Plus d’actions",
+	"filter-video": "Sélectionner fichiers vidéo",
+	"filter-audio": "Sélectionner fichiers audio",
+	"filter-image": "Sélectionner fichiers image",
+	"filter-document": "Sélectionner fichiers document",
+	"batch-remove-item": "Supprimer",
+	"torrent-preview-folder-toggle": "Basculer le dossier",
+	"clear-filter": "Effacer le filtre",
 };

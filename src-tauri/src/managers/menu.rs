@@ -103,7 +103,8 @@ fn build_macos_menu(
 ) -> Result<Menu<tauri::Wry>, Box<dyn std::error::Error>> {
     let mi = |id: &str, fb: &str| MenuItemBuilder::with_id(id, get_menu_text(labels, id, fb));
 
-    let app_menu = SubmenuBuilder::new(handle, get_menu_text(labels, "menu-app", "Risuko"))
+    #[allow(unused_mut)]
+    let mut app_menu = SubmenuBuilder::new(handle, get_menu_text(labels, "menu-app", "Risuko"))
         .about(Some(
             AboutMetadataBuilder::new()
                 .name(Some("Risuko"))
@@ -115,8 +116,14 @@ fn build_macos_menu(
             &mi("preferences", "Preferences...")
                 .accelerator("CmdOrCtrl+,")
                 .build(handle)?,
-        )
-        .item(&mi("check-for-updates", "Check for Updates...").build(handle)?)
+        );
+
+    #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+    {
+        app_menu = app_menu.item(&mi("check-for-updates", "Check for Updates...").build(handle)?);
+    }
+
+    let app_menu = app_menu
         .separator()
         .hide()
         .hide_others()
@@ -162,15 +169,22 @@ fn build_default_menu(
 ) -> Result<Menu<tauri::Wry>, Box<dyn std::error::Error>> {
     let mi = |id: &str, fb: &str| MenuItemBuilder::with_id(id, get_menu_text(labels, id, fb));
 
-    let file_menu = SubmenuBuilder::new(handle, get_menu_text(labels, "menu-file", "File"))
+    #[allow(unused_mut)]
+    let mut file_menu = SubmenuBuilder::new(handle, get_menu_text(labels, "menu-file", "File"))
         .item(&mi("about", "About Risuko").build(handle)?)
         .separator()
         .item(
             &mi("preferences", "Preferences...")
                 .accelerator("CmdOrCtrl+,")
                 .build(handle)?,
-        )
-        .item(&mi("check-for-updates", "Check for Updates...").build(handle)?)
+        );
+
+    #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+    {
+        file_menu = file_menu.item(&mi("check-for-updates", "Check for Updates...").build(handle)?);
+    }
+
+    let file_menu = file_menu
         .item(&mi("show-window", "Show Risuko").build(handle)?)
         .separator()
         .item(
@@ -323,7 +337,8 @@ fn setup_menu_event_handler(app: &App) {
             "clear-recent-tasks" => emit_command(app, "application:clear-recent-tasks"),
             "preferences" => emit_command(app, "application:preferences"),
             "about" => emit_command(app, "application:about"),
-            "check-for-updates" => emit_command(app, "application:check-for-updates"),
+            #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+            "check-for-updates" => show_and_emit(app, "application:check-for-updates"),
             "show-window" => {
                 if let Some(window) = app.get_webview_window("main") {
                     let _ = window.show();
@@ -334,7 +349,7 @@ fn setup_menu_event_handler(app: &App) {
                 let _ = open::that("https://risuko.app");
             }
             "manual" => {
-                let _ = open::that("https://github.com/YueMiyuki/Risuko/wiki");
+                let _ = open::that("https://risuko.app/docs");
             }
             "release-notes" => {
                 let _ = open::that("https://github.com/YueMiyuki/Risuko/releases");

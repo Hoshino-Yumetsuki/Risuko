@@ -10,36 +10,46 @@
           {{ currentFeed ? currentFeed.title : isDownloadedView ? $t('rss.downloaded') : $t('rss.all-items') }}
         </h4>
         <div class="task-actions">
-          <i
+          <button
+            type="button"
             class="task-action"
             :class="{ disabled: selectedCount === 0 }"
+            :disabled="selectedCount === 0"
             :title="$t('rss.delete-selected')"
+            :aria-label="$t('rss.delete-selected')"
             @click="handleBatchDelete"
           >
             <Trash2 :size="14" />
-          </i>
-          <i
+          </button>
+          <button
+            type="button"
             class="task-action"
             :class="{ disabled: downloadableSelectedCount === 0 }"
+            :disabled="downloadableSelectedCount === 0"
             :title="$t('rss.download-selected')"
+            :aria-label="$t('rss.download-selected')"
             @click="handleBatchDownload"
           >
             <Download :size="14" />
-          </i>
-          <i
+          </button>
+          <button
+            type="button"
             class="task-action"
             :title="$t('rss.refresh')"
+            :aria-label="$t('rss.refresh')"
             @click="handleRefreshAll"
           >
             <RefreshCw :size="14" :class="{ 'animate-spin': loading }" />
-          </i>
-          <i
+          </button>
+          <button
+            type="button"
             class="task-action"
             :title="$t('rss.add-feed')"
+            :aria-label="$t('rss.add-feed')"
             @click="showAddFeedDialog = true"
           >
             <Plus :size="14" />
-          </i>
+          </button>
         </div>
       </motion-enter>
       <div v-if="feeds.length > 0" class="task-toolbar">
@@ -50,12 +60,17 @@
               type="text"
               class="task-filter-field"
               :placeholder="$t('rss.filter-placeholder')"
+              :title="$t('rss.filter-placeholder')"
+              :aria-label="$t('rss.filter-placeholder')"
               :value="filterText"
               @input="onFilterInput"
             />
             <button
+              type="button"
               v-if="filterText"
               class="task-filter-clear"
+              :title="$t('rss.clear-filter')"
+              :aria-label="$t('rss.clear-filter')"
               @click="onFilterClear"
             >
               <X :size="12" />
@@ -64,11 +79,15 @@
           <button
             type="button"
             :class="['rss-chip', { active: unreadOnly }]"
+            :aria-pressed="unreadOnly"
+            :title="$t('rss.filter-unread')"
             @click="toggleUnreadOnly"
           >{{ $t('rss.filter-unread') }}</button>
           <button
             type="button"
             :class="['rss-chip', { active: matchedOnly }]"
+            :aria-pressed="matchedOnly"
+            :title="$t('rss.filter-matched')"
             @click="toggleMatchedOnly"
           >{{ $t('rss.filter-matched') }}</button>
           <Select :model-value="sortMode" @update:model-value="onSortChange">
@@ -86,6 +105,7 @@
             type="button"
             class="rss-chip"
             :title="$t('rss.mark-all-read')"
+            :aria-label="$t('rss.mark-all-read')"
             @click="handleMarkAllRead"
           >
             <CheckCheck :size="12" />
@@ -94,6 +114,7 @@
             type="button"
             :class="['rss-chip', { active: densityMode === 'compact' }]"
             :title="densityMode === 'compact' ? $t('rss.density-comfortable') : $t('rss.density-compact')"
+            :aria-label="densityMode === 'compact' ? $t('rss.density-comfortable') : $t('rss.density-compact')"
             @click="toggleDensity"
           >
             <Rows3 :size="12" />
@@ -112,15 +133,22 @@
               </SelectContent>
             </Select>
           </div>
-          <div class="rss-select-all" @click="toggleSelectAll">
+          <div class="rss-select-all">
             <Checkbox
               :model-value="selectAllState"
+              :aria-label="$t('rss.select-all')"
               @update:model-value="toggleSelectAll"
               @click.stop
             />
-            <span class="rss-select-label">
+            <button
+              type="button"
+              class="rss-select-label"
+              :title="$t('rss.select-all')"
+              :aria-label="$t('rss.select-all')"
+              @click="toggleSelectAll"
+            >
               {{ selectedCount > 0 ? $t('rss.selected-count', { count: selectedCount }) : $t('rss.select-all') }}
-            </span>
+            </button>
           </div>
         </div>
       </div>
@@ -432,8 +460,17 @@ export default {
 }
 
 .rss-select-label {
+  border: 0;
+  padding: 0;
+  background: transparent;
   font-size: 0.6875rem;
   color: var(--text-2);
+  cursor: pointer;
+  font: inherit;
+}
+
+.rss-select-label:hover {
+  color: var(--text-1);
 }
 
 .rss-chip {

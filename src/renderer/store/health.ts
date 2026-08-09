@@ -1,4 +1,5 @@
 import type { HealthCategoryId, HealthReport } from "@shared/types/health";
+import type { LogEntry, LogFileSummary, LogLevel } from "@shared/types/log";
 import logger from "@shared/utils/logger";
 import { defineStore } from "pinia";
 import api from "@/api";
@@ -26,6 +27,12 @@ export const useHealthStore = defineStore("health", {
 		loading: false,
 		loadingCategories: new Set<HealthCategoryId>(),
 		lastError: null as string | null,
+		logFiles: [] as LogFileSummary[],
+		logEntries: [] as LogEntry[],
+		logFileName: null as string | null,
+		logsLoading: false,
+		logsError: null as string | null,
+		logsTruncated: false,
 	}),
 
 	actions: {
@@ -73,11 +80,63 @@ export const useHealthStore = defineStore("health", {
 			}
 		},
 
+		async fetchLogFiles() {
+			this.logsLoading = true;
+			this.logsError = null;
+			try {
+				this.logFiles = await api.listLogFiles();
+				if (
+					this.logFileName &&
+					!this.logFiles.some((file) => file.name === this.logFileName)
+				) {
+					this.logFileName = null;
+				}
+				if (!this.logFileName) {
+					this.logFileName = this.logFiles[0]?.name ?? null;
+				}
+			} catch (err) {
+				this.logsError = err instanceof Error ? err.message : String(err);
+				logger.error("[health] fetchLogFiles failed", err);
+			} finally {
+				this.logsLoading = false;
+			}
+		},
+
+		async readLogFile(name: string, levels?: LogLevel[]) {
+			if (!name) {
+				this.logEntries = [];
+				this.logFileName = null;
+				this.logsTruncated = false;
+				return;
+			}
+			this.logsLoading = true;
+			this.logsError = null;
+			try {
+				const result = await api.readLogFile({ name, levels });
+				this.logFileName = result.name || name;
+				this.logEntries = Array.isArray(result.entries) ? result.entries : [];
+				this.logsTruncated = !!result.truncated;
+			} catch (err) {
+				this.logsError = err instanceof Error ? err.message : String(err);
+				this.logEntries = [];
+				this.logsTruncated = false;
+				logger.error("[health] readLogFile failed", err);
+			} finally {
+				this.logsLoading = false;
+			}
+		},
+
 		clear() {
 			this.report = null;
 			this.lastError = null;
 			this.loading = false;
 			this.loadingCategories.clear();
+			this.logFiles = [];
+			this.logEntries = [];
+			this.logFileName = null;
+			this.logsLoading = false;
+			this.logsError = null;
+			this.logsTruncated = false;
 		},
 	},
 });

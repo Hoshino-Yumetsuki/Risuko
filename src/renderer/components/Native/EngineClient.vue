@@ -19,6 +19,7 @@ import is from "@/shims/platform";
 import { useAppStore } from "@/store/app";
 import { usePreferenceStore } from "@/store/preference";
 import { useTaskStore } from "@/store/task";
+import { findHttpSourceUrl, openExternalUrl } from "@/utils/external";
 import {
 	finalizeCompletedDownloadPath,
 	getTaskFullPath,
@@ -579,6 +580,7 @@ export default {
 				const taskName = getTaskName(task);
 				const { errorCode, errorMessage } = task;
 				const normalizedErrorCode = String(errorCode || "");
+				const sourceUrl = findHttpSourceUrl(task);
 				logger.error(
 					`[Risuko] download error gid: ${gid}, #${errorCode}, ${errorMessage}`,
 				);
@@ -595,17 +597,18 @@ export default {
 					const errorString = String(errorMessage || "");
 					const hostMatch = errorString.match(/host=([^\s]+)/);
 					const host = hostMatch?.[1] || "";
-					const url =
-						(task.files || [])
-							.flatMap((f) => f.uris || [])
-							.map((u) => u.uri || "")
-							.find((u) => /^https?:\/\//i.test(u)) || "";
+					const url = sourceUrl;
 
 					const appStore = useAppStore();
 					if (host && appStore.cloudflareSkipHosts.includes(host)) {
-						this.$msg.error({
+						toast.error(this.$t("task.download-error-message", { taskName }), {
 							duration: 5000,
-							message: this.$t("task.download-error-message", { taskName }),
+							action: sourceUrl
+								? {
+										label: this.$t("task.open-source-url"),
+										onClick: () => void openExternalUrl(sourceUrl),
+									}
+								: undefined,
 						});
 					} else {
 						appStore.showCloudflareDialog({ gid, host, url, taskName });
@@ -654,9 +657,14 @@ export default {
 					message = this.$t("task.download-error-message", { taskName });
 				}
 				const link = `https://risuko.app/docs/reference/error-codes#${errorCode}`;
-				this.$msg.error({
+				toast.error(`${message} (${errorCode}) ${link}`, {
 					duration: isMissingYtDlp || usenetRepairFailure ? 9000 : 5000,
-					message: `${message} (${errorCode}) ${link}`,
+					action: sourceUrl
+						? {
+								label: this.$t("task.open-source-url"),
+								onClick: () => void openExternalUrl(sourceUrl),
+							}
+						: undefined,
 				});
 			});
 		},

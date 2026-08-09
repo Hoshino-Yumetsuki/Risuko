@@ -25,6 +25,7 @@
           class="health-cat-icon-btn health-cat-refresh"
           :disabled="loading"
           :title="$t('health.run-group')"
+          :aria-label="$t('health.run-group')"
           @click="$emit('run')"
         >
           <RefreshCw :size="14" :class="{ 'animate-spin': loading }" />
@@ -33,6 +34,7 @@
           type="button"
           class="health-cat-icon-btn"
 					:title="expanded ? $t('health.collapse') : $t('health.expand')"
+					:aria-label="expanded ? $t('health.collapse') : $t('health.expand')"
           @click="expanded = !expanded"
         >
           <ChevronDown :size="14" :class="{ 'health-cat-toggle-open': expanded }" />

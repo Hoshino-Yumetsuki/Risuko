@@ -18,7 +18,7 @@ use crate::cookies::SharedJar;
 use crate::decompress;
 use crate::error::{Error, Result};
 use crate::into_url::IntoUrl;
-use crate::proxy::Proxy;
+use crate::proxy::{NoProxy, Proxy};
 use crate::redirect::Policy;
 use crate::request::RequestBuilder;
 use crate::resolver::{GlobalResolver, SharedResolver};
@@ -31,6 +31,8 @@ pub struct Client {
 
 struct ClientInner {
     hyper: HyperClient<Connector, BoxBody<Bytes, Error>>,
+    proxy: Option<Arc<Proxy>>,
+    no_proxy: Option<Arc<NoProxy>>,
     user_agent: Option<HeaderValue>,
     default_headers: HeaderMap,
     redirect: Policy,
@@ -83,13 +85,6 @@ impl Client {
         let url = rb.url?;
         let timeout = rb.timeout.or(self.inner.timeout);
 
-        // Start with default headers, then let request headers override them.
-        // Per-name: if the request sets any value for a header name, all
-        // default values for that name are dropped before the request's values
-        // are appended. So a request `User-Agent` replaces the default UA
-        // instead of being sent alongside it (HTTP forbids duplicate singleton
-        // headers), while multi-valued request headers like `Accept` keep every
-        // value the caller appended
         let mut headers = HeaderMap::new();
         for (k, v) in self.inner.default_headers.iter() {
             headers.append(k.clone(), v.clone());
@@ -240,6 +235,24 @@ impl Client {
                 }
             }
         }
+
+        if let Some(proxy) = &self.inner.proxy {
+            let bypassed = self
+                .inner
+                .no_proxy
+                .as_deref()
+                .is_some_and(|matcher| matcher.matches_url(url));
+            if url.scheme() != "https"
+                && !bypassed
+                && !req_headers.contains_key(http::header::PROXY_AUTHORIZATION)
+            {
+                if let Some(auth) = proxy.http_basic_authorization() {
+                    if let Ok(value) = HeaderValue::from_str(&auth) {
+                        req_headers.insert(http::header::PROXY_AUTHORIZATION, value);
+                    }
+                }
+            }
+        }
         // Auto Accept-Encoding when the user enabled compression and didn't
         // override it themselves. Skip when no codec is enabled so we don't
         // emit an empty header (which servers may treat as ambiguous)
@@ -385,6 +398,7 @@ pub struct ClientBuilder {
     auto_deflate: bool,
     danger_accept_invalid_certs: bool,
     proxy: Option<Proxy>,
+    no_proxy: Option<NoProxy>,
     cookie_jar: Option<SharedJar>,
     resolver: Option<SharedResolver>,
     extra_root_certs: Vec<Vec<u8>>,
@@ -407,6 +421,7 @@ impl ClientBuilder {
             auto_deflate: false,
             danger_accept_invalid_certs: false,
             proxy: None,
+            no_proxy: None,
             cookie_jar: None,
             resolver: None,
             extra_root_certs: Vec::new(),
@@ -477,7 +492,20 @@ impl ClientBuilder {
     }
 
     pub fn proxy(mut self, p: Proxy) -> Self {
+        if self.no_proxy.is_none() {
+            self.no_proxy = p.no_proxy.as_deref().cloned();
+        }
         self.proxy = Some(p);
+        self
+    }
+
+    pub fn no_proxy(mut self, no_proxy: NoProxy) -> Self {
+        self.no_proxy = Some(no_proxy);
+        self
+    }
+
+    pub fn no_proxy_str(mut self, value: impl AsRef<str>) -> Self {
+        self.no_proxy = Some(NoProxy::parse(value));
         self
     }
 
@@ -486,8 +514,6 @@ impl ClientBuilder {
         self
     }
 
-    /// Pin a resolver that's already shared, so callers can share one
-    /// resolver instance, and its cache, across several clients
     pub fn resolver_arc(mut self, r: SharedResolver) -> Self {
         self.resolver = Some(r);
         self
@@ -501,10 +527,22 @@ impl ClientBuilder {
     pub fn build(self) -> Result<Client> {
         let tls = build_tls(self.danger_accept_invalid_certs, &self.extra_root_certs)?;
 
+        let no_proxy_matcher = self
+            .no_proxy
+            .or_else(|| {
+                self.proxy
+                    .as_ref()
+                    .and_then(|p| p.no_proxy.as_deref().cloned())
+            })
+            .unwrap_or_default();
+        let has_proxy = self.proxy.is_some();
+        let proxy = self.proxy.map(Arc::new);
+        let no_proxy = has_proxy.then(|| Arc::new(no_proxy_matcher));
         let connector = Connector {
             tls: Arc::new(tls),
             resolver: self.resolver.unwrap_or_else(|| Arc::new(GlobalResolver)),
-            proxy: self.proxy.map(Arc::new),
+            proxy: proxy.clone(),
+            no_proxy: no_proxy.clone(),
             connect_timeout: self.connect_timeout,
             tcp_nodelay: self.tcp_nodelay,
             tcp_keepalive: self.tcp_keepalive,
@@ -534,6 +572,8 @@ impl ClientBuilder {
 
         let inner = ClientInner {
             hyper,
+            proxy,
+            no_proxy,
             user_agent: self.user_agent,
             default_headers: self.default_headers,
             redirect: self.redirect,
@@ -558,10 +598,6 @@ impl Default for ClientBuilder {
 }
 
 fn build_tls(danger_accept_invalid: bool, extra: &[Vec<u8>]) -> Result<ClientConfig> {
-    // `ClientConfig::builder()` panics if no process-level CryptoProvider is
-    // installed. Risuko only ever links against `rustls/ring`, so install
-    // ring as the default the first time we build a client. The call is a
-    // no-op once a provider is installed, so it is safe to repeat
     static INSTALL_PROVIDER: std::sync::Once = std::sync::Once::new();
     INSTALL_PROVIDER.call_once(|| {
         let _ = rustls::crypto::ring::default_provider().install_default();
@@ -639,6 +675,25 @@ impl rustls::client::danger::ServerCertVerifier for NoCertVerifier {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
+    use std::net::SocketAddr;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    struct RoutingResolver(HashMap<String, SocketAddr>);
+
+    impl crate::resolver::Resolve for RoutingResolver {
+        fn resolve(&self, host: &str) -> crate::resolver::Resolving {
+            let address = self
+                .0
+                .get(host)
+                .copied()
+                .unwrap_or_else(|| "127.0.0.1:1".parse().unwrap());
+            Box::pin(
+                async move { Ok(Box::new(std::iter::once(address)) as crate::resolver::Addrs) },
+            )
+        }
+    }
 
     #[test]
     fn build_tls_advertises_h2_then_http11_alpn() {
@@ -647,5 +702,113 @@ mod tests {
             config.alpn_protocols,
             vec![b"h2".to_vec(), b"http/1.1".to_vec()]
         );
+    }
+
+    #[tokio::test]
+    async fn plain_http_proxy_uses_absolute_form_and_authentication() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = Vec::new();
+            let mut chunk = [0u8; 1024];
+            while !request.windows(4).any(|window| window == b"\r\n\r\n") {
+                let read = socket.read(&mut chunk).await.unwrap();
+                assert_ne!(read, 0, "proxy client closed before finishing headers");
+                request.extend_from_slice(&chunk[..read]);
+            }
+            let request = String::from_utf8(request).unwrap();
+            assert!(request.starts_with("GET http://example.test/file?part=1 HTTP/1.1\r\n"));
+            assert!(
+                request.contains("proxy-authorization: Basic dXNlcjpwYXNz\r\n"),
+                "unexpected proxy request: {request:?}"
+            );
+            socket
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")
+                .await
+                .unwrap();
+        });
+
+        let client = Client::builder()
+            .proxy(Proxy::all(format!("http://user:pass@{address}")).unwrap())
+            .build()
+            .unwrap();
+        assert_eq!(
+            client
+                .get("http://example.test/file?part=1")
+                .send()
+                .await
+                .unwrap()
+                .text()
+                .await
+                .unwrap(),
+            "ok"
+        );
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn redirect_recomputes_no_proxy_for_the_new_host() {
+        let proxy_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let proxy_address = proxy_listener.local_addr().unwrap();
+        let direct_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let direct_address = direct_listener.local_addr().unwrap();
+        let direct_port = direct_address.port();
+
+        let proxy = tokio::spawn(async move {
+            let (mut socket, _) = proxy_listener.accept().await.unwrap();
+            let mut request = Vec::new();
+            let mut chunk = [0u8; 1024];
+            while !request.windows(4).any(|window| window == b"\r\n\r\n") {
+                let read = socket.read(&mut chunk).await.unwrap();
+                assert_ne!(read, 0);
+                request.extend_from_slice(&chunk[..read]);
+            }
+            let request = String::from_utf8(request).unwrap();
+            assert!(request.starts_with("GET http://start.example/ HTTP/1.1\r\n"));
+            socket
+                .write_all(
+                    format!(
+                        "HTTP/1.1 302 Found\r\nLocation: http://bypass.example:{direct_port}/end\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                    )
+                    .as_bytes(),
+                )
+                .await
+                .unwrap();
+        });
+
+        let direct = tokio::spawn(async move {
+            let (mut socket, _) = direct_listener.accept().await.unwrap();
+            let mut request = Vec::new();
+            let mut chunk = [0u8; 1024];
+            while !request.windows(4).any(|window| window == b"\r\n\r\n") {
+                let read = socket.read(&mut chunk).await.unwrap();
+                assert_ne!(read, 0);
+                request.extend_from_slice(&chunk[..read]);
+            }
+            let request = String::from_utf8(request).unwrap();
+            assert!(request.starts_with("GET /end HTTP/1.1\r\n"));
+            socket
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Length: 6\r\nConnection: close\r\n\r\ndirect",
+                )
+                .await
+                .unwrap();
+        });
+
+        let resolver = RoutingResolver(HashMap::from([
+            ("proxy.example".to_string(), proxy_address),
+            ("bypass.example".to_string(), direct_address),
+        ]));
+        let client = Client::builder()
+            .proxy(Proxy::all(format!("http://proxy.example:{}", proxy_address.port())).unwrap())
+            .no_proxy(NoProxy::parse("bypass.example"))
+            .resolver_arc(Arc::new(resolver))
+            .build()
+            .unwrap();
+        let response = client.get("http://start.example/").send().await.unwrap();
+        assert_eq!(response.text().await.unwrap(), "direct");
+        proxy.await.unwrap();
+        direct.await.unwrap();
     }
 }

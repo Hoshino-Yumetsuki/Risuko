@@ -1,49 +1,61 @@
 <template>
   <nav class="rss-feed-list">
     <ul class="rss-feed-items">
-      <li
-        class="rss-feed-item"
-        :class="{ active: currentFeedId === null }"
-        @click="selectFeed(null)"
-      >
-        <i class="rss-feed-icon">
-          <Rss :size="15" />
-        </i>
-        <span class="rss-feed-name">{{ $t('rss.all-items') }}</span>
-        <span v-if="totalUnread > 0" class="rss-feed-badge">{{ totalUnread }}</span>
+      <li>
+        <button
+          type="button"
+          class="rss-feed-item"
+          :class="{ active: currentFeedId === null }"
+          :title="$t('rss.all-items')"
+          :aria-label="$t('rss.all-items')"
+          :aria-current="currentFeedId === null ? 'page' : undefined"
+          @click="selectFeed(null)"
+        >
+          <i class="rss-feed-icon" aria-hidden="true"><Rss :size="15" /></i>
+          <span class="rss-feed-name">{{ $t('rss.all-items') }}</span>
+          <span v-if="totalUnread > 0" class="rss-feed-badge">{{ totalUnread }}</span>
+        </button>
       </li>
-      <li
-        class="rss-feed-item"
-        :class="{ active: currentFeedId === '__downloaded__' }"
-        @click="selectFeed('__downloaded__')"
-      >
-        <i class="rss-feed-icon">
-          <Download :size="15" />
-        </i>
-        <span class="rss-feed-name">{{ $t('rss.downloaded') }}</span>
-        <span v-if="downloadedCount > 0" class="rss-feed-badge">{{ downloadedCount }}</span>
+      <li>
+        <button
+          type="button"
+          class="rss-feed-item"
+          :class="{ active: currentFeedId === '__downloaded__' }"
+          :title="$t('rss.downloaded')"
+          :aria-label="$t('rss.downloaded')"
+          :aria-current="currentFeedId === '__downloaded__' ? 'page' : undefined"
+          @click="selectFeed('__downloaded__')"
+        >
+          <i class="rss-feed-icon" aria-hidden="true"><Download :size="15" /></i>
+          <span class="rss-feed-name">{{ $t('rss.downloaded') }}</span>
+          <span v-if="downloadedCount > 0" class="rss-feed-badge">{{ downloadedCount }}</span>
+        </button>
       </li>
-      <li
-        v-for="feed in feeds"
-        :key="feed.id"
-        class="rss-feed-item"
-        :class="{
-          active: currentFeedId === feed.id,
-          'rss-feed-item--error': feed.error_count >= 3,
-          'rss-feed-item--inactive': !feed.is_active,
-        }"
-        @click="selectFeed(feed.id)"
-        @contextmenu.prevent="openContextMenu($event, feed)"
-      >
-        <i class="rss-feed-icon">
-          <CircleDot v-if="!feed.is_active" :size="15" />
-          <AlertTriangle v-else-if="feed.error_count >= 3" :size="15" />
-          <Rss v-else :size="15" />
-        </i>
-        <span class="rss-feed-name" :title="feed.title">{{ feed.title }}</span>
-        <span v-if="unreadCount(feed.id) > 0" class="rss-feed-badge">
-          {{ unreadCount(feed.id) }}
-        </span>
+      <li v-for="feed in feeds" :key="feed.id">
+        <button
+          type="button"
+          class="rss-feed-item"
+          :class="{
+            active: currentFeedId === feed.id,
+            'rss-feed-item--error': feed.error_count >= 3,
+            'rss-feed-item--inactive': !feed.is_active,
+          }"
+          :title="feed.title"
+          :aria-label="feed.title"
+          :aria-current="currentFeedId === feed.id ? 'page' : undefined"
+          @click="selectFeed(feed.id)"
+          @contextmenu.prevent="openContextMenu($event, feed)"
+        >
+          <i class="rss-feed-icon" aria-hidden="true">
+            <CircleDot v-if="!feed.is_active" :size="15" />
+            <AlertTriangle v-else-if="feed.error_count >= 3" :size="15" />
+            <Rss v-else :size="15" />
+          </i>
+          <span class="rss-feed-name">{{ feed.title }}</span>
+          <span v-if="unreadCount(feed.id) > 0" class="rss-feed-badge">
+            {{ unreadCount(feed.id) }}
+          </span>
+        </button>
       </li>
     </ul>
     <div class="rss-feed-footer">
@@ -208,15 +220,25 @@ export default {
   gap: 1px;
 }
 
+.rss-feed-items > li {
+  display: flex;
+  min-width: 0;
+}
+
 .rss-feed-item {
   display: flex;
+  flex: 1;
   align-items: center;
   gap: 8px;
   height: 30px;
   padding: 0 8px;
+  border: 0;
   border-radius: 6px;
+  background: transparent;
   color: var(--text-2);
   font-size: 13px;
+  font-family: inherit;
+  text-align: left;
   cursor: pointer;
   transition:
     color var(--dur-1) var(--ease-out),
@@ -226,6 +248,11 @@ export default {
 .rss-feed-item:hover {
   color: var(--text-1);
   background: var(--surface-1);
+}
+
+.rss-feed-item:focus-visible {
+	outline: 2px solid var(--primary);
+	outline-offset: 1px;
 }
 
 .rss-feed-item.active {

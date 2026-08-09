@@ -1,4 +1,7 @@
 export default {
+	"sort-ascending": "Ascendent",
+	"sort-descending": "Descendent",
+	"torrent-preview-folder-select": "Selecciona",
 	active: "Descarregant",
 	waiting: "Esperant",
 	stopped: "Detinguda",
@@ -147,4 +150,13 @@ export default {
 		"S'han conservat els fitxers parcials. Afegiu un proveïdor amb una completitud millor i torneu-ho a provar.",
 	"usenet-repair-partials-unavailable":
 		"Els fitxers parcials no estan disponibles. Proveu un NZB diferent o torneu a baixar-los amb un proveïdor amb una completitud millor.",
+	"open-source-url": "Obre l'URL d'origen",
+	"more-actions": "Més accions",
+	"filter-video": "Selecciona fitxers de vídeo",
+	"filter-audio": "Selecciona fitxers d'àudio",
+	"filter-image": "Selecciona fitxers d'imatge",
+	"filter-document": "Selecciona fitxers de document",
+	"batch-remove-item": "Elimina",
+	"torrent-preview-folder-toggle": "Commuta la carpeta",
+	"clear-filter": "Esborra el filtre",
 };

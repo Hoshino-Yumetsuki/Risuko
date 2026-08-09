@@ -227,7 +227,7 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { useAppStore } from "@/store/app";
 import { usePreferenceStore } from "@/store/preference";
-import { openItem } from "@/utils/native";
+import { openExternalUrl } from "@/utils/external";
 
 let cachedBrowsers: BrowserInfo[] | null = null;
 
@@ -379,7 +379,9 @@ export default {
 				return;
 			}
 			try {
-				await openItem(this.url);
+				if (!(await openExternalUrl(this.url))) {
+					toast.error(this.$t("app.open-url-failed"));
+				}
 			} catch (e) {
 				toast.error(String(e));
 			}

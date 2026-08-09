@@ -575,18 +575,26 @@ fn build_client(
     if let Some(proxy_url) = options
         .get("all-proxy")
         .and_then(|v| v.as_str())
+        .map(str::trim)
         .filter(|s| !s.is_empty())
     {
-        if let Ok(proxy) = risuko_http::Proxy::all(proxy_url) {
-            builder = builder.proxy(proxy);
+        let proxy = risuko_http::Proxy::all(proxy_url)
+            .map_err(|e| format!("Invalid configured proxy: {e}"))?;
+        builder = builder.proxy(proxy);
+    }
+
+    if let Some(no_proxy) = options
+        .get("no-proxy")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        let matcher = risuko_http::NoProxy::parse(no_proxy);
+        if !matcher.is_empty() {
+            builder = builder.no_proxy(matcher);
         }
     }
 
-    // Cookie file parsing happens once in the caller (see `load_cookie_jar`)
-    // so the decompressing and range clients share a single jar — otherwise
-    // each call here would re-parse the file into a disjoint store and
-    // requests issued via the range client wouldn't see cookies set on
-    // responses received by the main client (and vice versa)
     if let Some(jar) = cookie_jar {
         builder = builder.cookie_provider(jar);
     }

@@ -76,9 +76,16 @@ export default {
 	"enable-proxy": "Activar proxy",
 	"proxy-bypass-input-tips":
 		"Eviteu la configuració del servidor intermediari per a aquests amfitrions i dominis, un per línia",
+	"proxy-scope-label": "S'utilitza per a",
 	"proxy-scope-download": "Descàrrega",
+	"proxy-scope-download-desc":
+		"Encamina el trànsit de baixada a través del servidor intermediari",
 	"proxy-scope-update-app": "Actualització de l'aplicació",
+	"proxy-scope-update-app-desc":
+		"Comprova actualitzacions de l'aplicació a través del servidor intermediari",
 	"proxy-scope-update-trackers": "Actualitza els rastrejadors",
+	"proxy-scope-update-trackers-desc":
+		"Obtén llistes de rastrejadors BT a través del servidor intermediari",
 	"proxy-tips": "Consulteu el manual del servidor intermediari",
 	"bt-tracker": "Seguir servidors",
 	"bt-tracker-input-tips": "Seguir servidors, un per línia",
@@ -155,4 +162,10 @@ export default {
 	"completion-script-test-ok": "La prova del script ha anat bé",
 	"completion-script-test-fail": "La prova del script ha fallat",
 	"completion-script-empty": "Indica una ordre primer",
+	"history-directories": "Directoris de baixada recents",
+	"favorite-directory": "Directori preferit",
+	"unfavorite-directory": "Treu el directori dels preferits",
+	"remove-history-directory": "Treu el directori de l'historial",
+	"randomize-port": "Tria un port aleatori",
+	"generate-rpc-secret": "Genera un secret RPC nou",
 };

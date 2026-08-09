@@ -75,6 +75,7 @@ export interface AppConfig {
 	externalEngineSecret?: string;
 	engineOverrides?: Record<string, string | number | boolean | null>;
 	autoCheckUpdate?: boolean;
+	lastCheckUpdateTime?: number;
 	autoSyncTracker?: boolean;
 	trackerSource?: string[];
 	btTracker?: string;
@@ -100,6 +101,7 @@ export interface AppConfig {
 	proxy?: {
 		enable?: boolean;
 		server?: string;
+		bypass?: string;
 		scope?: string[];
 	};
 	openAtLogin?: boolean;

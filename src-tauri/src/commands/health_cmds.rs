@@ -1,15 +1,19 @@
 //! Aggregated health checks surfaced by the `/health` panel
-//!
-//! Exposes a single `run_health_checks` Tauri command that runs cheap probes
-//! against engine + system state and returns a structured report. Slow probes
-//! (e.g. proxy reachability) are gated behind `slow_probes`. Live BT internals
-//! (DHT node count, UPnP mappings, LSD peers) are reported as config-only flags
-//! for now — exposing them properly requires new accessors in `risuko-bt`
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
 use std::time::{Duration, SystemTime};
+
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
+#[cfg(windows)]
+use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
+#[cfg(windows)]
+use windows_sys::Win32::Storage::FileSystem::{
+    FILE_ATTRIBUTE_REPARSE_POINT, FILE_FLAG_OPEN_REPARSE_POINT,
+};
 
 use serde::Serialize;
 use serde_json::Value;
@@ -25,6 +29,9 @@ use crate::state::AppState;
 
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 const LOG_TAIL_BYTES: u64 = 1_048_576; // 1 MiB
+const MAX_LOG_FILES: usize = 60;
+const MAX_LOG_READ_BYTES: u64 = 2 * 1024 * 1024;
+const MAX_LOG_READ_LINES: usize = 5_000;
 const PROXY_PROBE_URL: &str = "https://www.cloudflare.com/cdn-cgi/trace";
 const PROXY_PROBE_TIMEOUT: Duration = Duration::from_secs(4);
 
@@ -900,6 +907,344 @@ fn check_config(
 
 // Logs
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LogFileSummary {
+    pub name: String,
+    pub date: String,
+    pub size_bytes: u64,
+    pub modified_at_ms: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LogEntry {
+    pub line_number: usize,
+    pub timestamp: Option<String>,
+    pub level: String,
+    pub message: String,
+    pub raw: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LogReadResult {
+    pub name: String,
+    pub entries: Vec<LogEntry>,
+    pub truncated: bool,
+    pub bytes_read: u64,
+    pub total_bytes: u64,
+    pub total_lines: usize,
+    pub returned_lines: usize,
+}
+
+fn log_file_date(name: &str) -> Option<&str> {
+    let date = name
+        .strip_prefix("risuko.")
+        .and_then(|rest| rest.strip_suffix(".log"))
+        .or_else(|| name.strip_prefix("risuko.log."))?;
+    if date.len() != 10
+        || date.as_bytes().get(4) != Some(&b'-')
+        || date.as_bytes().get(7) != Some(&b'-')
+        || !date
+            .bytes()
+            .enumerate()
+            .all(|(index, byte)| matches!(index, 4 | 7) || byte.is_ascii_digit())
+    {
+        return None;
+    }
+    let year = date[0..4].parse::<u16>().ok()?;
+    let month = date[5..7].parse::<u8>().ok()?;
+    let day = date[8..10].parse::<u8>().ok()?;
+    let days_in_month = match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if year % 400 == 0 || (year % 4 == 0 && year % 100 != 0) => 29,
+        2 => 28,
+        _ => return None,
+    };
+    if day == 0 || day > days_in_month {
+        return None;
+    }
+    Some(date)
+}
+
+fn is_supported_log_name(name: &str) -> bool {
+    log_file_date(name).is_some()
+}
+
+fn modified_at_ms(metadata: &std::fs::Metadata) -> u64 {
+    metadata
+        .modified()
+        .ok()
+        .and_then(|time| time.duration_since(SystemTime::UNIX_EPOCH).ok())
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+fn authorized_log_path(log_dir: &Path, name: &str) -> Result<std::path::PathBuf, String> {
+    let requested = Path::new(name);
+    if requested.file_name().and_then(|value| value.to_str()) != Some(name)
+        || !is_supported_log_name(name)
+    {
+        return Err("Invalid log file name".to_string());
+    }
+
+    let root =
+        std::fs::canonicalize(log_dir).map_err(|e| format!("Log directory unavailable: {e}"))?;
+    let path = log_dir.join(name);
+    let metadata =
+        std::fs::symlink_metadata(&path).map_err(|e| format!("Log file unavailable: {e}"))?;
+    if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
+        return Err("Log file is not a regular file".to_string());
+    }
+    let canonical =
+        std::fs::canonicalize(&path).map_err(|e| format!("Log file unavailable: {e}"))?;
+    if canonical.parent() != Some(root.as_path()) {
+        return Err("Log file is outside the log directory".to_string());
+    }
+    Ok(canonical)
+}
+
+fn open_authorized_log(path: &Path) -> Result<File, String> {
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    options.custom_flags(libc::O_NOFOLLOW);
+    #[cfg(windows)]
+    options.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+
+    let file = options
+        .open(path)
+        .map_err(|e| format!("Failed to open log file: {e}"))?;
+    let metadata = file
+        .metadata()
+        .map_err(|e| format!("Failed to inspect log file: {e}"))?;
+    if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
+        return Err("Log file is not a regular file".to_string());
+    }
+    #[cfg(windows)]
+    if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+        return Err("Log file is a reparse point".to_string());
+    }
+    Ok(file)
+}
+
+#[tauri::command]
+pub fn list_log_files(state: State<'_, AppState>) -> Result<Vec<LogFileSummary>, String> {
+    let root = std::fs::canonicalize(&state.log_dir)
+        .map_err(|e| format!("Log directory unavailable: {e}"))?;
+    let mut files = Vec::new();
+    let entries = std::fs::read_dir(&root).map_err(|e| format!("Failed to list log files: {e}"))?;
+    for entry in entries {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(_) => continue,
+        };
+        let name = entry.file_name().to_string_lossy().to_string();
+        let Some(date) = log_file_date(&name).map(str::to_string) else {
+            continue;
+        };
+        let metadata = match std::fs::symlink_metadata(entry.path()) {
+            Ok(metadata)
+                if metadata.file_type().is_file() && !metadata.file_type().is_symlink() =>
+            {
+                metadata
+            }
+            _ => continue,
+        };
+        let canonical = match std::fs::canonicalize(entry.path()) {
+            Ok(path) if path.parent() == Some(root.as_path()) => path,
+            _ => continue,
+        };
+        let _ = canonical;
+        files.push(LogFileSummary {
+            name,
+            date,
+            size_bytes: metadata.len(),
+            modified_at_ms: modified_at_ms(&metadata),
+        });
+    }
+    files.sort_by(|left, right| {
+        right
+            .modified_at_ms
+            .cmp(&left.modified_at_ms)
+            .then_with(|| right.name.cmp(&left.name))
+    });
+    files.truncate(MAX_LOG_FILES);
+    Ok(files)
+}
+
+#[tauri::command]
+pub fn read_log_file(
+    state: State<'_, AppState>,
+    name: String,
+    levels: Option<Vec<String>>,
+) -> Result<LogReadResult, String> {
+    let path = authorized_log_path(&state.log_dir, &name)?;
+    let mut file = open_authorized_log(&path)?;
+    let total_bytes = file
+        .metadata()
+        .map_err(|e| format!("Failed to stat log file: {e}"))?
+        .len();
+    let start = total_bytes.saturating_sub(MAX_LOG_READ_BYTES);
+    let starts_mid_line = if start == 0 {
+        false
+    } else {
+        file.seek(SeekFrom::Start(start - 1))
+            .map_err(|e| format!("Failed to inspect log file boundary: {e}"))?;
+        let mut previous = [0u8; 1];
+        file.read_exact(&mut previous)
+            .map_err(|e| format!("Failed to inspect log file boundary: {e}"))?;
+        previous[0] != b'\n'
+    };
+    file.seek(SeekFrom::Start(start))
+        .map_err(|e| format!("Failed to seek log file: {e}"))?;
+    let mut bytes = Vec::with_capacity((total_bytes - start) as usize);
+    file.take(MAX_LOG_READ_BYTES)
+        .read_to_end(&mut bytes)
+        .map_err(|e| format!("Failed to read log file: {e}"))?;
+
+    Ok(parse_log_bytes(
+        name,
+        bytes,
+        total_bytes,
+        start > 0,
+        starts_mid_line,
+        levels,
+    ))
+}
+
+fn parse_log_bytes(
+    name: String,
+    mut bytes: Vec<u8>,
+    total_bytes: u64,
+    mut truncated: bool,
+    mut starts_mid_line: bool,
+    levels: Option<Vec<String>>,
+) -> LogReadResult {
+    if bytes.len() as u64 > MAX_LOG_READ_BYTES {
+        let start = bytes.len() - MAX_LOG_READ_BYTES as usize;
+        bytes = bytes.split_off(start);
+        truncated = true;
+        starts_mid_line = true;
+    }
+
+    if starts_mid_line {
+        if let Some(newline) = bytes.iter().position(|byte| *byte == b'\n') {
+            bytes.drain(..=newline);
+        } else {
+            bytes.clear();
+        }
+    }
+
+    let ends_with_newline = bytes.last() == Some(&b'\n');
+    let text = String::from_utf8_lossy(&bytes);
+    let mut lines: Vec<String> = if bytes.is_empty() {
+        Vec::new()
+    } else {
+        text.split('\n')
+            .map(|line| line.strip_suffix('\r').unwrap_or(line).to_string())
+            .collect()
+    };
+    if ends_with_newline {
+        lines.pop();
+    } else if !lines.is_empty() {
+        lines.pop();
+        truncated = true;
+    }
+    let total_lines = lines.len();
+    if lines.len() > MAX_LOG_READ_LINES {
+        truncated = true;
+        lines.drain(..lines.len() - MAX_LOG_READ_LINES);
+    }
+
+    let level_filter = levels.map(|values| {
+        values
+            .into_iter()
+            .filter_map(|value| normalize_level(&value).map(str::to_string))
+            .collect::<HashSet<_>>()
+    });
+    let mut entries = Vec::with_capacity(lines.len());
+    for (index, raw) in lines.into_iter().enumerate() {
+        let (timestamp, level, message) = parse_log_line(&raw);
+        if level_filter
+            .as_ref()
+            .is_some_and(|filter| !filter.is_empty() && !filter.contains(&level))
+        {
+            continue;
+        }
+        entries.push(LogEntry {
+            line_number: index + 1,
+            timestamp,
+            level,
+            message,
+            raw,
+        });
+    }
+
+    let returned_lines = entries.len();
+    LogReadResult {
+        name,
+        entries,
+        truncated,
+        bytes_read: bytes.len() as u64,
+        total_bytes,
+        total_lines,
+        returned_lines,
+    }
+}
+
+fn normalize_level(value: &str) -> Option<&'static str> {
+    let value = value
+        .trim()
+        .trim_matches(|c: char| !c.is_ascii_alphabetic())
+        .to_ascii_lowercase();
+    match value.as_str() {
+        "trace" => Some("trace"),
+        "debug" => Some("debug"),
+        "info" => Some("info"),
+        "warn" | "warning" => Some("warn"),
+        "error" | "err" => Some("error"),
+        "unknown" => Some("unknown"),
+        _ => None,
+    }
+}
+
+fn parse_log_line(raw: &str) -> (Option<String>, String, String) {
+    let mut timestamp = None;
+    let mut level = "unknown";
+    let mut level_end = None;
+    let mut tokens = raw.split_whitespace();
+    let first = tokens.next();
+    if first.is_some_and(|value| {
+        value.len() >= 10
+            && value.as_bytes().get(4) == Some(&b'-')
+            && value.as_bytes().get(7) == Some(&b'-')
+    }) {
+        timestamp = first.map(str::to_string);
+    }
+
+    let level_token = if timestamp.is_some() {
+        tokens.next()
+    } else {
+        first
+    };
+    if let Some(token) = level_token {
+        if let Some(parsed) = normalize_level(token) {
+            level = parsed;
+            level_end = raw.find(token).map(|start| start + token.len());
+        }
+    }
+    let message = level_end
+        .and_then(|end| raw.get(end..))
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(raw)
+        .to_string();
+    (timestamp, level.to_string(), message)
+}
+
 fn check_logs(log_dir: &Path) -> Vec<HealthCheck> {
     let mut out = Vec::new();
 
@@ -916,14 +1261,18 @@ fn check_logs(log_dir: &Path) -> Vec<HealthCheck> {
         format!("Log directory: {}", log_dir.display()),
     ));
 
-    // tracing-appender names today's file `risuko.log.YYYY-MM-DD`. Find the
-    // most recently modified file matching that prefix
     let latest = std::fs::read_dir(log_dir)
         .ok()
         .into_iter()
         .flatten()
         .flatten()
-        .filter(|e| e.file_name().to_string_lossy().starts_with("risuko.log"))
+        .filter(|e| {
+            let name = e.file_name().to_string_lossy().to_string();
+            is_supported_log_name(&name)
+                && e.file_type()
+                    .map(|kind| kind.is_file() && !kind.is_symlink())
+                    .unwrap_or(false)
+        })
         .filter_map(|e| {
             let path = e.path();
             let mtime = e.metadata().and_then(|m| m.modified()).ok()?;
@@ -993,8 +1342,6 @@ async fn check_tools() -> Vec<HealthCheck> {
         }
     }
 
-    // ffmpeg is optional but enables merging of separate video+audio streams
-    // Without it, media downloads fall back to a single pre-muxed stream
     if let Some(ffmpeg_path) = media::find_ffmpeg().await {
         let version = tokio::process::Command::new(&ffmpeg_path)
             .arg("-version")
@@ -1026,16 +1373,16 @@ fn tail_count_levels(path: &Path) -> std::io::Result<(usize, usize)> {
     let start = len.saturating_sub(LOG_TAIL_BYTES);
     f.seek(SeekFrom::Start(start))?;
     let mut buf = Vec::with_capacity((len - start) as usize);
-    f.read_to_end(&mut buf)?;
+    f.take(LOG_TAIL_BYTES).read_to_end(&mut buf)?;
     let text = String::from_utf8_lossy(&buf);
 
     let mut errors = 0usize;
     let mut warnings = 0usize;
     for line in text.lines() {
-        if line.contains(" ERROR ") {
-            errors += 1;
-        } else if line.contains(" WARN ") {
-            warnings += 1;
+        match parse_log_line(line).1.as_str() {
+            "error" => errors += 1,
+            "warn" => warnings += 1,
+            _ => {}
         }
     }
     Ok((errors, warnings))
@@ -1082,5 +1429,179 @@ mod tests {
         let (errs, warns) = tail_count_levels(&path).unwrap();
         assert_eq!(errs, 2);
         assert_eq!(warns, 1);
+    }
+
+    #[test]
+    fn log_file_names_support_current_and_legacy_formats_only() {
+        assert_eq!(log_file_date("risuko.2026-08-09.log"), Some("2026-08-09"));
+        assert_eq!(log_file_date("risuko.log.2026-08-09"), Some("2026-08-09"));
+        assert!(log_file_date("risuko.log").is_none());
+        assert!(log_file_date("risuko.2026-99-99.log").is_none());
+        assert!(log_file_date("risuko.2026-02-29.log").is_none());
+        assert!(log_file_date("risuko.2024-02-29.log").is_some());
+        assert!(log_file_date("risuko.2026-08-09.log.bak").is_none());
+    }
+
+    #[test]
+    fn parses_and_normalizes_log_levels() {
+        let (timestamp, level, message) =
+            parse_log_line("2026-08-09T10:00:00Z WARN retrying request");
+        assert_eq!(timestamp.as_deref(), Some("2026-08-09T10:00:00Z"));
+        assert_eq!(level, "warn");
+        assert_eq!(message, "retrying request");
+
+        let (_, level, message) = parse_log_line("no level here");
+        assert_eq!(level, "unknown");
+        assert_eq!(message, "no level here");
+
+        let (_, level, message) = parse_log_line("2026-08-09 INFO request failed with error");
+        assert_eq!(level, "info");
+        assert_eq!(message, "request failed with error");
+
+        let (_, level, message) = parse_log_line("[WARN] retrying request");
+        assert_eq!(level, "warn");
+        assert_eq!(message, "retrying request");
+    }
+
+    #[test]
+    fn authorized_log_path_rejects_traversal_and_symlink() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("risuko.2026-08-09.log");
+        std::fs::write(&path, "INFO ok\n").unwrap();
+        assert!(authorized_log_path(dir.path(), "../risuko.2026-08-09.log").is_err());
+        assert!(authorized_log_path(dir.path(), "risuko.2026-08-09.log").is_ok());
+
+        let outside = tempfile::NamedTempFile::new().unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(outside.path(), dir.path().join("risuko.2026-08-08.log"))
+            .unwrap();
+        #[cfg(windows)]
+        std::os::windows::fs::symlink_file(
+            outside.path(),
+            dir.path().join("risuko.2026-08-08.log"),
+        )
+        .unwrap();
+        assert!(authorized_log_path(dir.path(), "risuko.2026-08-08.log").is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn no_follow_open_rejects_a_path_replaced_after_authorization() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("risuko.2026-08-09.log");
+        std::fs::write(&path, "INFO safe\n").unwrap();
+        let canonical = std::fs::canonicalize(&path).unwrap();
+        let outside = tempfile::NamedTempFile::new().unwrap();
+        std::fs::remove_file(&path).unwrap();
+        std::os::unix::fs::symlink(outside.path(), &path).unwrap();
+
+        assert!(open_authorized_log(&canonical).is_err());
+    }
+
+    #[test]
+    fn log_reads_are_byte_and_line_bounded_and_drop_partial_tail_line() {
+        let mut bytes = vec![b'x'; MAX_LOG_READ_BYTES as usize + 32];
+        bytes.extend_from_slice(b"\n2026-08-09 INFO newest\n");
+        let result = parse_log_bytes(
+            "risuko.2026-08-09.log".to_string(),
+            bytes,
+            (MAX_LOG_READ_BYTES + 64) as u64,
+            false,
+            false,
+            None,
+        );
+
+        assert!(result.truncated);
+        assert!(result.bytes_read <= MAX_LOG_READ_BYTES);
+        assert!(result
+            .entries
+            .iter()
+            .all(|entry| !entry.raw.starts_with('x')));
+
+        let many_lines = (0..(MAX_LOG_READ_LINES + 37))
+            .map(|index| format!("2026-08-09 INFO line-{index}\n"))
+            .collect::<String>();
+        let result = parse_log_bytes(
+            "risuko.2026-08-09.log".to_string(),
+            many_lines.into_bytes(),
+            0,
+            false,
+            false,
+            None,
+        );
+        assert!(result.truncated);
+        assert_eq!(result.entries.len(), MAX_LOG_READ_LINES);
+
+        let result = parse_log_bytes(
+            "risuko.2026-08-09.log".to_string(),
+            b"2026-08-09 INFO complete\n2026-08-09 WARN incomplete".to_vec(),
+            0,
+            false,
+            false,
+            None,
+        );
+        assert!(result.truncated);
+        assert_eq!(result.entries.len(), 1);
+        assert_eq!(result.entries[0].message, "complete");
+
+        let result = parse_log_bytes(
+            "risuko.2026-08-09.log".to_string(),
+            Vec::new(),
+            0,
+            false,
+            false,
+            None,
+        );
+        assert!(result.entries.is_empty());
+        assert!(!result.truncated);
+    }
+
+    #[test]
+    fn bounded_reader_never_collects_more_than_the_log_byte_limit() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("risuko.2026-08-09.log");
+        let total = MAX_LOG_READ_BYTES + 1024;
+        std::fs::write(&path, vec![b'x'; total as usize]).unwrap();
+
+        let mut file = std::fs::File::open(path).unwrap();
+        file.seek(SeekFrom::Start(0)).unwrap();
+        let mut bytes = Vec::new();
+        file.take(MAX_LOG_READ_BYTES)
+            .read_to_end(&mut bytes)
+            .unwrap();
+
+        assert_eq!(bytes.len(), MAX_LOG_READ_BYTES as usize);
+    }
+
+    #[test]
+    fn truncated_log_tail_keeps_a_line_that_starts_on_a_boundary() {
+        let result = parse_log_bytes(
+            "risuko.2026-08-09.log".to_string(),
+            b"2026-08-09 INFO first\n2026-08-09 WARN second\n".to_vec(),
+            MAX_LOG_READ_BYTES + 1,
+            true,
+            false,
+            None,
+        );
+
+        assert!(result.truncated);
+        assert_eq!(result.entries.len(), 2);
+        assert_eq!(result.entries[0].message, "first");
+    }
+
+    #[test]
+    fn log_reads_filter_normalized_levels_without_matching_message_words() {
+        let bytes = b"2026-08-09 INFO request failed with error\n2026-08-09 WARN retry\n".to_vec();
+        let result = parse_log_bytes(
+            "risuko.2026-08-09.log".to_string(),
+            bytes,
+            0,
+            false,
+            false,
+            Some(vec!["warning".to_string()]),
+        );
+        assert_eq!(result.returned_lines, 1);
+        assert_eq!(result.entries[0].level, "warn");
+        assert_eq!(result.entries[0].message, "retry");
     }
 }

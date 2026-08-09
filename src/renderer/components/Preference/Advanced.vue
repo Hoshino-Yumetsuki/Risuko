@@ -10,7 +10,10 @@
             </div>
           </div>
           <div class="settings-section-content">
-            <div class="settings-row">
+            <div
+              class="settings-row"
+              data-preference-search-target="preferences.completion-script-enabled preferences.completion-script-command preferences.completion-script-args preferences.completion-script-timeout"
+            >
               <div class="settings-row-content">
                 <div class="settings-row-title">
                   {{ $t('preferences.completion-script-enabled') }}
@@ -92,14 +95,22 @@
             </div>
           </div>
           <div class="settings-section-content">
-            <div class="settings-row">
+            <div
+              class="settings-row"
+              data-preference-search-target="preferences.enable-proxy preferences.proxy preferences.proxy-scope-label preferences.proxy-scope-download preferences.proxy-scope-update-app preferences.proxy-scope-update-trackers"
+            >
               <div class="settings-row-content">
                 <div class="settings-row-title">
                   {{ $t('preferences.enable-proxy') }}
                 </div>
               </div>
               <div class="settings-row-action">
-                <ui-checkbox :model-value="form.proxy.enable" @change="onProxyEnableChange" />
+                <ui-checkbox
+                  :model-value="form.proxy.enable"
+                  :title="$t('preferences.enable-proxy')"
+                  :aria-label="$t('preferences.enable-proxy')"
+                  @change="onProxyEnableChange"
+                />
               </div>
             </div>
             <div v-if="form.proxy.enable" style="margin-top: 14px">
@@ -135,7 +146,7 @@
                 <div class="form-info" style="margin-top: 8px">
                   <a
                     target="_blank"
-                    href="https://github.com/YueMiyuki/Risuko/wiki/Proxy"
+                    href="https://risuko.app/docs/guides/proxy"
                     rel="noopener noreferrer"
                   >
                     {{ $t('preferences.proxy-tips') }}
@@ -156,7 +167,10 @@
             </div>
           </div>
           <div class="settings-section-content">
-            <div class="settings-row">
+            <div
+              class="settings-row"
+	              data-preference-search-target="preferences.doh-enable preferences.doh preferences.doh-provider preferences.doh-url preferences.doh-bootstrap preferences.doh-fallback"
+            >
               <div class="settings-row-content">
                 <div class="settings-row-title">
                   {{ $t('preferences.doh-enable') }}
@@ -170,7 +184,11 @@
               </div>
             </div>
             <div v-if="form.dohEnable" style="margin-top: 14px">
-              <div class="settings-select-item" style="margin-bottom: 10px">
+              <div
+                class="settings-select-item"
+                style="margin-bottom: 10px"
+                data-preference-search-target="preferences.doh-provider"
+              >
                 <label class="settings-select-item-label">{{
                   $t('preferences.doh-provider')
                 }}</label>
@@ -193,6 +211,7 @@
                 v-if="form.dohProvider === 'custom'"
                 class="form-item-sub"
                 style="margin-bottom: 10px"
+                data-preference-search-target="preferences.doh-url"
               >
                 <label class="settings-select-item-label" for="doh-url-input" style="margin-bottom: 6px; display: block;">
                   {{ $t('preferences.doh-url') }}
@@ -204,7 +223,11 @@
                   aria-label="DoH endpoint URL"
                 />
               </div>
-              <div class="form-item-sub" style="margin-bottom: 10px">
+              <div
+                class="form-item-sub"
+                style="margin-bottom: 10px"
+                data-preference-search-target="preferences.doh-bootstrap"
+              >
                 <label class="settings-select-item-label" style="margin-bottom: 6px">{{
                   $t('preferences.doh-bootstrap')
                 }}</label>
@@ -213,7 +236,10 @@
                   v-model="form.dohBootstrap"
                 />
               </div>
-              <div class="settings-row">
+              <div
+                class="settings-row"
+                data-preference-search-target="preferences.doh-fallback"
+              >
                 <div class="settings-row-content">
                   <div class="settings-row-title">
                     {{ $t('preferences.doh-fallback') }}
@@ -252,6 +278,8 @@
                       type="button"
                       class="tracker-multi-select-trigger"
                       role="combobox"
+                      :title="$t('preferences.bt-tracker')"
+                      :aria-label="$t('preferences.bt-tracker')"
                       :aria-expanded="trackerSourceOpen"
                     >
                       <div class="tracker-multi-select-tags">
@@ -305,6 +333,8 @@
                     size="sm"
                     @click="syncTrackerFromSource"
                     class="sync-tracker-btn"
+                    :title="$t('preferences.sync-tracker-tips')"
+                    :aria-label="$t('preferences.sync-tracker-tips')"
                   >
                     <RefreshCw :size="12" class="animate-spin" v-if="trackerSyncing" />
                     <RefreshCcw width="12" height="12" v-else />
@@ -678,6 +708,55 @@
           </div>
         </div>
 
+        <div v-if="isDesktopUpdater" class="settings-section">
+          <div class="settings-section-header">
+            <div class="section-icon"><Download :size="16" /></div>
+            <div class="section-title">
+              <h3>{{ $t('preferences.auto-update') }}</h3>
+            </div>
+          </div>
+          <div class="settings-section-content">
+            <div class="settings-row">
+              <div class="settings-row-content">
+                <div class="settings-row-title">
+                  {{ $t('preferences.auto-check-update') }}
+                </div>
+                <div class="settings-row-description">
+                  {{ $t('preferences.last-check-update-time') }}<span v-if="lastCheckedUpdateLabel">: {{ lastCheckedUpdateLabel }}</span>
+                </div>
+              </div>
+              <div class="settings-row-action">
+                <ui-checkbox
+                  :model-value="!!form.autoCheckUpdate"
+                  :title="$t('preferences.auto-check-update')"
+                  :aria-label="$t('preferences.auto-check-update')"
+                  @change="(val) => setAdvancedBoolean('autoCheckUpdate', val)"
+                />
+              </div>
+            </div>
+            <div class="settings-row" style="margin-top: 10px">
+              <div class="settings-row-content">
+                <div class="settings-row-description" v-if="updaterStatusLabel">
+                  {{ updaterStatusLabel }}<span v-if="updaterState.version"> ({{ updaterState.version }})</span>
+                </div>
+              </div>
+              <div class="settings-row-action">
+                <ui-button
+                  variant="outline"
+                  size="sm"
+                  :disabled="updaterBusy"
+                  @click="checkForUpdatesNow"
+                >
+                  {{ $t('app.check-updates-now') }}
+                </ui-button>
+              </div>
+            </div>
+            <div v-if="updaterState.progress !== null" class="form-info" style="margin-top: 6px">
+              {{ $t('app.update-progress', { progress: Math.round(updaterState.progress) }) }}
+            </div>
+          </div>
+        </div>
+
         <div class="settings-section">
           <div class="settings-section-header">
             <div class="section-icon"><FileText :size="16" /></div>
@@ -797,9 +876,15 @@
                     @blur="onRpcListenPortBlur"
                   />
                   <span class="input-append" v-if="!form.externalEngineEnabled">
-                    <i @click.prevent="rollPort('rpcListenPort', rpcDefaultPort, 20000)" style="cursor: pointer">
+                    <button
+                      type="button"
+                      class="input-append-action"
+                      :title="$t('preferences.randomize-port')"
+                      :aria-label="$t('preferences.randomize-port')"
+                      @click.prevent="rollPort('rpcListenPort', rpcDefaultPort, 20000)"
+                    >
                       <Dices :size="12" />
-                    </i>
+                    </button>
                   </span>
                 </div>
               </div>
@@ -814,9 +899,15 @@
                     v-model="form.rpcSecret"
                   />
                   <span class="input-append" v-if="!form.externalEngineEnabled">
-                    <i @click.prevent="onRpcSecretDiceClick" style="cursor: pointer">
+                    <button
+                      type="button"
+                      class="input-append-action"
+                      :title="$t('preferences.generate-rpc-secret')"
+                      :aria-label="$t('preferences.generate-rpc-secret')"
+                      @click.prevent="onRpcSecretDiceClick"
+                    >
                       <Dices :size="12" />
-                    </i>
+                    </button>
                   </span>
                 </div>
               </div>
@@ -852,9 +943,15 @@
                 <div class="input-group">
                   <Input placeholder="BT Port" :maxlength="8" v-model="form.listenPort" />
                   <span class="input-append">
-                    <i @click.prevent="rollPort('listenPort', 20000, 24999)" style="cursor: pointer">
+                    <button
+                      type="button"
+                      class="input-append-action"
+                      :title="$t('preferences.randomize-port')"
+                      :aria-label="$t('preferences.randomize-port')"
+                      @click.prevent="rollPort('listenPort', 20000, 24999)"
+                    >
                       <Dices :size="12" />
-                    </i>
+                    </button>
                   </span>
                 </div>
               </div>
@@ -863,9 +960,15 @@
                 <div class="input-group">
                   <Input placeholder="DHT Port" :maxlength="8" v-model="form.dhtListenPort" />
                   <span class="input-append">
-                    <i @click.prevent="rollPort('dhtListenPort', 25000, 29999)" style="cursor: pointer">
+                    <button
+                      type="button"
+                      class="input-append-action"
+                      :title="$t('preferences.randomize-port')"
+                      :aria-label="$t('preferences.randomize-port')"
+                      @click.prevent="rollPort('dhtListenPort', 25000, 29999)"
+                    >
                       <Dices :size="12" />
-                    </i>
+                    </button>
                   </span>
                 </div>
               </div>
@@ -874,9 +977,15 @@
                 <div class="input-group">
                   <Input placeholder="4662" :maxlength="8" v-model="form.ed2kPort" />
                   <span class="input-append">
-                    <i @click.prevent="rollPort('ed2kPort', 30000, 34999)" style="cursor: pointer">
+                    <button
+                      type="button"
+                      class="input-append-action"
+                      :title="$t('preferences.randomize-port')"
+                      :aria-label="$t('preferences.randomize-port')"
+                      @click.prevent="rollPort('ed2kPort', 30000, 34999)"
+                    >
                       <Dices :size="12" />
-                    </i>
+                    </button>
                   </span>
                 </div>
               </div>
@@ -1243,6 +1352,7 @@ import {
 	Cookie,
 	Copy,
 	Dices,
+	Download,
 	ExternalLink,
 	FileKey,
 	FileText,
@@ -1314,6 +1424,11 @@ import is from "@/shims/platform";
 import { usePreferenceStore } from "@/store/preference";
 import { useTaskStore } from "@/store/task";
 import { copyText } from "@/utils/clipboard";
+import {
+	checkForUpdates,
+	isDesktopUpdaterAvailable,
+	updaterState,
+} from "@/utils/updater";
 
 const resolveDohProvider = (storedProvider, storedUrl) => {
 	const url = `${storedUrl || ""}`.trim();
@@ -1338,8 +1453,30 @@ const resolveDohProvider = (storedProvider, storedUrl) => {
 	return "cloudflare";
 };
 
+const normalizeProxyConfig = (value) => {
+	const proxy = value && typeof value === "object" ? value : {};
+	const allowedScopes = new Set(PROXY_SCOPE_OPTIONS);
+	const scope = Array.isArray(proxy.scope)
+		? [
+				...new Set(
+					proxy.scope.filter(
+						(item) => typeof item === "string" && allowedScopes.has(item),
+					),
+				),
+			]
+		: [...PROXY_SCOPE_OPTIONS];
+
+	return {
+		enable: parseBooleanConfig(proxy.enable, false),
+		server: typeof proxy.server === "string" ? proxy.server.trim() : "",
+		bypass: typeof proxy.bypass === "string" ? proxy.bypass : "",
+		scope,
+	};
+};
+
 const initForm = (config) => {
 	const {
+		autoCheckUpdate,
 		autoSyncTracker,
 		engineOverridesText,
 		engineOverrides,
@@ -1394,6 +1531,7 @@ const initForm = (config) => {
 			? engineOverridesText
 			: JSON.stringify(engineOverrides || {}, null, 2);
 	const result = {
+		autoCheckUpdate: parseBooleanConfig(autoCheckUpdate, false),
 		autoSyncTracker: parseBooleanConfig(autoSyncTracker),
 		engineOverridesText: pendingEngineOverridesText,
 		externalEngineEnabled: parseBooleanConfig(externalEngineEnabled, false),
@@ -1443,12 +1581,7 @@ const initForm = (config) => {
 		logDirOverride: typeof logDirOverride === "string" ? logDirOverride : "",
 		logLevel,
 		m3u8OutputFormat: m3u8OutputFormat || "ts",
-		proxy: cloneDeep(proxy) || {
-			enable: false,
-			server: "",
-			bypass: "",
-			scope: [],
-		},
+		proxy: normalizeProxyConfig(proxy),
 		protocols: {
 			magnet: parseBooleanConfig(protocols?.magnet, true),
 			thunder: parseBooleanConfig(protocols?.thunder, false),
@@ -1546,6 +1679,7 @@ export default {
 		X,
 		ChevronDown,
 		Check,
+		Download,
 		RefreshCcw,
 		Dices,
 		ExternalLink,
@@ -1554,12 +1688,18 @@ export default {
 	},
 	data() {
 		const preferenceStore = usePreferenceStore();
+		if (!updaterState.lastCheckedAt) {
+			updaterState.lastCheckedAt = Number(
+				preferenceStore.config.lastCheckUpdateTime || 0,
+			);
+		}
 		const formOriginal = initForm(preferenceStore.config);
 		const form = initForm({ ...formOriginal, ...changedConfig.advanced });
 
 		return {
 			form,
 			formOriginal,
+			updaterState,
 			hideRpcSecret: true,
 			hideExternalRpcSecret: true,
 			proxyScopeOptions: PROXY_SCOPE_OPTIONS,
@@ -1582,6 +1722,39 @@ export default {
 	},
 	computed: {
 		isRenderer: () => is.renderer(),
+		isDesktopUpdater: () => isDesktopUpdaterAvailable(),
+		updaterBusy() {
+			return ["checking", "downloading", "installing"].includes(
+				this.updaterState.status,
+			);
+		},
+		updaterStatusLabel() {
+			if (this.updaterState.status === "error") {
+				return this.$t("app.update-error", {
+					error: this.updaterState.error || this.$t("app.update-error-message"),
+				});
+			}
+			const keyByStatus = {
+				checking: "app.update-checking",
+				downloading: "app.update-download",
+				installing: "app.update-install",
+				"ready-to-install": "app.update-install",
+				"up-to-date": "app.update-unavailable",
+				available: "app.update-available",
+				cancelled: "app.update-cancelled",
+				idle: "",
+			};
+			const key = keyByStatus[this.updaterState.status] || "";
+			return key ? this.$t(key) : "";
+		},
+		lastCheckedUpdateLabel() {
+			const value = Number(
+				this.updaterState.lastCheckedAt ||
+					this.formOriginal?.lastCheckUpdateTime ||
+					0,
+			);
+			return value > 0 ? new Date(value).toLocaleString() : "";
+		},
 		rpcDefaultPort() {
 			return ENGINE_RPC_PORT;
 		},
@@ -1611,6 +1784,9 @@ export default {
 		},
 	},
 	methods: {
+		checkForUpdatesNow() {
+			void checkForUpdates("manual");
+		},
 		setAdvancedBoolean(key, enable) {
 			this.form[key] = !!enable;
 		},
@@ -1838,6 +2014,7 @@ export default {
 				delete data.engineOverridesText;
 			}
 			const booleanKeys = [
+				"autoCheckUpdate",
 				"autoSyncTracker",
 				"externalEngineEnabled",
 				"completionScriptEnabled",

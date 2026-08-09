@@ -1,6 +1,11 @@
 import { startupOnlyKeys } from "@shared/configKeys";
 import type { AppConfig } from "@shared/types/config";
 import type { HealthReport, RunHealthChecksParams } from "@shared/types/health";
+import type {
+	LogFileSummary,
+	LogLevel,
+	LogReadResult,
+} from "@shared/types/log";
 import type { RssRule } from "@shared/types/rss";
 import type {
 	DownloadStatsMinuteInput,
@@ -197,6 +202,21 @@ export default class Api {
 			categories: categories ?? null,
 			slowProbes: slowProbes ?? false,
 		});
+	}
+
+	listLogFiles() {
+		return invoke<LogFileSummary[]>("list_log_files");
+	}
+
+	readLogFile(params: { name: string; levels?: LogLevel[] }) {
+		return invoke<LogReadResult>("read_log_file", {
+			name: params.name,
+			levels: params.levels ?? null,
+		});
+	}
+
+	fetchTrackerSources(urls: string[]) {
+		return invoke<string[]>("fetch_tracker_sources", { urls });
 	}
 
 	updateAndroidDownloadNotification(params: {

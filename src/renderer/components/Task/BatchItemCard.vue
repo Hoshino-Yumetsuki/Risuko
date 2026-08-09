@@ -24,6 +24,7 @@
           type="button"
           class="shrink-0 rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
           :aria-label="$t('task.batch-remove-item')"
+          :title="$t('task.batch-remove-item')"
           :disabled="disabled"
           @click.stop="$emit('remove', item.id)"
         >
@@ -135,6 +136,7 @@
                   type="button"
                   class="shrink-0 rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
                   :aria-label="$t('task.mirror-remove')"
+                  :title="$t('task.mirror-remove')"
                   :disabled="disabled"
                   @click.stop="removeMirror(idx)"
                 >
@@ -177,14 +179,35 @@
             />
           </div>
         </div>
-        <div v-if="item.error" class="mt-2 text-xs text-destructive">{{ item.error }}</div>
+        <div v-if="item.error" class="mt-2 flex flex-wrap items-center gap-2 text-xs text-destructive">
+          <span>{{ item.error }}</span>
+          <Button
+            v-if="sourceUrl"
+            variant="outline"
+            size="sm"
+            class="h-7 px-2 text-[11px]"
+            :title="$t('task.open-source-url')"
+            :aria-label="$t('task.open-source-url')"
+            @click.stop="openSourceUrl"
+          >
+            <ExternalLink :size="12" />
+            {{ $t('task.open-source-url') }}
+          </Button>
+        </div>
       </AccordionContent>
     </AccordionItem>
   </div>
 </template>
 
 <script lang="ts">
-import { FileArchive, Link2, Magnet, Video, X } from "@lucide/vue";
+import {
+	ExternalLink,
+	FileArchive,
+	Link2,
+	Magnet,
+	Video,
+	X,
+} from "@lucide/vue";
 import type { MediaFormat } from "@shared/types/task";
 import { bytesToSize } from "@shared/utils";
 import api from "@/api";
@@ -206,6 +229,7 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import type { BatchQueueItem } from "@/store/batchQueue";
+import { isHttpUrl, openExternalUrl } from "@/utils/external";
 
 export default {
 	name: "batch-item-card",
@@ -225,6 +249,7 @@ export default {
 		Switch,
 		Video,
 		X,
+		ExternalLink,
 	},
 	props: {
 		item: {
@@ -299,6 +324,10 @@ export default {
 			}
 			return /^https?:\/\//i.test(this.item.uri.trim());
 		},
+		sourceUrl(): string {
+			const value = this.item.uri?.trim() || "";
+			return isHttpUrl(value) ? value : "";
+		},
 		// Formats can be fetched once the item is treated as media
 		canFetchFormats(): boolean {
 			return !!(this.item.isMedia || this.item.forceYtdlp);
@@ -358,6 +387,9 @@ export default {
 		removeMirror(idx: number) {
 			const next = this.mirrors.filter((_, i) => i !== idx);
 			this.$emit("update:mirrors", this.item.id, next);
+		},
+		openSourceUrl() {
+			void openExternalUrl(this.sourceUrl);
 		},
 		onToggleForce(value: boolean) {
 			this.$emit("update:media", this.item.id, {

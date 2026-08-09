@@ -1,4 +1,7 @@
 export default {
+	"sort-ascending": "Növekvő",
+	"sort-descending": "Csökkenő",
+	"torrent-preview-folder-select": "Kiválasztás",
 	active: "Letöltés",
 	waiting: "Varakozás",
 	stopped: "Lealitva",
@@ -137,4 +140,13 @@ export default {
 		"A részleges fájlokat megtartottuk. Adjon hozzá jobb teljességű szolgáltatót, majd próbálja újra.",
 	"usenet-repair-partials-unavailable":
 		"A részleges fájlok nem érhetők el. Próbáljon másik NZB-t, vagy töltse le újra jobb teljességű szolgáltatón keresztül.",
+	"open-source-url": "Forrás URL megnyitása",
+	"more-actions": "További műveletek",
+	"filter-video": "Kijelölés videófájlok",
+	"filter-audio": "Kijelölés hangfájlok",
+	"filter-image": "Kijelölés képfájlok",
+	"filter-document": "Kijelölés dokumentumfájlok",
+	"batch-remove-item": "Eltávolítás",
+	"torrent-preview-folder-toggle": "Mappa váltása",
+	"clear-filter": "Szűrő törlése",
 };

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { X } from "@lucide/vue";
 import { reactiveOmit } from "@vueuse/core";
 import type { DialogContentEmits, DialogContentProps } from "reka-ui";
 import {
@@ -54,8 +55,11 @@ const forwarded = useForwardPropsEmits(delegatedProps, emits);
 
       <DialogClose
         class="focus:ring-ring/50 data-[state=open]:bg-secondary absolute top-4 right-4 rounded-xs opacity-70 transition-opacity hover:opacity-100 focus:ring-2 focus:outline-hidden disabled:pointer-events-none"
+        :title="$t('window.close')"
+        :aria-label="$t('window.close')"
       >
-        <span class="sr-only">Close</span>
+        <X />
+        <span class="sr-only">{{ $t('window.close') }}</span>
       </DialogClose>
     </DialogContent>
   </DialogPortal>

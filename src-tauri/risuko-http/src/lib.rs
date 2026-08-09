@@ -20,7 +20,7 @@ pub use cookies::{CookieStore, Jar};
 pub use doh::{DohConfig, DohResolver};
 pub use error::{Error, Result};
 pub use into_url::IntoUrl;
-pub use proxy::Proxy;
+pub use proxy::{NoProxy, Proxy};
 pub use redirect::Policy;
 pub use request::RequestBuilder;
 pub use resolver::{set_global_resolver, Addrs, GaiResolver, Resolve, Resolving};
@@ -30,21 +30,6 @@ pub use http::header;
 pub use http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode, Uri};
 pub use url::Url;
 
-/// Build a streaming `ReqBody` that reads from a fresh `tokio::fs::File` each
-/// time it is polled. For large file uploads (WebDAV PUT, S3 PUT)
-///
-/// The path is captured by the factory; every send (including redirect/retry
-/// replays) opens a new `File` so the stream re-drives from byte zero. Calls
-/// `on_progress(bytes_sent_so_far)` after each chunk, aborts mid-stream when
-/// `cancel` is set
-///
-/// The progress total is per send attempt (counters reset on retry/redirect,
-/// so callers should clamp it against the known total). Cancel is checked
-/// before every chunk yield, so even multi-GB uploads interrupt promptly
-///
-/// `_content_length` is accepted for source-compat but ignored — the advertised
-/// `Content-Length` comes from the file's actual size at construction. Trusting
-/// caller-supplied lengths risks stale framing and a truncated upload
 pub fn file_stream_body_with_progress<F>(
     path: std::path::PathBuf,
     _content_length: u64,
@@ -63,9 +48,6 @@ where
     )
 }
 
-/// Same as [`file_stream_body_with_progress`] but reads only `len` bytes
-/// starting at byte `offset`. Used for S3 multipart UploadPart so each part
-/// streams its own slice of the source file without buffering it in memory
 pub fn file_stream_body_range_with_progress<F>(
     path: std::path::PathBuf,
     offset: u64,

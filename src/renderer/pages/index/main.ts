@@ -19,6 +19,7 @@ import store from "@/store";
 import { useAuthStore } from "@/store/auth";
 import { usePreferenceStore } from "@/store/preference";
 import { useSyncStore } from "@/store/sync";
+import { maybeCheckForUpdates } from "@/utils/updater";
 import TrayWorker from "@/workers/tray.worker?worker";
 import App from "./App.vue";
 import "./commands";
@@ -268,6 +269,10 @@ async function init(config: AppConfig) {
 		// Run startup sync if auto-sync is enabled
 		const syncStore = useSyncStore();
 		syncStore.syncOnStartup();
+
+		// Desktop update checks are opt-in and throttled inside the shared updater
+		// service. Mobile builds return immediately without loading the plugin.
+		maybeCheckForUpdates(config);
 	});
 }
 

@@ -72,9 +72,15 @@ export default {
 	"enable-proxy": "Proxy etkinleştir",
 	"proxy-bypass-input-tips":
 		"Her bir satırda bir tane olacak şekilde bu Ana Bilgisayarlar ve Alanlar için proxy ayarlarını atlayın",
+	"proxy-scope-label": "Şunun için kullanılır",
 	"proxy-scope-download": "İndirme",
+	"proxy-scope-download-desc": "İndirme trafiğini proxy üzerinden yönlendir",
 	"proxy-scope-update-app": "Uygulamayı Güncelle",
+	"proxy-scope-update-app-desc":
+		"Uygulama güncellemelerini proxy üzerinden denetle",
 	"proxy-scope-update-trackers": "İzleyicileri Güncelle",
+	"proxy-scope-update-trackers-desc":
+		"BT izleyici listelerini proxy üzerinden getir",
 	"proxy-tips": "Proxy Kılavuzunu Görüntüle",
 	"bt-tracker": "İzleyici Sunucular",
 	"bt-tracker-input-tips": "İzleyici sunucusu, her satıra bir tane",
@@ -151,4 +157,10 @@ export default {
 	"completion-script-test-ok": "Betik testi başarılı",
 	"completion-script-test-fail": "Betik testi başarısız",
 	"completion-script-empty": "Önce bir komut belirtin",
+	"history-directories": "Son indirme dizinleri",
+	"favorite-directory": "Favori dizin",
+	"unfavorite-directory": "Dizini favorilerden kaldır",
+	"remove-history-directory": "Dizini geçmişten kaldır",
+	"randomize-port": "Rastgele bir bağlantı noktası seç",
+	"generate-rpc-secret": "Yeni RPC sırrı oluştur",
 };

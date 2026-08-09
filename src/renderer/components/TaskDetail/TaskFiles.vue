@@ -81,16 +81,36 @@
     </div>
     <div class="files-toolbar">
       <div class="files-toolbar-filters">
-        <ui-button size="sm" variant="outline" @click="toggleVideoSelection()"
+        <ui-button
+          size="sm"
+          variant="outline"
+          :title="$t('task.filter-video')"
+          :aria-label="$t('task.filter-video')"
+          @click="toggleVideoSelection()"
           ><Video :size="12"
         /></ui-button>
-        <ui-button size="sm" variant="outline" @click="toggleAudioSelection()"
+        <ui-button
+          size="sm"
+          variant="outline"
+          :title="$t('task.filter-audio')"
+          :aria-label="$t('task.filter-audio')"
+          @click="toggleAudioSelection()"
           ><Headphones :size="12"
         /></ui-button>
-        <ui-button size="sm" variant="outline" @click="toggleImageSelection()"
+        <ui-button
+          size="sm"
+          variant="outline"
+          :title="$t('task.filter-image')"
+          :aria-label="$t('task.filter-image')"
+          @click="toggleImageSelection()"
           ><Image :size="12"
         /></ui-button>
-        <ui-button size="sm" variant="outline" @click="toggleDocumentSelection()"
+        <ui-button
+          size="sm"
+          variant="outline"
+          :title="$t('task.filter-document')"
+          :aria-label="$t('task.filter-document')"
+          @click="toggleDocumentSelection()"
           ><FileText :size="12"
         /></ui-button>
       </div>

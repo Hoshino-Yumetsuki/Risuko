@@ -32,6 +32,7 @@ export default {
 	"selected-count": "{{count}} selected",
 	"clear-selection": "Clear Selection",
 	"filter-placeholder": "Filter items...",
+	"clear-filter": "Clear filter",
 	"delete-item": "Delete",
 	downloaded: "Downloaded",
 	"view-download": "View",

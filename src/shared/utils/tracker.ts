@@ -54,7 +54,14 @@ const getCachedTrackerSource = (key: string, now: number) => {
 
 export const fetchBtTrackerFromSource = async (
 	source: string[],
-	proxyConfig: { enable?: boolean; server?: string; scope?: string[] } = {},
+	proxyConfig: {
+		enable?: boolean;
+		server?: string;
+		bypass?: string;
+		scope?: string[];
+	} = {},
+	resolveProxy?: (url: string) => Promise<string | null>,
+	fetchSource?: (urls: string[]) => Promise<string[]>,
 ) => {
 	if (!source?.length) {
 		return [];
@@ -62,11 +69,14 @@ export const fetchBtTrackerFromSource = async (
 
 	const now = Date.now();
 	const { enable, server, scope = [] } = proxyConfig;
-	const proxy =
-		enable && server && scope.includes(PROXY_SCOPES.UPDATE_TRACKERS)
-			? convertToAxiosProxy(server)
-			: undefined;
-	const cacheKey = buildTrackerSourceCacheKey(source, proxy ? server : "");
+	const proxyEnabled =
+		enable && server && scope.includes(PROXY_SCOPES.UPDATE_TRACKERS);
+	const proxyCacheKey = fetchSource
+		? `${enable ? "1" : "0"}|${server || ""}|${proxyConfig.bypass || ""}|${scope.join(",")}`
+		: proxyEnabled
+			? `${server}|${proxyConfig.bypass || ""}`
+			: "";
+	const cacheKey = buildTrackerSourceCacheKey(source, proxyCacheKey);
 	const cached = getCachedTrackerSource(cacheKey, now);
 	if (cached) {
 		return cached;
@@ -77,38 +87,71 @@ export const fetchBtTrackerFromSource = async (
 		return inFlight;
 	}
 
-	// Axios's config.proxy is Node.js only
-	const requestPromise = Promise.allSettled(
-		source.map(async (url) => {
-			return axios
-				.get(`${url}?t=${now}`, {
-					timeout: 30 * ONE_SECOND,
-					proxy,
-				})
-				.then((value) => value.data);
-		}),
-	)
-		.then((results) => {
-			const values = results
-				.filter(
-					(item): item is PromiseFulfilledResult<string> =>
-						item.status === "fulfilled",
-				)
-				.map((item) => item.value);
+	// Axios's config.proxy is Node.js only. Resolve every proxy decision before
+	// starting the tolerant request fan-out so an invalid active proxy is
+	// surfaced to the caller instead of being mistaken for an empty source list.
+	const requestPromise = (async () => {
+		const requestUrls = source.map((url) => appendCacheBust(url, now));
+		if (fetchSource) {
+			const values = await fetchSource(requestUrls);
 			const result = [...new Set(values)];
 			trackerSourceCache.set(cacheKey, {
 				value: result,
 				expiresAt: Date.now() + TRACKER_SOURCE_CACHE_TTL,
 			});
 			return result;
-		})
-		.finally(() => {
-			trackerSourceInFlight.delete(cacheKey);
+		}
+		const proxies = proxyEnabled
+			? await Promise.all(
+					requestUrls.map(async (requestUrl) => {
+						const resolved = resolveProxy
+							? await resolveProxy(requestUrl)
+							: server || null;
+						return resolved ? convertToAxiosProxy(resolved) : undefined;
+					}),
+				)
+			: requestUrls.map(() => undefined);
+
+		const results = await Promise.allSettled(
+			requestUrls.map((requestUrl, index) =>
+				axios
+					.get(requestUrl, {
+						timeout: 30 * ONE_SECOND,
+						proxy: proxies[index],
+					})
+					.then((value) => value.data),
+			),
+		);
+		const values = results
+			.filter(
+				(item): item is PromiseFulfilledResult<string> =>
+					item.status === "fulfilled",
+			)
+			.map((item) => item.value);
+		const result = [...new Set(values)];
+		trackerSourceCache.set(cacheKey, {
+			value: result,
+			expiresAt: Date.now() + TRACKER_SOURCE_CACHE_TTL,
 		});
+		return result;
+	})().finally(() => {
+		trackerSourceInFlight.delete(cacheKey);
+	});
 
 	trackerSourceInFlight.set(cacheKey, requestPromise);
 	return requestPromise;
 };
+
+function appendCacheBust(source: string, now: number): string {
+	try {
+		const url = new URL(source);
+		url.searchParams.set("t", `${now}`);
+		return url.toString();
+	} catch {
+		const separator = source.includes("?") ? "&" : "?";
+		return `${source}${separator}t=${now}`;
+	}
+}
 
 export const convertTrackerDataToLine = (arr = []) => {
 	return arr

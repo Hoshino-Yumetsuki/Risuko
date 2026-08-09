@@ -1,4 +1,7 @@
 export default {
+	"sort-ascending": "Artan",
+	"sort-descending": "Azalan",
+	"torrent-preview-folder-select": "Seç",
 	active: "İndiriliyor",
 	waiting: "Bekleniyor",
 	stopped: "Durdu",
@@ -143,4 +146,13 @@ export default {
 		"Kısmi dosyalar korundu. Tamamlanma oranı daha yüksek bir sağlayıcı ekleyip tekrar deneyin.",
 	"usenet-repair-partials-unavailable":
 		"Kısmi dosyalar kullanılamıyor. Farklı bir NZB deneyin veya tamamlanma oranı daha yüksek bir sağlayıcıyla yeniden indirin.",
+	"open-source-url": "Kaynak URL'yi aç",
+	"more-actions": "Diğer işlemler",
+	"filter-video": "Seç video dosyaları",
+	"filter-audio": "Seç ses dosyaları",
+	"filter-image": "Seç görüntü dosyaları",
+	"filter-document": "Seç belge dosyaları",
+	"batch-remove-item": "Kaldır",
+	"torrent-preview-folder-toggle": "Klasörü değiştir",
+	"clear-filter": "Filtreyi temizle",
 };

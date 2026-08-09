@@ -73,9 +73,15 @@ export default {
 	"enable-proxy": "Aktiver proxy",
 	"proxy-bypass-input-tips":
 		"Omgå proxy-innstillinger for disse vertene og domenene, en per linje",
+	"proxy-scope-label": "Brukes for",
 	"proxy-scope-download": "Nedlasting",
+	"proxy-scope-download-desc": "Ruter nedlastingstrafikk gjennom proxyen",
 	"proxy-scope-update-app": "Oppdater applikasjonen",
+	"proxy-scope-update-app-desc":
+		"Ser etter programoppdateringer gjennom proxyen",
 	"proxy-scope-update-trackers": "Oppdater sporingskapsler",
+	"proxy-scope-update-trackers-desc":
+		"Henter BT-sporingslister gjennom proxyen",
 	"proxy-tips": "Se Proxy Manual",
 	"bt-tracker": "Tracker-servere",
 	"bt-tracker-input-tips": "Tracker-servere, en per linje",
@@ -154,4 +160,10 @@ export default {
 	"completion-script-test-ok": "Skripttest vellykket",
 	"completion-script-test-fail": "Skripttest mislyktes",
 	"completion-script-empty": "Angi en kommando først",
+	"history-directories": "Nylige nedlastingsmapper",
+	"favorite-directory": "Favorittmappe",
+	"unfavorite-directory": "Fjern mappe fra favoritter",
+	"remove-history-directory": "Fjern mappe fra historikk",
+	"randomize-port": "Velg en tilfeldig port",
+	"generate-rpc-secret": "Generer en ny RPC-hemmelighet",
 };

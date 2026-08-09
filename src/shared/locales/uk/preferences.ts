@@ -76,9 +76,14 @@ export default {
 	"enable-proxy": "Застосувати Proxy",
 	"proxy-bypass-input-tips":
 		"Обхід налаштувань проксі для цих хостів та доменів, по одному на рядок",
+	"proxy-scope-label": "Використовується для",
 	"proxy-scope-download": "Завантажити",
+	"proxy-scope-download-desc": "Спрямовувати трафік завантажень через проксі",
 	"proxy-scope-update-app": "Оновити додаток",
+	"proxy-scope-update-app-desc": "Перевіряти оновлення застосунку через проксі",
 	"proxy-scope-update-trackers": "Оновити трекери",
+	"proxy-scope-update-trackers-desc":
+		"Отримувати списки BT-трекерів через проксі",
 	"proxy-tips": "Перегляньте посібник з проксі",
 	"bt-tracker": "Tracker Сервер",
 	"bt-tracker-input-tips": "Tracker сервера, один в рядок",
@@ -154,4 +159,10 @@ export default {
 	"completion-script-test-ok": "Перевірку скрипта завершено успішно",
 	"completion-script-test-fail": "Перевірка скрипта не вдалася",
 	"completion-script-empty": "Спочатку вкажіть команду",
+	"history-directories": "Останні каталоги завантажень",
+	"favorite-directory": "Улюблений каталог",
+	"unfavorite-directory": "Видалити каталог з улюблених",
+	"remove-history-directory": "Видалити каталог з історії",
+	"randomize-port": "Вибрати випадковий порт",
+	"generate-rpc-secret": "Створити новий секрет RPC",
 };

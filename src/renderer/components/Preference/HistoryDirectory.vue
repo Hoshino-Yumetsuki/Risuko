@@ -2,7 +2,13 @@
   <div class="history-directory">
     <Popover>
       <PopoverTrigger as-child>
-        <ui-button size="sm" variant="ghost" class="history-button">
+        <ui-button
+          size="sm"
+          variant="ghost"
+          class="history-button"
+          :title="$t('preferences.history-directories')"
+          :aria-label="$t('preferences.history-directories')"
+        >
           <History :size="14" />
         </ui-button>
       </PopoverTrigger>
@@ -16,46 +22,70 @@
           {{ $t('task.no-task') }}
         </div>
         <ul class="directory-list" v-if="favoriteDirectories.length > 0">
-          <li
-            v-for="directory in favoriteDirectories"
-            :key="directory"
-            @click.stop="() => handleSelectItem(directory)"
-          >
-            <span class="directory-path" :title="directory">{{ directory }}</span>
+          <li v-for="directory in favoriteDirectories" :key="directory">
+            <button
+              type="button"
+              class="directory-path"
+              :title="directory"
+              :aria-label="directory"
+              @click.stop="() => handleSelectItem(directory)"
+            >
+              {{ directory }}
+            </button>
             <span class="directory-actions">
-              <Star
-                :size="18"
+              <button
+                type="button"
                 class="history-icon icon-history-favorited"
+                :title="$t('preferences.unfavorite-directory')"
+                :aria-label="$t('preferences.unfavorite-directory')"
                 @click.stop="() => handleCancelFavoriteItem(directory)"
-              />
-              <Trash2
-                :size="18"
+              >
+                <Star :size="18" aria-hidden="true" />
+              </button>
+              <button
+                type="button"
                 class="history-icon icon-history-remove"
+                :title="$t('preferences.remove-history-directory')"
+                :aria-label="$t('preferences.remove-history-directory')"
                 @click.stop="() => handleRemoveItem(directory)"
-              />
+              >
+                <Trash2 :size="18" aria-hidden="true" />
+              </button>
             </span>
           </li>
         </ul>
         <div class="directory-divider" v-if="showDivider" />
         <ul class="directory-list" v-if="historyDirectories.length > 0">
-          <li
-            v-for="directory in historyDirectories"
-            :key="directory"
-            @click.stop="() => handleSelectItem(directory)"
-          >
-            <span class="directory-path" :title="directory">{{ directory }}</span>
+          <li v-for="directory in historyDirectories" :key="directory">
+            <button
+              type="button"
+              class="directory-path"
+              :title="directory"
+              :aria-label="directory"
+              @click.stop="() => handleSelectItem(directory)"
+            >
+              {{ directory }}
+            </button>
             <span class="directory-actions">
-              <StarOff
+              <button
+                type="button"
                 v-if="showFavoriteAction"
-                :size="18"
                 class="history-icon icon-history-favorite"
+                :title="$t('preferences.favorite-directory')"
+                :aria-label="$t('preferences.favorite-directory')"
                 @click.stop="() => handleFavoriteItem(directory)"
-              />
-              <Trash2
-                :size="18"
+              >
+                <StarOff :size="18" aria-hidden="true" />
+              </button>
+              <button
+                type="button"
                 class="history-icon icon-history-remove"
+                :title="$t('preferences.remove-history-directory')"
+                :aria-label="$t('preferences.remove-history-directory')"
                 @click.stop="() => handleRemoveItem(directory)"
-              />
+              >
+                <Trash2 :size="18" aria-hidden="true" />
+              </button>
             </span>
           </li>
         </ul>

@@ -72,9 +72,16 @@ export default {
 	"enable-proxy": "Proxy engedélyezése",
 	"proxy-bypass-input-tips":
 		"Proxy beálitassok elvetése ezek url és domain-nél (/sor)",
+	"proxy-scope-label": "Erre használva",
 	"proxy-scope-download": "Letöltés",
+	"proxy-scope-download-desc":
+		"Letöltési forgalom irányítása a proxyn keresztül",
 	"proxy-scope-update-app": "Alkalmazás frissítése",
+	"proxy-scope-update-app-desc":
+		"Alkalmazásfrissítések keresése a proxyn keresztül",
 	"proxy-scope-update-trackers": "Nyomkövetők frissítése",
+	"proxy-scope-update-trackers-desc":
+		"BT trackerlisták lekérése a proxyn keresztül",
 	"proxy-tips": "Proxy kéziköny megnyitasa",
 	"bt-tracker": "Lekövetö szerverek",
 	"bt-tracker-input-tips": "Lekövetö szerverek (/sor)",
@@ -148,4 +155,10 @@ export default {
 	"completion-script-test-ok": "A szkript tesztje sikeres",
 	"completion-script-test-fail": "A szkript tesztje sikertelen",
 	"completion-script-empty": "Előbb adj meg egy parancsot",
+	"history-directories": "Legutóbbi letöltési könyvtárak",
+	"favorite-directory": "Kedvenc könyvtár",
+	"unfavorite-directory": "Könyvtár eltávolítása a kedvencekből",
+	"remove-history-directory": "Könyvtár eltávolítása az előzményekből",
+	"randomize-port": "Véletlen port választása",
+	"generate-rpc-secret": "Új RPC-titok létrehozása",
 };

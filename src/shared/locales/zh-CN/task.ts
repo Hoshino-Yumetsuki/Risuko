@@ -307,4 +307,11 @@ export default {
 		"已保留部分文件。请添加完整度更高的提供商，然后重试。",
 	"usenet-repair-partials-unavailable":
 		"部分文件不可用。请尝试其他 NZB，或使用完整度更高的提供商重新下载。",
+	"open-source-url": "打开源 URL",
+	"more-actions": "更多操作",
+	"filter-video": "选择 视频文件",
+	"filter-audio": "选择 音频文件",
+	"filter-image": "选择 图片文件",
+	"filter-document": "选择 文档文件",
+	"clear-filter": "清除筛选",
 };

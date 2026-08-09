@@ -4,6 +4,8 @@
 		variant="ghost"
 		size="sm"
 		class="select-directory"
+		:title="$t('app.browse')"
+		:aria-label="$t('app.browse')"
 		@click.stop="onFolderClick"
 	>
 		<Folder :size="14" />
