@@ -185,18 +185,6 @@
         </UiButton>
         <UiButton
           type="button"
-          variant="ghost"
-          size="sm"
-          :title="$t('task.open-error-code-reference')"
-          :aria-label="$t('task.open-error-code-reference')"
-          :disabled="retrying || importing"
-          @click="handleOpenErrorReference"
-        >
-          <ExternalLink :size="12" class="mr-1" />
-          {{ $t('task.open-error-code-reference') }}
-        </UiButton>
-        <UiButton
-          type="button"
           size="sm"
           :disabled="!selectedBrowser || retrying || importing"
           @click="imported ? handleApplyAndRetry() : handlePreview()"
@@ -239,7 +227,7 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { useAppStore } from "@/store/app";
 import { usePreferenceStore } from "@/store/preference";
-import { getErrorCodeReferenceUrl, openExternalUrl } from "@/utils/external";
+import { openExternalUrl } from "@/utils/external";
 
 let cachedBrowsers: BrowserInfo[] | null = null;
 
@@ -313,9 +301,6 @@ export default {
 		},
 		url(): string {
 			return this.dialogState.url;
-		},
-		errorCodeReferenceUrl(): string {
-			return getErrorCodeReferenceUrl("315");
 		},
 		retried(): boolean {
 			return this.dialogState.retried;
@@ -399,11 +384,6 @@ export default {
 				}
 			} catch (e) {
 				toast.error(String(e));
-			}
-		},
-		async handleOpenErrorReference() {
-			if (!(await openExternalUrl(this.errorCodeReferenceUrl))) {
-				toast.error(this.$t("app.open-url-failed"));
 			}
 		},
 		async handleCaptureUa() {
