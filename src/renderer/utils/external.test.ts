@@ -36,12 +36,12 @@ test("does not invoke an external opener for invalid URLs", async () => {
 
 test("treats a browser fallback with noopener as a dispatched open", async () => {
 	const originalWindow = globalThis.window;
-	let openCalls = 0;
+	let openArgs: [string, string | undefined, string | undefined] | undefined;
 	Object.defineProperty(globalThis, "window", {
 		configurable: true,
 		value: {
-			open: () => {
-				openCalls += 1;
+			open: (url: string, target?: string, features?: string) => {
+				openArgs = [url, target, features];
 				return null;
 			},
 		},
@@ -49,7 +49,11 @@ test("treats a browser fallback with noopener as a dispatched open", async () =>
 
 	try {
 		assert.equal(await openExternalUrl("https://example.com"), true);
-		assert.equal(openCalls, 1);
+		assert.deepEqual(openArgs, [
+			"https://example.com",
+			"_blank",
+			"noopener,noreferrer",
+		]);
 	} finally {
 		Object.defineProperty(globalThis, "window", {
 			configurable: true,
