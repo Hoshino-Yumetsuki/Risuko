@@ -53,6 +53,7 @@ const FEATURE_KEYS = [
 	"task.filter-document",
 	"task.clear-filter",
 	"task.open-source-url",
+	"task.open-error-code-reference",
 	"task.more-actions",
 	"task.batch-remove-item",
 	"task.torrent-preview-folder-toggle",

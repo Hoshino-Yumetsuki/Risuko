@@ -912,15 +912,22 @@ html.platform-android .health-header {
 	padding: 0 16px 8px;
 	border-bottom: 0;
 }
-html.platform-android .health-header > .health-title {
-	flex: 1 1 0;
+html.platform-android .health-header > .health-header-main {
+	display: flex;
+	align-items: flex-start;
+	flex-direction: column;
+	flex: 1 1 100%;
 	min-width: 0;
+	gap: 8px;
+}
+html.platform-android .health-header .health-title {
+	flex: 1 1 0;
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
 }
-html.platform-android .health-header > .health-actions {
-	flex: 1 0 100%;
+html.platform-android .health-header .health-actions {
+	flex: 0 0 auto;
 	width: 100%;
 	justify-content: flex-end;
 	margin-left: 0;

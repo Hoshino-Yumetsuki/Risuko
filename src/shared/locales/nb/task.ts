@@ -148,6 +148,7 @@ export default {
 	"usenet-repair-partials-unavailable":
 		"Delvise filer er ikke tilgjengelige. Prøv en annen NZB, eller last ned på nytt med en leverandør med bedre fullstendighet.",
 	"open-source-url": "Åpne kilde-URL",
+	"open-error-code-reference": "Åpne referanse for feilkoder",
 	"more-actions": "Flere handlinger",
 	"filter-video": "Velg videofiler",
 	"filter-audio": "Velg lydfiler",

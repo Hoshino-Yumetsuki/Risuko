@@ -145,6 +145,7 @@ export default {
 	"usenet-repair-partials-unavailable":
 		"Berkas parsial tidak tersedia. Coba NZB lain atau unduh kembali dengan penyedia yang memiliki kelengkapan lebih baik.",
 	"open-source-url": "Buka URL sumber",
+	"open-error-code-reference": "Buka referensi kode kesalahan",
 	"more-actions": "Tindakan lainnya",
 	"filter-video": "Pilih berkas video",
 	"filter-audio": "Pilih berkas audio",

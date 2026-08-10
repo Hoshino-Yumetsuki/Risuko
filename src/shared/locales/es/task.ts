@@ -149,6 +149,7 @@ export default {
 	"usenet-repair-partials-unavailable":
 		"Los archivos parciales no están disponibles. Prueba con otro NZB o descarga de nuevo con un proveedor con mejor completitud.",
 	"open-source-url": "Abrir URL de origen",
+	"open-error-code-reference": "Abrir referencia de códigos de error",
 	"more-actions": "Más acciones",
 	"filter-video": "Seleccionar archivos de vídeo",
 	"filter-audio": "Seleccionar archivos de audio",

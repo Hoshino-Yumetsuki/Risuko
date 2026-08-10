@@ -142,6 +142,7 @@ export default {
 	"usenet-repair-partials-unavailable":
 		"الملفات الجزئية غير متاحة. جرّب NZB مختلفًا أو أعد التنزيل باستخدام مزود باكتمال أفضل.",
 	"open-source-url": "فتح رابط المصدر",
+	"open-error-code-reference": "فتح مرجع رموز الأخطاء",
 	"more-actions": "مزيد من الإجراءات",
 	"filter-video": "تحديد ملفات فيديو",
 	"filter-audio": "تحديد ملفات صوتية",

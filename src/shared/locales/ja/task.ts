@@ -146,6 +146,7 @@ export default {
 	"usenet-repair-partials-unavailable":
 		"部分ファイルを利用できません。別の NZB を試すか、より完全性の高いプロバイダーで再度ダウンロードしてください。",
 	"open-source-url": "ソースURLを開く",
+	"open-error-code-reference": "エラーコードのリファレンスを開く",
 	"more-actions": "その他の操作",
 	"filter-video": "動画ファイルを選択",
 	"filter-audio": "音声ファイルを選択",

@@ -151,6 +151,7 @@ export default {
 	"usenet-repair-partials-unavailable":
 		"Τα μερικά αρχεία δεν είναι διαθέσιμα. Δοκιμάστε διαφορετικό NZB ή κατεβάστε ξανά με πάροχο καλύτερης πληρότητας.",
 	"open-source-url": "Άνοιγμα URL προέλευσης",
+	"open-error-code-reference": "Άνοιγμα αναφοράς κωδικών σφάλματος",
 	"more-actions": "Περισσότερες ενέργειες",
 	"filter-video": "Επιλογή αρχείων βίντεο",
 	"filter-audio": "Επιλογή αρχείων ήχου",

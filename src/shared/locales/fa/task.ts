@@ -143,6 +143,7 @@ export default {
 	"usenet-repair-partials-unavailable":
 		"فایل‌های ناقص در دسترس نیستند. NZB دیگری را امتحان کنید یا با ارائه‌دهنده‌ای با تکمیل بهتر دوباره دانلود کنید.",
 	"open-source-url": "باز کردن نشانی منبع",
+	"open-error-code-reference": "باز کردن مرجع کدهای خطا",
 	"more-actions": "عملیات بیشتر",
 	"filter-video": "انتخاب فایل ویدئو",
 	"filter-audio": "انتخاب فایل صوتی",

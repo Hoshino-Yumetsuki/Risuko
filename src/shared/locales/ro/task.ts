@@ -150,6 +150,7 @@ export default {
 	"usenet-repair-partials-unavailable":
 		"Fișierele parțiale nu sunt disponibile. Încercați un NZB diferit sau descărcați din nou de la un furnizor cu o completitudine mai bună.",
 	"open-source-url": "Deschide URL-ul sursă",
+	"open-error-code-reference": "Deschide referința codurilor de eroare",
 	"more-actions": "Mai multe acțiuni",
 	"filter-video": "Selectează fișiere video",
 	"filter-audio": "Selectează fișiere audio",

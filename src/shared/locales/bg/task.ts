@@ -146,6 +146,7 @@ export default {
 	"usenet-repair-partials-unavailable":
 		"Частичните файлове не са налични. Опитайте друг NZB или изтеглете отново от доставчик с по-добра пълнота.",
 	"open-source-url": "Отвори URL на източника",
+	"open-error-code-reference": "Отвори справката за кодовете на грешки",
 	"more-actions": "Още действия",
 	"filter-video": "Избери видео файлове",
 	"filter-audio": "Избери аудио файлове",

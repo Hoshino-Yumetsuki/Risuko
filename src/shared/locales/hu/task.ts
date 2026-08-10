@@ -141,6 +141,7 @@ export default {
 	"usenet-repair-partials-unavailable":
 		"A részleges fájlok nem érhetők el. Próbáljon másik NZB-t, vagy töltse le újra jobb teljességű szolgáltatón keresztül.",
 	"open-source-url": "Forrás URL megnyitása",
+	"open-error-code-reference": "Hibakód-referencia megnyitása",
 	"more-actions": "További műveletek",
 	"filter-video": "Kijelölés videófájlok",
 	"filter-audio": "Kijelölés hangfájlok",

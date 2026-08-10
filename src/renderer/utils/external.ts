@@ -1,5 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 
+const ERROR_CODE_REFERENCE_URL =
+	"https://risuko.app/docs/reference/error-codes";
+
 export function isHttpUrl(value: unknown): value is string {
 	if (typeof value !== "string" || !value.trim()) {
 		return false;
@@ -61,6 +64,19 @@ export function findHttpSourceUrl(value: unknown): string {
 	);
 
 	return candidates.find((candidate) => isHttpUrl(candidate))?.trim() || "";
+}
+
+export function getErrorCodeReferenceUrl(value: unknown): string {
+	const code =
+		typeof value === "number" && Number.isInteger(value)
+			? String(value)
+			: typeof value === "string"
+				? value.trim()
+				: "";
+	if (!/^\d{3}$/.test(code) || code === "000") {
+		return "";
+	}
+	return `${ERROR_CODE_REFERENCE_URL}#${code}`;
 }
 
 export async function openExternalUrl(value: unknown): Promise<boolean> {
