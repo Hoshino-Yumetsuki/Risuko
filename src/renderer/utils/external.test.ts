@@ -45,6 +45,7 @@ test("builds error-code reference URLs only for canonical numeric codes", () => 
 		"https://risuko.app/docs/reference/error-codes#540",
 	);
 	assert.equal(getErrorCodeReferenceUrl("0"), "");
+	assert.equal(getErrorCodeReferenceUrl("000"), "");
 	assert.equal(getErrorCodeReferenceUrl("315#other"), "");
 	assert.equal(getErrorCodeReferenceUrl("not-a-code"), "");
 });
