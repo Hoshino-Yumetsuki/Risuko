@@ -59,7 +59,7 @@ export default {
 	"rule-must-not": "一致してはならない",
 	"rule-pattern-kind": "種類",
 	"rule-pattern-value": "パターン",
-	"rule-pattern-case": "大文字と小文字",
+	"rule-pattern-case": "大文字と小文字を区別",
 	"rule-min-size": "最小サイズ（MB）",
 	"rule-max-size": "最大サイズ（MB）",
 	"rule-min-seeders": "最小シーダー数",

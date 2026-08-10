@@ -34,15 +34,22 @@ test("does not invoke an external opener for invalid URLs", async () => {
 	assert.equal(await openExternalUrl("javascript:alert(1)"), false);
 });
 
-test("reports a blocked browser popup as a failed open", async () => {
+test("treats a browser fallback with noopener as a dispatched open", async () => {
 	const originalWindow = globalThis.window;
+	let openCalls = 0;
 	Object.defineProperty(globalThis, "window", {
 		configurable: true,
-		value: { open: () => null },
+		value: {
+			open: () => {
+				openCalls += 1;
+				return null;
+			},
+		},
 	});
 
 	try {
-		assert.equal(await openExternalUrl("https://example.com"), false);
+		assert.equal(await openExternalUrl("https://example.com"), true);
+		assert.equal(openCalls, 1);
 	} finally {
 		Object.defineProperty(globalThis, "window", {
 			configurable: true,
