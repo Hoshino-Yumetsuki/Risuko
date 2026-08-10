@@ -150,6 +150,7 @@ export default {
 	"usenet-repair-partials-unavailable":
 		"Gedeeltelijke bestanden zijn niet beschikbaar. Probeer een andere NZB of download opnieuw met een provider met een betere volledigheid.",
 	"open-source-url": "Bron-URL openen",
+	"open-error-code-reference": "Foutcodereferentie openen",
 	"more-actions": "Meer acties",
 	"filter-video": "Selecteren videobestanden",
 	"filter-audio": "Selecteren audiobestanden",

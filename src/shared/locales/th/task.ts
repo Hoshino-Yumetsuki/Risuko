@@ -138,6 +138,7 @@ export default {
 	"usenet-repair-partials-unavailable":
 		"ไฟล์บางส่วนไม่พร้อมใช้งาน ลองใช้ NZB อื่นหรือดาวน์โหลดอีกครั้งผ่านผู้ให้บริการที่มีความสมบูรณ์ดีกว่า",
 	"open-source-url": "เปิด URL ต้นทาง",
+	"open-error-code-reference": "เปิดข้อมูลอ้างอิงรหัสข้อผิดพลาด",
 	"more-actions": "การทำงานเพิ่มเติม",
 	"filter-video": "เลือก ไฟล์วิดีโอ",
 	"filter-audio": "เลือก ไฟล์เสียง",

@@ -146,6 +146,7 @@ export default {
 	"usenet-repair-partials-unavailable":
 		"Các tệp một phần không khả dụng. Hãy thử NZB khác hoặc tải lại với nhà cung cấp có độ hoàn thiện tốt hơn.",
 	"open-source-url": "Mở URL nguồn",
+	"open-error-code-reference": "Mở tài liệu tham chiếu mã lỗi",
 	"more-actions": "Thao tác khác",
 	"filter-video": "Chọn tệp video",
 	"filter-audio": "Chọn tệp âm thanh",

@@ -239,6 +239,7 @@ export default {
 	"no-task": "There are no current tasks",
 	"copy-link": "Copy Link",
 	"open-source-url": "Open source URL",
+	"open-error-code-reference": "Open error-code reference",
 	"copy-link-success": "Successfully copied link",
 	"copy-link-failed": "Failed to copy link",
 	"remove-record": "Remove Task Record",

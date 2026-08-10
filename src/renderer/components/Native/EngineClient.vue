@@ -19,7 +19,11 @@ import is from "@/shims/platform";
 import { useAppStore } from "@/store/app";
 import { usePreferenceStore } from "@/store/preference";
 import { useTaskStore } from "@/store/task";
-import { findHttpSourceUrl, openExternalUrl } from "@/utils/external";
+import {
+	findHttpSourceUrl,
+	getErrorCodeReferenceUrl,
+	openExternalUrl,
+} from "@/utils/external";
 import {
 	finalizeCompletedDownloadPath,
 	getTaskFullPath,
@@ -580,6 +584,7 @@ export default {
 				const taskName = getTaskName(task);
 				const { errorCode, errorMessage } = task;
 				const normalizedErrorCode = String(errorCode || "");
+				const errorReferenceUrl = getErrorCodeReferenceUrl(errorCode);
 				const sourceUrl = findHttpSourceUrl(task);
 				logger.error(
 					`[Risuko] download error gid: ${gid}, #${errorCode}, ${errorMessage}`,
@@ -603,10 +608,10 @@ export default {
 					if (host && appStore.cloudflareSkipHosts.includes(host)) {
 						toast.error(this.$t("task.download-error-message", { taskName }), {
 							duration: 5000,
-							action: sourceUrl
+							action: errorReferenceUrl
 								? {
-										label: this.$t("task.open-source-url"),
-										onClick: () => void openExternalUrl(sourceUrl),
+										label: this.$t("task.open-error-code-reference"),
+										onClick: () => void openExternalUrl(errorReferenceUrl),
 									}
 								: undefined,
 						});
@@ -656,13 +661,15 @@ export default {
 				} else {
 					message = this.$t("task.download-error-message", { taskName });
 				}
-				const link = `https://risuko.app/docs/reference/error-codes#${errorCode}`;
-				toast.error(`${message} (${errorCode}) ${link}`, {
+				const errorCodeSuffix = normalizedErrorCode
+					? ` (${normalizedErrorCode})`
+					: "";
+				toast.error(`${message}${errorCodeSuffix}`, {
 					duration: isMissingYtDlp || usenetRepairFailure ? 9000 : 5000,
-					action: sourceUrl
+					action: errorReferenceUrl
 						? {
-								label: this.$t("task.open-source-url"),
-								onClick: () => void openExternalUrl(sourceUrl),
+								label: this.$t("task.open-error-code-reference"),
+								onClick: () => void openExternalUrl(errorReferenceUrl),
 							}
 						: undefined,
 				});

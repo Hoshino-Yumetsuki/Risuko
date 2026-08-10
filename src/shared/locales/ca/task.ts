@@ -151,6 +151,7 @@ export default {
 	"usenet-repair-partials-unavailable":
 		"Els fitxers parcials no estan disponibles. Proveu un NZB diferent o torneu a baixar-los amb un proveïdor amb una completitud millor.",
 	"open-source-url": "Obre l'URL d'origen",
+	"open-error-code-reference": "Obre la referència dels codis d'error",
 	"more-actions": "Més accions",
 	"filter-video": "Selecciona fitxers de vídeo",
 	"filter-audio": "Selecciona fitxers d'àudio",

@@ -313,6 +313,7 @@ export default {
 	"clipboard-download-accept": "下載",
 	"clipboard-download-ignore": "忽略",
 	"open-source-url": "開啟來源 URL",
+	"open-error-code-reference": "開啟錯誤代碼參考",
 	"more-actions": "更多操作",
 	"filter-video": "選取 影片檔案",
 	"filter-audio": "選取 音訊檔案",

@@ -147,6 +147,7 @@ export default {
 	"usenet-repair-partials-unavailable":
 		"Kısmi dosyalar kullanılamıyor. Farklı bir NZB deneyin veya tamamlanma oranı daha yüksek bir sağlayıcıyla yeniden indirin.",
 	"open-source-url": "Kaynak URL'yi aç",
+	"open-error-code-reference": "Hata kodu başvurusunu aç",
 	"more-actions": "Diğer işlemler",
 	"filter-video": "Seç video dosyaları",
 	"filter-audio": "Seç ses dosyaları",

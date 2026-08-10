@@ -308,6 +308,7 @@ export default {
 	"usenet-repair-partials-unavailable":
 		"部分文件不可用。请尝试其他 NZB，或使用完整度更高的提供商重新下载。",
 	"open-source-url": "打开源 URL",
+	"open-error-code-reference": "打开错误代码参考",
 	"more-actions": "更多操作",
 	"filter-video": "选择 视频文件",
 	"filter-audio": "选择 音频文件",

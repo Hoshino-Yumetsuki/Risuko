@@ -145,6 +145,7 @@ export default {
 	"usenet-repair-partials-unavailable":
 		"부분 파일을 사용할 수 없습니다. 다른 NZB를 시도하거나 완성도가 더 높은 제공자를 통해 다시 다운로드하세요.",
 	"open-source-url": "소스 URL 열기",
+	"open-error-code-reference": "오류 코드 참조 열기",
 	"more-actions": "추가 작업",
 	"filter-video": "선택 동영상 파일",
 	"filter-audio": "선택 오디오 파일",

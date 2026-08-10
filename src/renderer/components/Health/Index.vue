@@ -1,32 +1,34 @@
 <template>
   <div class="main panel panel-layout panel-layout--v health-panel">
     <motion-enter tag="header" preset="fadeInDown" class="panel-header health-header">
-      <h4 class="health-title">{{ $t('health.title') }}</h4>
-      <div class="health-actions">
-        <Button
-          size="sm"
-          variant="default"
-          class="health-run-btn"
-          :class="{ 'is-loading': loading }"
-          :disabled="loading"
-          :title="loading ? $t('health.loading') : $t('health.run-all')"
-          :aria-label="loading ? $t('health.loading') : $t('health.run-all')"
-          @click="runAll"
-        >
-          <RefreshCw :size="14" :class="{ 'animate-spin': loading }" />
-          <span>{{ loading ? $t('health.loading') : $t('health.run-all') }}</span>
-        </Button>
-        <Button
-          size="sm"
-          variant="outline"
-          class="health-log-btn"
-          :title="$t('health.inspect-logs')"
-          :aria-label="$t('health.inspect-logs')"
-          @click="logsOpen = true"
-        >
-          <FileText :size="14" />
-          <span>{{ $t('health.inspect-logs') }}</span>
-        </Button>
+      <div class="health-header-main">
+        <h4 class="health-title">{{ $t('health.title') }}</h4>
+        <div class="health-actions">
+          <Button
+            size="sm"
+            variant="default"
+            class="health-run-btn"
+            :class="{ 'is-loading': loading }"
+            :disabled="loading"
+            :title="loading ? $t('health.loading') : $t('health.run-all')"
+            :aria-label="loading ? $t('health.loading') : $t('health.run-all')"
+            @click="runAll"
+          >
+            <RefreshCw :size="14" :class="{ 'animate-spin': loading }" />
+            <span>{{ loading ? $t('health.loading') : $t('health.run-all') }}</span>
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            class="health-log-btn"
+            :title="$t('health.inspect-logs')"
+            :aria-label="$t('health.inspect-logs')"
+            @click="logsOpen = true"
+          >
+            <FileText :size="14" />
+            <span>{{ $t('health.inspect-logs') }}</span>
+          </Button>
+        </div>
       </div>
       <p class="page-desc">{{ $t('health.subtitle') }}</p>
       <div v-if="report" class="page-meta">
@@ -252,6 +254,17 @@ export default {
 	color: var(--muted-foreground);
 	font-variant-numeric: tabular-nums;
 }
+.health-header-main {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	flex: 1 1 100%;
+	min-width: 0;
+	gap: 12px;
+}
+.health-title {
+	min-width: 0;
+}
 .health-actions {
 	display: flex;
 	align-items: center;
@@ -313,8 +326,13 @@ export default {
 	justify-content: center;
 }
 @media (max-width: 640px) {
+	.health-header-main {
+		align-items: flex-start;
+		flex-direction: column;
+		gap: 8px;
+	}
 	.health-actions {
-		flex-basis: 100%;
+		flex-basis: auto;
 		width: 100%;
 		margin-left: 0;
 	}

@@ -147,6 +147,7 @@ export default {
 	"usenet-repair-partials-unavailable":
 		"Часткові файли недоступні. Спробуйте інший NZB або завантажте знову через провайдера з кращою повнотою.",
 	"open-source-url": "Відкрити URL джерела",
+	"open-error-code-reference": "Відкрити довідник кодів помилок",
 	"more-actions": "Інші дії",
 	"filter-video": "Вибрати відеофайли",
 	"filter-audio": "Вибрати аудіофайли",

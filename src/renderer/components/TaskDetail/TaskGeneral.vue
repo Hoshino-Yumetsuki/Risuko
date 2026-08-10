@@ -62,16 +62,16 @@
         <span class="general-card-value general-card-value--error flex flex-wrap items-center gap-2">
           <span class="min-w-0">{{ task.errorCode }} {{ taskErrorMessage }}</span>
           <Button
-            v-if="sourceUrl"
+            v-if="errorCodeReferenceUrl"
             variant="outline"
             size="sm"
             class="ml-2 shrink-0"
-            :title="$t('task.open-source-url')"
-            :aria-label="$t('task.open-source-url')"
-            @click="openSourceUrl"
+            :title="$t('task.open-error-code-reference')"
+            :aria-label="$t('task.open-error-code-reference')"
+            @click="openErrorCodeReference"
           >
             <ExternalLink :size="13" />
-            {{ $t('task.open-source-url') }}
+            {{ $t('task.open-error-code-reference') }}
           </Button>
         </span>
       </div>
@@ -150,7 +150,7 @@ import is from "@/shims/platform";
 import { useAppStore } from "@/store/app";
 import { usePreferenceStore } from "@/store/preference";
 import { copyText } from "@/utils/clipboard";
-import { findHttpSourceUrl, openExternalUrl } from "@/utils/external";
+import { getErrorCodeReferenceUrl, openExternalUrl } from "@/utils/external";
 import { getTaskRevealDir, getTaskRevealPath } from "@/utils/native";
 
 export default {
@@ -218,8 +218,8 @@ export default {
 		taskErrorMessage() {
 			return this.usenetRepairFailureMessage || this.task?.errorMessage || "";
 		},
-		sourceUrl(): string {
-			return findHttpSourceUrl(this.task);
+		errorCodeReferenceUrl(): string {
+			return getErrorCodeReferenceUrl(this.task?.errorCode);
 		},
 		displayDownloadSpeed() {
 			return Number(this.task?.downloadSpeed || 0);
@@ -311,8 +311,10 @@ export default {
 					this.$msg.error(this.$t("task.copy-link-failed"));
 				});
 		},
-		openSourceUrl() {
-			void openExternalUrl(this.sourceUrl);
+		async openErrorCodeReference() {
+			if (!(await openExternalUrl(this.errorCodeReferenceUrl))) {
+				this.$msg.error(this.$t("app.open-url-failed"));
+			}
 		},
 	},
 	beforeUnmount() {

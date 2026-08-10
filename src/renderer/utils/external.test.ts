@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { findHttpSourceUrl, isHttpUrl, openExternalUrl } from "./external.ts";
+import {
+	findHttpSourceUrl,
+	getErrorCodeReferenceUrl,
+	isHttpUrl,
+	openExternalUrl,
+} from "./external.ts";
 
 test("accepts only browser-safe HTTP(S) URLs", () => {
 	assert.equal(isHttpUrl(" https://example.com/download "), true);
@@ -28,6 +33,21 @@ test("finds a valid persisted source URL without exposing other URI schemes", ()
 		"http://cdn.example.com/archive.zip",
 	);
 	assert.equal(findHttpSourceUrl({ uri: "file:///tmp/archive.zip" }), "");
+});
+
+test("builds error-code reference URLs only for canonical numeric codes", () => {
+	assert.equal(
+		getErrorCodeReferenceUrl("315"),
+		"https://risuko.app/docs/reference/error-codes#315",
+	);
+	assert.equal(
+		getErrorCodeReferenceUrl(540),
+		"https://risuko.app/docs/reference/error-codes#540",
+	);
+	assert.equal(getErrorCodeReferenceUrl("0"), "");
+	assert.equal(getErrorCodeReferenceUrl("000"), "");
+	assert.equal(getErrorCodeReferenceUrl("315#other"), "");
+	assert.equal(getErrorCodeReferenceUrl("not-a-code"), "");
 });
 
 test("does not invoke an external opener for invalid URLs", async () => {
