@@ -2,7 +2,7 @@
   <div class="content panel panel-layout panel-layout--v">
     <main class="panel-content">
       <div class="form-preference usenet-preferences">
-        <section class="settings-section">
+        <section class="settings-section" data-preference-search-target="preferences.usenet-profiles">
           <div class="settings-section-header usenet-section-header">
             <div class="section-icon"><Radio :size="16" /></div>
             <div class="section-title">
@@ -103,7 +103,7 @@
           </div>
         </section>
 
-        <section class="settings-section">
+        <section class="settings-section" data-preference-search-target="preferences.usenet-cleanup">
           <div class="settings-section-header">
             <div class="section-icon"><Archive :size="16" /></div>
             <div class="section-title">
@@ -140,7 +140,7 @@
           </div>
         </section>
 
-        <section class="settings-section">
+        <section class="settings-section" data-preference-search-target="preferences.usenet-archive-safety">
           <div class="settings-section-header">
             <div class="section-icon"><ShieldCheck :size="16" /></div>
             <div class="section-title">

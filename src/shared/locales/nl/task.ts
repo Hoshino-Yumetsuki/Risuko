@@ -1,4 +1,7 @@
 export default {
+	"sort-ascending": "Oplopend",
+	"sort-descending": "Aflopend",
+	"torrent-preview-folder-select": "Selecteren",
 	active: "Actief",
 	waiting: "Wachten",
 	stopped: "Gestopt",
@@ -146,4 +149,13 @@ export default {
 		"Gedeeltelijke bestanden zijn bewaard. Voeg een provider met een betere volledigheid toe en probeer het opnieuw.",
 	"usenet-repair-partials-unavailable":
 		"Gedeeltelijke bestanden zijn niet beschikbaar. Probeer een andere NZB of download opnieuw met een provider met een betere volledigheid.",
+	"open-source-url": "Bron-URL openen",
+	"more-actions": "Meer acties",
+	"filter-video": "Selecteren videobestanden",
+	"filter-audio": "Selecteren audiobestanden",
+	"filter-image": "Selecteren afbeeldingsbestanden",
+	"filter-document": "Selecteren documentbestanden",
+	"batch-remove-item": "Verwijderen",
+	"torrent-preview-folder-toggle": "Map wisselen",
+	"clear-filter": "Filter wissen",
 };

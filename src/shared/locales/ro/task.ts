@@ -1,4 +1,7 @@
 export default {
+	"sort-ascending": "Crescător",
+	"sort-descending": "Descrescător",
+	"torrent-preview-folder-select": "Selectează",
 	active: "Se descarcă",
 	waiting: "În aşteptare",
 	stopped: "Oprite",
@@ -146,4 +149,13 @@ export default {
 		"Fișierele parțiale au fost păstrate. Adăugați un furnizor cu o completitudine mai bună și încercați din nou.",
 	"usenet-repair-partials-unavailable":
 		"Fișierele parțiale nu sunt disponibile. Încercați un NZB diferit sau descărcați din nou de la un furnizor cu o completitudine mai bună.",
+	"open-source-url": "Deschide URL-ul sursă",
+	"more-actions": "Mai multe acțiuni",
+	"filter-video": "Selectează fișiere video",
+	"filter-audio": "Selectează fișiere audio",
+	"filter-image": "Selectează fișiere imagine",
+	"filter-document": "Selectează fișiere document",
+	"batch-remove-item": "Elimină",
+	"torrent-preview-folder-toggle": "Comută folderul",
+	"clear-filter": "Șterge filtrul",
 };

@@ -1,4 +1,7 @@
 export default {
+	"sort-ascending": "จากน้อยไปมาก",
+	"sort-descending": "จากมากไปน้อย",
+	"torrent-preview-folder-select": "เลือก",
 	active: "การดาวน์โหลด",
 	waiting: "กำลังรอ",
 	stopped: "หยุดแล้ว",
@@ -134,4 +137,13 @@ export default {
 		"เก็บไฟล์บางส่วนไว้แล้ว เพิ่มผู้ให้บริการที่มีความสมบูรณ์ดีกว่า แล้วลองอีกครั้ง",
 	"usenet-repair-partials-unavailable":
 		"ไฟล์บางส่วนไม่พร้อมใช้งาน ลองใช้ NZB อื่นหรือดาวน์โหลดอีกครั้งผ่านผู้ให้บริการที่มีความสมบูรณ์ดีกว่า",
+	"open-source-url": "เปิด URL ต้นทาง",
+	"more-actions": "การทำงานเพิ่มเติม",
+	"filter-video": "เลือก ไฟล์วิดีโอ",
+	"filter-audio": "เลือก ไฟล์เสียง",
+	"filter-image": "เลือก ไฟล์รูปภาพ",
+	"filter-document": "เลือก ไฟล์เอกสาร",
+	"batch-remove-item": "ลบ",
+	"torrent-preview-folder-toggle": "สลับโฟลเดอร์",
+	"clear-filter": "ล้างตัวกรอง",
 };

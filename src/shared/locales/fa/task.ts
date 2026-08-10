@@ -1,4 +1,7 @@
 export default {
+	"sort-ascending": "صعودی",
+	"sort-descending": "نزولی",
+	"torrent-preview-folder-select": "انتخاب",
 	active: "در حال بارگیری",
 	waiting: "در انتظار",
 	stopped: "متوقف شد",
@@ -139,4 +142,13 @@ export default {
 		"فایل‌های ناقص حفظ شدند. ارائه‌دهنده‌ای با تکمیل بهتر اضافه کنید و دوباره تلاش کنید.",
 	"usenet-repair-partials-unavailable":
 		"فایل‌های ناقص در دسترس نیستند. NZB دیگری را امتحان کنید یا با ارائه‌دهنده‌ای با تکمیل بهتر دوباره دانلود کنید.",
+	"open-source-url": "باز کردن نشانی منبع",
+	"more-actions": "عملیات بیشتر",
+	"filter-video": "انتخاب فایل ویدئو",
+	"filter-audio": "انتخاب فایل صوتی",
+	"filter-image": "انتخاب فایل تصویر",
+	"filter-document": "انتخاب فایل سند",
+	"batch-remove-item": "حذف",
+	"torrent-preview-folder-toggle": "تغییر پوشه",
+	"clear-filter": "پاک کردن فیلتر",
 };

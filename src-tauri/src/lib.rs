@@ -51,14 +51,18 @@ fn with_desktop_plugins<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri:
         .plugin(tauri_plugin_barcode_scanner::init())
 }
 
-/// Resolve which directory the log appender should write to
-///
-/// `log-dir-override` points logs at any writable directory — matters most on
-/// Android, where the default `app_log_dir` lives in the app's private data dir
-/// and stays invisible to file managers. Empty means "use the OS default"; a
-/// non-empty value we can't create or write also falls back to the default, so
-/// logging never fails just because the override went stale (removed SD card,
-/// revoked permission, typo'd path)
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+fn with_updater_plugins<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
+    builder
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+fn with_updater_plugins<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
+    builder
+}
+
 fn resolve_log_dir(
     config: &risuko_engine::config::ConfigManager,
     default_log_dir: &std::path::Path,
@@ -106,8 +110,16 @@ fn resolve_log_dir(
     candidate
 }
 
-/// Set up the tracing subscriber with stdout and file output. Returns a guard
-/// that must be held for the application's lifetime
+fn build_daily_log_appender(
+    log_dir: &std::path::Path,
+) -> Result<tracing_appender::rolling::RollingFileAppender, tracing_appender::rolling::InitError> {
+    tracing_appender::rolling::RollingFileAppender::builder()
+        .rotation(tracing_appender::rolling::Rotation::DAILY)
+        .filename_prefix("risuko")
+        .filename_suffix("log")
+        .build(log_dir)
+}
+
 fn init_logging(
     log_dir: &std::path::Path,
     log_level: &str,
@@ -120,8 +132,32 @@ fn init_logging(
         eprintln!("Failed to create log directory {:?}: {}", log_dir, e);
     }
 
-    let file_appender = tracing_appender::rolling::daily(log_dir, "risuko.log");
-    let (file_writer, guard) = tracing_appender::non_blocking(file_appender);
+    let log_writer: Box<dyn std::io::Write + Send> = match build_daily_log_appender(log_dir) {
+        Ok(appender) => Box::new(appender),
+        Err(e) => {
+            eprintln!("Failed to configure rolling log appender: {e}");
+            let fallback_dir = std::env::temp_dir().join("risuko-logs");
+            if let Err(directory_error) = std::fs::create_dir_all(&fallback_dir) {
+                eprintln!(
+                    "Failed to create fallback log directory {:?}: {}. Logging to stderr.",
+                    fallback_dir, directory_error
+                );
+                Box::new(std::io::stderr())
+            } else {
+                match build_daily_log_appender(&fallback_dir) {
+                    Ok(appender) => Box::new(appender),
+                    Err(fallback_error) => {
+                        eprintln!(
+                            "Failed to configure fallback rolling log appender in {:?}: {}. Logging to stderr.",
+                            fallback_dir, fallback_error
+                        );
+                        Box::new(std::io::stderr())
+                    }
+                }
+            }
+        }
+    };
+    let (file_writer, guard) = tracing_appender::non_blocking(log_writer);
 
     let filter = EnvFilter::try_new(log_level).unwrap_or_else(|_| EnvFilter::new("warn"));
 
@@ -164,12 +200,12 @@ pub fn run() {
     #[cfg(target_os = "linux")]
     apply_linux_webkit_workarounds();
 
-    let app = with_desktop_plugins(
+    let app = with_updater_plugins(with_desktop_plugins(
         tauri::Builder::default()
             .plugin(tauri_plugin_store::Builder::default().build())
             .plugin(tauri_plugin_dialog::init())
             .plugin(tauri_plugin_shell::init()),
-    )
+    ))
     .plugin(tauri_plugin_clipboard_manager::init())
     .plugin(tauri_plugin_deep_link::init())
     .setup(|app| {
@@ -182,11 +218,6 @@ pub fn run() {
         let storage: Arc<dyn risuko_engine::StorageBackend> =
             Arc::new(bridge::TauriStorage::new(handle));
 
-        // Resolve the log directory and level from user config before building
-        // AppState. Defaults to the OS app log dir; the user can override via
-        // `log-dir-override` (e.g. `/storage/emulated/0/Download/Risuko-logs`
-        // on Android so logs show up in any file manager). The override applies
-        // only if we can create and write it, else the default kicks in
         let default_log_dir = handle.path().app_log_dir().unwrap_or_else(|_| {
             handle
                 .path()
@@ -410,6 +441,9 @@ pub fn run() {
         commands::config_cmds::get_app_config,
         commands::config_cmds::save_preference,
         commands::config_cmds::prepare_preference_patch,
+        commands::config_cmds::resolve_configured_proxy,
+        commands::config_cmds::is_signed_updater_available,
+        commands::config_cmds::fetch_tracker_sources,
         commands::clipboard_cmds::mark_clipboard_self_write,
         commands::clipboard_cmds::start_clipboard_watch,
         commands::clipboard_cmds::stop_clipboard_watch,
@@ -440,6 +474,8 @@ pub fn run() {
         commands::file_cmds::cleanup_generated_torrent_sidecars_for_task,
         commands::engine_cmds::restart_engine,
         commands::health_cmds::run_health_checks,
+        commands::health_cmds::list_log_files,
+        commands::health_cmds::read_log_file,
         commands::engine_cmds::add_uri,
         commands::engine_cmds::add_media,
         commands::engine_cmds::get_media_info,
@@ -606,5 +642,27 @@ fn sync_open_at_login_setting(app: &tauri::App) {
         if let Err(err) = result {
             tracing::warn!("Failed to sync open-at-login setting: {}", err);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn daily_log_appender_uses_the_new_filename_format() {
+        let directory = tempfile::tempdir().expect("create temporary log directory");
+        let _appender = build_daily_log_appender(directory.path()).expect("build log appender");
+        let filenames = std::fs::read_dir(directory.path())
+            .expect("list log directory")
+            .filter_map(Result::ok)
+            .filter_map(|entry| entry.file_name().into_string().ok())
+            .collect::<Vec<_>>();
+
+        assert!(filenames.iter().any(|name| {
+            name.len() == "risuko.YYYY-MM-DD.log".len()
+                && name.starts_with("risuko.")
+                && name.ends_with(".log")
+        }));
     }
 }

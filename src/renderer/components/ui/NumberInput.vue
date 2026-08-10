@@ -15,6 +15,8 @@
         type="button"
         class="number-btn"
         tabindex="-1"
+        :title="$t('app.increase-value')"
+        :aria-label="$t('app.increase-value')"
         @click="increment"
         @mousedown.prevent
       >
@@ -32,6 +34,8 @@
         type="button"
         class="number-btn"
         tabindex="-1"
+        :title="$t('app.decrease-value')"
+        :aria-label="$t('app.decrease-value')"
         @click="decrement"
         @mousedown.prevent
       >

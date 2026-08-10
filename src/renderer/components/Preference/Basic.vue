@@ -14,7 +14,7 @@
           </div>
           <div class="settings-section-content">
             <div class="settings-select-group">
-              <div class="settings-select-item">
+              <div class="settings-select-item" data-preference-search-target="preferences.language">
                 <label class="settings-select-item-label">{{ $t('preferences.language') }}</label>
                 <Select v-model="form.locale" class="settings-select-control">
                   <SelectTrigger>
@@ -27,7 +27,11 @@
                   </SelectContent>
                 </Select>
               </div>
-              <div v-if="isMac" class="settings-select-item">
+              <div
+                v-if="isMac"
+                class="settings-select-item"
+                data-preference-search-target="preferences.run-mode"
+              >
                 <label class="settings-select-item-label">{{ $t('preferences.run-mode') }}</label>
                 <Select v-model="form.runMode" class="settings-select-control">
                   <SelectTrigger>
@@ -41,7 +45,7 @@
                 </Select>
               </div>
             </div>
-            <div class="settings-row">
+            <div class="settings-row" data-preference-search-target="preferences.open-at-login">
               <div class="settings-row-content">
                 <span class="settings-row-title">{{ $t('preferences.open-at-login') }}</span>
               </div>
@@ -52,7 +56,7 @@
                 />
               </div>
             </div>
-            <div class="settings-row">
+            <div class="settings-row" data-preference-search-target="preferences.keep-window-state">
               <div class="settings-row-content">
                 <span class="settings-row-title">{{ $t('preferences.keep-window-state') }}</span>
               </div>
@@ -63,7 +67,7 @@
                 />
               </div>
             </div>
-            <div class="settings-row">
+            <div class="settings-row" data-preference-search-target="preferences.auto-resume-all">
               <div class="settings-row-content">
                 <span class="settings-row-title">{{ $t('preferences.auto-resume-all') }}</span>
               </div>
@@ -74,7 +78,7 @@
                 />
               </div>
             </div>
-            <div class="settings-row">
+            <div class="settings-row" data-preference-search-target="preferences.purge-record-on-start">
               <div class="settings-row-content">
                 <span class="settings-row-title">{{ $t('preferences.purge-record-on-start') }}</span>
               </div>
@@ -88,7 +92,10 @@
           </div>
         </div>
 
-        <div class="settings-section">
+        <div
+          class="settings-section"
+          data-preference-search-target="preferences.default-dir preferences.history-directories preferences.favorite-directory preferences.unfavorite-directory preferences.remove-history-directory"
+        >
           <div class="settings-section-header">
             <div class="section-icon"><FolderDown :size="16" /></div>
             <div class="section-title">
@@ -116,7 +123,10 @@
           </div>
         </div>
 
-        <div class="settings-section">
+        <div
+          class="settings-section"
+          data-preference-search-target="preferences.file-category-dirs preferences.file-category-music preferences.file-category-video preferences.file-category-image preferences.file-category-document preferences.file-category-compressed preferences.file-category-program preferences.file-category-rss"
+        >
           <div class="settings-section-header">
             <div class="section-icon"><FolderDown :size="16" /></div>
             <div class="section-title">
@@ -152,7 +162,10 @@
           </div>
         </div>
 
-        <div class="settings-section">
+        <div
+          class="settings-section"
+          data-preference-search-target="preferences.task-routing-rules preferences.task-routing-rule-add"
+        >
           <div class="settings-section-header">
             <div class="section-icon"><FolderDown :size="16" /></div>
             <div class="section-title">
@@ -230,7 +243,10 @@
             </div>
           </div>
           <div class="settings-section-content">
-            <div class="settings-row">
+            <div
+              class="settings-row"
+              data-preference-search-target="preferences.speed-limit-enabled"
+            >
               <div class="settings-row-content">
                 <span class="settings-row-title">{{ $t('preferences.speed-limit-enabled') }}</span>
                 <div class="settings-row-description">
@@ -245,7 +261,7 @@
               </div>
             </div>
             <div class="settings-select-group">
-              <div class="settings-select-item">
+              <div class="settings-select-item" data-preference-search-target="preferences.transfer-speed-upload">
                 <label class="settings-select-item-label"
                   ><ArrowUp :size="12" style="vertical-align: middle; margin-right: 4px" />{{
                     $t('preferences.transfer-speed-upload')
@@ -270,7 +286,7 @@
                   </Select>
                 </div>
               </div>
-              <div class="settings-select-item">
+              <div class="settings-select-item" data-preference-search-target="preferences.transfer-speed-download">
                 <label class="settings-select-item-label"
                   ><ArrowDown :size="12" style="vertical-align: middle; margin-right: 4px" />{{
                     $t('preferences.transfer-speed-download')
@@ -307,7 +323,7 @@
             </div>
           </div>
           <div class="settings-section-content">
-            <div class="settings-row">
+            <div class="settings-row" data-preference-search-target="preferences.bt-save-metadata">
               <div class="settings-row-content">
                 <span class="settings-row-title">{{ $t('preferences.bt-save-metadata') }}</span>
               </div>
@@ -318,7 +334,7 @@
                 />
               </div>
             </div>
-            <div class="settings-row">
+            <div class="settings-row" data-preference-search-target="preferences.bt-force-encryption">
               <div class="settings-row-content">
                 <span class="settings-row-title">{{ $t('preferences.bt-force-encryption') }}</span>
               </div>
@@ -329,7 +345,10 @@
                 />
               </div>
             </div>
-            <div class="settings-row">
+            <div
+              class="settings-row"
+              data-preference-search-target="preferences.keep-seeding preferences.seed-ratio preferences.seed-time"
+            >
               <div class="settings-row-content">
                 <span class="settings-row-title">{{ $t('preferences.keep-seeding') }}</span>
               </div>
@@ -338,11 +357,11 @@
               </div>
             </div>
             <div v-if="form.keepSeeding" class="settings-select-group">
-              <div class="settings-select-item">
+              <div class="settings-select-item" data-preference-search-target="preferences.seed-ratio">
                 <label class="settings-select-item-label">{{ $t('preferences.seed-ratio') }}</label>
                 <NumberInput v-model="form.seedRatio" :min="0" :max="100" :step="0.1" />
               </div>
-              <div class="settings-select-item">
+              <div class="settings-select-item" data-preference-search-target="preferences.seed-time">
                 <label class="settings-select-item-label"
                   >{{ $t('preferences.seed-time') }} ({{ $t('preferences.seed-time-unit') }})</label
                 >
@@ -372,7 +391,10 @@
                 />
               </div>
             </div>
-            <div class="settings-row">
+            <div
+              class="settings-row"
+              data-preference-search-target="preferences.auto-retry preferences.auto-retry-strategy preferences.auto-retry-interval preferences.worker-max-retries"
+            >
               <div class="settings-row-content">
                 <span class="settings-row-title">{{ $t('preferences.auto-retry') }}</span>
               </div>
@@ -420,7 +442,10 @@
                 <NumberInput v-model="form.workerMaxRetries" :min="1" :max="20" :step="1" />
               </div>
             </div>
-            <div class="settings-row">
+            <div
+              class="settings-row"
+              data-preference-search-target="preferences.auto-detect-low-speed-tasks preferences.low-speed-threshold"
+            >
               <div class="settings-row-content">
                 <div class="settings-row-title">
                   {{ $t('preferences.auto-detect-low-speed-tasks') }}

@@ -6,14 +6,38 @@
       @mousedown.left.prevent="handleStartDragging"
     ></div>
     <ul v-if="showActions" class="window-controls">
-      <li @click="handleMinimize">
-        <Minus :size="12" />
+      <li>
+        <button
+          type="button"
+          class="window-control"
+          :title="$t('window.minimize')"
+          :aria-label="$t('window.minimize')"
+          @click="handleMinimize"
+        >
+          <Minus :size="12" aria-hidden="true" />
+        </button>
       </li>
-      <li @click="handleMaximize">
-        <Maximize2 :size="12" />
+      <li>
+        <button
+          type="button"
+          class="window-control"
+          :title="$t('window.zoom')"
+          :aria-label="$t('window.zoom')"
+          @click="handleMaximize"
+        >
+          <Maximize2 :size="12" aria-hidden="true" />
+        </button>
       </li>
-      <li @click="handleClose" class="win-close-btn">
-        <X :size="12" />
+      <li>
+        <button
+          type="button"
+          class="window-control win-close-btn"
+          :title="$t('window.close')"
+          :aria-label="$t('window.close')"
+          @click="handleClose"
+        >
+          <X :size="12" aria-hidden="true" />
+        </button>
       </li>
     </ul>
   </div>

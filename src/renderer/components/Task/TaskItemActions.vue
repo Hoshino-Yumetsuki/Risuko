@@ -10,6 +10,8 @@
       v-if="primaryAction"
       type="button"
       class="task-item-action"
+      :title="actionLabel(primaryAction)"
+      :aria-label="actionLabel(primaryAction)"
       @click.stop="onActionClick(primaryAction, $event)"
     >
       <component :is="actionIcons[primaryAction]" :size="14" />
@@ -18,12 +20,19 @@
       v-if="isCardView"
       type="button"
       class="task-item-action"
+      :title="actionLabel('FOLDER')"
+      :aria-label="actionLabel('FOLDER')"
       @click.stop="onActionClick('FOLDER', $event)"
     >
       <Folder :size="14" />
     </button>
     <DropdownMenu>
-      <DropdownMenuTrigger class="task-item-action" type="button">
+      <DropdownMenuTrigger
+        class="task-item-action"
+        type="button"
+        :title="$t('task.more-actions')"
+        :aria-label="$t('task.more-actions')"
+      >
         <EllipsisVertical :size="14" />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
@@ -52,6 +61,8 @@
       :key="action"
       class="task-item-action"
       :style="{ '--stagger-index': index }"
+      :title="actionLabel(action)"
+      :aria-label="actionLabel(action)"
       @click.stop="onActionClick(action, $event)"
     >
       <Pause v-if="action === 'PAUSE'" :size="14" />

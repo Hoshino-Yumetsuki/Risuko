@@ -94,4 +94,5 @@ export default {
 	"mark-all-read": "全部标为已读",
 	"group-by-episode": "按剧集分组",
 	"mark-read-on-scroll": "滚动时标为已读",
+	"clear-filter": "清除筛选",
 };

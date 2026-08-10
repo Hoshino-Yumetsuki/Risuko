@@ -1,6 +1,10 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, useAttrs } from "vue";
 import { Checkbox } from "../checkbox";
+
+defineOptions({ inheritAttrs: false });
+
+const attrs = useAttrs();
 
 const props = withDefaults(
 	defineProps<{
@@ -30,6 +34,7 @@ const checked = computed({
 <template>
   <label class="ui-checkbox" :class="{ 'is-disabled': disabled }">
     <Checkbox
+      v-bind="attrs"
       :model-value="checked"
       :disabled="disabled"
       @update:model-value="

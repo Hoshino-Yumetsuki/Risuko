@@ -312,4 +312,11 @@ export default {
 	"clipboard-download-prompt": "下載此連結？",
 	"clipboard-download-accept": "下載",
 	"clipboard-download-ignore": "忽略",
+	"open-source-url": "開啟來源 URL",
+	"more-actions": "更多操作",
+	"filter-video": "選取 影片檔案",
+	"filter-audio": "選取 音訊檔案",
+	"filter-image": "選取 圖片檔案",
+	"filter-document": "選取 文件檔案",
+	"clear-filter": "清除篩選",
 };

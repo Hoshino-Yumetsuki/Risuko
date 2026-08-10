@@ -2,7 +2,7 @@
   <div class="content panel panel-layout panel-layout--v">
     <main class="panel-content">
       <div class="form-preference">
-        <div class="settings-section">
+        <div class="settings-section" data-preference-search-target="preferences.appearance-theme preferences.theme-auto preferences.theme-light preferences.theme-dark">
           <div class="settings-section-header">
             <div class="section-icon"><Palette :size="16" /></div>
             <div class="section-title">
@@ -14,7 +14,7 @@
           </div>
         </div>
 
-        <div class="settings-section">
+        <div class="settings-section" data-preference-search-target="preferences.appearance-typography preferences.font-family preferences.font-family-system preferences.font-family-rounded preferences.font-family-serif preferences.font-family-mono preferences.font-size preferences.font-size-small preferences.font-size-default preferences.font-size-large preferences.font-size-extra-large">
           <div class="settings-section-header">
             <div class="section-icon"><Type :size="16" /></div>
             <div class="section-title">
@@ -68,7 +68,7 @@
           </div>
         </div>
 
-        <div class="settings-section">
+        <div class="settings-section" data-preference-search-target="preferences.task-list-style preferences.task-list-style-compact preferences.task-list-style-card">
           <div class="settings-section-header">
             <div class="section-icon"><ListTodo :size="16" /></div>
             <div class="section-title">
@@ -95,7 +95,11 @@
           </div>
         </div>
 
-        <div v-if="isRenderer && !isAndroid" class="settings-section">
+        <div
+          v-if="isRenderer && !isAndroid"
+          class="settings-section"
+          data-preference-search-target="preferences.appearance-window preferences.sidebar-collapsed preferences.hide-app-menu preferences.auto-hide-window preferences.tray-speedometer"
+        >
           <div class="settings-section-header">
             <div class="section-icon"><AppWindow :size="16" /></div>
             <div class="section-title">

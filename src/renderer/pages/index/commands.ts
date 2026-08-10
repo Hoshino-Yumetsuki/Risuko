@@ -13,6 +13,7 @@ import {
 	buildUriPayload,
 	initTaskForm,
 } from "@/utils/task";
+import { checkForUpdates } from "@/utils/updater";
 
 const i18n = getLocaleManager().getI18n();
 const getAppStore = () => useAppStore();
@@ -169,6 +170,10 @@ const fetchPreference = () => {
 	getPreferenceStore().fetchPreference();
 };
 
+const checkForUpdatesNow = () => {
+	void checkForUpdates("manual");
+};
+
 commands.register("application:task-list", navigateTaskList);
 commands.register("application:preferences", navigatePreferences);
 commands.register("application:about", showAboutPanel);
@@ -185,6 +190,7 @@ commands.register("application:select-all-task", selectAllTask);
 commands.register("application:show-task-detail", showTaskDetail);
 
 commands.register("application:update-preference-config", fetchPreference);
+commands.register("application:check-for-updates", checkForUpdatesNow);
 commands.register("application:update-system-theme", updateSystemTheme);
 commands.register("application:update-theme", updateTheme);
 commands.register("application:update-locale", updateLocale);

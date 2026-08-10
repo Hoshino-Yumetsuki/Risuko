@@ -10,8 +10,6 @@ use std::time::Duration;
 
 use futures_util::stream::{FuturesUnordered, StreamExt};
 
-use base64::engine::general_purpose::STANDARD as B64_STANDARD;
-use base64::Engine as _;
 use http::Uri;
 use hyper::rt::ReadBufCursor;
 use hyper_util::client::legacy::connect::{Connected, Connection};
@@ -25,7 +23,7 @@ use tokio_rustls::TlsConnector;
 use tower_service::Service;
 
 use crate::error::Error;
-use crate::proxy::{Proxy, ProxyScheme};
+use crate::proxy::{NoProxy, Proxy, ProxyScheme};
 use crate::resolver::SharedResolver;
 
 #[derive(Clone)]
@@ -33,6 +31,7 @@ pub(crate) struct Connector {
     pub(crate) tls: Arc<ClientConfig>,
     pub(crate) resolver: SharedResolver,
     pub(crate) proxy: Option<Arc<Proxy>>,
+    pub(crate) no_proxy: Option<Arc<NoProxy>>,
     pub(crate) connect_timeout: Option<Duration>,
     pub(crate) tcp_nodelay: bool,
     pub(crate) tcp_keepalive: Option<Duration>,
@@ -147,14 +146,16 @@ impl AsyncWrite for BoxedIo {
 pub struct ConnIo {
     io: TokioIo<MaybeTls>,
     negotiated_h2: bool,
+    proxied: bool,
 }
 
 impl Connection for ConnIo {
     fn connected(&self) -> Connected {
+        let connected = Connected::new().proxy(self.proxied);
         if self.negotiated_h2 {
-            Connected::new().negotiated_h2()
+            connected.negotiated_h2()
         } else {
-            Connected::new()
+            connected
         }
     }
 }
@@ -251,9 +252,19 @@ impl Connector {
         });
         let is_https = scheme == "https";
 
-        let stream = match self.proxy.as_deref() {
-            Some(p) => self.via_proxy(p, &host, port, is_https).await?,
-            None => BoxedIo::new(self.direct(&host, port).await?),
+        let bypass = self
+            .no_proxy
+            .as_deref()
+            .is_some_and(|matcher| matcher.matches_host_port(&host, Some(port)));
+        let proxied = !bypass
+            && !is_https
+            && self
+                .proxy
+                .as_deref()
+                .is_some_and(|proxy| matches!(proxy.scheme(), ProxyScheme::Http));
+        let stream = match (self.proxy.as_deref(), bypass) {
+            (Some(p), false) => self.via_proxy(p, &host, port, is_https).await?,
+            (None, _) | (Some(_), true) => BoxedIo::new(self.direct(&host, port).await?),
         };
 
         let (final_io, negotiated_h2) = if is_https {
@@ -276,6 +287,7 @@ impl Connector {
         Ok(ConnIo {
             io: TokioIo::new(final_io),
             negotiated_h2,
+            proxied,
         })
     }
 
@@ -412,19 +424,14 @@ impl Connector {
                 let pass_raw = proxy.url().password().unwrap_or("");
                 let user = percent_decode_str(user_raw);
                 let pass = percent_decode_str(pass_raw);
-                let target_addr_str = format!("{host}:{port}");
-                let proxy_addr = format!("{phost}:{pport}");
+                let proxy_addr = format_socket_endpoint(&phost, pport);
                 let auth = (!user.is_empty()).then_some((user.as_str(), pass.as_str()));
 
-                // Apply the same connect-timeout budget to SOCKS5 as to
-                // direct/HTTP-CONNECT paths so a misbehaving proxy can't
-                // hang the worker indefinitely
                 let stream = match self.connect_timeout {
                     Some(d) => tokio::time::timeout(
                         d,
                         socks5_connect(
                             &proxy_addr,
-                            &target_addr_str,
                             host,
                             port,
                             *resolve_locally,
@@ -437,7 +444,6 @@ impl Connector {
                     None => {
                         socks5_connect(
                             &proxy_addr,
-                            &target_addr_str,
                             host,
                             port,
                             *resolve_locally,
@@ -476,16 +482,10 @@ async fn http_connect_inner(
     port: u16,
     proxy: &Proxy,
 ) -> Result<BoxedIo, Error> {
-    let mut req = format!("CONNECT {host}:{port} HTTP/1.1\r\nHost: {host}:{port}\r\n");
-    if !proxy.url().username().is_empty() {
-        // Percent-decode credentials per RFC 3986 before encoding to Basic;
-        // otherwise creds containing reserved characters (e.g. `@`, `:`,
-        // space) authenticate against the wrong literal value
-        let user = percent_decode_str(proxy.url().username());
-        let pass = percent_decode_str(proxy.url().password().unwrap_or(""));
-        let creds = format!("{user}:{pass}");
-        let encoded = B64_STANDARD.encode(creds.as_bytes());
-        req.push_str(&format!("Proxy-Authorization: Basic {encoded}\r\n"));
+    let authority = format_socket_endpoint(host, port);
+    let mut req = format!("CONNECT {authority} HTTP/1.1\r\nHost: {authority}\r\n");
+    if let Some(auth) = proxy.http_basic_authorization() {
+        req.push_str(&format!("Proxy-Authorization: {auth}\r\n"));
     }
     req.push_str("\r\n");
     stream
@@ -580,12 +580,20 @@ fn percent_decode_str(s: &str) -> String {
         .into_owned()
 }
 
+fn format_socket_endpoint(host: &str, port: u16) -> String {
+    let host = host.trim_matches(['[', ']']);
+    if host.parse::<std::net::Ipv6Addr>().is_ok() {
+        format!("[{host}]:{port}")
+    } else {
+        format!("{host}:{port}")
+    }
+}
+
 /// SOCKS5 connect with optional local DNS and username/password auth
 ///
 /// Split out so the connect-timeout wrapper covers every path
 async fn socks5_connect(
     proxy_addr: &str,
-    target_addr_str: &str,
     host: &str,
     port: u16,
     resolve_locally: bool,
@@ -601,7 +609,6 @@ async fn socks5_connect(
             .ok_or_else(|| Error::Connect(format!("no addrs for {host}")))?
             .ip();
         let target = SocketAddr::new(target_ip, port);
-        let _ = target_addr_str;
         match auth {
             Some((u, p)) => Ok(tokio_socks::tcp::Socks5Stream::connect_with_password(
                 proxy_addr, target, u, p,
@@ -681,6 +688,16 @@ mod tests {
         assert_eq!(out, vec![v6(1), v4(1), v6(2), v6(3)]);
     }
 
+    #[test]
+    fn socks_proxy_endpoint_brackets_ipv6_hosts() {
+        assert_eq!(format_socket_endpoint("::1", 1080), "[::1]:1080");
+        assert_eq!(format_socket_endpoint("[::1]", 1080), "[::1]:1080");
+        assert_eq!(
+            format_socket_endpoint("proxy.example", 1080),
+            "proxy.example:1080"
+        );
+    }
+
     fn test_connector() -> Connector {
         let roots = rustls::RootCertStore::empty();
         let tls = rustls::ClientConfig::builder()
@@ -690,6 +707,7 @@ mod tests {
             tls: Arc::new(tls),
             resolver: Arc::new(crate::resolver::GaiResolver),
             proxy: None,
+            no_proxy: None,
             connect_timeout: Some(Duration::from_secs(2)),
             tcp_nodelay: true,
             tcp_keepalive: None,
@@ -702,8 +720,20 @@ mod tests {
         let conn = ConnIo {
             io: TokioIo::new(MaybeTls::Plain(BoxedIo::new(client))),
             negotiated_h2: true,
+            proxied: false,
         };
         assert!(conn.connected().is_negotiated_h2());
+    }
+
+    #[test]
+    fn conn_io_reports_plain_http_proxy_state() {
+        let (client, _server) = tokio::io::duplex(64);
+        let conn = ConnIo {
+            io: TokioIo::new(MaybeTls::Plain(BoxedIo::new(client))),
+            negotiated_h2: false,
+            proxied: true,
+        };
+        assert!(conn.connected().is_proxied());
     }
 
     #[tokio::test]

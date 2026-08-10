@@ -70,9 +70,14 @@ export default {
 	"enable-proxy": "プロキシを使う",
 	"proxy-bypass-input-tips":
 		"これらのホストおよびドメインのプロキシ設定を1行に1つずつバイパスします",
+	"proxy-scope-label": "使用先",
 	"proxy-scope-download": "ダウンロード",
+	"proxy-scope-download-desc": "ダウンロード通信をプロキシ経由にする",
 	"proxy-scope-update-app": "アプリケーションの更新",
+	"proxy-scope-update-app-desc": "アプリの更新をプロキシ経由で確認する",
 	"proxy-scope-update-trackers": "トラッカーを更新する",
+	"proxy-scope-update-trackers-desc":
+		"BTトラッカー一覧をプロキシ経由で取得する",
 	"proxy-tips": "プロキシマニュアルを表示",
 	"bt-tracker": "トラッカーサーバー",
 	"bt-tracker-input-tips": "トラッカーサーバ、一行に一つ",
@@ -148,4 +153,10 @@ export default {
 	"completion-script-test-ok": "スクリプトテストに成功しました",
 	"completion-script-test-fail": "スクリプトテストに失敗しました",
 	"completion-script-empty": "先にコマンドを指定してください",
+	"history-directories": "最近のダウンロードフォルダー",
+	"favorite-directory": "お気に入りフォルダー",
+	"unfavorite-directory": "お気に入りから削除",
+	"remove-history-directory": "履歴からフォルダーを削除",
+	"randomize-port": "ランダムなポートを選択",
+	"generate-rpc-secret": "新しいRPCシークレットを生成",
 };

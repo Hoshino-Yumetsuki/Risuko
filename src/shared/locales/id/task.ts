@@ -1,4 +1,7 @@
 export default {
+	"sort-ascending": "Naik",
+	"sort-descending": "Menurun",
+	"torrent-preview-folder-select": "Pilih",
 	active: "Mengunduh",
 	waiting: "Mengunggu",
 	stopped: "Terhenti",
@@ -141,4 +144,13 @@ export default {
 		"Berkas parsial dipertahankan. Tambahkan penyedia dengan kelengkapan yang lebih baik, lalu coba lagi.",
 	"usenet-repair-partials-unavailable":
 		"Berkas parsial tidak tersedia. Coba NZB lain atau unduh kembali dengan penyedia yang memiliki kelengkapan lebih baik.",
+	"open-source-url": "Buka URL sumber",
+	"more-actions": "Tindakan lainnya",
+	"filter-video": "Pilih berkas video",
+	"filter-audio": "Pilih berkas audio",
+	"filter-image": "Pilih berkas gambar",
+	"filter-document": "Pilih berkas dokumen",
+	"batch-remove-item": "Hapus",
+	"torrent-preview-folder-toggle": "Alihkan folder",
+	"clear-filter": "Hapus filter",
 };

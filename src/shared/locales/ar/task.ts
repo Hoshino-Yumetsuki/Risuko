@@ -1,4 +1,7 @@
 export default {
+	"sort-ascending": "تصاعدي",
+	"sort-descending": "تنازلي",
+	"torrent-preview-folder-select": "تحديد",
 	active: "جاري التحميل",
 	waiting: "جاري الانتظار",
 	stopped: "المتوقفة",
@@ -138,4 +141,13 @@ export default {
 		"تم الاحتفاظ بالملفات الجزئية. أضف مزودًا باكتمال أفضل، ثم أعد المحاولة.",
 	"usenet-repair-partials-unavailable":
 		"الملفات الجزئية غير متاحة. جرّب NZB مختلفًا أو أعد التنزيل باستخدام مزود باكتمال أفضل.",
+	"open-source-url": "فتح رابط المصدر",
+	"more-actions": "مزيد من الإجراءات",
+	"filter-video": "تحديد ملفات فيديو",
+	"filter-audio": "تحديد ملفات صوتية",
+	"filter-image": "تحديد ملفات صور",
+	"filter-document": "تحديد ملفات مستندات",
+	"batch-remove-item": "إزالة",
+	"torrent-preview-folder-toggle": "تبديل المجلد",
+	"clear-filter": "مسح عامل التصفية",
 };

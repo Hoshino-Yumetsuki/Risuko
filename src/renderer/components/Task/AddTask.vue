@@ -13,6 +13,7 @@
           type="button"
           class="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
           :aria-label="$t('window.close')"
+          :title="$t('window.close')"
           :disabled="submitting"
           @click="handleClose"
         >
@@ -49,6 +50,8 @@
               v-if="isRenderer"
               type="button"
               class="ml-1 rounded-md border border-border/60 px-2 py-0.5 text-[11px] hover:bg-muted"
+              :title="$t('app.browse')"
+              :aria-label="$t('app.browse')"
               :disabled="submitting"
               @click="browseTorrentFiles"
             >
@@ -192,7 +195,7 @@
                 <a
                   class="inline-flex items-center gap-0.5 text-[10px] text-primary hover:underline"
                   target="_blank"
-                  href="https://github.com/YueMiyuki/Risuko/wiki/Proxy"
+                  href="https://risuko.app/docs/guides/proxy"
                   rel="noopener noreferrer"
                 >
                   {{ $t('preferences.proxy-tips') }}
@@ -280,6 +283,9 @@
           type="button"
           class="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
           :disabled="submitting"
+          :aria-expanded="showAdvanced"
+          :aria-label="$t('task.show-advanced-options')"
+          :title="$t('task.show-advanced-options')"
           @click="showAdvanced = !showAdvanced"
         >
           <SlidersHorizontal :size="12" />

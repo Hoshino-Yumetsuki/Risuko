@@ -52,6 +52,8 @@
         <button
           type="button"
           class="task-files-toggle"
+          :title="$t('task.bt-files-count', { count: displayFiles.length })"
+          :aria-label="$t('task.bt-files-count', { count: displayFiles.length })"
           @click.stop="toggleFiles"
         >
           <ChevronDown v-if="filesExpanded" :size="12" />

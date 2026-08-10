@@ -78,9 +78,16 @@ export default {
 	"enable-proxy": "Usa Proxy",
 	"proxy-bypass-input-tips":
 		"Non usare proxy per questi Host e Domini, uno per linea",
+	"proxy-scope-label": "Usato per",
 	"proxy-scope-download": "Scarica",
+	"proxy-scope-download-desc":
+		"Instrada il traffico dei download tramite il proxy",
 	"proxy-scope-update-app": "Aggiorna applicazione",
+	"proxy-scope-update-app-desc":
+		"Controlla gli aggiornamenti dell'applicazione tramite il proxy",
 	"proxy-scope-update-trackers": "Aggiorna tracker",
+	"proxy-scope-update-trackers-desc":
+		"Recupera gli elenchi di tracker BT tramite il proxy",
 	"proxy-tips": "Guida all'uso dei proxy (In Inglese)",
 	"bt-tracker": "Server di monitoraggio",
 	"bt-tracker-input-tips": "Tracker servers, uno per linea",
@@ -158,4 +165,10 @@ export default {
 	"completion-script-test-ok": "Test script riuscito",
 	"completion-script-test-fail": "Test script non riuscito",
 	"completion-script-empty": "Specifica prima un comando",
+	"history-directories": "Directory di download recenti",
+	"favorite-directory": "Directory preferita",
+	"unfavorite-directory": "Rimuovi directory dai preferiti",
+	"remove-history-directory": "Rimuovi directory dalla cronologia",
+	"randomize-port": "Scegli una porta casuale",
+	"generate-rpc-secret": "Genera un nuovo segreto RPC",
 };

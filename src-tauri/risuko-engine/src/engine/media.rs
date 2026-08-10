@@ -162,11 +162,24 @@ fn option_non_empty_str<'a>(options: &'a Map<String, Value>, key: &str) -> Optio
         .filter(|s| !s.is_empty())
 }
 
-fn apply_yt_dlp_network_options(cmd: &mut Command, options: &Map<String, Value>) {
-    if let Some(proxy) = option_non_empty_str(options, "all-proxy")
+fn apply_yt_dlp_network_options(
+    cmd: &mut Command,
+    options: &Map<String, Value>,
+    target_url: &str,
+) -> Result<(), String> {
+    if let Some(proxy_url) = option_non_empty_str(options, "all-proxy")
         .or_else(|| option_non_empty_str(options, "proxy"))
     {
-        cmd.arg("--proxy").arg(proxy);
+        let matcher = risuko_http::NoProxy::parse(
+            option_non_empty_str(options, "no-proxy").unwrap_or_default(),
+        );
+        let bypassed = risuko_http::Url::parse(target_url)
+            .ok()
+            .is_some_and(|target| matcher.matches_url(&target));
+        risuko_http::Proxy::all(proxy_url).map_err(|e| format!("Invalid configured proxy: {e}"))?;
+        if !bypassed {
+            cmd.arg("--proxy").arg(proxy_url);
+        }
     }
 
     if let Some(user_agent) = option_non_empty_str(options, "user-agent") {
@@ -183,6 +196,8 @@ fn apply_yt_dlp_network_options(cmd: &mut Command, options: &Map<String, Value>)
         cmd.arg("--add-header")
             .arg(format!("Cookie: {cookie_header}"));
     }
+
+    Ok(())
 }
 
 pub async fn run_media_download(
@@ -196,7 +211,6 @@ pub async fn run_media_download(
     speed: Arc<AtomicU64>,
     connections: Arc<AtomicU32>,
     cancel_token: CancellationToken,
-    // Sender for the resolved destination filename
     dest_tx: watch::Sender<String>,
 ) -> Result<PathBuf, String> {
     check_yt_dlp_available().await?;
@@ -204,13 +218,10 @@ pub async fn run_media_download(
     let mut cmd = Command::new("yt-dlp");
     cmd.arg("--newline")
         .arg("--no-color")
-        // Print the planned output path before each file download starts
         .arg("--print")
         .arg("before_dl:__YTDEST__%(filename)s")
-        // Print the final moved path after download/merge completes
         .arg("--print")
         .arg("after_move:__YTPATH__%(filepath)s")
-        // Progress template with raw byte values for precise tracking
         .arg("--progress")
         .arg("--progress-template")
         .arg("download:__YTPROG__%(progress.downloaded_bytes)s %(progress.total_bytes,progress.total_bytes_estimate)s %(progress.speed)s");
@@ -221,7 +232,7 @@ pub async fn run_media_download(
             .arg("youtube:player_client=web,default");
     }
 
-    apply_yt_dlp_network_options(&mut cmd, options);
+    apply_yt_dlp_network_options(&mut cmd, options, url)?;
 
     // ffmpeg is required to merge separate video+audio streams
     let ffmpeg = find_ffmpeg().await;
@@ -534,7 +545,7 @@ pub async fn get_media_info(url: &str, options: &Map<String, Value>) -> Result<M
             .arg("youtube:player_client=web,default");
     }
 
-    apply_yt_dlp_network_options(&mut cmd, options);
+    apply_yt_dlp_network_options(&mut cmd, options, url)?;
 
     let output = cmd
         .output()

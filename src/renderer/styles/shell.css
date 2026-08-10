@@ -66,19 +66,28 @@
 		display: inline-flex;
 		align-items: center;
 		justify-content: center;
+		margin: 0;
+	}
+	.window-controls > li > .window-control {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
 		width: 44px;
 		height: 36px;
-		margin: 0;
+		padding: 0;
+		border: 0;
+		background: transparent;
 		color: var(--text-2);
+		cursor: pointer;
 		transition:
 			background-color var(--dur-2) var(--ease-out),
 			color var(--dur-2) var(--ease-out);
 	}
-	.window-controls > li:hover {
+	.window-controls > li > .window-control:hover {
 		background-color: var(--surface-2);
 		color: var(--text-1);
 	}
-	.window-controls > li.win-close-btn:hover {
+	.window-controls > li > .window-control.win-close-btn:hover {
 		background-color: var(--danger);
 		color: #ffffff;
 	}

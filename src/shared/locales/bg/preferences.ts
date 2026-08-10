@@ -76,9 +76,16 @@ export default {
 	"enable-proxy": "използване на Proxy",
 	"proxy-bypass-input-tips":
 		"заобикаляне на настройките на прокси за тези хостове и домейни, един по един на ред",
+	"proxy-scope-label": "Използва се за",
 	"proxy-scope-download": "Изтегляне",
+	"proxy-scope-download-desc":
+		"Насочване на трафика за изтегляне през прокси сървъра",
 	"proxy-scope-update-app": "Актуализиране на приложението",
+	"proxy-scope-update-app-desc":
+		"Проверка за актуализации на приложението през прокси сървъра",
 	"proxy-scope-update-trackers": "Актуализиране на трекери",
+	"proxy-scope-update-trackers-desc":
+		"Изтегляне на списъци с BitTorrent тракери през прокси сървъра",
 	"proxy-tips": "преглед на ръководството за прокси",
 	"bt-tracker": "Tracker сървър",
 	"bt-tracker-input-tips": "Tracker сървър, един на ред",
@@ -154,4 +161,10 @@ export default {
 	"completion-script-test-ok": "Тестът на скрипта е успешен",
 	"completion-script-test-fail": "Тестът на скрипта е неуспешен",
 	"completion-script-empty": "Моля, задайте команда първо",
+	"history-directories": "Последни папки за изтегляне",
+	"favorite-directory": "Любима папка",
+	"unfavorite-directory": "Премахни папката от любимите",
+	"remove-history-directory": "Премахни папката от историята",
+	"randomize-port": "Избери случаен порт",
+	"generate-rpc-secret": "Генерирай нов RPC секрет",
 };

@@ -308,4 +308,10 @@ export default {
 	"completion-script-test-ok": "腳本測試成功",
 	"completion-script-test-fail": "腳本測試失敗",
 	"completion-script-empty": "請先指定命令",
+	"history-directories": "最近下載目錄",
+	"favorite-directory": "最愛目錄",
+	"unfavorite-directory": "從最愛移除目錄",
+	"remove-history-directory": "從記錄移除目錄",
+	"randomize-port": "選擇隨機連接埠",
+	"generate-rpc-secret": "產生新的 RPC 密鑰",
 };

@@ -546,6 +546,12 @@
 		font-weight: 500;
 	}
 	.copy-link {
+		display: inline-flex;
+		align-items: center;
+		border: 0;
+		padding: 0;
+		background: transparent;
+		font: inherit;
 		cursor: pointer;
 		color: var(--muted-foreground);
 		transition: color 0.15s;

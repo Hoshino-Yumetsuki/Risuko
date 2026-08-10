@@ -3,7 +3,7 @@
     <main class="panel-content">
       <form class="form-preference" @submit.prevent>
 
-        <div class="settings-section">
+        <div class="settings-section" data-preference-search-target="sync.cloud-sync">
           <div class="settings-section-header">
             <div class="section-icon"><Cloud :size="16" /></div>
             <div class="section-title">
@@ -12,7 +12,10 @@
             </div>
           </div>
           <div class="settings-section-content">
-            <div class="settings-row sync-server-row">
+            <div
+              class="settings-row sync-server-row"
+              data-preference-search-target="sync.cloud-sync-server-url"
+            >
               <div class="settings-row-content">
                 <div class="settings-row-title">{{ $t('sync.cloud-sync-server-url') }}</div>
                 <div class="settings-row-description">
@@ -99,7 +102,7 @@
           </div>
         </div>
 
-        <div class="settings-section">
+        <div class="settings-section" data-preference-search-target="sync.cloud-sync-categories">
           <div class="settings-section-header">
             <div class="section-icon"><RefreshCw :size="16" /></div>
             <div class="section-title">
@@ -128,7 +131,7 @@
               {{ $t('sync.cloud-sync-login-required') }}
             </div>
 
-            <div class="settings-row">
+            <div class="settings-row" data-preference-search-target="sync.cloud-sync-auto">
               <div class="settings-row-content">
                 <div class="settings-row-title">{{ $t('sync.cloud-sync-auto') }}</div>
                 <div class="settings-row-description">
@@ -148,6 +151,7 @@
               v-for="cat in syncCategories"
               :key="cat.id"
               class="settings-row"
+              :data-preference-search-target="`sync.category-${cat.id}`"
             >
               <div class="settings-row-content">
                 <div class="settings-row-title">{{ $t(`sync.category-${cat.id}`) }}</div>

@@ -123,7 +123,7 @@ pub fn user_defaults() -> Map<String, Value> {
 
     let mut m = Map::new();
     m.insert("auto-detect-low-speed-tasks".into(), json!(false));
-    m.insert("auto-check-update".into(), json!(is_macos));
+    m.insert("auto-check-update".into(), json!(false));
     m.insert("auto-hide-window".into(), json!(false));
     m.insert("auto-retry".into(), json!(false));
     m.insert("auto-retry-interval".into(), json!(5));
@@ -290,27 +290,21 @@ mod tests {
         assert_eq!(user.get("keep-seeding").unwrap(), false);
         assert_eq!(user.get("rpc-host").unwrap(), "127.0.0.1");
         assert_eq!(user.get("m3u8-output-format").unwrap(), "ts");
-        // Regression: purge-record-on-start defaults to false
         assert_eq!(user.get("purge-record-on-start").unwrap(), false);
         // DoH provider default
         assert_eq!(user.get("doh-provider").unwrap(), "cloudflare");
     }
 
-    #[cfg(target_os = "macos")]
     #[test]
-    fn user_defaults_macos_specific() {
-        let user = user_defaults();
-        assert_eq!(user.get("auto-check-update").unwrap(), true);
-        assert_eq!(user.get("hide-app-menu").unwrap(), false);
-        assert_eq!(user.get("tray-speedometer").unwrap(), true);
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    #[test]
-    fn user_defaults_non_macos_specific() {
+    fn user_defaults_platform_specific() {
         let user = user_defaults();
         assert_eq!(user.get("auto-check-update").unwrap(), false);
-        assert_eq!(user.get("hide-app-menu").unwrap(), true);
-        assert_eq!(user.get("tray-speedometer").unwrap(), false);
+        if cfg!(target_os = "macos") {
+            assert_eq!(user.get("hide-app-menu").unwrap(), false);
+            assert_eq!(user.get("tray-speedometer").unwrap(), true);
+        } else {
+            assert_eq!(user.get("hide-app-menu").unwrap(), true);
+            assert_eq!(user.get("tray-speedometer").unwrap(), false);
+        }
     }
 }

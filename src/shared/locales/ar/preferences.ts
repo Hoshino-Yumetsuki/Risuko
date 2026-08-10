@@ -69,9 +69,14 @@ export default {
 	"enable-proxy": "تفعيل الخادم الوسيط",
 	"proxy-bypass-input-tips":
 		"تخطي إعدادات الخادم الوسيط لهذه المضيفات والمجالات، واحدة لكل سطر",
+	"proxy-scope-label": "يُستخدم لـ",
 	"proxy-scope-download": "تنزيل",
+	"proxy-scope-download-desc": "توجيه حركة تنزيل الملفات عبر الخادم الوسيط",
 	"proxy-scope-update-app": "تحديث التطبيق",
+	"proxy-scope-update-app-desc": "التحقق من تحديثات التطبيق عبر الخادم الوسيط",
 	"proxy-scope-update-trackers": "تحديث المتتبعات",
+	"proxy-scope-update-trackers-desc":
+		"جلب قوائم متتبعات BitTorrent عبر الخادم الوسيط",
 	"proxy-tips": "عرض دليل الخادم الوسيط",
 	"bt-tracker": "خوادم التعقب",
 	"bt-tracker-input-tips": "خوادم التعقب، واحدة لكل سطر",
@@ -146,4 +151,10 @@ export default {
 	"completion-script-test-ok": "نجح اختبار البرنامج النصي",
 	"completion-script-test-fail": "فشل اختبار البرنامج النصي",
 	"completion-script-empty": "يرجى تحديد أمر أولاً",
+	"history-directories": "مجلدات التنزيل الأخيرة",
+	"favorite-directory": "مجلد مفضل",
+	"unfavorite-directory": "إزالة المجلد من المفضلة",
+	"remove-history-directory": "إزالة المجلد من السجل",
+	"randomize-port": "اختيار منفذ عشوائي",
+	"generate-rpc-secret": "إنشاء سر RPC جديد",
 };

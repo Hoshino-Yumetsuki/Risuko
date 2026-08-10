@@ -75,9 +75,16 @@ export default {
 	"enable-proxy": "Χρησιμοίησε  Proxy",
 	"proxy-bypass-input-tips":
 		"Μη χρησιμοποιήσεις  ρυθμίσεις proxy για αυτούς τους Hosts και τα Domains, ένα ανά γραμμή",
+	"proxy-scope-label": "Χρησιμοποιείται για",
 	"proxy-scope-download": "Λήψη",
+	"proxy-scope-download-desc":
+		"Δρομολόγηση της κίνησης λήψεων μέσω του διακομιστή μεσολάβησης",
 	"proxy-scope-update-app": "Ενημέρωση εφαρμογής",
+	"proxy-scope-update-app-desc":
+		"Έλεγχος για ενημερώσεις εφαρμογής μέσω του διακομιστή μεσολάβησης",
 	"proxy-scope-update-trackers": "Ενημέρωση Trackers",
+	"proxy-scope-update-trackers-desc":
+		"Λήψη λιστών ιχνηλατών BitTorrent μέσω του διακομιστή μεσολάβησης",
 	"proxy-tips": "Εμφάνιση εγχειριδίου Proxy",
 	"bt-tracker": "Tracker Servers",
 	"bt-tracker-input-tips": "Tracker servers, ένα ανά γραμμή",
@@ -153,4 +160,10 @@ export default {
 	"completion-script-test-ok": "Η δοκιμή σεναρίου πέτυχε",
 	"completion-script-test-fail": "Η δοκιμή σεναρίου απέτυχε",
 	"completion-script-empty": "Ορίστε πρώτα μια εντολή",
+	"history-directories": "Πρόσφατοι κατάλογοι λήψεων",
+	"favorite-directory": "Αγαπημένος κατάλογος",
+	"unfavorite-directory": "Αφαίρεση καταλόγου από αγαπημένα",
+	"remove-history-directory": "Αφαίρεση καταλόγου από ιστορικό",
+	"randomize-port": "Επιλογή τυχαίας θύρας",
+	"generate-rpc-secret": "Δημιουργία νέου μυστικού RPC",
 };

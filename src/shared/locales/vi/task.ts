@@ -1,4 +1,7 @@
 export default {
+	"sort-ascending": "Tăng dần",
+	"sort-descending": "Giảm dần",
+	"torrent-preview-folder-select": "Chọn",
 	active: "Đang tải về",
 	waiting: "Đang chờ",
 	stopped: "Ngừng",
@@ -142,4 +145,13 @@ export default {
 		"Các tệp một phần đã được giữ lại. Thêm nhà cung cấp có độ hoàn thiện tốt hơn rồi thử lại.",
 	"usenet-repair-partials-unavailable":
 		"Các tệp một phần không khả dụng. Hãy thử NZB khác hoặc tải lại với nhà cung cấp có độ hoàn thiện tốt hơn.",
+	"open-source-url": "Mở URL nguồn",
+	"more-actions": "Thao tác khác",
+	"filter-video": "Chọn tệp video",
+	"filter-audio": "Chọn tệp âm thanh",
+	"filter-image": "Chọn tệp hình ảnh",
+	"filter-document": "Chọn tệp tài liệu",
+	"batch-remove-item": "Xóa",
+	"torrent-preview-folder-toggle": "Chuyển đổi lựa chọn thư mục",
+	"clear-filter": "Xóa bộ lọc",
 };

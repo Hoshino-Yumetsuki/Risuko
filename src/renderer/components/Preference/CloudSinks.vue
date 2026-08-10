@@ -2,7 +2,7 @@
   <div class="content panel panel-layout panel-layout--v">
     <main class="panel-content">
       <div class="form-preference">
-        <div class="settings-section">
+        <div class="settings-section" data-preference-search-target="cloudSinks.sinks">
           <div class="settings-section-header">
             <div class="section-icon"><Cloud :size="16" /></div>
             <div class="section-title">
@@ -83,7 +83,7 @@
           </div>
         </div>
 
-        <div class="settings-section">
+        <div class="settings-section" data-preference-search-target="cloudSinks.rules">
           <div class="settings-section-header">
             <div class="section-icon"><Filter :size="16" /></div>
             <div class="section-title">
@@ -166,7 +166,7 @@
           </div>
         </div>
 
-        <div class="settings-section">
+        <div class="settings-section" data-preference-search-target="cloudSinks.recentJobs">
           <div class="settings-section-header">
             <div class="section-icon"><Activity :size="16" /></div>
             <div class="section-title">

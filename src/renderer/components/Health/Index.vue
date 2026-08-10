@@ -2,17 +2,32 @@
   <div class="main panel panel-layout panel-layout--v health-panel">
     <motion-enter tag="header" preset="fadeInDown" class="panel-header health-header">
       <h4 class="health-title">{{ $t('health.title') }}</h4>
-      <Button
-        size="sm"
-        variant="default"
-        class="health-run-btn"
-        :class="{ 'is-loading': loading }"
-        :disabled="loading"
-        @click="runAll"
-      >
-        <RefreshCw :size="14" :class="{ 'animate-spin': loading }" />
-        <span>{{ loading ? $t('health.loading') : $t('health.run-all') }}</span>
-      </Button>
+      <div class="health-actions">
+        <Button
+          size="sm"
+          variant="default"
+          class="health-run-btn"
+          :class="{ 'is-loading': loading }"
+          :disabled="loading"
+          :title="loading ? $t('health.loading') : $t('health.run-all')"
+          :aria-label="loading ? $t('health.loading') : $t('health.run-all')"
+          @click="runAll"
+        >
+          <RefreshCw :size="14" :class="{ 'animate-spin': loading }" />
+          <span>{{ loading ? $t('health.loading') : $t('health.run-all') }}</span>
+        </Button>
+        <Button
+          size="sm"
+          variant="outline"
+          class="health-log-btn"
+          :title="$t('health.inspect-logs')"
+          :aria-label="$t('health.inspect-logs')"
+          @click="logsOpen = true"
+        >
+          <FileText :size="14" />
+          <span>{{ $t('health.inspect-logs') }}</span>
+        </Button>
+      </div>
       <p class="page-desc">{{ $t('health.subtitle') }}</p>
       <div v-if="report" class="page-meta">
         <span class="health-overall" :class="`health-status-${report.overallStatus}`">
@@ -49,11 +64,15 @@
         </div>
       </div>
     </main>
+    <health-log-inspector
+      :open="logsOpen"
+      @update:open="logsOpen = $event"
+    />
   </div>
 </template>
 
 <script lang="ts">
-import { AlertCircle, RefreshCw } from "@lucide/vue";
+import { AlertCircle, FileText, RefreshCw } from "@lucide/vue";
 import type {
 	HealthCategoryId,
 	HealthFix,
@@ -65,6 +84,7 @@ import { Button } from "@/components/ui/button";
 import { useHealthStore } from "@/store/health";
 import HealthCategoryCard from "./CategoryCard.vue";
 import { STATUS_ICON } from "./CheckRow.vue";
+import HealthLogInspector from "./LogInspector.vue";
 
 const REFRESH_INTERVAL_MS = 15_000;
 
@@ -73,14 +93,17 @@ export default {
 	components: {
 		AlertCircle,
 		Button,
+		FileText,
 		RefreshCw,
 		"health-category-card": HealthCategoryCard,
+		"health-log-inspector": HealthLogInspector,
 	},
 	data() {
 		return {
 			refreshTimer: null as number | null,
 			now: Date.now(),
 			tickTimer: null as number | null,
+			logsOpen: false,
 		};
 	},
 	computed: {
@@ -229,8 +252,23 @@ export default {
 	color: var(--muted-foreground);
 	font-variant-numeric: tabular-nums;
 }
+.health-actions {
+	display: flex;
+	align-items: center;
+	justify-content: flex-end;
+	flex: 0 0 auto;
+	flex-wrap: wrap;
+	gap: 8px;
+	margin-left: auto;
+}
 .health-run-btn {
 	transition: transform 120ms ease, opacity 120ms ease;
+}
+.health-log-btn {
+	transition: transform 120ms ease, opacity 120ms ease;
+}
+.health-log-btn:active:not(:disabled) {
+	transform: scale(0.96);
 }
 .health-run-btn:active:not(:disabled) {
 	transform: scale(0.96);
@@ -273,5 +311,12 @@ export default {
 	padding: 24px;
 	color: var(--muted-foreground);
 	justify-content: center;
+}
+@media (max-width: 640px) {
+	.health-actions {
+		flex-basis: 100%;
+		width: 100%;
+		margin-left: 0;
+	}
 }
 </style>

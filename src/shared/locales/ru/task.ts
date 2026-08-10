@@ -1,4 +1,7 @@
 export default {
+	"sort-ascending": "По возрастанию",
+	"sort-descending": "По убыванию",
+	"torrent-preview-folder-select": "Выбрать",
 	active: "Загрузки",
 	waiting: "Ожидание",
 	stopped: "Остановлено",
@@ -143,4 +146,13 @@ export default {
 		"Частичные файлы сохранены. Добавьте провайдера с лучшей полнотой и повторите попытку.",
 	"usenet-repair-partials-unavailable":
 		"Частичные файлы недоступны. Попробуйте другой NZB или загрузите снова через провайдера с лучшей полнотой.",
+	"open-source-url": "Открыть URL источника",
+	"more-actions": "Другие действия",
+	"filter-video": "Выбрать видеофайлы",
+	"filter-audio": "Выбрать аудиофайлы",
+	"filter-image": "Выбрать файлы изображений",
+	"filter-document": "Выбрать файлы документов",
+	"batch-remove-item": "Удалить",
+	"torrent-preview-folder-toggle": "Переключить папку",
+	"clear-filter": "Очистить фильтр",
 };

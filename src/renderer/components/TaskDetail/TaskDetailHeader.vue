@@ -10,6 +10,7 @@
       class="task-detail-close"
       type="button"
       :aria-label="$t('window.close')"
+      :title="$t('window.close')"
       @click="$emit('close')"
     >
       <X :size="16" />

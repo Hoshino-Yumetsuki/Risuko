@@ -42,6 +42,20 @@
 		border-bottom-right-radius: calc(var(--radius) - 2px);
 		cursor: pointer;
 	}
+	.input-append-action {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		padding: 0;
+		border: 0;
+		background: transparent;
+		color: inherit;
+		cursor: pointer;
+		line-height: 0;
+	}
+	.input-append-action:hover {
+		color: var(--foreground);
+	}
 	.input-append .select-directory.ui-button {
 		transition:
 			background-color 0.2s ease,

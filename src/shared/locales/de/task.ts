@@ -1,4 +1,7 @@
 export default {
+	"sort-ascending": "Aufsteigend",
+	"sort-descending": "Absteigend",
+	"torrent-preview-folder-select": "Auswählen",
 	active: "Aktiv",
 	waiting: "Warteschlange",
 	stopped: "Gestoppt",
@@ -146,4 +149,13 @@ export default {
 		"Unvollständige Dateien wurden behalten. Fügen Sie einen Anbieter mit besserer Vollständigkeit hinzu und versuchen Sie es erneut.",
 	"usenet-repair-partials-unavailable":
 		"Teilweise Dateien sind nicht verfügbar. Versuchen Sie ein anderes NZB oder laden Sie erneut mit einem Anbieter mit besserer Vollständigkeit herunter.",
+	"open-source-url": "Quell-URL öffnen",
+	"more-actions": "Weitere Aktionen",
+	"filter-video": "Videodateien auswählen",
+	"filter-audio": "Audiodateien auswählen",
+	"filter-image": "Bilddateien auswählen",
+	"filter-document": "Dokumentdateien auswählen",
+	"batch-remove-item": "Entfernen",
+	"torrent-preview-folder-toggle": "Ordner umschalten",
+	"clear-filter": "Filter löschen",
 };

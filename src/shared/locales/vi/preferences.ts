@@ -69,9 +69,14 @@ export default {
 	"enable-proxy": "Bật Proxy",
 	"proxy-bypass-input-tips":
 		"Bỏ qua cài đặt proxy cho các Máy chủ và tên miền này, mỗi cái một dòng",
+	"proxy-scope-label": "Dùng cho",
 	"proxy-scope-download": "Tải về",
+	"proxy-scope-download-desc": "Định tuyến lưu lượng tải xuống qua proxy",
 	"proxy-scope-update-app": "Cập nhật ứng dụng",
+	"proxy-scope-update-app-desc": "Kiểm tra cập nhật ứng dụng qua proxy",
 	"proxy-scope-update-trackers": "Cập nhật theo dõi",
+	"proxy-scope-update-trackers-desc":
+		"Lấy danh sách trình theo dõi BT qua proxy",
 	"proxy-tips": "Xem Proxy Thủ Công",
 	"bt-tracker": "Máy Chủ Tracker",
 	"bt-tracker-input-tips": "Máy chủ theo dõi, mỗi thông tin trên một dòng",
@@ -148,4 +153,10 @@ export default {
 	"completion-script-test-ok": "Kiểm tra script thành công",
 	"completion-script-test-fail": "Kiểm tra script thất bại",
 	"completion-script-empty": "Vui lòng chỉ định lệnh trước",
+	"history-directories": "Thư mục tải xuống gần đây",
+	"favorite-directory": "Thư mục yêu thích",
+	"unfavorite-directory": "Xóa thư mục khỏi yêu thích",
+	"remove-history-directory": "Xóa thư mục khỏi lịch sử",
+	"randomize-port": "Chọn cổng ngẫu nhiên",
+	"generate-rpc-secret": "Tạo bí mật RPC mới",
 };

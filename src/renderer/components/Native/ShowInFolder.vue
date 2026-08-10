@@ -1,5 +1,11 @@
 <template>
-  <button type="button" class="show-in-folder" :aria-label="$t('task.show-in-folder')" @click.stop="onFolderClick">
+  <button
+    type="button"
+    class="show-in-folder"
+    :aria-label="$t('task.show-in-folder')"
+    :title="$t('task.show-in-folder')"
+    @click.stop="onFolderClick"
+  >
     <FolderOpen :size="size" />
   </button>
 </template>

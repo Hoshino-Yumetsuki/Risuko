@@ -5,6 +5,7 @@ import health from "./health";
 import help from "./help";
 import menu from "./menu";
 import preferences from "./preferences";
+import rss from "./rss";
 import subnav from "./subnav";
 import task from "./task";
 import window from "./window";
@@ -17,6 +18,7 @@ export default {
 	help,
 	menu,
 	preferences,
+	rss,
 	subnav,
 	task,
 	window,

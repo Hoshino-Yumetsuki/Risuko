@@ -320,4 +320,10 @@ export default {
 	"completion-script-test-ok": "脚本测试成功",
 	"completion-script-test-fail": "脚本测试失败",
 	"completion-script-empty": "请先指定命令",
+	"history-directories": "最近下载目录",
+	"favorite-directory": "收藏目录",
+	"unfavorite-directory": "从收藏中移除目录",
+	"remove-history-directory": "从历史记录中移除目录",
+	"randomize-port": "选择随机端口",
+	"generate-rpc-secret": "生成新的 RPC 密钥",
 };

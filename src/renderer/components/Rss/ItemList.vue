@@ -27,7 +27,13 @@
                 @update:model-value="() => toggleSelect(item.id)"
                 @click.stop
               />
-              <div class="rss-item-info" @click="openPreview(item)">
+              <button
+                type="button"
+                class="rss-item-info"
+                :title="`${$t('rss.open-link')}: ${item.title}`"
+                :aria-label="`${$t('rss.open-link')}: ${item.title}`"
+                @click="openPreview(item)"
+              >
                 <span class="rss-item-title" :title="item.title">
                   {{ item.title }}
                 </span>
@@ -52,7 +58,7 @@
                     :title="ruleNameFor(item.matched_rule_id)"
                   >{{ ruleNameFor(item.matched_rule_id) }}</span>
                 </span>
-              </div>
+              </button>
               <div class="rss-item-actions">
                 <Button
                   v-if="item.is_downloaded"
@@ -60,6 +66,7 @@
                   variant="ghost"
                   class="rss-item-badge--downloaded"
                   :title="$t('rss.view-download')"
+                  :aria-label="$t('rss.view-download')"
                   @click.stop="openViewer(item)"
                 >
                   <Eye :size="14" />
@@ -69,6 +76,7 @@
                   size="icon-sm"
                   variant="ghost"
                   :title="$t('rss.download')"
+                  :aria-label="$t('rss.download')"
                   @click.stop="handleDownload(item)"
                 >
                   <Download :size="14" />
@@ -79,6 +87,7 @@
                   variant="ghost"
                   class="rss-item-delete"
                   :title="$t('rss.delete-item')"
+                  :aria-label="$t('rss.delete-item')"
                   @click.stop="handleClearDownload(item)"
                 >
                   <Trash2 :size="14" />
@@ -563,8 +572,21 @@ export default {
 }
 
 .rss-item-info {
+  display: block;
   flex: 1;
   min-width: 0;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.rss-item-info:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
 }
 
 .rss-item-title {

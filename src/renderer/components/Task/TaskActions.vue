@@ -17,6 +17,7 @@
         type="button"
         class="task-action"
         :disabled="selectableTaskCount === 0"
+        :title="allVisibleTasksSelected ? $t('task.deselect-all-task') : $t('task.select-all-task')"
         :aria-label="allVisibleTasksSelected ? $t('task.deselect-all-task') : $t('task.select-all-task')"
         @click="onSelectAllClick"
       >
@@ -30,18 +31,28 @@
       :content="$t('task.delete-selected-tasks')"
       v-if="currentList !== 'stopped'"
     >
-      <i
+      <button
+        type="button"
         class="task-action"
         :class="{ disabled: selectedGidListCount === 0 }"
+        :disabled="selectedGidListCount === 0"
+        :title="$t('task.delete-selected-tasks')"
+        :aria-label="$t('task.delete-selected-tasks')"
         @click="onBatchDeleteClick"
       >
         <Trash2 :size="14" />
-      </i>
+      </button>
     </ui-tooltip>
     <ui-tooltip class="item" effect="dark" placement="bottom" :content="$t('task.refresh-list')">
-      <i class="task-action" @click="onRefreshClick">
+      <button
+        type="button"
+        class="task-action"
+        :title="$t('task.refresh-list')"
+        :aria-label="$t('task.refresh-list')"
+        @click="onRefreshClick"
+      >
         <RefreshCw :size="14" :class="{ 'animate-spin': refreshing }" />
-      </i>
+      </button>
     </ui-tooltip>
     <ui-tooltip
       class="item"
@@ -49,9 +60,15 @@
       placement="bottom"
       :content="hasSelection ? $t('task.resume-selected-tasks') : $t('task.resume-all-task')"
     >
-      <i class="task-action" @click="onResumeClick">
+      <button
+        type="button"
+        class="task-action"
+        :title="hasSelection ? $t('task.resume-selected-tasks') : $t('task.resume-all-task')"
+        :aria-label="hasSelection ? $t('task.resume-selected-tasks') : $t('task.resume-all-task')"
+        @click="onResumeClick"
+      >
         <Play :size="14" />
-      </i>
+      </button>
     </ui-tooltip>
     <ui-tooltip
       class="item"
@@ -59,9 +76,15 @@
       placement="bottom"
       :content="hasSelection ? $t('task.pause-selected-tasks') : $t('task.pause-all-task')"
     >
-      <i class="task-action" @click="onPauseClick">
+      <button
+        type="button"
+        class="task-action"
+        :title="hasSelection ? $t('task.pause-selected-tasks') : $t('task.pause-all-task')"
+        :aria-label="hasSelection ? $t('task.pause-selected-tasks') : $t('task.pause-all-task')"
+        @click="onPauseClick"
+      >
         <Pause :size="14" />
-      </i>
+      </button>
     </ui-tooltip>
     <ui-tooltip
       class="item"
@@ -70,9 +93,15 @@
       :content="$t('task.purge-record')"
       v-if="currentList === 'stopped'"
     >
-      <i class="task-action" @click="onPurgeRecordClick">
+      <button
+        type="button"
+        class="task-action"
+        :title="$t('task.purge-record')"
+        :aria-label="$t('task.purge-record')"
+        @click="onPurgeRecordClick"
+      >
         <Eraser :size="14" />
-      </i>
+      </button>
     </ui-tooltip>
   </div>
 </template>

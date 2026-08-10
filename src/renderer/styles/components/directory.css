@@ -41,21 +41,39 @@
 		margin: 0;
 		font-size: 13px;
 		color: var(--text-2);
-		cursor: pointer;
 		outline: none;
-		padding: 6px 6px 6px 12px;
+		min-height: 36px;
+		padding: 0 6px 0 0;
 	}
-	.directory-list > li:focus,
 	.directory-list > li:hover {
 		background-color: var(--surface-2);
 		color: var(--text-1);
 	}
 	.directory-list .directory-path {
-		display: inline-block;
+		display: flex;
 		flex: 1;
+		min-width: 0;
+		align-self: stretch;
+		align-items: center;
+		border: 0;
+		padding: 6px 6px 6px 12px;
+		background: transparent;
+		color: inherit;
+		font: inherit;
+		line-height: inherit;
+		text-align: left;
+		cursor: pointer;
+	}
+	.directory-list .directory-path-label {
+		flex: 1;
+		min-width: 0;
 		overflow: hidden;
 		white-space: nowrap;
 		text-overflow: ellipsis;
+	}
+	.directory-list .directory-path:focus-visible {
+		outline: 2px solid var(--primary);
+		outline-offset: 2px;
 	}
 	.directory-list .directory-actions {
 		min-width: 40px;
@@ -65,6 +83,14 @@
 		gap: 8px;
 	}
 	.directory-list .directory-actions .history-icon {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		border: 0;
+		background: transparent;
+		color: inherit;
+		cursor: pointer;
+		line-height: 0;
 		padding: 3px;
 		margin-right: 3px;
 		vertical-align: middle;

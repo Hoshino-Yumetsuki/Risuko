@@ -400,7 +400,22 @@
 		font-weight: inherit;
 	}
 	.task-sort-order {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 24px;
+		height: 24px;
+		padding: 0;
+		border: 0;
+		border-radius: calc(var(--radius) - 2px);
+		background: transparent;
+		color: var(--text-2);
+		cursor: pointer;
 		margin-left: 0;
+	}
+	.task-sort-order:hover {
+		background: var(--surface-2);
+		color: var(--text-1);
 	}
 	.task-mobile-subnav-switcher,
 	.task-total-progress-row {

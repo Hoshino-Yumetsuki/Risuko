@@ -1,4 +1,7 @@
 export default {
+	"sort-ascending": "昇順",
+	"sort-descending": "降順",
+	"torrent-preview-folder-select": "選択",
 	active: "ダウンロード中",
 	waiting: "待機中",
 	stopped: "一時停止中",
@@ -142,4 +145,13 @@ export default {
 		"部分ファイルは保持されています。より完全性の高いプロバイダーを追加して、もう一度お試しください。",
 	"usenet-repair-partials-unavailable":
 		"部分ファイルを利用できません。別の NZB を試すか、より完全性の高いプロバイダーで再度ダウンロードしてください。",
+	"open-source-url": "ソースURLを開く",
+	"more-actions": "その他の操作",
+	"filter-video": "動画ファイルを選択",
+	"filter-audio": "音声ファイルを選択",
+	"filter-image": "画像ファイルを選択",
+	"filter-document": "ドキュメントファイルを選択",
+	"batch-remove-item": "削除",
+	"torrent-preview-folder-toggle": "フォルダーを切り替え",
+	"clear-filter": "フィルターをクリア",
 };

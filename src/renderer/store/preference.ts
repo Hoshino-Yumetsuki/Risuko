@@ -393,7 +393,9 @@ export const usePreferenceStore = defineStore("preference", {
 		fetchBtTracker(trackerSource: string[] = []) {
 			const { proxy = { enable: false } } = this.config;
 			logger.log("fetchBtTracker", trackerSource, proxy);
-			return fetchBtTrackerFromSource(trackerSource, proxy);
+			return fetchBtTrackerFromSource(trackerSource, proxy, undefined, (urls) =>
+				api.fetchTrackerSources(urls),
+			);
 		},
 		async autoSyncTracker() {
 			const config = this.config;

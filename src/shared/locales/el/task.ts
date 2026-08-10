@@ -1,4 +1,7 @@
 export default {
+	"sort-ascending": "Αύξουσα",
+	"sort-descending": "Φθίνουσα",
+	"torrent-preview-folder-select": "Επιλογή",
 	active: "Γίνεται λήψη",
 	waiting: "Σε αναμονή",
 	stopped: "Σταματημένα",
@@ -147,4 +150,13 @@ export default {
 		"Τα μερικά αρχεία διατηρήθηκαν. Προσθέστε έναν πάροχο με καλύτερη πληρότητα και δοκιμάστε ξανά.",
 	"usenet-repair-partials-unavailable":
 		"Τα μερικά αρχεία δεν είναι διαθέσιμα. Δοκιμάστε διαφορετικό NZB ή κατεβάστε ξανά με πάροχο καλύτερης πληρότητας.",
+	"open-source-url": "Άνοιγμα URL προέλευσης",
+	"more-actions": "Περισσότερες ενέργειες",
+	"filter-video": "Επιλογή αρχείων βίντεο",
+	"filter-audio": "Επιλογή αρχείων ήχου",
+	"filter-image": "Επιλογή αρχείων εικόνας",
+	"filter-document": "Επιλογή αρχείων εγγράφων",
+	"batch-remove-item": "Αφαίρεση",
+	"torrent-preview-folder-toggle": "Εναλλαγή φακέλου",
+	"clear-filter": "Εκκαθάριση φίλτρου",
 };

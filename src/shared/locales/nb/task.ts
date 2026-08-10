@@ -1,4 +1,7 @@
 export default {
+	"sort-ascending": "Stigende",
+	"sort-descending": "Synkende",
+	"torrent-preview-folder-select": "Velg",
 	active: "Laster ned",
 	waiting: "Venter",
 	stopped: "Stoppet",
@@ -144,4 +147,13 @@ export default {
 		"Delvise filer ble beholdt. Legg til en leverandør med bedre fullstendighet, og prøv igjen.",
 	"usenet-repair-partials-unavailable":
 		"Delvise filer er ikke tilgjengelige. Prøv en annen NZB, eller last ned på nytt med en leverandør med bedre fullstendighet.",
+	"open-source-url": "Åpne kilde-URL",
+	"more-actions": "Flere handlinger",
+	"filter-video": "Velg videofiler",
+	"filter-audio": "Velg lydfiler",
+	"filter-image": "Velg bildefiler",
+	"filter-document": "Velg dokumentfiler",
+	"batch-remove-item": "Fjern",
+	"torrent-preview-folder-toggle": "Bytt mappe",
+	"clear-filter": "Tøm filter",
 };

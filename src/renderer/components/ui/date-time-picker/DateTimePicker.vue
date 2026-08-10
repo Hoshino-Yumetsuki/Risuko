@@ -205,7 +205,8 @@ const inputClass =
           type="button"
           variant="ghost"
           size="icon-sm"
-          aria-label="Previous month"
+          :title="$t('app.previous-month')"
+          :aria-label="$t('app.previous-month')"
           @click="prevMonth"
         >
           <ChevronLeft class="size-4" />
@@ -215,7 +216,8 @@ const inputClass =
           type="button"
           variant="ghost"
           size="icon-sm"
-          aria-label="Next month"
+          :title="$t('app.next-month')"
+          :aria-label="$t('app.next-month')"
           @click="nextMonth"
         >
           <ChevronRight class="size-4" />

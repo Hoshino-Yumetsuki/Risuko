@@ -375,6 +375,7 @@ export default {
 		},
 		async quit(): Promise<void> {
 			try {
+				await this.showMain();
 				await emit("confirm-quit");
 			} finally {
 				await this.hideFlyout();
