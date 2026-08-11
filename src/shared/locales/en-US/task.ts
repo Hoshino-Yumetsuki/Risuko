@@ -77,7 +77,7 @@ export default {
 	"select-at-least-one": "Please select at least one file",
 	"task-gid": "GID",
 	"task-name": "Task Name",
-	"task-out": "Rename",
+	"task-out": "File name",
 	"task-out-tips": "Optional",
 	"task-split": "Splits",
 	"task-dir": "Save to",
