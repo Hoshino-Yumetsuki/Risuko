@@ -107,6 +107,15 @@
 
         <div class="border-t border-border/60 px-4 py-3">
           <div class="grid grid-cols-[1fr_88px] gap-2">
+            <div class="col-span-2">
+              <label class="mb-1 block text-[11px] text-muted-foreground">{{ $t('task.task-out') }}</label>
+              <Input
+                v-model="form.out"
+                auto-complete="off"
+                :placeholder="$t('task.task-out-tips')"
+                :disabled="submitting"
+              />
+            </div>
             <div>
               <label class="mb-1 block text-[11px] text-muted-foreground">{{ $t('task.task-dir') }}</label>
               <div class="input-group input-group--bordered">
@@ -336,6 +345,7 @@ import {
 	splitTaskLinksWithRenames,
 } from "@shared/utils";
 import logger from "@shared/utils/logger";
+import { buildOuts } from "@shared/utils/rename";
 import { readText } from "@tauri-apps/plugin-clipboard-manager";
 import { open as tauriOpen } from "@tauri-apps/plugin-dialog";
 import { AnimatePresence, Motion } from "motion-v";
@@ -812,10 +822,12 @@ export default {
 		onNewTaskShowDownloadingChange(enable: boolean) {
 			this.form.newTaskShowDownloading = !!enable;
 		},
-		buildSharedOptions(type = ADD_TASK_TYPE.URI) {
+		buildSharedOptions(type = ADD_TASK_TYPE.URI, includeFileName = false) {
 			const base = buildOption(type, this.form);
 			delete (base as Record<string, unknown>).selectFile;
-			delete (base as Record<string, unknown>).out;
+			if (!includeFileName) {
+				delete (base as Record<string, unknown>).out;
+			}
 			return base;
 		},
 		normalizeAddTaskError(err: unknown): string {
@@ -926,7 +938,10 @@ export default {
 				const r = await this.submitPathBatch(torrentItems, () =>
 					taskStore.addTorrents({
 						paths: torrentItems.map((it) => it.path as string),
-						options: this.buildSharedOptions(ADD_TASK_TYPE.TORRENT),
+						options: this.buildSharedOptions(
+							ADD_TASK_TYPE.TORRENT,
+							torrentItems.length === 1,
+						),
 					}),
 				);
 				okCount += r.ok;
@@ -955,7 +970,11 @@ export default {
 				failCount += r.fail;
 			}
 
-			for (const it of uriItems) {
+			const formOuts = buildOuts(
+				uriItems.map((it) => it.uri || ""),
+				`${this.form.out || ""}`.trim(),
+			);
+			for (const [index, it] of uriItems.entries()) {
 				try {
 					const uri = it.uri as string;
 					const uris = [uri, ...(it.mirrors ?? [])]
@@ -976,7 +995,8 @@ export default {
 					if ((it.isMedia || it.forceYtdlp) && it.mediaFormatId) {
 						sharedOpts.mediaFormat = it.mediaFormatId;
 					}
-					const outs = it.out ? [it.out] : [];
+					const out = `${it.out || formOuts[index] || ""}`.trim();
+					const outs = out ? [out] : [];
 					await taskStore.addUri({
 						uris,
 						outs,
