@@ -39,7 +39,6 @@ export default {
 	"binary-file": "该下载文件是二进制内容，无法在此预览。",
 	"open-externally": "用默认程序打开",
 	"items-per-page": "{{count}} 项/页",
-	// v2: rules dialog
 	"rule-tab-general": "常规",
 	"rule-tab-filters": "筛选",
 	"rule-tab-series": "剧集",
@@ -80,7 +79,6 @@ export default {
 	"rule-placeholder-quality": "1080p, x265, WEB-DL, ...",
 	"rule-placeholder-filename-template":
 		"{series} S{season:02}E{episode:02} [{quality}].{ext}",
-	// v2: reader UX
 	"density-compact": "紧凑",
 	"density-comfortable": "舒适",
 	"reader-split": "分栏视图",

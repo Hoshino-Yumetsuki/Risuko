@@ -13,8 +13,7 @@ pub enum GnutellaError {
     NoSource,
 }
 
-/// Parsed `gnutella://` / `gnet://` content URI carrying SHA-1 / bitprint
-/// URN, optional display name, file size hint and the `uri-res/N2R` path
+/// Parsed `gnutella://` / `gnet://` content URI carrying SHA-1 / bitprint URN, optional display name, file size hint and the `uri-res/N2R` path
 pub struct GnutellaLink {
     pub host: String,
     pub port: u16,
@@ -24,16 +23,13 @@ pub struct GnutellaLink {
     pub n2r_path: String,
 }
 
-/// True when the input begins with `gnutella://` or `gnet://`
-/// (case-insensitive)
+/// True when the input begins with `gnutella://` or `gnet://` (case-insensitive)
 pub fn is_gnutella_uri(uri: &str) -> bool {
     let lower = uri.trim().to_ascii_lowercase();
     lower.starts_with("gnutella://") || lower.starts_with("gnet://")
 }
 
-/// Parse a content-direct Gnutella URI of the form
-/// `gnutella://host[:port]/uri-res/N2R?urn:sha1:<base32>[&dn=&xl=]`
-/// Returns `None` for malformed input or non-Gnutella schemes
+/// Parse a content-direct Gnutella URI of the form `gnutella://host[:port]/uri-res/N2R?urn:sha1:<base32>[&dn=&xl=]` Returns `None` for malformed input or non-Gnutella schemes
 pub fn parse_gnutella_uri(uri: &str) -> Option<GnutellaLink> {
     let s = uri.trim();
     let lower = s.to_ascii_lowercase();

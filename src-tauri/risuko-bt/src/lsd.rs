@@ -1,22 +1,4 @@
-//! BEP-14 Local Service Discovery
-//!
-//! Announces info-hashes over UDP multicast on the local link so peers on
-//! the same LAN can find each other without trackers. Both IPv4
-//! (`239.192.152.143:6771`) and IPv6 (`ff15::efc0:988f:6771`) groups are
-//! supported; bind failures on one family downgrade to a warning and do not
-//! fail the whole service
-//!
-//! Messages are HTTP-like:
-//!
-//! ```text
-//! BT-SEARCH * HTTP/1.1\r\n
-//! Host: <group>:6771\r\n
-//! Port: <listen_port>\r\n
-//! Infohash: <hex>\r\n
-//! Infohash: <hex>\r\n
-//! cookie: <random>\r\n
-//! \r\n\r\n
-//! ```
+//! BEP-14 Local Service Discovery: announces info-hashes over UDP multicast on the local link so LAN peers find each other without trackers; IPv4 (`239.192.152.143:6771`) and IPv6 (`ff15::efc0:988f:6771`) groups are supported and a bind failure on one family downgrades to a warning; messages are HTTP-like `BT-SEARCH * HTTP/1.1` with `Host`, `Port`, one or more `Infohash`, and `cookie` headers
 
 use std::collections::{HashMap, HashSet};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
@@ -40,9 +22,7 @@ const ANNOUNCE_INTERVAL: Duration = Duration::from_secs(5 * 60);
 const RATE_LIMIT_WINDOW: Duration = Duration::from_secs(1);
 const MAX_DATAGRAM: usize = 1280;
 
-/// Running LSD service; output arrives on the `Receiver` returned by
-/// [`LocalServiceDiscovery::spawn`]. Dropping [`LocalServiceDiscovery`]
-/// cancels all background tasks
+/// Running LSD service; output arrives on the `Receiver` returned by [`LocalServiceDiscovery::spawn`], and dropping [`LocalServiceDiscovery`] cancels all background tasks
 pub struct LocalServiceDiscovery {
     inner: Arc<LsdInner>,
     join_handles: Mutex<Vec<JoinHandle<()>>>,
@@ -60,8 +40,7 @@ struct LsdInner {
 }
 
 impl LocalServiceDiscovery {
-    /// Spawn the service. Returns the handle and a receiver yielding
-    /// `(info_hash, peer_addr)` for every valid incoming announce
+    /// Spawn the service; returns the handle and a receiver yielding `(info_hash, peer_addr)` for every valid incoming announce
     #[allow(clippy::type_complexity)]
     pub fn spawn(
         announce_port: u16,
@@ -144,9 +123,7 @@ impl Drop for LocalServiceDiscovery {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Socket setup
-// ---------------------------------------------------------------------------
 
 fn bind_v4() -> std::io::Result<UdpSocket> {
     let sock = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
@@ -176,9 +153,7 @@ fn bind_v6() -> std::io::Result<UdpSocket> {
     UdpSocket::from_std(sock.into())
 }
 
-// ---------------------------------------------------------------------------
 // Announce loop
-// ---------------------------------------------------------------------------
 
 async fn announce_loop(
     v4: Option<Arc<UdpSocket>>,
@@ -249,9 +224,7 @@ fn build_announce(host: SocketAddr, port: u16, hashes: &[Id20], cookie: &str) ->
     s
 }
 
-// ---------------------------------------------------------------------------
 // Receive loop
-// ---------------------------------------------------------------------------
 
 async fn recv_loop(sock: Arc<UdpSocket>, inner: Arc<LsdInner>) {
     let mut buf = vec![0u8; 2048];

@@ -99,8 +99,7 @@ pub fn decode_yenc(input: &[u8]) -> Result<Vec<u8>, YEncError> {
     Ok(out)
 }
 
-/// Decode one yEnc payload line. The worker's multipart decoder uses this
-/// shared primitive so escaped bytes have identical semantics everywhere.
+/// Decode one yEnc payload line; the worker's multipart decoder uses this shared primitive so escaped bytes have identical semantics everywhere
 pub(crate) fn decode_yenc_line(input: &[u8], output: &mut Vec<u8>) -> Result<(), &'static str> {
     let mut index = 0;
     while index < input.len() {

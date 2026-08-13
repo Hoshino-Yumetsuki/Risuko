@@ -1,9 +1,4 @@
-//! The shared µTP endpoint: one UDP socket multiplexing many connections.
-//!
-//! A background router task reads every datagram and dispatches it to the
-//! right connection driver, keyed by `(peer_addr, our_recv_conn_id)`. A SYN
-//! for an unknown key opens a new inbound connection and enqueues its
-//! [`UtpStream`] for [`UtpSocket::accept`].
+//! The shared µTP endpoint: one UDP socket multiplexing many connections; a background router task reads every datagram and dispatches it to the right connection driver, keyed by `(peer_addr, our_recv_conn_id)`, and a SYN for an unknown key opens a new inbound connection and enqueues its [`UtpStream`] for [`UtpSocket::accept`]
 
 use std::collections::HashMap;
 use std::io;
@@ -20,20 +15,19 @@ use tokio::sync::{mpsc, oneshot};
 use super::packet::{PacketType, UtpHeader};
 use super::stream::{self, DriverConfig, Role, RoleKind, UtpStream};
 
-/// Demux key: a connection is identified by (peer address, our receive id).
+/// Demux key: a connection is identified by (peer address, our receive id)
 pub(crate) type ConnKey = (SocketAddr, u16);
 
-/// Maps each live connection to the channel its driver reads packets from.
+/// Maps each live connection to the channel its driver reads packets from
 pub(crate) type ConnRegistry =
     Arc<Mutex<HashMap<ConnKey, mpsc::UnboundedSender<(UtpHeader, Bytes)>>>>;
 
-/// Largest UDP datagram we'll read (µTP payloads are MSS-sized; this leaves
-/// room for the header plus any extensions).
+/// Largest UDP datagram we'll read (µTP payloads are MSS-sized; this leaves room for the header plus any extensions)
 const MAX_DATAGRAM: usize = 2048;
 const ROUTER_READ_SLAB: usize = MAX_DATAGRAM * 64;
 const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// A µTP endpoint sharing a single UDP socket across all its connections.
+/// A µTP endpoint sharing a single UDP socket across all its connections
 pub struct UtpSocket {
     udp: Arc<UdpSocket>,
     registry: ConnRegistry,
@@ -43,14 +37,13 @@ pub struct UtpSocket {
 }
 
 impl UtpSocket {
-    /// Bind a fresh UDP socket and start serving µTP on it.
+    /// Bind a fresh UDP socket and start serving µTP on it
     pub async fn bind(addr: SocketAddr) -> io::Result<Arc<Self>> {
         let udp = UdpSocket::bind(addr).await?;
         Ok(Self::from_udp(Arc::new(udp)))
     }
 
-    /// Build a µTP endpoint over an existing UDP socket (e.g. one shared with
-    /// another protocol on the same port).
+    /// Build a µTP endpoint over an existing UDP socket (e.g. one shared with another protocol on the same port)
     pub fn from_udp(udp: Arc<UdpSocket>) -> Arc<Self> {
         let local_addr = udp
             .local_addr()
@@ -71,7 +64,7 @@ impl UtpSocket {
         self.local_addr
     }
 
-    /// Dial a peer over µTP, resolving once the handshake completes.
+    /// Dial a peer over µTP, resolving once the handshake completes
     pub async fn connect(&self, remote: SocketAddr) -> io::Result<UtpStream> {
         self.connect_timeout(remote, DEFAULT_CONNECT_TIMEOUT).await
     }
@@ -81,8 +74,7 @@ impl UtpSocket {
         remote: SocketAddr,
         timeout: Duration,
     ) -> io::Result<UtpStream> {
-        // Reserve a receive id that doesn't collide with an existing
-        // connection to this peer (and register the incoming channel).
+        // Reserve a receive id that doesn't collide with an existing connection to this peer (and register the incoming channel)
         let (key, inc_rx) = {
             let mut reg = self.registry.lock();
             let mut id: u16 = rand::rng().random();
@@ -125,8 +117,7 @@ impl UtpSocket {
                 "utp driver exited before handshake",
             )),
             Err(_) => {
-                // Timed out waiting for the peer's STATE. Tell the driver to
-                // stop retransmitting and reclaim the slot.
+                // Timed out waiting for the peer's STATE; tell the driver to stop retransmitting and reclaim the slot
                 {
                     let mut st = shared.state.lock();
                     st.force_close();
@@ -141,7 +132,7 @@ impl UtpSocket {
         }
     }
 
-    /// Accept the next inbound µTP connection.
+    /// Accept the next inbound µTP connection
     pub async fn accept(&self) -> io::Result<UtpStream> {
         let mut rx = self.accept_rx.lock().await;
         rx.recv()
@@ -166,8 +157,7 @@ impl Drop for UtpSocket {
     }
 }
 
-/// Reads every datagram and routes it to the owning connection, or opens a new
-/// inbound connection for an unrecognized SYN.
+/// Reads every datagram and routes it to the owning connection, or opens a new inbound connection for an unrecognized SYN
 async fn router(
     udp: Arc<UdpSocket>,
     registry: ConnRegistry,
@@ -181,8 +171,7 @@ async fn router(
         }
         let (n, src) = match udp.recv_from(&mut buf[..MAX_DATAGRAM]).await {
             Ok(x) => x,
-            // A transient recv error (e.g. ICMP port-unreachable surfaced on
-            // some platforms) shouldn't kill the whole endpoint.
+            // A transient recv error (e.g. ICMP port-unreachable surfaced on some platforms) shouldn't kill the whole endpoint
             Err(_) => continue,
         };
         let Ok((header, payload)) = UtpHeader::decode(&buf[..n]) else {
@@ -191,7 +180,7 @@ async fn router(
         let payload_offset = n - payload.len();
         let payload = buf.split_to(n).freeze().slice(payload_offset..);
         let key = (src, header.connection_id);
-        // Fast path: an established connection owns this id.
+        // Fast path: an established connection owns this id
         {
             let reg = registry.lock();
             if let Some(tx) = reg.get(&key) {
@@ -199,15 +188,14 @@ async fn router(
                 continue;
             }
         }
-        // Otherwise only a SYN is meaningful; everything else is a stray
-        // packet for a connection we don't have (ignored).
+        // Otherwise only a SYN is meaningful; everything else is a stray packet for a connection we don't have (ignored)
         if header.packet_type == PacketType::Syn {
             open_inbound(&udp, &registry, &accept_tx, src, &header);
         }
     }
 }
 
-/// Create the responder side of a connection from an inbound SYN.
+/// Create the responder side of a connection from an inbound SYN
 fn open_inbound(
     udp: &Arc<UdpSocket>,
     registry: &ConnRegistry,
@@ -215,7 +203,7 @@ fn open_inbound(
     src: SocketAddr,
     syn: &UtpHeader,
 ) {
-    // Responder sends stamped with the SYN's id (C) and receives stamped C+1.
+    // Responder sends stamped with the SYN's id (C) and receives stamped C+1
     let send_id = syn.connection_id;
     let recv_id = send_id.wrapping_add(1);
     let key = (src, recv_id);
@@ -241,8 +229,7 @@ fn open_inbound(
         key,
     };
     tokio::spawn(stream::drive(shared.clone(), cfg, Role::Responder));
-    // If nobody is accepting, the stream drops immediately and its driver
-    // tears the connection down cleanly.
+    // If nobody is accepting, the stream drops immediately and its driver tears the connection down cleanly
     let _ = accept_tx.send(UtpStream::new(shared));
 }
 
@@ -272,7 +259,7 @@ mod tests {
             s.read_exact(&mut buf).await.unwrap();
             s.write_all(&buf).await.unwrap();
             s.flush().await.unwrap();
-            // Hold the connection open until the client reads the echo.
+            // Hold the connection open until the client reads the echo
             tokio::time::sleep(Duration::from_millis(300)).await;
         });
 
@@ -293,7 +280,7 @@ mod tests {
     async fn bulk_transfer_preserves_bytes() {
         let (client_sock, server_sock) = loopback_pair().await;
         let server_addr = server_sock.local_addr();
-        // Many MSS-sized packets to exercise sequencing, acks, and the window.
+        // Many MSS-sized packets to exercise sequencing, acks, and the window
         const N: usize = 256 * 1024;
         let data: Vec<u8> = (0..N).map(|i| (i % 251) as u8).collect();
         let expected = data.clone();
@@ -308,7 +295,7 @@ mod tests {
         tokio::time::timeout(Duration::from_secs(20), async move {
             let mut c = client_sock.connect(server_addr).await.unwrap();
             c.write_all(&data).await.unwrap();
-            // Clean FIN; the server's read_to_end completes on the resulting EOF.
+            // Clean FIN; the server's read_to_end completes on the resulting EOF
             c.shutdown().await.unwrap();
         })
         .await
@@ -327,7 +314,7 @@ mod tests {
         let sock = UtpSocket::bind("127.0.0.1:0".parse().unwrap())
             .await
             .unwrap();
-        // 127.0.0.1:1 has no µTP listener; the SYN goes unanswered.
+        // 127.0.0.1:1 has no µTP listener; the SYN goes unanswered
         let dead: SocketAddr = "127.0.0.1:1".parse().unwrap();
         let err = sock
             .connect_timeout(dead, Duration::from_millis(600))

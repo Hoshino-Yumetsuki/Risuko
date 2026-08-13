@@ -1,7 +1,4 @@
-//! BitTorrent trackers
-//!
-//! This module provides the types and orchestration used by `torrent::` to
-//! discover peers via HTTP (BEP-3 / BEP-23 compact) and UDP (BEP-15) trackers
+//! BitTorrent trackers: types and orchestration used by `torrent::` to discover peers via HTTP (BEP-3 / BEP-23 compact) and UDP (BEP-15) trackers
 
 pub mod http;
 pub mod udp;
@@ -69,7 +66,7 @@ pub enum TrackerError {
     Url(String),
 }
 
-/// Dispatch a single announce to a tracker URL. Returns the parsed response
+/// Dispatch a single announce to a tracker URL; returns the parsed response
 pub async fn announce(
     url: &str,
     req: &AnnounceRequest,

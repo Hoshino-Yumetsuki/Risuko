@@ -1,28 +1,4 @@
-//! DNS over HTTPS (DoH) resolver, RFC 8484 wire format
-//!
-//! Resolves a hostname by POSTing a binary DNS query (`application/dns-message`)
-//! to a DoH endpoint and parsing the binary answer back out. A and AAAA go out
-//! at the same time and we merge whatever comes back
-//!
-//! # Recursion / bootstrap
-//!
-//! The resolver owns an inner [`Client`] with an explicit resolver pinned on it,
-//! so resolving the endpoint's own hostname can't loop back into DoH. The
-//! [`BootstrapResolver`] hands back operator-supplied IPs for the endpoint host
-//! (so we can reach it without leaking the lookup to the system resolver) and
-//! passes everything else through to [`GaiResolver`]
-//!
-//! # Caching
-//!
-//! The connector calls [`Resolve::resolve`] once per TCP connection, and one
-//! multi-chunk download opens a lot of connections, so answers live in an
-//! in-memory cache keyed by host. We honour the smallest record TTL (clamped),
-//! plus a short negative cache so a flaky endpoint doesn't get hammered
-//!
-//! # Port-0 contract
-//!
-//! Per the [`Resolve`] trait, every [`SocketAddr`] we return carries port `0`;
-//! the connector fills in the real port before it connects
+//! DoH resolver (RFC 8484): POSTs binary A+AAAA queries in parallel; inner client uses a pinned BootstrapResolver so endpoint lookup can't loop back into DoH; caches answers by host (clamped TTL + short negative cache); returns every SocketAddr on port 0 per the Resolve contract
 
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
@@ -34,11 +10,9 @@ use crate::client::{Client, ClientBuilder};
 use crate::error::{Error, Result};
 use crate::resolver::{Addrs, GaiResolver, Resolve, Resolving};
 
-/// Don't trust a TTL shorter than this, or we'd re-query the endpoint
-/// constantly for hosts that advertise a 0s TTL
+/// Floor on cached TTL, so a 0s-TTL host isn't re-queried constantly
 const MIN_TTL: Duration = Duration::from_secs(30);
-/// Cap the TTL too, so a stale answer can't pin a dead IP for hours after the
-/// operator moves their infrastructure
+/// Cap on cached TTL, so a stale answer can't pin a dead IP for hours
 const MAX_TTL: Duration = Duration::from_secs(3600);
 /// How long we remember a failure before retrying the endpoint
 const NEGATIVE_TTL: Duration = Duration::from_secs(5);
@@ -50,12 +24,9 @@ const QUERY_TIMEOUT: Duration = Duration::from_secs(5);
 pub struct DohConfig {
     /// DoH endpoint, e.g. `https://cloudflare-dns.com/dns-query`
     pub url: String,
-    /// IPs used to reach the endpoint host without going through the system
-    /// resolver. Empty means "just resolve the endpoint with system DNS"
+    /// IPs to reach the endpoint host without the system resolver; empty means resolve it with system DNS
     pub bootstrap: Vec<IpAddr>,
-    /// Fall back to the system resolver when a DoH query fails (timeout,
-    /// network error, SERVFAIL). Worth keeping on, otherwise a bad endpoint
-    /// takes every download down with it
+    /// Fall back to the system resolver on DoH failure, so a bad endpoint doesn't take every download down
     pub fallback: bool,
 }
 
@@ -77,14 +48,12 @@ struct Inner {
     client: Client,
     gai: GaiResolver,
     cache: RwLock<HashMap<String, CacheEntry>>,
-    /// Feeds the DNS message ID. The ID is cosmetic over a single TLS
-    /// connection, but we vary it per query anyway
+    /// Feeds the DNS message ID; cosmetic over one TLS connection, but varied per query anyway
     next_id: AtomicU16,
 }
 
 impl DohResolver {
-    /// Build a resolver from `cfg`. Only fails if the endpoint URL or the inner
-    /// bootstrap client don't check out
+    /// Build a resolver from `cfg`; only fails if the endpoint URL or inner bootstrap client don't check out
     pub fn new(cfg: DohConfig) -> Result<Self> {
         let url = url::Url::parse(&cfg.url).map_err(|e| Error::Url(e.to_string()))?;
         if url.scheme() != "https" {
@@ -98,8 +67,7 @@ impl DohResolver {
             .ok_or_else(|| Error::Url("DoH endpoint missing host".into()))?
             .to_string();
 
-        // Pin an explicit bootstrap resolver on the inner client so it can't
-        // loop back into DoH while resolving the endpoint's own hostname
+        // Pin an explicit bootstrap resolver on the inner client so resolving the endpoint's own hostname can't loop back into DoH
         let bootstrap = Arc::new(BootstrapResolver {
             host: endpoint_host,
             ips: cfg.bootstrap.clone(),
@@ -125,9 +93,7 @@ impl DohResolver {
         })
     }
 
-    /// Look up `host` in the cache. The returned IPs may be empty, which means
-    /// we've got a cached failure. `None` means nothing fresh is cached.
-    /// Expired entries are removed when discovered
+    /// Look up `host` in the cache. The returned IPs may be empty, which means we've got a cached failure. `None` means nothing fresh is cached. Expired entries are removed when discovered
     fn cache_get(&self, host: &str) -> Option<Vec<IpAddr>> {
         let cache = self.inner.cache.read().ok()?;
         let entry = cache.get(host)?;
@@ -158,8 +124,7 @@ impl DohResolver {
         }
     }
 
-    /// Fire off one DoH query for `host`/`qtype` and hand back the IPs plus the
-    /// smallest TTL we saw
+    /// Fire off one DoH query for `host`/`qtype` and hand back the IPs plus the smallest TTL we saw
     async fn query_one(&self, host: &str, qtype: u16) -> Result<(Vec<IpAddr>, Duration)> {
         let id = self.inner.next_id.fetch_add(1, Ordering::Relaxed);
         let msg = encode_query(id, host, qtype)?;
@@ -204,10 +169,7 @@ impl DohResolver {
         }
 
         if addrs.is_empty() {
-            // Both families came back empty or errored. If at least one query
-            // errored, surface that; an empty-but-successful answer
-            // (NXDOMAIN/SERVFAIL with no records) is a definitive DNS miss
-            // and should not fall back to system DNS
+            // Both families came back empty or errored. If at least one query errored, surface that; an empty-but-successful answer (NXDOMAIN/SERVFAIL with no records) is a definitive DNS miss and should not fall back to system DNS
             return Err(last_err.unwrap_or(Error::NoRecords));
         }
 
@@ -243,8 +205,7 @@ impl Resolve for DohResolver {
                     Ok(ips_to_addrs(addrs))
                 }
                 Err(e) => {
-                    // Remember the failure for a few seconds so a flaky endpoint
-                    // doesn't get re-queried on every connection a download opens
+                    // Remember the failure for a few seconds so a flaky endpoint doesn't get re-queried on every connection a download opens
                     this.cache_put(&host, Vec::new(), NEGATIVE_TTL);
                     if this.inner.fallback {
                         tracing::warn!("DoH resolve failed for {host}: {e}; using system DNS");
@@ -258,16 +219,13 @@ impl Resolve for DohResolver {
     }
 }
 
-/// Box the IPs into the trait's iterator type, each on port 0 as the contract
-/// requires
+/// Box the IPs into the trait's iterator type, each on port 0 as the contract requires
 fn ips_to_addrs(ips: Vec<IpAddr>) -> Addrs {
     let v: Vec<SocketAddr> = ips.into_iter().map(|ip| SocketAddr::new(ip, 0)).collect();
     Box::new(v.into_iter()) as Addrs
 }
 
-/// Resolver wired only into the endpoint's own inner client. Returns the
-/// configured bootstrap IPs for the endpoint host (so the lookup doesn't leak
-/// to system DNS) and passes any other host through to the system resolver
+/// Resolver wired only into the endpoint's own inner client. Returns the configured bootstrap IPs for the endpoint host (so the lookup doesn't leak to system DNS) and passes any other host through to the system resolver
 struct BootstrapResolver {
     host: String,
     ips: Vec<IpAddr>,
@@ -319,8 +277,7 @@ fn encode_query(id: u16, host: &str, qtype: u16) -> Result<Vec<u8>> {
     Ok(buf)
 }
 
-/// Parse a DNS response: pull out the `want_type` (A or AAAA) addresses and the
-/// smallest TTL among the records that matched
+/// Parse a DNS response: pull out the `want_type` (A or AAAA) addresses and the smallest TTL among the records that matched
 fn parse_response(buf: &[u8], want_type: u16) -> Result<(Vec<IpAddr>, Duration)> {
     if buf.len() < 12 {
         return Err(Error::Decode("DNS response too short".into()));
@@ -380,18 +337,14 @@ fn parse_response(buf: &[u8], want_type: u16) -> Result<(Vec<IpAddr>, Duration)>
                 _ => {}
             }
         }
-        // We skip CNAMEs and anything else and only keep the address family we
-        // asked for. The recursive resolver behind the endpoint has already
-        // chased the CNAMEs and dropped the address records in here for us
+        // We skip CNAMEs and anything else and only keep the address family we asked for. The recursive resolver behind the endpoint has already chased the CNAMEs and dropped the address records in here for us
         pos += rdlength;
     }
 
     Ok((addrs, min_ttl))
 }
 
-/// Walk past a DNS name starting at `pos`, handling compression pointers.
-/// Returns the offset right after the name in the current record; a compression
-/// pointer ends the name in 2 bytes
+/// Walk past a DNS name starting at `pos`, handling compression pointers. Returns the offset right after the name in the current record; a compression pointer ends the name in 2 bytes
 fn skip_name(buf: &[u8], mut pos: usize) -> Result<usize> {
     loop {
         let len = *buf

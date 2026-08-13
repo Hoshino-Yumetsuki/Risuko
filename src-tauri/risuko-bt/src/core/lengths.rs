@@ -1,10 +1,6 @@
-//! Piece / chunk length arithmetic
-//!
-//! BitTorrent splits a torrent into fixed-size pieces (defined by the torrent)
-//! and each piece into 16 KiB chunks (BEP-3 convention)
+//! Piece / chunk length arithmetic: fixed-size pieces (per torrent) split into 16 KiB chunks (BEP-3 convention)
 
-/// Standard chunk (block) size. BEP-3 says clients must accept requests up to
-/// this size; virtually every peer refuses anything larger, so we use it
+/// Standard chunk (block) size; BEP-3 requires accepting requests up to this size and peers refuse anything larger
 pub const CHUNK_SIZE: u32 = 16 * 1024;
 
 #[derive(Debug, thiserror::Error)]
@@ -30,8 +26,7 @@ pub struct ChunkInfo {
     pub offset: u32,
 }
 
-/// A piece index that has been validated against a given [`Lengths`]. The
-/// type acts as a proof obligation for downstream arithmetic
+/// A piece index validated against a given [`Lengths`], acting as a proof obligation for downstream arithmetic
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ValidPieceIndex(u32);
 

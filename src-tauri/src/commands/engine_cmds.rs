@@ -170,12 +170,7 @@ fn infer_out_from_uri_inner(uri: &str) -> String {
     let decoded_candidate = crate::commands::file_cmds::percent_decode_lossy(candidate);
     let decoded_candidate = decoded_candidate.trim();
     if decoded_candidate.is_empty() || !decoded_candidate.contains('.') {
-        // Opaque URL like /resources/foo/download?version=N has no extension
-        // to hint at a name. Drop in a placeholder so the task carries a stable
-        // display name; the engine swaps in the real filename once it sees
-        // Content-Disposition on the first response. The per-URL hash suffix
-        // keeps two distinct extensionless URLs queued together from colliding
-        // on the same `${dir}/download.part`
+        // Opaque URL like /resources/foo/download?version=N has no extension to hint at a name; drop in a placeholder so the task carries a stable display name (the engine swaps in the real filename once it sees Content-Disposition on the first response), the per-URL hash suffix keeping two distinct extensionless URLs queued together from colliding on `${dir}/download.part`
         return placeholder_download_name(raw);
     }
     if decoded_candidate.contains('/') || decoded_candidate.contains('\\') {
@@ -188,12 +183,7 @@ fn infer_out_from_uri_inner(uri: &str) -> String {
     decoded_candidate.to_string()
 }
 
-/// Unique-but-deterministic placeholder filename for opaque URLs. A URL hash
-/// beats a counter or UUID: re-adding the same link yields the same name (so
-/// retries / dedup behave) while distinct URLs get distinct names (so
-/// concurrent extensionless downloads don't share `download.part`). The
-/// engine's `filename_was_url_derived` recognizes the `download-` prefix and
-/// still adopts a real Content-Disposition name when one arrives
+/// Unique-but-deterministic placeholder filename for opaque URLs. A URL hash beats a counter or UUID: re-adding the same link yields the same name (so retries / dedup behave) while distinct URLs get distinct names (so concurrent extensionless downloads don't share `download.part`). The engine's `filename_was_url_derived` recognizes the `download-` prefix and still adopts a real Content-Disposition name when one arrives
 fn placeholder_download_name(uri: &str) -> String {
     use sha1::{Digest, Sha1};
     let mut hasher = Sha1::new();
@@ -214,8 +204,7 @@ pub fn resolve_file_category(filename: String) -> String {
 }
 
 fn resolve_file_category_inner(filename: &str) -> String {
-    // Delegate to the engine-side classifier so the rule-matching and the
-    // user-facing category-dirs feature can never disagree on extensions
+    // Delegate to the engine-side classifier so the rule-matching and the user-facing category-dirs feature can never disagree on extensions
     risuko_engine::engine::upload::resolve_category(filename).unwrap_or_default()
 }
 
@@ -460,9 +449,7 @@ pub async fn add_torrents_by_paths(
         return Err("task.new-task-torrent-required".to_string());
     }
 
-    // When adding multiple torrents, strip the per-task `out` filename so each
-    // torrent doesn't end up writing to the same .part file. Per-torrent
-    // filenames are inferred individually inside add_torrent_by_path_inner
+    // When adding multiple torrents, strip the per-task `out` filename so each torrent doesn't end up writing to the same .part file. Per-torrent filenames are inferred individually inside add_torrent_by_path_inner
     let per_call_options: Option<Value> = if paths.len() > 1 {
         match options.as_ref() {
             Some(Value::Object(map)) => {
@@ -580,6 +567,17 @@ fn is_nzb_url(uri: &str) -> bool {
         .unwrap_or("")
         .to_ascii_lowercase()
         .ends_with(".nzb")
+}
+
+/// Best-effort source name for a URL-imported NZB, derived from the URL's last path segment so URL imports carry the same `usenet-source-name` that path imports set from the local filename
+fn nzb_source_name_from_url(uri: &str) -> String {
+    let path = uri.split(['?', '#']).next().unwrap_or(uri);
+    let name = path.rsplit('/').next().unwrap_or("").trim();
+    if name.is_empty() {
+        "download.nzb".to_string()
+    } else {
+        name.to_string()
+    }
 }
 
 async fn fetch_nzb_url(uri: &str, options: &Map<String, Value>) -> Result<Vec<u8>, String> {
@@ -702,9 +700,7 @@ pub async fn add_uri(
         .map(|value| value.trim())
         .filter(|value| !value.is_empty())
         .collect::<std::collections::HashSet<_>>();
-    // preferred_out falls back to options["out"], so the uniformity check must
-    // account for it too — otherwise a per-uri out that differs from the global
-    // "out" would be merged into one mirror group despite naming two outputs
+    // preferred_out falls back to options["out"], so the uniformity check must account for it too — otherwise a per-uri out that differs from the global "out" would be merged into one mirror group despite naming two outputs
     if let Some(out) = base_options
         .get("out")
         .and_then(|value| value.as_str())
@@ -764,8 +760,7 @@ pub async fn add_uri(
             })
             .unwrap_or_else(|| infer_out_from_uri_inner(uri));
 
-        // Route to the yt-dlp media engine for allowlisted sites, or any URL
-        // the user explicitly forced via the `force-ytdlp` option
+        // Route to the yt-dlp media engine for allowlisted sites, or any URL the user explicitly forced via the `force-ytdlp` option
         let is_media =
             engine::media::is_media_uri(uri) || engine::media::is_force_ytdlp(&task_options);
         // M3u8 uses a temp directory for segments, not a .part file
@@ -795,13 +790,16 @@ pub async fn add_uri(
         let result = if torrent::is_magnet_uri(uri) {
             manager.add_magnet_task(uri, task_options).await
         } else if is_nzb_url(uri) {
-            // URL imports happen before the task is created, so explicitly
-            // merge global defaults to preserve proxy, headers, cookies, and
-            // other HTTP request settings for this fetch.
+            // URL imports happen before the task is created, so explicitly merge global defaults to preserve proxy, headers, cookies, and other HTTP request settings for this fetch
             let mut fetch_options = global_options.clone();
             fetch_options.extend(task_options.clone());
             match fetch_nzb_url(uri, &fetch_options).await {
-                Ok(bytes) => manager.add_nzb_task(bytes, task_options).await,
+                Ok(bytes) => {
+                    task_options
+                        .entry("usenet-source-name".to_string())
+                        .or_insert_with(|| Value::String(nzb_source_name_from_url(uri)));
+                    manager.add_nzb_task(bytes, task_options).await
+                }
                 Err(error) => Err(error),
             }
         } else if is_m3u8 {
@@ -1430,9 +1428,7 @@ mod tests {
 
     #[test]
     fn infer_out_no_extension_falls_back_to_download() {
-        // Opaque URLs with no extension hint get a generic placeholder
-        // so the task carries a stable display name; Content-Disposition
-        // takes over once the engine sees the first response
+        // Opaque URLs with no extension hint get a generic placeholder so the task carries a stable display name; Content-Disposition takes over once the engine sees the first response
         let r1 = infer_out_from_uri_inner("http://example.com/path/noext");
         assert!(
             r1.starts_with("download-"),

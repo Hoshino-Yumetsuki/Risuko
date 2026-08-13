@@ -1,8 +1,4 @@
-//! Peer wire protocol (BEP-3) plus the bits of BEP-10 extension protocol and
-//! ut_metadata / ut_pex that we need
-//!
-//! MSE/PE (BEP-8 Message Stream Encryption) primitives live under `mse`,
-//! and the peer connection layer negotiates it when possible.
+//! Peer wire protocol (BEP-3) plus needed bits of BEP-10 extension protocol and ut_metadata / ut_pex; MSE/PE (BEP-8) primitives live under `mse`, negotiated by the peer connection layer when possible
 
 pub mod extended;
 pub mod handshake;

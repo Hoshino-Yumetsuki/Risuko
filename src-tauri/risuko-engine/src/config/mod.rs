@@ -59,9 +59,13 @@ impl ConfigManager {
         let mut merged = self.system_config.clone();
         merged.extend(self.user_config.clone());
 
-        // Add runtime context
-        merged.insert("platform".into(), json!(std::env::consts::OS));
-        merged.insert("arch".into(), json!(std::env::consts::ARCH));
+        // Add runtime context without clobbering a user/system key of the same name (insert only when absent)
+        merged
+            .entry("platform".to_string())
+            .or_insert_with(|| json!(std::env::consts::OS));
+        merged
+            .entry("arch".to_string())
+            .or_insert_with(|| json!(std::env::consts::ARCH));
 
         Value::Object(merged)
     }
@@ -120,29 +124,61 @@ impl ConfigManager {
     fn save_system(&self) -> Result<(), String> {
         let path = self.config_dir.join("system.json");
         let data = serde_json::to_string_pretty(&self.system_config).map_err(|e| e.to_string())?;
-        fs::write(path, data).map_err(|e| e.to_string())?;
-        Ok(())
+        write_atomic(&path, &data)
     }
 
     fn save_user(&self) -> Result<(), String> {
         let path = self.config_dir.join("user.json");
         let data = serde_json::to_string_pretty(&self.user_config).map_err(|e| e.to_string())?;
-        fs::write(path, data).map_err(|e| e.to_string())?;
-        Ok(())
+        write_atomic(&path, &data)
     }
 }
 
+/// Write `data` to `path` atomically via a sibling temp file then rename, so a crash or full disk mid-write cannot truncate/corrupt the existing file (`fs::rename` is atomic within the same directory)
+fn write_atomic(path: &Path, data: &str) -> Result<(), String> {
+    let tmp = path.with_extension("json.tmp");
+    fs::write(&tmp, data).map_err(|e| e.to_string())?;
+    fs::rename(&tmp, path).map_err(|e| {
+        let _ = fs::remove_file(&tmp);
+        e.to_string()
+    })
+}
+
 fn load_or_default(path: &Path, defaults: Map<String, Value>) -> Map<String, Value> {
-    if let Ok(data) = fs::read_to_string(path) {
-        if let Ok(Value::Object(mut map)) = serde_json::from_str(&data) {
-            // Fill in missing keys from defaults
-            for (k, v) in &defaults {
-                if !map.contains_key(k) {
-                    map.insert(k.clone(), v.clone());
+    match fs::read_to_string(path) {
+        Ok(data) => {
+            if let Ok(Value::Object(mut map)) = serde_json::from_str(&data) {
+                // Fill in missing keys from defaults
+                for (k, v) in &defaults {
+                    if !map.contains_key(k) {
+                        map.insert(k.clone(), v.clone());
+                    }
                 }
+                return map;
             }
-            return map;
+            // File exists but is corrupt/unparseable: back it up so the user's broken settings aren't silently overwritten, then fall back
+            let backup = path.with_extension("json.bak");
+            match fs::rename(path, &backup) {
+                Ok(()) => tracing::warn!(
+                    "Config file {} is corrupt; backed up to {} and using defaults",
+                    path.display(),
+                    backup.display()
+                ),
+                Err(err) => tracing::warn!(
+                    "Config file {} is corrupt and could not be backed up ({}); using defaults",
+                    path.display(),
+                    err
+                ),
+            }
         }
+        Err(err) if err.kind() != std::io::ErrorKind::NotFound => {
+            tracing::warn!(
+                "Failed to read config {}: {}; using defaults",
+                path.display(),
+                err
+            );
+        }
+        Err(_) => {}
     }
     defaults
 }

@@ -15,10 +15,6 @@ internal object Reflect {
     fun cls(name: String): Class<*> =
         classCache.getOrPut(name) { Class.forName(name) }
 
-    fun clsOrNull(name: String): Class<*>? =
-        try { cls(name) } catch (t: Throwable) { null }
-
-
     private fun findField(start: Class<*>, name: String): Field {
         val key = "${start.name}#$name"
         fieldCache[key]?.let { return it }
@@ -48,10 +44,6 @@ internal object Reflect {
 
     fun setField(target: Any, name: String, value: Any?) {
         findField(target.javaClass, name).set(target, value)
-    }
-
-    fun setFieldOn(declaringClass: Class<*>, target: Any?, name: String, value: Any?) {
-        findField(declaringClass, name).set(target, value)
     }
 
     private fun argTypeKey(args: Array<out Any?>): String =
@@ -124,17 +116,6 @@ internal object Reflect {
 
     fun call(target: Any, name: String, vararg args: Any?): Any? =
         findMethod(target.javaClass, name, args).invoke(target, *args)
-
-    fun callStaticTyped(
-        clazz: Class<*>,
-        name: String,
-        paramTypes: Array<Class<*>>,
-        args: Array<Any?>,
-    ): Any? {
-        val m = clazz.getDeclaredMethod(name, *paramTypes)
-        m.isAccessible = true
-        return m.invoke(null, *args)
-    }
 
     fun newInterfaceProxy(
         target: Any,

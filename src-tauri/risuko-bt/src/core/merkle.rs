@@ -1,18 +1,4 @@
-//! BEP 52 Merkle-tree primitives
-//!
-//! BitTorrent v2 verifies file content via a binary SHA-256 Merkle tree:
-//! - leaves are 16 KiB blocks (the trailing block of a file is zero-padded
-//!   to 16 KiB for hashing purposes only)
-//! - the leaf count is rounded up to the next power of two by appending
-//!   zero-hash leaves (`[0u8; 32]`)
-//! - internal nodes hash the concatenation of their two children
-//! - the root is the file's `pieces root`
-//!
-//! Within a torrent's metadata, the `piece layers` dict gives the
-//! intermediate layer at the **piece** level: one SHA-256 hash per
-//! piece-aligned chunk of the file. Given those, plus the file's root and
-//! length, we can reconstruct enough of the tree to verify any block via
-//! an O(log n) sibling proof
+//! BEP 52 Merkle-tree primitives BitTorrent v2 verifies file content via a binary SHA-256 Merkle tree: - leaves are 16 KiB blocks (the trailing block of a file is zero-padded to 16 KiB for hashing purposes only) - the leaf count is rounded up to the next power of two by appending zero-hash leaves (`[0u8; 32]`) - internal nodes hash the concatenation of their two children - the root is the file's `pieces root` Within a torrent's metadata, the `piece layers` dict gives the intermediate layer at the **piece** level: one SHA-256 hash per piece-aligned chunk of the file. Given those, plus the file's root and length, we can reconstruct enough of the tree to verify any block via an O(log n) sibling proof
 
 use super::hash::{sha256, Id32};
 
@@ -38,8 +24,7 @@ pub fn hash_pair(left: &Id32, right: &Id32) -> Id32 {
     sha256(&buf)
 }
 
-/// Compute the Merkle root over a slice of leaf hashes. Pads to the next
-/// power of two with zero hashes per BEP 52
+/// Compute the Merkle root over a slice of leaf hashes. Pads to the next power of two with zero hashes per BEP 52
 pub fn compute_root(leaves: &[Id32]) -> Id32 {
     if leaves.is_empty() {
         return Id32([0u8; 32]);
@@ -62,11 +47,7 @@ pub fn compute_root(leaves: &[Id32]) -> Id32 {
     layer[0]
 }
 
-/// Compute the Merkle root over `leaves` padded out to `padded_len` (which
-/// must be a power of two ≥ leaves.len()). Used to derive a piece's root
-/// from its constituent block hashes when the piece is the last piece
-/// of a file: BEP 52 pads the leaf layer at the file level, not at the
-/// piece level, so the per-piece subtree may need its own padding logic
+/// Compute the Merkle root over `leaves` padded out to `padded_len` (which must be a power of two ≥ leaves.len()). Used to derive a piece's root from its constituent block hashes when the piece is the last piece of a file: BEP 52 pads the leaf layer at the file level, not at the piece level, so the per-piece subtree may need its own padding logic
 pub fn compute_root_padded(leaves: &[Id32], padded_len: usize) -> Id32 {
     assert!(padded_len.is_power_of_two() || padded_len == 0);
     assert!(leaves.len() <= padded_len);
@@ -84,12 +65,7 @@ pub fn compute_root_padded(leaves: &[Id32], padded_len: usize) -> Id32 {
     layer[0]
 }
 
-/// Per-file proof table built from the metainfo `piece layers` entry.
-///
-/// Holds the SHA-256 hashes at the piece-leaf layer of the file's
-/// Merkle tree, one entry per piece. Once a piece's blocks have been
-/// downloaded we hash them to derive that piece's root and check it
-/// against `piece_root_hashes[piece_index_within_file]`
+/// Per-file proof table built from the metainfo `piece layers` entry. Holds the SHA-256 hashes at the piece-leaf layer of the file's Merkle tree, one entry per piece. Once a piece's blocks have been downloaded we hash them to derive that piece's root and check it against `piece_root_hashes[piece_index_within_file]`
 #[derive(Debug, Clone)]
 pub struct MerkleProofTable {
     /// File's overall Merkle root (== `pieces root` from metainfo)
@@ -102,9 +78,7 @@ pub struct MerkleProofTable {
     pub piece_count: u32,
     /// Number of 16 KiB blocks per piece (= piece_length / 16 KiB)
     pub blocks_per_piece: u32,
-    /// SHA-256 root of each piece, in order. Length == `piece_count`
-    /// For files smaller than one piece, this is empty and `file_root`
-    /// alone is used
+    /// SHA-256 root of each piece, in order. Length == `piece_count` For files smaller than one piece, this is empty and `file_root` alone is used
     pub piece_root_hashes: Vec<Id32>,
 }
 
@@ -121,10 +95,7 @@ pub enum MerkleError {
 }
 
 impl MerkleProofTable {
-    /// Build a proof table for one file. `layer_bytes` is the value from
-    /// the metainfo `piece layers` dict for this file's pieces-root, or
-    /// empty for files smaller than one piece. Verifies that the layer
-    /// hashes (padded to a power of two) collapse to the declared root
+    /// Build a proof table for one file. `layer_bytes` is the value from the metainfo `piece layers` dict for this file's pieces-root, or empty for files smaller than one piece. Verifies that the layer hashes (padded to a power of two) collapse to the declared root
     pub fn from_layer_bytes(
         file_root: Id32,
         file_length: u64,
@@ -140,8 +111,7 @@ impl MerkleProofTable {
         let blocks_per_piece = piece_length / BLOCK_SIZE;
         let piece_count = file_length.div_ceil(piece_length as u64) as u32;
 
-        // For files smaller than one piece, no layer is required —
-        // verification is direct against `file_root`
+        // For files smaller than one piece, no layer is required — verification is direct against `file_root`
         if file_length <= piece_length as u64 {
             if !layer_bytes.is_empty() {
                 return Err(MerkleError::LayerLengthMismatch {
@@ -174,8 +144,7 @@ impl MerkleProofTable {
             .map(|c| Id32::from_slice(c).expect("32-byte chunk"))
             .collect();
 
-        // Verify root: the file-level Merkle tree root is computed over the
-        // piece-layer leaves padded to the next power of two
+        // Verify root: the file-level Merkle tree root is computed over the piece-layer leaves padded to the next power of two
         let recomputed = compute_root(&piece_root_hashes);
         if recomputed != file_root {
             return Err(MerkleError::RootMismatch);
@@ -201,8 +170,7 @@ impl MerkleProofTable {
         Some((end - start) as u32)
     }
 
-    /// Compute the root of one piece's subtree by hashing its bytes in
-    /// 16 KiB blocks and collapsing the (zero-padded) per-piece subtree
+    /// Compute the root of one piece's subtree by hashing its bytes in 16 KiB blocks and collapsing the (zero-padded) per-piece subtree
     pub fn expected_piece_root(&self, piece_bytes: &[u8]) -> Id32 {
         let mut block_hashes: Vec<Id32> = piece_bytes
             .chunks(BLOCK_SIZE as usize)
@@ -218,10 +186,7 @@ impl MerkleProofTable {
         compute_root_padded(&block_hashes, target.next_power_of_two())
     }
 
-    /// Number of pieces padded to the next power of two — the row length
-    /// used when requesting / serving the entire piece layer at once
-    /// (BEP 52 `HASH_REQUEST` `length` field). Returns 0 for files that
-    /// fit in a single piece (no layer is exchanged for those)
+    /// Number of pieces padded to the next power of two — the row length used when requesting / serving the entire piece layer at once (BEP 52 `HASH_REQUEST` `length` field). Returns 0 for files that fit in a single piece (no layer is exchanged for those)
     pub fn piece_layer_padded_len(&self) -> u32 {
         if self.piece_root_hashes.is_empty() {
             0
@@ -230,17 +195,12 @@ impl MerkleProofTable {
         }
     }
 
-    /// Number of layers between the 16 KiB-leaf layer (base_layer 0) and
-    /// the piece layer. Equals `log2(piece_length / 16 KiB)`. This is the
-    /// `base_layer` field for a piece-layer `HASH_REQUEST`
+    /// Number of layers between the 16 KiB-leaf layer (base_layer 0) and the piece layer. Equals `log2(piece_length / 16 KiB)`. This is the `base_layer` field for a piece-layer `HASH_REQUEST`
     pub fn piece_layer_base(&self) -> u32 {
         self.blocks_per_piece.trailing_zeros()
     }
 
-    /// Encode the piece layer for an outbound `HASHES` response: leaf
-    /// hashes padded with zero-hashes to `piece_layer_padded_len`, flat
-    /// 32-byte concatenation. Returns `None` for single-piece files (no
-    /// layer to serve)
+    /// Encode the piece layer for an outbound `HASHES` response: leaf hashes padded with zero-hashes to `piece_layer_padded_len`, flat 32-byte concatenation. Returns `None` for single-piece files (no layer to serve)
     pub fn serve_full_piece_layer(&self) -> Option<Vec<u8>> {
         let padded = self.piece_layer_padded_len() as usize;
         if padded == 0 {
@@ -254,11 +214,7 @@ impl MerkleProofTable {
         Some(out)
     }
 
-    /// Validate a `HASHES` response carrying the entire piece layer
-    /// (`length == next_pow2(piece_count)`, `proof_layers == 0`) for one
-    /// file, returning the canonical (un-padded) piece-layer bytes ready
-    /// for storage in `piece layers`. The response is rejected if the
-    /// recovered hashes do not collapse to `file_root`
+    /// Validate a `HASHES` response carrying the entire piece layer (`length == next_pow2(piece_count)`, `proof_layers == 0`) for one file, returning the canonical (un-padded) piece-layer bytes ready for storage in `piece layers`. The response is rejected if the recovered hashes do not collapse to `file_root`
     pub fn verify_full_piece_layer_response(
         file_root: Id32,
         file_length: u64,
@@ -292,8 +248,7 @@ impl MerkleProofTable {
             .chunks_exact(32)
             .map(|c| Id32::from_slice(c).expect("32-byte chunk"))
             .collect();
-        // Trailing entries beyond `piece_count` must be zero — this is the
-        // only valid padding per BEP 52
+        // Trailing entries beyond `piece_count` must be zero — this is the only valid padding per BEP 52
         for h in &leaves[piece_count as usize..] {
             if h.0 != [0u8; 32] {
                 return Err(MerkleError::RootMismatch);
@@ -325,12 +280,7 @@ impl MerkleProofTable {
             });
         }
         let computed = if self.piece_root_hashes.is_empty() {
-            // Single-piece file: BEP 52 derives the file root by padding to
-            // next_power_of_two(actual_block_count), not to blocks_per_piece.
-            // Using expected_piece_root (which pads to blocks_per_piece) would
-            // produce the wrong root when the two values differ (e.g. 48 KiB
-            // file with 256 KiB pieces: actual_blocks=3 → pad to 4, but
-            // blocks_per_piece=16)
+            // Single-piece file: BEP 52 derives the file root by padding to next_power_of_two(actual_block_count), not to blocks_per_piece. Using expected_piece_root (which pads to blocks_per_piece) would produce the wrong root when the two values differ (e.g. 48 KiB file with 256 KiB pieces: actual_blocks=3 → pad to 4, but blocks_per_piece=16)
             let block_hashes: Vec<Id32> = piece_bytes
                 .chunks(BLOCK_SIZE as usize)
                 .map(hash_block)
@@ -371,34 +321,22 @@ pub fn supports_v2_wire(meta: &TorrentMeta) -> bool {
     })
 }
 
-/// Strategy for verifying a fully-downloaded piece. Chosen once per torrent
-/// at session-attach time. v1 torrents use SHA-1 over the piece bytes
-/// (`pieces[piece_index * 20 .. + 20]`); v2 torrents collapse 16 KiB
-/// SHA-256 block hashes through the per-file Merkle subtree
-///
-/// Hybrid torrents currently use the v1 path — both verifiers would yield
-/// the same go/no-go outcome, and v1 piece verification is cheaper
+/// Strategy for verifying a fully-downloaded piece. Chosen once per torrent at session-attach time. v1 torrents use SHA-1 over the piece bytes (`pieces[piece_index * 20 .. + 20]`); v2 torrents collapse 16 KiB SHA-256 block hashes through the per-file Merkle subtree Hybrid torrents currently use the v1 path — both verifiers would yield the same go/no-go outcome, and v1 piece verification is cheaper
 #[derive(Debug, Clone)]
 pub enum PieceVerifier {
-    /// BEP-3 SHA-1 piece-hash list. Empty when the underlying metainfo is
-    /// pure-v2 (in which case `V2Merkle` is used instead)
+    /// BEP-3 SHA-1 piece-hash list. Empty when the underlying metainfo is pure-v2 (in which case `V2Merkle` is used instead)
     V1Sha1 { pieces: Arc<Vec<u8>> },
-    /// BEP 52 Merkle verification. `tables` is one entry per file in
-    /// `info.files` order; `piece_to_file` resolves a torrent-global piece
-    /// index to (file index, piece index within that file)
+    /// BEP 52 Merkle verification. `tables` is one entry per file in `info.files` order; `piece_to_file` resolves a torrent-global piece index to (file index, piece index within that file)
     V2Merkle {
         tables: Arc<Vec<MerkleProofTable>>,
-        /// Cumulative byte offset at the start of each file, length
-        /// `tables.len() + 1`; the last entry is the total torrent length
+        /// Cumulative byte offset at the start of each file, length `tables.len() + 1`; the last entry is the total torrent length
         file_offsets: Arc<Vec<u64>>,
         piece_length: u32,
     },
 }
 
 impl PieceVerifier {
-    /// Build a verifier from parsed metainfo. Returns an error only when
-    /// the v2 layer hashes are inconsistent with the declared file roots —
-    /// which would indicate a malformed `.torrent`
+    /// Build a verifier from parsed metainfo. Returns an error only when the v2 layer hashes are inconsistent with the declared file roots — which would indicate a malformed `.torrent`
     pub fn from_meta(meta: &TorrentMeta) -> Result<Self, MerkleError> {
         // Hybrid torrents prefer v1 verification (cheaper, equally strict)
         if meta.meta_version.has_v1() {
@@ -442,8 +380,7 @@ impl PieceVerifier {
         })
     }
 
-    /// Verify a fully-downloaded piece. `piece_bytes` is the full piece
-    /// (last piece may be partial). Returns `Ok(())` on successful match
+    /// Verify a fully-downloaded piece. `piece_bytes` is the full piece (last piece may be partial). Returns `Ok(())` on successful match
     pub fn verify(&self, piece_index: u32, piece_bytes: &[u8]) -> Result<(), VerifyError> {
         match self {
             Self::V1Sha1 { pieces } => {
@@ -462,9 +399,7 @@ impl PieceVerifier {
                 file_offsets,
                 piece_length,
             } => {
-                // v2 pieces never span file boundaries (BEP 52 padding files
-                // ensure each file starts on a piece boundary). Locate the
-                // file owning this piece
+                // v2 pieces never span file boundaries (BEP 52 padding files ensure each file starts on a piece boundary). Locate the file owning this piece
                 let piece_offset = piece_index as u64 * *piece_length as u64;
                 let file_idx = match file_offsets.binary_search_by(|off| {
                     if *off <= piece_offset {

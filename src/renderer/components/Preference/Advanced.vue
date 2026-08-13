@@ -660,6 +660,45 @@
             <div class="form-info" style="margin-top: 8px">
               {{ $t('preferences.ed2k-server-tips') }}
             </div>
+            <div
+              class="settings-row"
+              style="margin-top: 16px"
+              data-preference-search-target="preferences.ed2k-kad preferences.ed2k-enable-kad preferences.ed2k-kad-port"
+            >
+              <div class="settings-row-content">
+                <div class="settings-row-title">
+                  {{ $t('preferences.ed2k-enable-kad') }}
+                </div>
+                <div class="settings-row-description">
+                  {{ $t('preferences.ed2k-enable-kad-tips') }}
+                </div>
+              </div>
+              <div class="settings-row-action">
+                <ui-checkbox
+                  :model-value="!!form.ed2kEnableKad"
+                  :title="$t('preferences.ed2k-enable-kad')"
+                  :aria-label="$t('preferences.ed2k-enable-kad')"
+                  @change="(val) => setAdvancedBoolean('ed2kEnableKad', val)"
+                />
+              </div>
+            </div>
+            <div class="settings-select-group" style="margin-top: 12px">
+              <div class="settings-select-item">
+                <label class="settings-select-item-label">
+                  {{ $t('preferences.ed2k-kad-port') }}
+                </label>
+                <Input
+                  v-model="form.ed2kKadPort"
+                  inputmode="numeric"
+                  maxlength="5"
+                  placeholder="4672"
+                  @blur="onEd2kKadPortBlur"
+                />
+              </div>
+            </div>
+            <div class="form-info" style="margin-top: 8px">
+              {{ $t('preferences.ed2k-kad-port-tips') }}
+            </div>
           </div>
         </div>
 
@@ -1503,6 +1542,10 @@ const initForm = (config) => {
 		netrcPath,
 		noNetrc,
 		dhtListenPort,
+		ed2KEnableKad,
+		ed2KKadPort,
+		ed2kEnableKad,
+		ed2kKadPort,
 		dohEnable,
 		dohUrl,
 		dohBootstrap,
@@ -1557,6 +1600,8 @@ const initForm = (config) => {
 		netrcPath: netrcPath || "",
 		noNetrc: parseBooleanConfig(noNetrc, false),
 		dhtListenPort,
+		ed2kEnableKad: parseBooleanConfig(ed2KEnableKad ?? ed2kEnableKad, true),
+		ed2kKadPort: normalizePortValue(ed2KKadPort ?? ed2kKadPort, 4672),
 		dohEnable: parseBooleanConfig(dohEnable, false),
 		dohUrl: dohUrl || "",
 		dohBootstrap: dohBootstrap || "",
@@ -1602,6 +1647,29 @@ const initForm = (config) => {
 	return result;
 };
 
+const ENGINE_OVERRIDES_MAX_KEYS = 64;
+const ENGINE_OVERRIDES_MAX_KEY_LENGTH = 64;
+const ENGINE_OVERRIDES_MAX_VALUE_LENGTH = 2048;
+
+const isEngineOverrideValue = (value) =>
+	value === null ||
+	typeof value === "boolean" ||
+	(typeof value === "number" && Number.isFinite(value)) ||
+	(typeof value === "string" &&
+		value.length <= ENGINE_OVERRIDES_MAX_VALUE_LENGTH);
+
+const validateEngineOverrideBounds = (input) => {
+	const entries = Object.entries(input || {});
+	if (entries.length > ENGINE_OVERRIDES_MAX_KEYS) {
+		return false;
+	}
+	return entries.every(
+		([key, value]) =>
+			key.length <= ENGINE_OVERRIDES_MAX_KEY_LENGTH &&
+			isEngineOverrideValue(value),
+	);
+};
+
 const sanitizeEngineOverrides = (input) => {
 	const reservedKeys = new Set(["rpc-host"]);
 	const filtered = {};
@@ -1638,6 +1706,124 @@ const normalizePortValue = (value, fallback) => {
 	}
 
 	return parsed;
+};
+
+const ADVANCED_BOOLEAN_KEYS = [
+	"autoCheckUpdate",
+	"autoSyncTracker",
+	"externalEngineEnabled",
+	"completionScriptEnabled",
+	"ed2kEnableKad",
+];
+
+const ADVANCED_NUMERIC_KEYS = [
+	"ed2kKadPort",
+	"btMaxPeersPerTorrent",
+	"btMaxOutstandingPerPeer",
+	"btUpnpLease",
+	"connectTimeout",
+	"nzbBodyTimeout",
+	"lowestSpeedLimit",
+	"lowestSpeedLimitTimeout",
+];
+
+const normalizeAdvancedConfig = (data, rpcDefaultPort) => {
+	for (const key of ADVANCED_BOOLEAN_KEYS) {
+		if (key in data) {
+			data[key] = !!data[key];
+		}
+	}
+
+	if ("protocols" in data) {
+		const protocols = data.protocols || {};
+		data.protocols = {
+			magnet: !!protocols.magnet,
+			thunder: !!protocols.thunder,
+			ed2k: !!protocols.ed2k,
+			adc: !!protocols.adc,
+			gnutella: !!protocols.gnutella,
+			g2: !!protocols.g2,
+		};
+	}
+
+	if ("sftpKeyPassphrase" in data) {
+		data.sftpPrivateKeyPassphrase = data.sftpKeyPassphrase;
+		delete data.sftpKeyPassphrase;
+	}
+
+	if ("mediaFormat" in data) {
+		data["media-format"] = data.mediaFormat;
+		data["youtube-format"] = data.mediaFormat;
+		delete data.mediaFormat;
+	}
+
+	if (data.btTracker) {
+		data.btTracker = reduceTrackerString(convertLineToComma(data.btTracker));
+	}
+
+	for (const key of ADVANCED_NUMERIC_KEYS) {
+		if (key in data) {
+			const raw = data[key];
+			if (raw === "" || raw === null || raw === undefined) {
+				if (key === "ed2kKadPort") {
+					data[key] = 4672;
+					continue;
+				}
+				delete data[key];
+				continue;
+			}
+			const n = Number(raw);
+			let ok: boolean;
+			if (key === "ed2kKadPort") {
+				ok = Number.isInteger(n) && n >= 1 && n <= 65535;
+			} else if (key === "btUpnpLease") {
+				ok = Number.isFinite(n) && n >= 60 && n <= 86400;
+			} else if (key === "connectTimeout") {
+				ok = Number.isFinite(n) && n >= 1 && n <= 600;
+			} else if (key === "nzbBodyTimeout") {
+				ok = Number.isFinite(n) && n >= 1 && n <= 3600;
+			} else if (key === "lowestSpeedLimitTimeout") {
+				ok = Number.isFinite(n) && n >= 1 && n <= 3600;
+			} else if (key === "lowestSpeedLimit") {
+				ok = Number.isFinite(n) && n >= 0 && n <= 1048576;
+			} else {
+				ok = Number.isFinite(n) && n >= 0;
+			}
+			if (ok) {
+				data[key] = n;
+			} else if (key === "ed2kKadPort") {
+				data[key] = 4672;
+			} else {
+				delete data[key];
+			}
+		}
+	}
+
+	if ("lowestSpeedLimit" in data && typeof data.lowestSpeedLimit === "number") {
+		data.lowestSpeedLimit = data.lowestSpeedLimit * 1024;
+	}
+
+	if (data.ed2kServer !== undefined) {
+		data.ed2kServer = convertLineToComma(data.ed2kServer);
+	}
+
+	if (data.rpcListenPort === "") {
+		data.rpcListenPort = rpcDefaultPort;
+	}
+
+	if (data.externalEnginePort !== undefined) {
+		data.externalEnginePort = normalizePortValue(
+			data.externalEnginePort,
+			rpcDefaultPort,
+		);
+	}
+
+	if ("externalEngineHost" in data) {
+		const host = `${data.externalEngineHost || ""}`.trim();
+		data.externalEngineHost = host || ENGINE_RPC_HOST;
+	}
+
+	return data;
 };
 
 export default {
@@ -1805,6 +1991,9 @@ export default {
 				this.form.externalEnginePort,
 				this.rpcDefaultPort,
 			);
+		},
+		onEd2kKadPortBlur() {
+			this.form.ed2kKadPort = normalizePortValue(this.form.ed2kKadPort, 4672);
 		},
 		getTrackerLabel(value) {
 			for (const group of this.trackerSourceOptions) {
@@ -1998,6 +2187,12 @@ export default {
 							return;
 						}
 						const { filtered, droppedKeys } = sanitizeEngineOverrides(parsed);
+						if (!validateEngineOverrideBounds(filtered)) {
+							this.$msg.error(
+								this.$t("preferences.engine-overrides-too-large"),
+							);
+							return;
+						}
 						data.engineOverrides = filtered;
 						if (droppedKeys.length) {
 							this.$msg.warning(
@@ -2012,44 +2207,6 @@ export default {
 					}
 				}
 				delete data.engineOverridesText;
-			}
-			const booleanKeys = [
-				"autoCheckUpdate",
-				"autoSyncTracker",
-				"externalEngineEnabled",
-				"completionScriptEnabled",
-			];
-			for (const key of booleanKeys) {
-				if (key in data) {
-					data[key] = !!this.form[key];
-				}
-			}
-			if ("protocols" in data) {
-				data.protocols = {
-					magnet: !!this.form.protocols.magnet,
-					thunder: !!this.form.protocols.thunder,
-					ed2k: !!this.form.protocols.ed2k,
-					adc: !!this.form.protocols.adc,
-					gnutella: !!this.form.protocols.gnutella,
-					g2: !!this.form.protocols.g2,
-				};
-			}
-
-			const { btTracker, ed2kServer, rpcListenPort, externalEnginePort } = data;
-
-			if ("sftpKeyPassphrase" in data) {
-				data.sftpPrivateKeyPassphrase = data.sftpKeyPassphrase;
-				delete data.sftpKeyPassphrase;
-			}
-
-			if ("mediaFormat" in data) {
-				data["media-format"] = data.mediaFormat;
-				data["youtube-format"] = data.mediaFormat;
-				delete data.mediaFormat;
-			}
-
-			if (btTracker) {
-				data.btTracker = reduceTrackerString(convertLineToComma(btTracker));
 			}
 
 			if (
@@ -2082,70 +2239,18 @@ export default {
 				}
 			}
 
-			for (const key of [
-				"btMaxPeersPerTorrent",
-				"btMaxOutstandingPerPeer",
-				"btUpnpLease",
-				"connectTimeout",
-				"nzbBodyTimeout",
-				"lowestSpeedLimit",
-				"lowestSpeedLimitTimeout",
-			]) {
-				if (key in data) {
-					const raw = data[key];
-					if (raw === "" || raw === null || raw === undefined) {
-						delete data[key];
-						continue;
-					}
+			if ("ed2kKadPort" in data) {
+				const raw = data.ed2kKadPort;
+				if (raw !== "" && raw !== null && raw !== undefined) {
 					const n = Number(raw);
-					let ok: boolean;
-					if (key === "btUpnpLease") {
-						ok = Number.isFinite(n) && n >= 60 && n <= 86400;
-					} else if (key === "connectTimeout") {
-						ok = Number.isFinite(n) && n >= 1 && n <= 600;
-					} else if (key === "nzbBodyTimeout") {
-						ok = Number.isFinite(n) && n >= 1 && n <= 3600;
-					} else if (key === "lowestSpeedLimitTimeout") {
-						ok = Number.isFinite(n) && n >= 1 && n <= 3600;
-					} else if (key === "lowestSpeedLimit") {
-						ok = Number.isFinite(n) && n >= 0 && n <= 1048576;
-					} else {
-						ok = Number.isFinite(n) && n >= 0;
-					}
-					if (ok) {
-						data[key] = n;
-					} else {
-						delete data[key];
+					if (!(Number.isInteger(n) && n >= 1 && n <= 65535)) {
+						this.$msg.error(this.$t("preferences.ed2k-kad-port-invalid"));
+						return;
 					}
 				}
 			}
 
-			if (
-				"lowestSpeedLimit" in data &&
-				typeof data.lowestSpeedLimit === "number"
-			) {
-				data.lowestSpeedLimit = data.lowestSpeedLimit * 1024;
-			}
-
-			if (ed2kServer !== undefined) {
-				data.ed2kServer = convertLineToComma(ed2kServer);
-			}
-
-			if (rpcListenPort === "") {
-				data.rpcListenPort = this.rpcDefaultPort;
-			}
-
-			if (externalEnginePort !== undefined) {
-				data.externalEnginePort = normalizePortValue(
-					this.form.externalEnginePort,
-					this.rpcDefaultPort,
-				);
-			}
-
-			if ("externalEngineHost" in data) {
-				const host = `${this.form.externalEngineHost || ""}`.trim();
-				data.externalEngineHost = host || ENGINE_RPC_HOST;
-			}
+			normalizeAdvancedConfig(data, this.rpcDefaultPort);
 
 			{
 				const safeData = { ...data };
@@ -2229,7 +2334,10 @@ export default {
 		}
 	},
 	async beforeRouteLeave(to, _from) {
-		changedConfig.advanced = diffConfig(this.formOriginal, this.form);
+		changedConfig.advanced = normalizeAdvancedConfig(
+			diffConfig(this.formOriginal, this.form),
+			this.rpcDefaultPort,
+		);
 		if (to.path === "/preference/basic") {
 			return true;
 		}

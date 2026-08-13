@@ -126,10 +126,6 @@ export const useAppStore = defineStore("app", {
 					stat.downloadSpeed = 0;
 					this.increaseInterval();
 				}
-				// only commit when a tracked field changed — idle ticks produce
-				// identical stats every poll, and blind assignment churns Vue
-				// observers across the renderer (subnav badges, speedometer,
-				// tray, header) for nothing
 				const prev = this.stat as Record<string, number>;
 				let changed = false;
 				for (const k of Object.keys(stat)) {

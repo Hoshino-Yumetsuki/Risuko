@@ -1,12 +1,4 @@
-//! ADC / DC download orchestration. Resolves the target hub from the URI,
-//! handshakes, searches for the TTH, and downloads from the first peer that
-//! accepts the request
-//!
-//! Limitations:
-//! - Active-mode only (we don't bind a listening socket; passive-only hubs
-//!   that require `$RevConnectToMe` won't complete)
-//! - Hub-only URIs without a TTH return immediately with `NoSource` since we
-//!   don't surface a search UI
+//! ADC / DC download orchestration: resolves the hub from the URI, handshakes, searches for the TTH, downloads from the first accepting peer. Limitations: active-mode only (passive-only hubs needing `$RevConnectToMe` won't complete); hub-only URIs without a TTH return `NoSource` since there's no search UI
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
@@ -17,10 +9,7 @@ use tokio_util::sync::CancellationToken;
 use super::types::{is_adc_uri, parse_adc_hub_uri, parse_dchub_file_uri, AdcError};
 use crate::engine::options::EngineOptions;
 
-/// Run a single ADC / NMDC download to completion. Parses the URI, opens
-/// the hub, locates a peer holding the requested TTH and copies the file
-/// to `dir`. Returns the absolute output path on success or a string
-/// describing the failure (`"cancelled"` when aborted)
+/// Run a single ADC / NMDC download to completion: parse the URI, open the hub, locate a peer holding the requested TTH and copy the file to `dir`; returns the output path on success or a failure string (`"cancelled"` when aborted)
 pub async fn run_adc_download(
     uri: &str,
     dir: &str,
@@ -55,9 +44,7 @@ pub async fn run_adc_download(
         return Err("cancelled".into());
     }
 
-    // Passive-only mode,  don't bind a listening socket, so the peer
-    // negotiation (`$ConnectToMe` / ADC `CTM`) cannot complete. Bail out
-    // before performing hub I/O so the task fails fast instead of hanging
+    // Passive-only mode: no listening socket, so peer negotiation (`$ConnectToMe` / ADC `CTM`) cannot complete; bail before hub I/O so the task fails fast instead of hanging
     let _ = (&tth, &completed, dir);
     Err(AdcError::NoSource.to_string())
 }

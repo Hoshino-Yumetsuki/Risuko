@@ -2,7 +2,6 @@ import { getLanguage } from "@shared/locales";
 import type { AppConfig } from "@shared/types/config";
 import logger from "@shared/utils/logger";
 import { invoke } from "@tauri-apps/api/core";
-import axios from "axios";
 import { createApp } from "vue";
 import VueVirtualScroller from "vue-virtual-scroller";
 import { commands } from "@/components/CommandManager/instance";
@@ -147,7 +146,6 @@ async function init(config: AppConfig) {
 	app.component("ui-switch", UiSwitch);
 	app.component("ui-button", UiButton);
 	app.component("motion-enter", MoEnter);
-	app.config.globalProperties.$http = axios;
 	app.config.globalProperties.$t = (
 		key: string,
 		value?: Record<string, unknown>,
@@ -158,8 +156,6 @@ async function init(config: AppConfig) {
 		window.__app.commands = commands;
 		window.__app.trayWorker = initTrayWorker();
 
-		// Show the window after mount to avoid a white flash
-		// Skip showing if launched at login (auto-start)
 		const isOpenedAtLogin = await invoke("is_opened_at_login").catch(
 			() => false,
 		);
@@ -169,23 +165,19 @@ async function init(config: AppConfig) {
 			);
 			getCurrentWebviewWindow()
 				.show()
-				.catch(() => {
-					/* noop */
-				});
+				.catch(() => {});
 		}
 
-		// Initialize auth from saved config and run startup sync
 		const authStore = useAuthStore();
 		await authStore.initFromConfig();
 
-		// Listen for deep link events
 		const sanitizeUrl = (url: string): string => {
 			try {
 				const parsed = new URL(url);
 				parsed.searchParams.delete("token");
 				return parsed.toString();
 			} catch {
-				return url.replace(/([?&])token=[^&]*/i, "$1token=[REDACTED]");
+				return url.replace(/([?&])token=[^&]*/gi, "$1token=[REDACTED]");
 			}
 		};
 
@@ -196,7 +188,6 @@ async function init(config: AppConfig) {
 					continue;
 				}
 
-				// P2P file share link: risuko://share/<id>
 				if (url.startsWith("risuko://share/")) {
 					const rawId = url.slice("risuko://share/".length).split(/[?#]/)[0];
 					let shareId = "";
@@ -266,12 +257,9 @@ async function init(config: AppConfig) {
 			logger.warn("[Risuko] deep-link plugin not available:", err);
 		}
 
-		// Run startup sync if auto-sync is enabled
 		const syncStore = useSyncStore();
 		syncStore.syncOnStartup();
 
-		// Desktop update checks are opt-in and throttled inside the shared updater
-		// service. Mobile builds return immediately without loading the plugin.
 		maybeCheckForUpdates(config);
 	});
 }
@@ -281,9 +269,6 @@ usePreferenceStore()
 	.then((config) => {
 		logger.info("[Risuko] load preference:", config);
 		init(config);
-		// Defer tracker auto-sync off the startup critical path. Fetching+parsing
-		// the tracker source URLs lands ~15–25s after launch and spikes CPU;
-		// run it in an idle callback (or delayed fallback) to keep launch smooth
 		const runAutoSyncTracker = () => {
 			usePreferenceStore().autoSyncTracker();
 		};

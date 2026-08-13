@@ -342,7 +342,6 @@ export const useSyncStore = defineStore("sync", {
 							}
 							toPullTimestamps[categoryId] = remoteTimestamp;
 						}
-						// Equal: skip
 					}
 				}
 

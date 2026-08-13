@@ -181,7 +181,6 @@ export const useAuthStore = defineStore("auth", {
 			if (token) {
 				this.token = token;
 				this.isLoggedIn = true;
-				// Validate in background; keep login state on network errors
 				this.fetchMe();
 			}
 		},

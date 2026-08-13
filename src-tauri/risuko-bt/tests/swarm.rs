@@ -1,8 +1,4 @@
-//! End-to-end swarm test for the in-tree BitTorrent implementation
-//!
-//! Spins up two `Session`s sharing a 256 KiB random payload. The seeder
-//! pre-populates storage and we verify the leecher receives a byte-exact
-//! copy via direct peer connection (no tracker / DHT)
+//! End-to-end swarm test for the in-tree BitTorrent implementation Spins up two `Session`s sharing a 256 KiB random payload. The seeder pre-populates storage and we verify the leecher receives a byte-exact copy via direct peer connection (no tracker / DHT)
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -18,8 +14,7 @@ const PIECE_LEN: u32 = 64 * 1024;
 const TOTAL: u64 = 256 * 1024;
 
 fn make_payload() -> Vec<u8> {
-    // Deterministic non-trivial pattern: LCG output. Not uniform random,
-    // but each piece is distinct which is all we need
+    // Deterministic non-trivial pattern: LCG output. Not uniform random, but each piece is distinct which is all we need
     let mut out = Vec::with_capacity(TOTAL as usize);
     let mut x: u32 = 0xDEADBEEF;
     for _ in 0..TOTAL {
@@ -50,9 +45,7 @@ fn build_meta(payload: &[u8]) -> TorrentMeta {
         }],
         single_file_mode: true,
     };
-    // Build a deterministic info-hash by SHA-1ing a concat of name+length+pieces —
-    // the value doesn't matter for peer-direct tests as long as both
-    // sessions agree. Handshake compares this byte-for-byte
+    // Build a deterministic info-hash by SHA-1ing a concat of name+length+pieces — the value doesn't matter for peer-direct tests as long as both sessions agree. Handshake compares this byte-for-byte
     let mut h = Sha1::new();
     h.update(&info.name);
     h.update((info.files[0].length as u64).to_be_bytes());
@@ -202,8 +195,7 @@ mod v2 {
         out
     }
 
-    /// Compute the per-piece root (SHA-256 Merkle subtree over 16 KiB blocks,
-    /// zero-padded to `blocks_per_piece`)
+    /// Compute the per-piece root (SHA-256 Merkle subtree over 16 KiB blocks, zero-padded to `blocks_per_piece`)
     fn piece_root(piece_bytes: &[u8], blocks_per_piece: u32) -> Id32 {
         let mut leaves: Vec<Id32> = piece_bytes
             .chunks(BLOCK_SIZE as usize)
@@ -220,9 +212,7 @@ mod v2 {
         }
     }
 
-    /// Build a real BEP 52 pure-v2 .torrent for a single-file payload.
-    /// Returns (bencode_bytes, pieces_root, layer_bytes) so the test can
-    /// assert the parsed `info_hash_v2` matches expectations
+    /// Build a real BEP 52 pure-v2 .torrent for a single-file payload. Returns (bencode_bytes, pieces_root, layer_bytes) so the test can assert the parsed `info_hash_v2` matches expectations
     fn build_pure_v2_torrent(name: &str, payload: &[u8]) -> Vec<u8> {
         let blocks_per_piece = V2_PIECE_LEN / BLOCK_SIZE;
         let pieces: Vec<Id32> = payload
@@ -279,8 +269,7 @@ mod v2 {
         let seed_dir = tempfile::tempdir().unwrap();
         let leech_dir = tempfile::tempdir().unwrap();
 
-        // Seed-side payload pre-populated; scan_existing_pieces will mark it
-        // local via the V2Merkle verifier
+        // Seed-side payload pre-populated; scan_existing_pieces will mark it local via the V2Merkle verifier
         write_payload(seed_dir.path(), &meta.info.name, &payload);
 
         let seed = Session::new_with_opts(
@@ -358,31 +347,9 @@ mod v2 {
         assert_eq!(got, payload, "v2 payload mismatch");
     }
 
-    // NOTE: an end-to-end pure-v2 magnet swarm test (leecher resolves
-    // `magnet:?xt=urn:btmh:...` against a risuko seeder) requires the
-    // seeder side to also serve the info dict over BEP 9 ut_metadata.
-    // risuko's torrent loop currently does not implement an ut_metadata
-    // responder (info dicts are loaded from the .torrent on both sides).
-    // Adding one is its own feature; in the meantime the BEP 52 piece-
-    // layer responder is exercised by the unit test
-    // `core::merkle::tests::full_piece_layer_serve_and_verify_round_trip`
-    // and by `torrent::tests::build_hash_response_serves_full_piece_layer`
+    // NOTE: an end-to-end pure-v2 magnet swarm test (leecher resolves `magnet:?xt=urn:btmh:...` against a risuko seeder) requires the seeder side to also serve the info dict over BEP 9 ut_metadata. risuko's torrent loop currently does not implement an ut_metadata responder (info dicts are loaded from the .torrent on both sides). Adding one is its own feature; in the meantime the BEP 52 piece- layer responder is exercised by the unit test `core::merkle::tests::full_piece_layer_serve_and_verify_round_trip` and by `torrent::tests::build_hash_response_serves_full_piece_layer`
 
-    /// End-to-end pure-v2 magnet test:
-    ///   1. Build a real BEP 52 .torrent + payload, seed it from session A
-    ///   2. Construct a pure-v2 magnet URI (`urn:btmh:1220<sha256>`)
-    ///   3. Have session B resolve the magnet by dialing session A's
-    ///      listener directly. The resolver must:
-    ///        a. Receive the info dict via BEP-9 `ut_metadata`
-    ///        b. Receive every file's piece-layer rows via BEP 52
-    ///           `HASH_REQUEST` / `Hashes`
-    ///   4. Synthesize the .torrent bytes from the resolved info + piece
-    ///      layers, attach to session B, dial seeder, download to
-    ///      completion, and assert byte equality with the original payload
-    ///
-    /// Exercises the full pure-v2 magnet path: ut_metadata responder
-    /// (added in this test's enabling commit), HASH_REQUEST responder,
-    /// and the leecher's piece-layer fetcher
+    /// End-to-end pure-v2 magnet test: 1. Build a real BEP 52 .torrent + payload, seed it from session A 2. Construct a pure-v2 magnet URI (`urn:btmh:1220<sha256>`) 3. Have session B resolve the magnet by dialing session A's listener directly. The resolver must: a. Receive the info dict via BEP-9 `ut_metadata` b. Receive every file's piece-layer rows via BEP 52 `HASH_REQUEST` / `Hashes` 4. Synthesize the .torrent bytes from the resolved info + piece layers, attach to session B, dial seeder, download to completion, and assert byte equality with the original payload Exercises the full pure-v2 magnet path: ut_metadata responder (added in this test's enabling commit), HASH_REQUEST responder, and the leecher's piece-layer fetcher
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn pure_v2_magnet_leecher_resolves_and_downloads_from_seeder() {
         let _ = env_logger::builder().is_test(true).try_init();
@@ -424,8 +391,7 @@ mod v2 {
         let seed_addr: SocketAddr = format!("127.0.0.1:{}", seed.listen_port()).parse().unwrap();
         let magnet_uri = format!("magnet:?xt=urn:btmh:1220{}", hex::encode(v2_hash.0));
 
-        // Resolve via direct peer dial (no tracker / DHT). This drives both
-        // ut_metadata fetch and BEP 52 piece-layer fetch through the seeder
+        // Resolve via direct peer dial (no tracker / DHT). This drives both ut_metadata fetch and BEP 52 piece-layer fetch through the seeder
         let resolved = risuko_bt::magnet::resolve_with_peers(
             &magnet_uri,
             &[],

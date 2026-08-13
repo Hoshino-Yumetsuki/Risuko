@@ -9,10 +9,7 @@ pub struct RpcClient {
 
 impl RpcClient {
     pub fn new_with_host(host: &str, port: u16, secret: Option<String>) -> Self {
-        // Fail closed: a default client would silently drop the timeout and
-        // connect_timeout configured above, leaving JSON-RPC calls free to hang
-        // indefinitely. Building the client cannot legitimately fail with this
-        // configuration, so an explicit panic surfaces real misconfiguration
+        // Fail closed: a default client would silently drop the configured timeouts and let JSON-RPC calls hang forever; building cannot legitimately fail here, so an explicit panic surfaces real misconfiguration
         let client = risuko_http::Client::builder()
             .timeout(std::time::Duration::from_secs(30))
             .connect_timeout(std::time::Duration::from_secs(5))

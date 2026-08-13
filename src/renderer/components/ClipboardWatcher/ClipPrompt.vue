@@ -31,7 +31,6 @@ export default {
 			this.refresh();
 			this.playEntrance();
 		});
-		// Re-render if the flyout's language is re-synced while it's mounted
 		this.onLang = () => this.$forceUpdate();
 		i18next.on("languageChanged", this.onLang);
 		window.addEventListener("keydown", this.onKey);

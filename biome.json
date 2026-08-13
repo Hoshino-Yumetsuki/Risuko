@@ -1,5 +1,5 @@
 {
-	"$schema": "https://biomejs.dev/schemas/2.5.7/schema.json",
+	"$schema": "https://biomejs.dev/schemas/2.5.8/schema.json",
 	"vcs": { "enabled": true, "clientKind": "git", "useIgnoreFile": true },
 	"files": {
 		"includes": [
@@ -66,6 +66,14 @@
 			"linter": {
 				"rules": {
 					"suspicious": { "noConsole": "warn" }
+				}
+			}
+		},
+		{
+			"includes": ["src/shared/utils/logger.ts"],
+			"linter": {
+				"rules": {
+					"suspicious": { "noConsole": "off" }
 				}
 			}
 		},

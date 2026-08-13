@@ -3,6 +3,9 @@ use serde_json::{Map, Value};
 
 use super::speed_limiter::parse_speed_limit;
 
+pub const DEFAULT_ED2K_PORT: u16 = 4662;
+pub const DEFAULT_ED2K_KAD_PORT: u16 = 4672;
+
 fn is_reserved_engine_key(key: &str) -> bool {
     let normalized = key.to_ascii_lowercase();
     normalized.starts_with("rpc-")
@@ -26,8 +29,7 @@ fn apply_engine_overrides(global: &mut Map<String, Value>, user: &Map<String, Va
     }
 }
 
-/// Default global options and per-task option management
-/// Maps aria2 option names to internal config values
+/// Default global options and per-task option management, mapping aria2 option names to internal config values
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EngineOptions {
@@ -64,9 +66,7 @@ impl EngineOptions {
             }
         }
 
-        // Advanced escape hatch: allow users to provide arbitrary engine keys
-        // from the UI via `engine-overrides` so newly added backend options can
-        // be configured without waiting for dedicated form fields
+        // Escape hatch: users can supply arbitrary engine keys from the UI via `engine-overrides` so new backend options work without dedicated form fields
         apply_engine_overrides(&mut global, user);
 
         Self { global }
@@ -83,8 +83,7 @@ impl EngineOptions {
         })
     }
 
-    /// Coerce common boolean representations. Accepts native bools,
-    /// "true"/"false" strings, "1"/"0" strings, and numeric 0/1
+    /// Coerce common boolean representations: native bools, "true"/"false" strings, "1"/"0" strings, and numeric 0/1
     pub fn get_bool(&self, key: &str) -> Option<bool> {
         match self.global.get(key)? {
             Value::Bool(b) => Some(*b),
@@ -143,8 +142,7 @@ impl EngineOptions {
         self.get_u64("seed-time").unwrap_or(0)
     }
 
-    /// Keep seeding until the user stops manually. Overrides seed-time /
-    /// seed-ratio enforcement (those only take effect if this is false)
+    /// Keep seeding until the user stops manually, overriding seed-time/seed-ratio enforcement (those only apply when this is false)
     pub fn keep_seeding(&self) -> bool {
         self.get_bool("keep-seeding").unwrap_or(false)
     }
@@ -178,8 +176,7 @@ impl EngineOptions {
             .map(std::time::Duration::from_secs)
     }
 
-    /// BEP-8 Message Stream Encryption policy: "plaintext", "prefer", "require"
-    /// Defaults to `prefer` (MSE first, plaintext fallback)
+    /// BEP-8 Message Stream Encryption policy ("plaintext", "prefer", "require"), defaulting to `prefer` (MSE first, plaintext fallback)
     pub fn bt_encryption_policy(&self) -> &'static str {
         match self.get_str("bt-encryption-policy").unwrap_or("prefer") {
             "plaintext" => "plaintext",
@@ -213,7 +210,48 @@ impl EngineOptions {
     }
 
     pub fn ed2k_port(&self) -> u16 {
-        self.get_u64("ed2k-port").unwrap_or(4662) as u16
+        self.get_u64("ed2k-port")
+            .and_then(|port| u16::try_from(port).ok())
+            .filter(|port| *port != 0)
+            .unwrap_or(DEFAULT_ED2K_PORT)
+    }
+
+    /// Whether eMule Kad source discovery starts with the engine; Kad is intentionally separate from the BitTorrent DHT settings
+    pub fn ed2k_enable_kad(&self) -> bool {
+        self.get_bool("ed2k-enable-kad").unwrap_or(true)
+    }
+
+    /// Parse the configured Kad UDP port without narrowing or silently accepting an invalid value: a missing setting uses the protocol default, while an explicit zero, out-of-range, or non-numeric value returns an error so startup can report the misconfiguration instead of binding an unrelated port
+    pub fn ed2k_kad_port_checked(&self) -> Result<u16, String> {
+        let Some(value) = self.global.get("ed2k-kad-port") else {
+            return Ok(DEFAULT_ED2K_KAD_PORT);
+        };
+
+        let parsed = match value {
+            Value::Number(number) => number.as_u64().ok_or_else(|| {
+                format!("invalid ed2k-kad-port value {number}: expected an integer")
+            }),
+            Value::String(text) => text.trim().parse::<u64>().map_err(|_| {
+                format!("invalid ed2k-kad-port value {text:?}: expected an integer in 1..=65535")
+            }),
+            other => Err(format!(
+                "invalid ed2k-kad-port value {other}: expected an integer in 1..=65535"
+            )),
+        }?;
+
+        if parsed == 0 || parsed > u16::MAX as u64 {
+            return Err(format!(
+                "invalid ed2k-kad-port value {parsed}: expected an integer in 1..=65535"
+            ));
+        }
+
+        Ok(parsed as u16)
+    }
+
+    /// Compatibility accessor for callers that cannot propagate a startup error; new startup code should use [`Self::ed2k_kad_port_checked`] so invalid configuration surfaces to health diagnostics
+    pub fn ed2k_kad_port(&self) -> u16 {
+        self.ed2k_kad_port_checked()
+            .unwrap_or(DEFAULT_ED2K_KAD_PORT)
     }
 
     /// User-defined task routing rules (pattern -> tag + directory)
@@ -334,6 +372,9 @@ mod tests {
         assert_eq!(opts.seed_time(), 0);
         assert!(opts.ed2k_servers().is_empty());
         assert_eq!(opts.ed2k_port(), 4662);
+        assert!(opts.ed2k_enable_kad());
+        assert_eq!(opts.ed2k_kad_port_checked().unwrap(), 4672);
+        assert_eq!(opts.ed2k_kad_port(), 4672);
     }
 
     #[test]
@@ -343,6 +384,24 @@ mod tests {
         assert_eq!(opts.seed_ratio(), 1.5);
         assert_eq!(opts.ed2k_servers(), vec!["srv1", "srv2"]);
         assert_eq!(opts.ed2k_port(), 5662);
+    }
+
+    #[test]
+    fn kad_options_parse_and_validate_port() {
+        let mut sys = Map::new();
+        sys.insert("ed2k-enable-kad".into(), json!(false));
+        sys.insert("ed2k-kad-port".into(), json!(5000));
+        let opts = EngineOptions::from_config(&sys, &Map::new());
+        assert!(!opts.ed2k_enable_kad());
+        assert_eq!(opts.ed2k_kad_port_checked().unwrap(), 5000);
+
+        for invalid in [json!(0), json!(65536), json!("not-a-port"), json!(-1)] {
+            let mut sys = Map::new();
+            sys.insert("ed2k-kad-port".into(), invalid);
+            let opts = EngineOptions::from_config(&sys, &Map::new());
+            assert!(opts.ed2k_kad_port_checked().is_err());
+            assert_eq!(opts.ed2k_kad_port(), 4672);
+        }
     }
 
     #[test]

@@ -1,19 +1,4 @@
-//! Per-connection µTP state machine and the [`UtpStream`] `AsyncRead` /
-//! `AsyncWrite` handle.
-//!
-//! Each connection is driven by a single background task ([`drive`]). The
-//! task owns the connection's slice of the shared UDP socket's traffic (fed
-//! to it by the socket router over an mpsc channel) and is the only thing
-//! that touches the wire for this connection. The [`UtpStream`] handle shares
-//! a [`Mutex<ConnState>`] with the driver: reads drain `recv_ready`, writes
-//! append to `send_buf`, and a [`Notify`] nudges the driver to do work. The
-//! driver wakes the stream's stored wakers when data arrives or buffer space
-//! frees up.
-//!
-//! Reliability model: in-order byte delivery with a reorder buffer for
-//! out-of-order data, cumulative + selective acknowledgements, RFC-6298-style
-//! RTO retransmission (Karn's algorithm for RTT sampling), and LEDBAT-lite
-//! delay-based congestion control bounded by the peer's advertised window.
+//! Per-connection µTP state machine and the [`UtpStream`] `AsyncRead`/`AsyncWrite` handle: each connection is driven by a single background task ([`drive`]) that owns the connection's slice of the shared UDP socket's traffic (fed by the socket router over an mpsc channel) and is the only thing that touches the wire for this connection; the [`UtpStream`] handle shares a [`Mutex<ConnState>`] with the driver (reads drain `recv_ready`, writes append to `send_buf`, a [`Notify`] nudges the driver) and the driver wakes the stream's stored wakers when data arrives or buffer space frees up. Reliability model: in-order byte delivery with a reorder buffer for out-of-order data, cumulative + selective acknowledgements, RFC-6298-style RTO retransmission (Karn's algorithm for RTT sampling), and LEDBAT-lite delay-based congestion control bounded by the peer's advertised window
 
 use std::collections::{BTreeMap, VecDeque};
 use std::io;
@@ -33,16 +18,15 @@ use super::now_micros;
 use super::packet::{PacketType, UtpHeader};
 use super::socket::{ConnKey, ConnRegistry};
 
-/// Payload bytes per outgoing DATA packet. Conservative to stay under common
-/// path MTUs (1500 - IP - UDP - µTP header) without PMTU discovery.
+/// Payload bytes per outgoing DATA packet; conservative to stay under common path MTUs (1500 - IP - UDP - µTP header) without PMTU discovery
 const MSS: usize = 1200;
-/// Cap on our reorder + ready buffers; also what we advertise as `wnd_size`.
+/// Cap on our reorder + ready buffers; also what we advertise as `wnd_size`
 const RECV_BUF_MAX: usize = 1024 * 1024;
-/// Cap on app bytes buffered for sending before `poll_write` backpressures.
+/// Cap on app bytes buffered for sending before `poll_write` backpressures
 const SEND_BUF_MAX: usize = 512 * 1024;
-/// LEDBAT target queuing delay (100 ms, per BEP-29).
+/// LEDBAT target queuing delay (100 ms, per BEP-29)
 const TARGET_MICROS: f64 = 100_000.0;
-/// LEDBAT window-gain factor.
+/// LEDBAT window-gain factor
 const CWND_GAIN: f64 = 1.0;
 const MIN_CWND: usize = 2 * MSS;
 const MAX_CWND: usize = 2 * 1024 * 1024;
@@ -50,12 +34,12 @@ const INITIAL_CWND: usize = 3 * MSS;
 const MIN_RTO: Duration = Duration::from_millis(500);
 const MAX_RTO: Duration = Duration::from_secs(10);
 const INITIAL_RTO: Duration = Duration::from_secs(1);
-/// Give up retransmitting after this many tries and reset the connection.
+/// Give up retransmitting after this many tries and reset the connection
 const MAX_RETRANSMITS: u32 = 8;
-/// Tear the driver down if nothing happens for this long after close.
+/// Tear the driver down if nothing happens for this long after close
 const LINGER_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// `a` is strictly after `b` in 16-bit sequence space (within half the ring).
+/// `a` is strictly after `b` in 16-bit sequence space (within half the ring)
 fn seq_after(a: u16, b: u16) -> bool {
     let d = a.wrapping_sub(b);
     d != 0 && d < 0x8000
@@ -63,18 +47,17 @@ fn seq_after(a: u16, b: u16) -> bool {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum State {
-    /// Outgoing SYN sent, awaiting the peer's STATE.
+    /// Outgoing SYN sent, awaiting the peer's STATE
     SynSent,
-    /// Handshake done; data may flow.
+    /// Handshake done; data may flow
     Connected,
-    /// We sent a FIN; still draining/acking.
+    /// We sent a FIN; still draining/acking
     FinSent,
-    /// Terminal — either clean or via RESET/error.
+    /// Terminal — either clean or via RESET/error
     Closed,
 }
 
-/// A packet we've transmitted that is awaiting acknowledgement. Stored
-/// un-encoded so retransmissions carry fresh timestamps / ack_nr / window.
+/// A packet we've transmitted that is awaiting acknowledgement; stored un-encoded so retransmissions carry fresh timestamps / ack_nr / window
 struct OutPacket {
     packet_type: PacketType,
     seq_nr: u16,
@@ -86,7 +69,7 @@ struct OutPacket {
 pub(crate) struct ConnState {
     state: State,
     remote: SocketAddr,
-    /// Connection id stamped on our outgoing (non-SYN) packets.
+    /// Connection id stamped on our outgoing (non-SYN) packets
     conn_id_send: u16,
 
     seq_nr: u16,
@@ -98,43 +81,37 @@ pub(crate) struct ConnState {
     recv_ready: VecDeque<u8>,
     reorder: BTreeMap<u16, Vec<u8>>,
 
-    /// Peer's advertised receive window (flow control), in bytes.
+    /// Peer's advertised receive window (flow control), in bytes
     peer_wnd: u32,
-    /// Our congestion window, in bytes (LEDBAT-controlled).
+    /// Our congestion window, in bytes (LEDBAT-controlled)
     max_window: usize,
-    /// Minimum observed one-way delay (LEDBAT baseline), microseconds.
+    /// Minimum observed one-way delay (LEDBAT baseline), microseconds
     base_delay: u32,
 
     rtt: f64,
     rtt_var: f64,
     rto: Duration,
 
-    /// One-way delay we last measured for the peer's packets; echoed back in
-    /// our `timestamp_difference_microseconds` field so the peer can run
-    /// LEDBAT against us.
+    /// One-way delay we last measured for the peer's packets; echoed back in our `timestamp_difference_microseconds` field so the peer can run LEDBAT against us
     reply_micros: u32,
 
-    /// True once we've received data we haven't acked yet.
+    /// True once we've received data we haven't acked yet
     needs_ack: bool,
-    /// App requested close; driver should emit a FIN once the send buffer
-    /// has drained.
+    /// App requested close; driver should emit a FIN once the send buffer has drained
     want_fin: bool,
-    /// Peer's FIN sequence number, once received. EOF is delivered to the
-    /// reader after all bytes up to and including this are in order.
+    /// Peer's FIN sequence number, once received; EOF is delivered to the reader after all bytes up to and including this are in order
     peer_fin: Option<u16>,
     eof: bool,
     error: Option<io::ErrorKind>,
 
-    /// Recovery marker for the current fast-retransmit episode
-    ///
-    /// Further SACKs before this seq is cumulatively acked do not shrink the window again
+    /// Recovery marker for the current fast-retransmit episode; further SACKs before this seq is cumulatively acked do not shrink the window again
     recovery_seq: Option<u16>,
 
-    /// Encoded datagrams the driver should put on the wire this iteration.
+    /// Encoded datagrams the driver should put on the wire this iteration
     outbox: Vec<Vec<u8>>,
     read_waker: Option<Waker>,
     write_waker: Option<Waker>,
-    /// Fired by the driver when the connection becomes established (or fails).
+    /// Fired by the driver when the connection becomes established (or fails)
     connect_notify: Option<oneshot::Sender<io::Result<()>>>,
 }
 
@@ -146,10 +123,9 @@ impl ConnState {
         RECV_BUF_MAX.saturating_sub(used) as u32
     }
 
-    /// Encode an outstanding packet with current ack/window/timestamps.
+    /// Encode an outstanding packet with current ack/window/timestamps
     fn encode(&self, p: &OutPacket) -> Vec<u8> {
-        // The SYN is special-cased to carry our *receive* id (send-1); every
-        // other packet carries our send id.
+        // The SYN is special-cased to carry our *receive* id (send-1); every other packet carries our send id
         let conn_id = if p.packet_type == PacketType::Syn {
             self.conn_id_send.wrapping_sub(1)
         } else {
@@ -168,7 +144,7 @@ impl ConnState {
         header.encode(&p.payload)
     }
 
-    /// Build a standalone ST_STATE acknowledgement.
+    /// Build a standalone ST_STATE acknowledgement
     fn encode_state(&self) -> Vec<u8> {
         UtpHeader {
             packet_type: PacketType::State,
@@ -176,7 +152,7 @@ impl ConnState {
             timestamp_micros: now_micros(),
             timestamp_diff_micros: self.reply_micros,
             wnd_size: self.advertised_window(),
-            // ST_STATE carries the next seq to be used but does not consume it.
+            // ST_STATE carries the next seq to be used but does not consume it
             seq_nr: self.seq_nr,
             ack_nr: self.ack_nr,
             selective_ack: self.build_selective_ack(),
@@ -184,8 +160,7 @@ impl ConnState {
         .encode(&[])
     }
 
-    /// Selective-ACK bitmask covering buffered out-of-order packets, if any.
-    /// Bit `i` (LSB-first per byte) acks `ack_nr + 2 + i`.
+    /// Selective-ACK bitmask covering buffered out-of-order packets, if any; bit `i` (LSB-first per byte) acks `ack_nr + 2 + i`
     fn build_selective_ack(&self) -> Option<Vec<u8>> {
         if self.reorder.is_empty() {
             return None;
@@ -205,8 +180,7 @@ impl ConnState {
         self.unacked.iter().map(|p| p.payload.len()).sum()
     }
 
-    /// Move app bytes from `send_buf` into DATA packets while the congestion
-    /// and flow-control windows allow, queuing them for transmission.
+    /// Move app bytes from `send_buf` into DATA packets while the congestion and flow-control windows allow, queuing them for transmission
     fn fill_send_window(&mut self) {
         if self.state != State::Connected {
             return;
@@ -229,7 +203,7 @@ impl ConnState {
         }
     }
 
-    /// Assign a fresh sequence number to a DATA/FIN packet and queue it.
+    /// Assign a fresh sequence number to a DATA/FIN packet and queue it
     fn transmit_new(&mut self, packet_type: PacketType, payload: Vec<u8>) {
         let p = OutPacket {
             packet_type,
@@ -241,11 +215,11 @@ impl ConnState {
         self.seq_nr = self.seq_nr.wrapping_add(1);
         self.outbox.push(self.encode(&p));
         self.unacked.push_back(p);
-        // A DATA/FIN packet carries our ack_nr, so it doubles as an ack.
+        // A DATA/FIN packet carries our ack_nr, so it doubles as an ack
         self.needs_ack = false;
     }
 
-    /// Process a cumulative ack: drop fully-acked packets and sample RTT.
+    /// Process a cumulative ack: drop fully-acked packets and sample RTT
     fn process_ack(&mut self, ack_nr: u16, their_delay: u32) {
         let mut acked_any = false;
         let mut acked_bytes = 0usize;
@@ -256,7 +230,7 @@ impl ConnState {
             let p = self.unacked.pop_front().unwrap();
             acked_any = true;
             acked_bytes += p.payload.len();
-            // Karn: only sample RTT from packets sent exactly once.
+            // Karn: only sample RTT from packets sent exactly once
             if p.transmissions == 1 {
                 self.update_rtt(p.sent_at.elapsed());
             }
@@ -273,8 +247,7 @@ impl ConnState {
         }
     }
 
-    /// Remove packets named by a selective-ACK bitmask and fast-retransmit the
-    /// oldest unacked packet if anything past it was selectively acked.
+    /// Remove packets named by a selective-ACK bitmask and fast-retransmit the oldest unacked packet if anything past it was selectively acked
     fn process_selective_ack(&mut self, ack_nr: u16, mask: &[u8]) {
         let base = ack_nr.wrapping_add(2);
         let mut sacked = false;
@@ -290,9 +263,7 @@ impl ConnState {
                 }
             }
         }
-        // If holes remain before SACKed packets, the front was likely lost;
-        // fast-retransmit it. Extract its fields first so the mutable borrow
-        // is released before we re-encode (which borrows &self).
+        // If holes remain before SACKed packets, the front was likely lost; fast-retransmit it, extracting its fields first so the mutable borrow is released before we re-encode (which borrows &self)
         if sacked {
             // SACK past a hole signals loss; decrease once per `recovery_seq` episode
             if self.recovery_seq.is_none() {
@@ -331,7 +302,7 @@ impl ConnState {
         self.rto = rto.clamp(MIN_RTO, MAX_RTO);
     }
 
-    /// LEDBAT congestion-window update from the peer-measured one-way delay.
+    /// LEDBAT congestion-window update from the peer-measured one-way delay
     fn update_cwnd(&mut self, their_delay: u32, acked_bytes: usize) {
         if their_delay == 0 {
             return;
@@ -347,20 +318,19 @@ impl ConnState {
         self.max_window = (next as i64).clamp(MIN_CWND as i64, MAX_CWND as i64) as usize;
     }
 
-    /// Ingest one decoded packet. Returns nothing; mutates buffers/outbox and
-    /// arms wakers as appropriate.
+    /// Ingest one decoded packet. Returns nothing; mutates buffers/outbox and arms wakers as appropriate
     fn handle_packet(&mut self, header: &UtpHeader, payload: &[u8]) {
         if self.state == State::Closed {
             return;
         }
         self.peer_wnd = header.wnd_size;
-        // Measure the one-way delay of *this* packet so we can echo it back.
+        // Measure the one-way delay of *this* packet so we can echo it back
         self.reply_micros = now_micros().wrapping_sub(header.timestamp_micros);
 
-        // Handshake completion: first STATE after our SYN.
+        // Handshake completion: first STATE after our SYN
         if self.state == State::SynSent && header.packet_type == PacketType::State {
             self.state = State::Connected;
-            // Peer's STATE carries its next-data seq; we've received nothing yet.
+            // Peer's STATE carries its next-data seq; we've received nothing yet
             self.ack_nr = header.seq_nr.wrapping_sub(1);
             if let Some(tx) = self.connect_notify.take() {
                 let _ = tx.send(Ok(()));
@@ -384,7 +354,7 @@ impl ConnState {
             PacketType::State | PacketType::Syn => {}
         }
 
-        // After a FIN whose sequence we've now reached in order, signal EOF.
+        // After a FIN whose sequence we've now reached in order, signal EOF
         if let Some(fin) = self.peer_fin {
             if !seq_after(fin, self.ack_nr) {
                 self.eof = true;
@@ -394,18 +364,18 @@ impl ConnState {
         self.maybe_finish();
     }
 
-    /// Place a DATA/FIN payload in order, buffering out-of-order arrivals.
+    /// Place a DATA/FIN payload in order, buffering out-of-order arrivals
     fn accept_inorder(&mut self, header: &UtpHeader, payload: &[u8]) {
         let expected = self.ack_nr.wrapping_add(1);
         if header.seq_nr == expected {
             self.consume(header.packet_type, header.seq_nr, payload);
-            // Drain any contiguous reorder-buffer entries.
+            // Drain any contiguous reorder-buffer entries
             loop {
                 let next = self.ack_nr.wrapping_add(1);
                 let Some(buf) = self.reorder.remove(&next) else {
                     break;
                 };
-                // A buffered FIN is recorded; its (empty) payload adds nothing.
+                // A buffered FIN is recorded; its (empty) payload adds nothing
                 let ty = if Some(next) == self.peer_fin {
                     PacketType::Fin
                 } else {
@@ -415,22 +385,22 @@ impl ConnState {
             }
             self.needs_ack = true;
         } else if seq_after(header.seq_nr, self.ack_nr) {
-            // Future packet: buffer it (bounded by the advertised window).
+            // Record an out-of-order FIN regardless of buffer room: it carries no payload, so it costs nothing, and dropping it could stall EOF until a retransmission refills the reorder buffer
+            if header.packet_type == PacketType::Fin {
+                self.peer_fin = Some(header.seq_nr);
+            }
+            // Future packet: buffer it (bounded by the advertised window)
             if self.reorder.len() < RECV_BUF_MAX / MSS {
-                if header.packet_type == PacketType::Fin {
-                    self.peer_fin = Some(header.seq_nr);
-                }
                 self.reorder.insert(header.seq_nr, payload.to_vec());
             }
             self.needs_ack = true;
         } else {
-            // Duplicate / already-acked: re-ack so the peer makes progress.
+            // Duplicate / already-acked: re-ack so the peer makes progress
             self.needs_ack = true;
         }
     }
 
-    /// Advance `ack_nr` past `seq`, delivering DATA bytes to the reader and
-    /// recording a FIN.
+    /// Advance `ack_nr` past `seq`, delivering DATA bytes to the reader and recording a FIN
     fn consume(&mut self, ty: PacketType, seq: u16, payload: &[u8]) {
         self.ack_nr = seq;
         if ty == PacketType::Fin {
@@ -441,7 +411,7 @@ impl ConnState {
         }
     }
 
-    /// Retransmit timed-out packets; returns the deadline of the next timer.
+    /// Retransmit timed-out packets; returns the deadline of the next timer
     fn check_retransmit(&mut self) {
         let Some(front) = self.unacked.front() else {
             return;
@@ -453,10 +423,10 @@ impl ConnState {
             self.fail(io::ErrorKind::TimedOut);
             return;
         }
-        // Timeout: collapse the congestion window (TCP-style) and back off RTO.
+        // Timeout: collapse the congestion window (TCP-style) and back off RTO
         self.max_window = MIN_CWND;
         self.rto = (self.rto * 2).min(MAX_RTO);
-        // Re-send the oldest unacked packet; cumulative acks pull the rest.
+        // Re-send the oldest unacked packet; cumulative acks pull the rest
         let (pt, seq, payload, tx) = {
             let f = self.unacked.front_mut().unwrap();
             f.sent_at = Instant::now();
@@ -473,7 +443,7 @@ impl ConnState {
         self.outbox.push(self.encode(&p));
     }
 
-    /// Emit a FIN once the send buffer has drained, then mark FinSent.
+    /// Emit a FIN once the send buffer has drained, then mark FinSent
     fn maybe_send_fin(&mut self) {
         if self.want_fin && self.state == State::Connected && self.send_buf.is_empty() {
             self.transmit_new(PacketType::Fin, Vec::new());
@@ -481,15 +451,14 @@ impl ConnState {
         }
     }
 
-    /// Transition a half-closed connection to fully closed once our FIN is
-    /// acked and we've seen the peer's FIN, so the driver can wind down.
+    /// Transition a half-closed connection to fully closed once our FIN is acked and we've seen the peer's FIN, so the driver can wind down
     fn maybe_finish(&mut self) {
         if self.state == State::FinSent && self.unacked.is_empty() && self.eof {
             self.state = State::Closed;
         }
     }
 
-    /// Next instant the driver must wake to do timer work, if any.
+    /// Next instant the driver must wake to do timer work, if any
     fn next_deadline(&self) -> Option<Instant> {
         self.unacked.front().map(|p| p.sent_at + self.rto)
     }
@@ -509,16 +478,14 @@ impl ConnState {
         self.notify_write();
     }
 
-    /// Seed responder state from the initiating SYN: it consumed `syn.seq_nr`,
-    /// so our first expected DATA is the next sequence number.
+    /// Seed responder state from the initiating SYN: it consumed `syn.seq_nr`, so our first expected DATA is the next sequence number
     pub(crate) fn seed_responder(&mut self, syn: &UtpHeader) {
         self.ack_nr = syn.seq_nr;
         self.peer_wnd = syn.wnd_size;
         self.reply_micros = now_micros().wrapping_sub(syn.timestamp_micros);
     }
 
-    /// Abandon the connection immediately (e.g. on connect timeout) so the
-    /// driver exits promptly instead of retransmitting to a dead peer.
+    /// Abandon the connection immediately (e.g. on connect timeout) so the driver exits promptly instead of retransmitting to a dead peer
     pub(crate) fn force_close(&mut self) {
         self.state = State::Closed;
         self.error.get_or_insert(io::ErrorKind::TimedOut);
@@ -539,31 +506,29 @@ impl ConnState {
     }
 }
 
-/// Shared between the [`UtpStream`] handle and its driver task.
+/// Shared between the [`UtpStream`] handle and its driver task
 pub(crate) struct Shared {
     pub(crate) state: Mutex<ConnState>,
-    /// Nudges the driver after the app writes / requests shutdown.
+    /// Nudges the driver after the app writes / requests shutdown
     pub(crate) nudge: Notify,
 }
 
-/// Whether a freshly-created connection initiates (sends a SYN) or responds.
-/// Carries the establishment notifier for the initiator; consumed by [`drive`].
+/// Whether a freshly-created connection initiates (sends a SYN) or responds. Carries the establishment notifier for the initiator; consumed by [`drive`]
 pub(crate) enum Role {
-    /// Outgoing dial; the driver sends a SYN and reports establishment here.
+    /// Outgoing dial; the driver sends a SYN and reports establishment here
     Initiator(oneshot::Sender<io::Result<()>>),
-    /// Inbound connection accepted from a peer's SYN; already Connected.
+    /// Inbound connection accepted from a peer's SYN; already Connected
     Responder,
 }
 
-/// `Copy` view of [`Role`] used to pick a connection's initial state without
-/// consuming the (non-`Clone`) establishment notifier.
+/// `Copy` view of [`Role`] used to pick a connection's initial state without consuming the (non-`Clone`) establishment notifier
 #[derive(Clone, Copy)]
 pub(crate) enum RoleKind {
     Initiator,
     Responder,
 }
 
-/// Configuration handed to a connection driver by the socket layer.
+/// Configuration handed to a connection driver by the socket layer
 pub(crate) struct DriverConfig {
     pub udp: Arc<UdpSocket>,
     pub remote: SocketAddr,
@@ -572,7 +537,7 @@ pub(crate) struct DriverConfig {
     pub key: ConnKey,
 }
 
-/// Create the shared state for a new connection.
+/// Create the shared state for a new connection
 pub(crate) fn new_shared(remote: SocketAddr, conn_id_send: u16, kind: RoleKind) -> Arc<Shared> {
     let state = match kind {
         RoleKind::Initiator => State::SynSent,
@@ -583,8 +548,7 @@ pub(crate) fn new_shared(remote: SocketAddr, conn_id_send: u16, kind: RoleKind) 
             state,
             remote,
             conn_id_send,
-            // Initiator's SYN consumes seq 1, so the next DATA is seq 2.
-            // Responder picks a random initial sequence.
+            // Initiator's SYN consumes seq 1, so the next DATA is seq 2. Responder picks a random initial sequence
             seq_nr: match kind {
                 RoleKind::Initiator => 2,
                 RoleKind::Responder => rand::random::<u16>() | 1,
@@ -616,14 +580,14 @@ pub(crate) fn new_shared(remote: SocketAddr, conn_id_send: u16, kind: RoleKind) 
     })
 }
 
-/// The single task that owns a connection's wire traffic for its lifetime.
+/// The single task that owns a connection's wire traffic for its lifetime
 pub(crate) async fn drive(shared: Arc<Shared>, mut cfg: DriverConfig, role: Role) {
-    // Kick off the handshake / initial ack and arm the connect notifier.
+    // Kick off the handshake / initial ack and arm the connect notifier
     {
         let mut st = shared.state.lock();
         if let Role::Initiator(tx) = role {
             st.connect_notify = Some(tx);
-            // Send the SYN (seq 1). It lives in `unacked` for retransmission.
+            // Send the SYN (seq 1). It lives in `unacked` for retransmission
             let syn = OutPacket {
                 packet_type: PacketType::Syn,
                 seq_nr: 1,
@@ -635,7 +599,7 @@ pub(crate) async fn drive(shared: Arc<Shared>, mut cfg: DriverConfig, role: Role
             st.outbox.push(syn_bytes);
             st.unacked.push_back(syn);
         } else {
-            // Responder: ack_nr was set by the socket from the SYN; send STATE.
+            // Responder: ack_nr was set by the socket from the SYN; send STATE
             let state_bytes = st.encode_state();
             st.outbox.push(state_bytes);
         }
@@ -652,7 +616,7 @@ pub(crate) async fn drive(shared: Arc<Shared>, mut cfg: DriverConfig, role: Role
             st.next_deadline()
         };
 
-        // Stop lingering once closed and drained.
+        // Stop lingering once closed and drained
         if let Some(since) = closed_since {
             let drained = {
                 let st = shared.state.lock();
@@ -683,7 +647,7 @@ pub(crate) async fn drive(shared: Arc<Shared>, mut cfg: DriverConfig, role: Role
                         st.handle_packet(&header, &payload);
                     }
                     None => {
-                        // Router dropped our channel; nothing more will arrive.
+                        // Router dropped our channel; nothing more will arrive
                         shared.state.lock().fail(io::ErrorKind::ConnectionAborted);
                     }
                 }
@@ -694,8 +658,7 @@ pub(crate) async fn drive(shared: Arc<Shared>, mut cfg: DriverConfig, role: Role
             }
         }
 
-        // Do per-iteration work: drain app writes, emit FIN if requested,
-        // send a standalone ack if we owe one.
+        // Do per-iteration work: drain app writes, emit FIN if requested, send a standalone ack if we owe one
         {
             let mut st = shared.state.lock();
             st.fill_send_window();
@@ -714,8 +677,7 @@ pub(crate) async fn drive(shared: Arc<Shared>, mut cfg: DriverConfig, role: Role
     cfg.registry.lock().remove(&cfg.key);
 }
 
-/// Drain the outbox to the wire. Datagrams are collected under the lock and
-/// sent after releasing it so UDP I/O never blocks the state mutex.
+/// Drain the outbox to the wire. Datagrams are collected under the lock and sent after releasing it so UDP I/O never blocks the state mutex
 async fn flush(shared: &Arc<Shared>, cfg: &DriverConfig) {
     let datagrams: Vec<Vec<u8>> = {
         let mut st = shared.state.lock();
@@ -726,8 +688,7 @@ async fn flush(shared: &Arc<Shared>, cfg: &DriverConfig) {
     }
 }
 
-/// A µTP connection presented as an async byte stream. Plugs into the peer
-/// connection layer wherever a `TcpStream` would go.
+/// A µTP connection presented as an async byte stream. Plugs into the peer connection layer wherever a `TcpStream` would go
 pub struct UtpStream {
     shared: Arc<Shared>,
 }
@@ -766,8 +727,7 @@ impl AsyncRead for UtpStream {
                 buf.put_slice(&second[..n - first_n]);
             }
             st.recv_ready.drain(..n);
-            // Reading frees receive-buffer space; the peer learns the larger
-            // window on our next outgoing packet, so nudge a fresh ack.
+            // Reading frees receive-buffer space; the peer learns the larger window on our next outgoing packet, so nudge a fresh ack
             self.shared.nudge.notify_one();
             return Poll::Ready(Ok(()));
         }
@@ -830,8 +790,7 @@ impl AsyncWrite for UtpStream {
             return Poll::Ready(Ok(()));
         }
         st.want_fin = true;
-        // Shutdown completes once the FIN has been sent and acked (no more
-        // unacked packets) and the send buffer is empty.
+        // Shutdown completes once the FIN has been sent and acked (no more unacked packets) and the send buffer is empty
         if st.state == State::FinSent && st.unacked.is_empty() {
             return Poll::Ready(Ok(()));
         }
@@ -849,7 +808,7 @@ impl Drop for UtpStream {
         st.read_waker = None;
         st.write_waker = None;
         drop(st);
-        // Wake the driver so it can emit a FIN and tear down cleanly.
+        // Wake the driver so it can emit a FIN and tear down cleanly
         self.shared.nudge.notify_one();
     }
 }
@@ -863,7 +822,7 @@ mod tests {
         assert!(seq_after(5, 4));
         assert!(!seq_after(4, 5));
         assert!(!seq_after(4, 4));
-        // Wraparound: 1 is after 65535.
+        // Wraparound: 1 is after 65535
         assert!(seq_after(1, 65535));
         assert!(!seq_after(65535, 1));
     }

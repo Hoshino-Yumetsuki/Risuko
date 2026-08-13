@@ -455,7 +455,7 @@ fn ensure_usenet_active_time(
     active_time: &ActiveTimeTracker,
     max_active_seconds: u64,
 ) -> Result<(), String> {
-    if active_time.active_elapsed().as_secs() > max_active_seconds {
+    if active_time.active_elapsed() >= Duration::from_secs(max_active_seconds) {
         Err("archive limit: Usenet task exceeded the active-time limit".into())
     } else {
         Ok(())
@@ -736,8 +736,7 @@ pub(crate) async fn run_usenet_download_with_resolver_and_capacity(
     ensure_usenet_active_time(&active_time, archive_limits.max_active_seconds)?;
     completed.store(expected_total, Ordering::Relaxed);
     let cleanup_mode = cleanup_mode_for_task(metadata, options);
-    // This worker assembles and verifies NZB data but does not extract archives,
-    // so archive-volume cleanup is intentionally disabled in cleanup_inputs.
+    // This worker assembles and verifies NZB data but doesn't extract archives, so archive-volume cleanup is intentionally disabled in cleanup_inputs
     let (par2_inputs, archive_inputs) = cleanup_inputs(&assembled, false, &promoted_outputs);
     if let Err(error) = cleanup_after_success(cleanup_mode, true, &par2_inputs, &archive_inputs) {
         tracing::warn!(
@@ -964,9 +963,7 @@ async fn output_slot_is_available(output: &Path) -> Result<bool, String> {
     let sidecar_path = resume_sidecar_path(output);
     match tokio::fs::symlink_metadata(&sidecar_path).await {
         Ok(metadata) => {
-            // Only regular files can be parsed as resume metadata. Treat
-            // FIFOs, devices, directories, and symlinks as occupied so
-            // reservation never blocks on an arbitrary filesystem object.
+            // Only regular files parse as resume metadata; treat FIFOs, devices, directories, and symlinks as occupied so reservation never blocks on an arbitrary filesystem object
             if !metadata.file_type().is_file() {
                 return Ok(false);
             }

@@ -33,8 +33,7 @@ impl FileSet {
             .iter()
             .map(|f| {
                 let mut path = root.to_path_buf();
-                // For single-file torrents the parsed file already has the
-                // torrent name as its sole path component — don't double it
+                // For single-file torrents the parsed file already has the torrent name as its sole path component — don't double it
                 for c in &f.path {
                     path.push(c);
                 }
@@ -100,8 +99,7 @@ impl Iterator for SpansIter<'_> {
         if self.remaining == 0 {
             return None;
         }
-        // Skip over zero-length files iteratively to avoid unbounded recursion
-        // on torrents containing many empty entries.
+        // Skip over zero-length files iteratively to avoid unbounded recursion on torrents containing many empty entries
         while self.idx < self.files.len() && self.files[self.idx].length == 0 {
             self.idx += 1;
         }

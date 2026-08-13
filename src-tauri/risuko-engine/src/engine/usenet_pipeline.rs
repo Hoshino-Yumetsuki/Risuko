@@ -157,29 +157,44 @@ impl ResumeSidecar {
     pub async fn save_atomic(&self, path: &Path) -> Result<(), String> {
         let payload = serde_json::to_vec_pretty(self)
             .map_err(|error| format!("serialize resume metadata: {error}"))?;
+        // Per-call unique suffix so concurrent writers never clobber each other's temp; temp removed on failure so no partial write is left behind
+        static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+        let unique = TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
         let temp = path.with_extension(format!(
-            "{}.tmp",
-            path.extension().and_then(|v| v.to_str()).unwrap_or("json")
+            "{}.{}.{}.tmp",
+            path.extension().and_then(|v| v.to_str()).unwrap_or("json"),
+            std::process::id(),
+            unique
         ));
         if let Some(parent) = path.parent() {
             tokio::fs::create_dir_all(parent)
                 .await
                 .map_err(|error| format!("create resume metadata directory: {error}"))?;
         }
-        let mut file = tokio::fs::File::create(&temp)
-            .await
-            .map_err(|error| format!("create resume metadata: {error}"))?;
-        file.write_all(&payload)
-            .await
-            .map_err(|error| format!("write resume metadata: {error}"))?;
-        file.sync_all()
-            .await
-            .map_err(|error| format!("flush resume metadata: {error}"))?;
-        drop(file);
-        tokio::fs::rename(&temp, path)
-            .await
-            .map_err(|error| format!("replace resume metadata: {error}"))
+        match write_and_rename(&temp, path, &payload).await {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                let _ = tokio::fs::remove_file(&temp).await;
+                Err(error)
+            }
+        }
     }
+}
+
+async fn write_and_rename(temp: &Path, path: &Path, payload: &[u8]) -> Result<(), String> {
+    let mut file = tokio::fs::File::create(temp)
+        .await
+        .map_err(|error| format!("create resume metadata: {error}"))?;
+    file.write_all(payload)
+        .await
+        .map_err(|error| format!("write resume metadata: {error}"))?;
+    file.sync_all()
+        .await
+        .map_err(|error| format!("flush resume metadata: {error}"))?;
+    drop(file);
+    tokio::fs::rename(temp, path)
+        .await
+        .map_err(|error| format!("replace resume metadata: {error}"))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -306,6 +321,8 @@ pub fn decode_yenc_part(input: &[u8]) -> Result<DecodedYencPart, String> {
     let mut end_header = None;
     let mut in_payload = false;
     let mut output = Vec::new();
+    // A yEnc part can't exceed the whole file, so the `=ybegin size` header caps decoded output to stop a hostile article forcing us to buffer far more than the declared file before post-decode checks
+    let mut decoded_cap = None;
 
     for line in input
         .split(|byte| *byte == b'\r' || *byte == b'\n')
@@ -313,7 +330,9 @@ pub fn decode_yenc_part(input: &[u8]) -> Result<DecodedYencPart, String> {
     {
         if !in_payload {
             if line.starts_with(b"=ybegin ") {
-                begin_header = Some(parse_yenc_header(line, "=ybegin")?);
+                let header = parse_yenc_header(line, "=ybegin")?;
+                decoded_cap = header_u64(&header, "size")?;
+                begin_header = Some(header);
                 in_payload = true;
             }
             continue;
@@ -322,7 +341,14 @@ pub fn decode_yenc_part(input: &[u8]) -> Result<DecodedYencPart, String> {
             if part_header.is_some() {
                 return Err("multiple =ypart headers in one yEnc article".into());
             }
-            part_header = Some(parse_yenc_header(line, "=ypart")?);
+            let header = parse_yenc_header(line, "=ypart")?;
+            if let Some(end_inclusive) = header_u64(&header, "end")? {
+                decoded_cap = Some(match decoded_cap {
+                    Some(cap) => cap.min(end_inclusive),
+                    None => end_inclusive,
+                });
+            }
+            part_header = Some(header);
             continue;
         }
         if line.starts_with(b"=yend ") {
@@ -330,6 +356,11 @@ pub fn decode_yenc_part(input: &[u8]) -> Result<DecodedYencPart, String> {
             break;
         }
         decode_yenc_line(line, &mut output)?;
+        if let Some(cap) = decoded_cap {
+            if output.len() as u64 > cap {
+                return Err("yEnc payload exceeds the declared file size".into());
+            }
+        }
     }
 
     let begin_header = begin_header.ok_or_else(|| "article is not yEnc encoded".to_string())?;
@@ -352,6 +383,14 @@ pub fn decode_yenc_part(input: &[u8]) -> Result<DecodedYencPart, String> {
         || part_header.is_some();
     let (range, has_explicit_range) = match part_header {
         Some(header) => {
+            if let (Some(begin_part), Some(part_part)) = (
+                header_u64(&begin_header, "part")?,
+                header_u64(&header, "part")?,
+            ) {
+                if begin_part != part_part {
+                    return Err("yEnc =ypart part number disagrees with =ybegin".into());
+                }
+            }
             let begin = header_u64(&header, "begin")?
                 .ok_or_else(|| "yEnc =ypart header has no begin".to_string())?;
             let end_inclusive = header_u64(&header, "end")?
@@ -824,9 +863,7 @@ pub(crate) async fn assemble_file_with_report_with_limits_at_offset<S: ArticleSo
         }};
     }
 
-    // Keep network fetches in flight while yielding decoded parts in manifest
-    // order. The fixed batch size bounds completed decoded payloads without
-    // trusting potentially inaccurate manifest byte counts.
+    // Keep network fetches in flight while yielding decoded parts in manifest order; fixed batch size bounds completed payloads without trusting potentially inaccurate manifest byte counts
     let pending_segments = ordered
         .iter()
         .filter(|segment| !sidecar.completed_segments.contains(&segment.number))
@@ -845,8 +882,17 @@ pub(crate) async fn assemble_file_with_report_with_limits_at_offset<S: ArticleSo
             });
         }
         let mut fetched = Vec::with_capacity(batch.len());
-        while let Some(result) = fetches.next().await {
-            fetched.push(result);
+        loop {
+            tokio::select! {
+                biased;
+                _ = cancel.cancelled() => {
+                    return_after_checkpoint!("Download cancelled".into());
+                }
+                result = fetches.next() => match result {
+                    Some(result) => fetched.push(result),
+                    None => break,
+                },
+            }
         }
         fetched.sort_by_key(|(order, _, _)| *order);
         for (_, segment, fetch_result) in fetched {

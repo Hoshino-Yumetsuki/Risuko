@@ -1,16 +1,4 @@
-//! Per-peer connection actor
-//!
-//! A connected peer is modelled as a pair of tokio tasks communicating over
-//! mpsc channels with the torrent state machine:
-//!
-//!  - **reader task** reads the TCP stream, decodes `Message` frames, and
-//!    forwards them to the torrent via `PeerEvent`
-//!  - **writer task** pulls `PeerCommand`s from the torrent and writes the
-//!    encoded messages to the stream
-//!
-//! The actor owns the peer's local BitTorrent state (am_choking,
-//! am_interested, peer_choking, peer_interested, peer bitfield). Higher-level
-//! policy (what to request, when to unchoke) lives in `torrent::`
+//! Per-peer connection actor: a reader task decodes `Message` frames to `PeerEvent`s and a writer task sends `PeerCommand`s, both over mpsc to the torrent state machine; the actor owns local BT state (choking/interested/bitfield) while request/unchoke policy lives in `torrent::`
 
 pub mod connection;
 

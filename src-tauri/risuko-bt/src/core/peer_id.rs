@@ -1,7 +1,4 @@
-//! Peer id generation
-//!
-//! We use Azureus-style peer ids: `-<CLIENT><VERSION>-` followed by 12
-//! random bytes. `RS` (Risuko) is the two-letter client tag
+//! Peer id generation: Azureus-style `-<CLIENT><VERSION>-` plus 12 random bytes; `RS` (Risuko) is the client tag
 
 use rand::Rng;
 

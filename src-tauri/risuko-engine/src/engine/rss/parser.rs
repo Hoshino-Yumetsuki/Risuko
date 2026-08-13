@@ -1,5 +1,4 @@
-//! Hand-rolled RSS title parser. Extracts series/season/episode/quality
-//! tags from common torrent and anime release naming conventions
+//! Hand-rolled RSS title parser: extracts series/season/episode/quality tags from torrent and anime release names
 
 use std::sync::OnceLock;
 
@@ -27,7 +26,8 @@ struct ParserRegexes {
 fn regexes() -> &'static ParserRegexes {
     static R: OnceLock<ParserRegexes> = OnceLock::new();
     R.get_or_init(|| ParserRegexes {
-        season_episode: Regex::new(r"(?i)\bS(\d{1,2})E(\d{1,3})(?:[-_ ]?E?(\d{1,3}))?\b").unwrap(),
+        // Trailing range (e.g. `-E04` in `S01E02-E04`) is matched to consume the token but not captured; only the first episode is tracked
+        season_episode: Regex::new(r"(?i)\bS(\d{1,2})E(\d{1,3})(?:[-_ ]?E?\d{1,3})?\b").unwrap(),
         season_episode_x: Regex::new(r"(?i)\b(\d{1,2})x(\d{1,3})\b").unwrap(),
         episode_only: Regex::new(r"(?i)\b(?:EP|Episode|E)[ ._-]?(\d{1,3})\b").unwrap(),
         anime_loose: Regex::new(r"(?:^|[\s\-\[\]])(\d{1,3})(?:v\d)?(?:[\s\-\[\]]|$)").unwrap(),
@@ -50,8 +50,7 @@ fn regexes() -> &'static ParserRegexes {
     })
 }
 
-/// Normalize a series title for dedupe: lowercase, strip punctuation,
-/// collapse whitespace, drop common release tags from the tail
+/// Normalize a series title for dedupe: lowercase, strip punctuation, collapse whitespace, drop tail release tags
 pub fn normalize_series(s: &str) -> String {
     let lowered = s.to_lowercase();
     let mut out = String::with_capacity(lowered.len());
@@ -146,8 +145,7 @@ pub fn parse_title(raw: &str) -> ParsedMeta {
     if meta.group.is_none() {
         if let Some(c) = r.group.captures(title) {
             let candidate = c.get(1).unwrap().as_str();
-            // Heuristic: avoid matching quality / codec / source-suffix tokens
-            // (e.g. the trailing "DL" of "WEB-DL", "RIP" of "BD-RIP")
+            // Heuristic: avoid matching quality/codec/source-suffix tokens (e.g. trailing "DL" of "WEB-DL", "RIP" of "BD-RIP")
             let lower = candidate.to_lowercase();
             let is_known_token = matches!(
                 lower.as_str(),
@@ -164,11 +162,7 @@ pub fn parse_title(raw: &str) -> ParsedMeta {
                     | "rip"
                     | "ray"
             );
-            // Reject if the token looks like the tail of a hyphenated source
-            // tag (WEB-DL, BLU-RAY, BD-RIP, HD-RIP, DVD-RIP, etc.). The group
-            // regex matches `-([A-Za-z0-9_]+?)`, so for "WEB-DL" candidate is
-            // "DL" preceded by "WEB" \u2014 inspect what's directly before the
-            // capture
+            // Reject tail of a hyphenated source tag (WEB-DL, BD-RIP, etc.): group regex matches `-([A-Za-z0-9_]+?)`, so for "WEB-DL" candidate "DL" is preceded by "WEB" \u2014 inspect what's directly before the capture
             let cap0 = c.get(0).unwrap();
             let preceding_is_source_prefix = title[..cap0.start()]
                 .rsplit(|c: char| !c.is_ascii_alphanumeric())
@@ -190,38 +184,36 @@ pub fn parse_title(raw: &str) -> ParsedMeta {
     }
 
     // Episode/season detection
-    let mut ep_match_end: Option<usize> = None;
+    let mut ep_match_start: Option<usize> = None;
     if let Some(c) = r.season_episode.captures(title) {
         meta.season = c.get(1).and_then(|m| m.as_str().parse().ok());
         meta.episode = c.get(2).and_then(|m| m.as_str().parse().ok());
-        ep_match_end = c.get(0).map(|m| m.start());
+        ep_match_start = c.get(0).map(|m| m.start());
     } else if let Some(c) = r.season_episode_x.captures(title) {
         meta.season = c.get(1).and_then(|m| m.as_str().parse().ok());
         meta.episode = c.get(2).and_then(|m| m.as_str().parse().ok());
-        ep_match_end = c.get(0).map(|m| m.start());
+        ep_match_start = c.get(0).map(|m| m.start());
     } else if let Some(c) = r.episode_only.captures(title) {
         let n: Option<u32> = c.get(1).and_then(|m| m.as_str().parse().ok());
         meta.absolute_episode = n;
         meta.episode = n;
-        ep_match_end = c.get(0).map(|m| m.start());
+        ep_match_start = c.get(0).map(|m| m.start());
     } else if let Some(c) = r.anime_loose.captures(title) {
-        // Only accept if surrounded by anime-style markers AND title has a
-        // bracket group (to reduce false positives)
+        // Only accept if surrounded by anime-style markers AND title has a bracket group (reduces false positives)
         if meta.group.is_some() {
             let n: Option<u32> = c.get(1).and_then(|m| m.as_str().parse().ok());
             if let Some(n) = n {
                 if (1..=999).contains(&n) {
                     meta.absolute_episode = Some(n);
                     meta.episode = Some(n);
-                    ep_match_end = c.get(0).map(|m| m.start());
+                    ep_match_start = c.get(0).map(|m| m.start());
                 }
             }
         }
     }
 
-    // Series name: text before the episode marker (if found) or before the
-    // first quality/year token. Strip leading [Group] tag
-    let series_end = ep_match_end
+    // Series name: text before the episode marker (if found) or before the first quality/year token; strip leading [Group] tag
+    let series_end = ep_match_start
         .or_else(|| {
             // Earliest of resolution/source/year start
             [&r.resolution, &r.source, &r.year]
@@ -268,8 +260,7 @@ fn canonical_source(s: &str) -> String {
     }
 }
 
-/// Display-friendly series: replace underscores/dots with spaces, collapse
-/// whitespace. Different from `normalize_series` which is for dedupe
+/// Display-friendly series: replace underscores/dots with spaces, collapse whitespace (unlike `normalize_series`, which is for dedupe)
 fn normalize_display_series(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut prev_space = false;

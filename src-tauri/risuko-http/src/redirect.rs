@@ -1,5 +1,4 @@
-/// Redirect policy: follow up to `max` `Location` hops, then surface a
-/// `Redirect` error
+/// Redirect policy: follow up to `max` `Location` hops, then surface a `Redirect` error
 #[derive(Clone, Debug)]
 pub struct Policy {
     pub(crate) max: usize,

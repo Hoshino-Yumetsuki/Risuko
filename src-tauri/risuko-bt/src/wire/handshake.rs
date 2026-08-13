@@ -1,26 +1,15 @@
-//! BitTorrent handshake (BEP-3): 68 bytes total
-//!
-//! ```text
-//!   1   byte   length of protocol string (always 19)
-//!   19  bytes  "BitTorrent protocol"
-//!   8   bytes  reserved (BEP-10 bit: ext protocol; BEP-5 bit: DHT; …)
-//!   20  bytes  info-hash
-//!   20  bytes  peer-id
-//! ```
+//! BitTorrent handshake (BEP-3), 68 bytes: 1 len + 19 "BitTorrent protocol" + 8 reserved (BEP-10 ext, BEP-5 DHT) + 20 info-hash + 20 peer-id
 
 use super::super::core::Id20;
 
 pub const PROTOCOL: &[u8; 19] = b"BitTorrent protocol";
 pub const HANDSHAKE_LEN: usize = 1 + 19 + 8 + 20 + 20;
 
-/// Reserved bit flags we care about. Byte indices are 0-based from the start
-/// of the 8-byte reserved area
+/// Reserved bit flags we care about; byte indices are 0-based from the start of the 8-byte reserved area
 pub mod reserved {
     /// Bit 20 (byte 5, bit 0x10) — BEP-10 Extension Protocol
     pub const EXT_PROTOCOL: (usize, u8) = (5, 0x10);
-    /// Bit 3 of byte 7 (0x08) — BEP 52 BitTorrent v2 capable
-    /// Matches libtorrent's choice for maximum interop. The bit position
-    /// is not yet ratified; flip this single constant if it shifts
+    /// Bit 3 of byte 7 (0x08) — BEP 52 v2 capable; matches libtorrent for interop; bit not yet ratified, flip this constant if it shifts
     pub const V2: (usize, u8) = (7, 0x08);
     pub const DHT: (usize, u8) = (7, 0x01);
     pub const FAST: (usize, u8) = (7, 0x04);

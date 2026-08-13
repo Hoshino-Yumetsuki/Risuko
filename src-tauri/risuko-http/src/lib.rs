@@ -80,15 +80,7 @@ fn file_stream_body_range_inner(
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::Arc;
 
-    // Stat the file at construction so the advertised `Content-Length` matches
-    // what the body delivers. Doing it only inside the lazy stream factory was
-    // too late — the request layer had already framed headers from the
-    // (possibly stale) caller-supplied length, so a shrunk file or over-large
-    // `take` produced framing that disagreed with the body
-    //
-    // If the stat fails (file missing, permission denied) fall back to the
-    // caller-supplied length so the deferred open in the stream factory still
-    // surfaces the IO error; the request fails anyway, one layer deeper
+    // Stat the file now so the advertised `Content-Length` matches what the body delivers; doing it only in the lazy stream factory was too late (headers were already framed from the possibly-stale caller length, so a shrunk file or over-large `take` produced disagreeing framing). If the stat fails (missing, permission denied) fall back to the caller-supplied length so the deferred open still surfaces the IO error one layer deeper
     let verified_length = match std::fs::metadata(&path) {
         Ok(meta) => {
             let remaining = meta.len().saturating_sub(offset);
@@ -107,16 +99,12 @@ fn file_stream_body_range_inner(
             let on_progress = on_progress.clone();
             let cancel = cancel.clone();
             let counter = Arc::new(AtomicU64::new(0));
-            // Lazily open the file the first time the body is polled. Any IO
-            // error becomes a body error — hyper will surface it to the caller
+            // Lazily open the file the first time the body is polled; any IO error becomes a body error that hyper surfaces to the caller
             let stream = async_stream::try_stream! {
                 use tokio::io::{AsyncReadExt, AsyncSeekExt};
                 let mut file = tokio::fs::File::open(&path).await
                     .map_err(|e| Error::Body(format!("open {}: {e}", path.display())))?;
-                // Defense-in-depth: re-validate the requested range against
-                // the file's actual size at send time. If it shrank between
-                // construction and now we'd otherwise hang the connection
-                // after delivering a short body
+                // Defense-in-depth: re-validate the requested range against the file's actual size at send time, since a shrink between construction and now would otherwise hang the connection after a short body
                 let file_size = file.metadata().await
                     .map_err(|e| Error::Body(format!("stat {}: {e}", path.display())))?
                     .len();

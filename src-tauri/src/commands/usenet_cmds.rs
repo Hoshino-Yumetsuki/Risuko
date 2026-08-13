@@ -96,8 +96,10 @@ fn with_fallback_lock<T>(
             .and_then(|name| name.to_str())
             .unwrap_or("credentials")
     ));
+    // Lock file contents are irrelevant; never truncate so concurrent lockers are unaffected
     let lock_file = OpenOptions::new()
         .create(true)
+        .truncate(false)
         .read(true)
         .write(true)
         .open(&lock_path)

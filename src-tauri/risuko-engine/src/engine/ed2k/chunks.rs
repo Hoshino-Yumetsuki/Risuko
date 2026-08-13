@@ -50,10 +50,7 @@ impl ChunkManager {
         (start, end)
     }
 
-    /// Find the next chunk to download (Missing state, peer has it), skipping
-    /// chunks already chosen this request round
-    ///
-    /// Chunk status is not updated until data arrives, so this avoids duplicate ranges
+    /// Find the next Missing chunk the peer has, skipping ones chosen this round (status lags data, so this avoids duplicate ranges)
     pub fn next_needed_chunk_excluding(&self, peer_parts: &[bool], exclude: &[u64]) -> Option<u64> {
         for i in 0..self.chunk_count as usize {
             let idx = i as u64;

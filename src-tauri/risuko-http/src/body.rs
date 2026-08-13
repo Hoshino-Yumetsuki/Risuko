@@ -7,20 +7,10 @@ use http_body_util::{combinators::BoxBody, BodyExt, Full};
 
 use crate::error::Error;
 
-/// Factory that produces a fresh outgoing body each time it's called
-///
-/// Used by `ReqBody::Stream` so retries/redirects can replay the body without
-/// requiring the body to be `Clone`. The factory typically opens a fresh
-/// `tokio::fs::File` and wraps it in `tokio_util::io::ReaderStream`
+/// Factory that produces a fresh outgoing body each time it's called; used by `ReqBody::Stream` so retries/redirects can replay the body without requiring it to be `Clone` (typically opens a fresh `tokio::fs::File` wrapped in `tokio_util::io::ReaderStream`)
 pub type StreamBodyFactory = Arc<dyn Fn() -> BoxBody<Bytes, Error> + Send + Sync + 'static>;
 
-/// Body type sent in outgoing requests
-///
-/// `Bytes` carries a fully-buffered payload (small JSON/forms). `Stream`
-/// carries a body that is produced on demand by a factory closure — used for
-/// large uploads where we don't want to read the whole file into memory. The
-/// factory pattern makes the body cheaply clonable for redirect/retry while
-/// still supporting one-shot streaming reads
+/// Body sent in requests: `Bytes` is a buffered payload; `Stream` is produced on demand by a factory closure (large uploads) that keeps the body cheaply clonable for redirect/retry while supporting one-shot reads
 #[derive(Clone)]
 pub enum ReqBody {
     Empty,
@@ -49,9 +39,7 @@ impl ReqBody {
         ReqBody::Bytes(b.into())
     }
 
-    /// Build a streaming request body from a factory closure. Each invocation
-    /// of `factory` must produce a fresh, full body — the closure is called
-    /// once per send (including on redirect replay)
+    /// Build a streaming request body from a factory closure that must produce a fresh, full body each send (including on redirect replay)
     pub fn from_stream<F>(factory: F, content_length: Option<u64>) -> Self
     where
         F: Fn() -> BoxBody<Bytes, Error> + Send + Sync + 'static,
@@ -82,6 +70,5 @@ impl ReqBody {
     }
 }
 
-/// A boxed `HttpBody<Data = Bytes, Error = Error>` used as the response body
-/// type after decompression / chunked decoding
+/// A boxed `HttpBody<Data = Bytes, Error = Error>` response body after decompression / chunked decoding
 pub type RespBody = http_body_util::combinators::BoxBody<Bytes, Error>;

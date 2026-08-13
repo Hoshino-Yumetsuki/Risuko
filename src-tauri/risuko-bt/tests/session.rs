@@ -1,4 +1,4 @@
-//! Session behaviour tests: add_torrent dedup and shutdown semantics.
+//! Session behaviour tests: add_torrent dedup and shutdown semantics
 
 use std::path::PathBuf;
 
@@ -81,15 +81,12 @@ async fn list_only_returns_metadata_without_adding() {
         _ => panic!("expected ListOnly"),
     }
 
-    // list_only must NOT register the torrent.
+    // list_only must NOT register the torrent
     let count = session.with_torrents(|iter| iter.count());
     assert_eq!(count, 0);
 }
 
-/// Session must start successfully when an IPv6 listener is requested. On
-/// hosts without v6 support the listener bind is logged-and-skipped, so this
-/// test only asserts that startup itself does not fail. The session object
-/// is dropped immediately to clean up the background tasks
+/// Session must start when an IPv6 listener is requested; on hosts without v6 the bind is logged-and-skipped, so this asserts only that startup succeeds (session dropped immediately to clean up tasks)
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn session_starts_with_listen_ipv6_enabled() {
     let tmp = tempfile::tempdir().unwrap();

@@ -204,9 +204,7 @@ fn check_cancel(cancel: Option<&CancellationToken>) -> Result<(), Par2Error> {
     }
 }
 
-// rust-par2's public verify/repair entry points are intentionally blocking and
-// do not expose a cancellation hook. Keep the work in this module chunked so
-// a worker cancellation can be observed during hashing, decoding, and writes.
+// rust-par2's verify/repair entry points are blocking and expose no cancellation hook, so keep the work chunked to observe worker cancellation during hashing, decoding, and writes
 fn verify_with_cancel(
     file_set: &rust_par2::Par2FileSet,
     dir: &Path,
@@ -512,13 +510,8 @@ fn repair_from_verify_with_cancel(
         .collect::<Vec<_>>();
     for (row, output) in outputs.iter_mut().enumerate() {
         check_cancel(cancel)?;
-        for column in 0..damaged_count {
-            mul_add_cancellable(
-                output,
-                adjusted_refs[column],
-                inverse.get(row, column),
-                cancel,
-            )?;
+        for (column, adjusted_block) in adjusted_refs.iter().enumerate() {
+            mul_add_cancellable(output, adjusted_block, inverse.get(row, column), cancel)?;
         }
     }
 
@@ -812,7 +805,7 @@ fn cancellable_damaged_indices(
     }
     indices.sort_unstable();
     indices.dedup();
-    indices.into_iter().map(|index| index as usize).collect()
+    indices
 }
 
 fn read_source_block_with_cancel(
@@ -994,9 +987,7 @@ fn validate_repair_resources(
     verification: &rust_par2::VerifyResult,
     file_set: &rust_par2::Par2FileSet,
 ) -> Result<(), Par2Error> {
-    // This estimate matches rust-par2 0.1.3: its recovery blocks, repair
-    // matrix, paired repair buffers, and verification worker buffers are all
-    // live during repair.
+    // This estimate matches rust-par2 0.1.3: recovery blocks, repair matrix, paired repair buffers, and verification worker buffers are all live during repair
     let needed = verification.blocks_needed();
     let available = verification.recovery_blocks_available;
     if needed > MAX_PAR2_REPAIR_BLOCKS || available > MAX_PAR2_RECOVERY_BLOCKS {
@@ -1239,7 +1230,7 @@ fn validate_par2_packets(path: &Path) -> Result<ParityFileStats, Par2Error> {
                     ));
                 }
             } else if packet_type == *PAR2_TYPE_IFSC {
-                if body_len < 16 || (body_len - 16) % 20 != 0 {
+                if body_len < 16 || !(body_len - 16).is_multiple_of(20) {
                     return Err(Par2Error::Malformed(format!(
                         "{} contains malformed PAR2 slice checksums",
                         path.display()
@@ -1373,7 +1364,7 @@ fn validate_file_set(
 ) -> Result<SourceStats, Par2Error> {
     if file_set.slice_size == 0
         || file_set.slice_size > MAX_PAR2_SLICE_BYTES
-        || file_set.slice_size % 2 != 0
+        || !file_set.slice_size.is_multiple_of(2)
     {
         return Err(Par2Error::Limits("invalid PAR2 slice size".into()));
     }

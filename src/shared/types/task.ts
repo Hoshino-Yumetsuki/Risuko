@@ -29,6 +29,22 @@ export interface UsenetRepairFailure {
 	partialsRetained: boolean;
 }
 
+export type Ed2kKadLookupState =
+	| "disabled"
+	| "bootstrapping"
+	| "searching"
+	| "complete"
+	| "timeout"
+	| "error";
+
+export interface Ed2kKadTaskStatus {
+	state: Ed2kKadLookupState;
+	queriedNodes: number;
+	discoveredSources: number;
+	contacts?: number;
+	error?: string | null;
+}
+
 export interface DownloadTask {
 	gid: string;
 	status: string;
@@ -52,6 +68,7 @@ export interface DownloadTask {
 	seeder?: string;
 	numSeeders?: string;
 	ed2kLink?: string;
+	ed2kKad?: Ed2kKadTaskStatus;
 	numPeers?: string;
 	m3u8Link?: string;
 	pieceLength?: string;

@@ -1,33 +1,20 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
-/// Token-bucket (GCRA) rate limiter for download speed
-///
-/// Lock-free and correct under contention: state is a single atomic
-/// `next_avail_us` (the virtual "next available time"). Each acquire
-/// CAS-advances it by `bytes / limit` seconds; bursting is bounded by
-/// clamping the start to `now - BURST_WINDOW`. Every successful acquire
-/// atomically moves `next_avail_us`, so the rate holds regardless of
-/// concurrent callers
-///
-/// A limit of 0 means unlimited (no throttling)
+/// Lock-free token-bucket (GCRA) download rate limiter: state is one atomic `next_avail_us` (virtual next-available time) CAS-advanced by `bytes / limit` seconds per acquire, bursting bounded by clamping start to `now - BURST_WINDOW`; limit 0 means unlimited
 pub struct SpeedLimiter {
     limit_bps: AtomicU64,
-    /// Earliest virtual time (microseconds since `start`) at which the next
-    /// byte can be served. Bumps forward on every successful acquire
+    /// Earliest virtual time (microseconds since `start`) the next byte can be served; bumps forward on every successful acquire
     next_avail_us: AtomicU64,
     start: tokio::time::Instant,
 }
 
-/// Allow up to this much burst above the steady-state rate. Matches the old
-/// "2x limit" cap (2 seconds of unspent budget)
+/// Max burst above steady-state rate, matching the old "2x limit" cap (2 seconds of unspent budget)
 const BURST_WINDOW_US: u64 = 2_000_000;
 
 impl SpeedLimiter {
     pub fn new(limit_bps: u64) -> Self {
         let now = tokio::time::Instant::now();
-        // Pre-charge 1 second of virtual budget so the first acquire of up
-        // to `limit_bps` bytes proceeds without sleeping. Matches the
-        // original "tokens initialized to limit_bps" semantics
+        // Pre-charge 1 second of virtual budget so the first acquire of up to `limit_bps` bytes proceeds without sleeping, matching the original "tokens initialized to limit_bps" semantics
         let start = now
             .checked_sub(std::time::Duration::from_secs(1))
             .unwrap_or(now);
@@ -53,12 +40,9 @@ impl SpeedLimiter {
             .as_micros() as u64
     }
 
-    /// Try to consume `bytes` worth of tokens. Returns `Ok(())` if the
-    /// virtual budget allows it now, or `Err(wait_secs)` with how long to
-    /// sleep before retrying
+    /// Try to consume `bytes` of tokens: `Ok(())` if the virtual budget allows now, else `Err(wait_secs)` telling how long to sleep before retrying
     fn try_consume(&self, bytes: u64, limit: u64) -> Result<(), f64> {
-        // Microseconds of virtual time this request consumes. Use ceil so
-        // small writes still cost at least 1us and we never under-charge
+        // Microseconds of virtual time this request consumes; ceil so small writes cost at least 1us and never under-charge
         let cost_us = (bytes as u128 * 1_000_000).div_ceil(limit as u128) as u64;
 
         loop {
@@ -69,13 +53,7 @@ impl SpeedLimiter {
             let base = cur.max(earliest);
             let new_va = base.saturating_add(cost_us);
 
-            // Commit the advance only when the request can be served now.
-            // Committing in the wait branch double-charges: acquire sleeps
-            // `wait_secs`, loops, recomputes against the already-advanced
-            // `next_avail_us`, and reserves another `cost_us` on top of the
-            // bytes already paid for. So the wait branch just reports the
-            // sleep and lets the caller retry; on retry `now_us` has
-            // advanced and one commit succeeds
+            // Commit the advance only when servable now: committing in the wait branch double-charges (sleep, loop, recompute against the already-advanced `next_avail_us`, reserve another `cost_us`), so wait just reports the sleep and lets the caller retry once `now_us` advances
             if new_va <= now_us {
                 if self
                     .next_avail_us
@@ -91,8 +69,7 @@ impl SpeedLimiter {
         }
     }
 
-    /// Acquire `bytes` worth of throughput tokens, sleeping if the rate
-    /// limit would be exceeded. Returns immediately when limit is 0 (unlimited)
+    /// Acquire `bytes` of throughput tokens, sleeping if the rate limit would be exceeded; returns immediately when limit is 0 (unlimited)
     pub async fn acquire(&self, bytes: usize) {
         if bytes == 0 {
             return;
@@ -116,14 +93,7 @@ impl SpeedLimiter {
     }
 }
 
-/// Parse a speed limit string like "5M", "10K", "128k", "0", or numeric value
-/// Returns bytes per second. 0 means unlimited
-///
-/// E.g.
-/// - `"0"` or `0` → 0 (unlimited)
-/// - `"1024"` → 1024 bytes/sec
-/// - `"10K"` or `"10k"` → 10 * 1024 = 10240 bytes/sec
-/// - `"5M"` or `"5m"` → 5 * 1048576 = 5242880 bytes/sec
+/// Parse a speed limit ("5M", "10K", "128k", "0", or numeric) into bytes/sec, where 0 means unlimited and K/M are 1024/1048576
 pub fn parse_speed_limit(value: &serde_json::Value) -> u64 {
     match value {
         serde_json::Value::Number(n) => n.as_u64().unwrap_or(0),
@@ -167,9 +137,7 @@ impl SpeedEma {
         Self::default()
     }
 
-    /// Feed `bytes` transferred over `elapsed_secs` and return the smoothed
-    /// speed in bytes/sec (truncated). Callers should only invoke this with
-    /// `elapsed_secs > 0`
+    /// Feed `bytes` transferred over `elapsed_secs` (must be > 0) and return the smoothed speed in bytes/sec (truncated)
     pub fn update(&mut self, bytes: u64, elapsed_secs: f64) -> u64 {
         let instant = bytes as f64 / elapsed_secs;
         self.ema = if self.initialized {
@@ -240,8 +208,7 @@ mod tests {
 
     #[tokio::test]
     async fn limited_throttles_then_refills() {
-        // 4 MiB/s limit. First call drains the initial bucket, second call
-        // must wait approximately the deficit / rate (~250ms for 1 MiB)
+        // 4 MiB/s limit: first call drains the initial bucket, second call must wait ~ deficit / rate (~250ms for 1 MiB)
         let lim = SpeedLimiter::new(4 * 1024 * 1024);
         lim.acquire(4 * 1024 * 1024).await; // drain initial tokens
         let start = std::time::Instant::now();

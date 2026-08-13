@@ -75,8 +75,7 @@ impl SessionManager {
 
         let data = serde_json::to_string_pretty(&session).map_err(|e| e.to_string())?;
 
-        // Skip the rewrite when the serialized payload is identical to the
-        // last successful save
+        // Skip the rewrite when the serialized payload is identical to the last successful save
         let new_hash = {
             let mut hasher = DefaultHasher::new();
             data.as_bytes().hash(&mut hasher);

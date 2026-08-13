@@ -184,8 +184,7 @@ pub async fn shutdown_system(handle: AppHandle) -> Result<(), String> {
 
     #[cfg(not(target_os = "android"))]
     {
-        // Set quit flag but don't stop engine; OS shutdown will terminate everything
-        // If OS shutdown fails, engine remains running so app stays functional
+        // Set quit flag but don't stop engine; if OS shutdown fails the engine stays running so the app remains functional
         let state = handle.state::<crate::state::AppState>();
         state.is_quitting.store(true, Ordering::SeqCst);
 

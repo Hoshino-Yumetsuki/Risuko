@@ -1,7 +1,4 @@
-//! Browser cookie extraction
-//!
-//! Reads cookies straight from the browser's own store: Chromium and its
-//! forks, the Firefox family, and Safari on macOS
+//! Browser cookie extraction: reads cookies straight from the browser's own store (Chromium and forks, the Firefox family, and Safari on macOS)
 
 mod browser;
 mod platform;
@@ -10,9 +7,7 @@ mod utils;
 use serde::{Deserialize, Serialize};
 use url::Url;
 
-// Newer Chrome on Windows wraps the cookie key with app-bound encryption that
-// only opens under an admin token. When we hit that we bail with this marker so
-// the Tauri side can offer a UAC retry instead of just saying "failed"
+// Newer Chrome on Windows wraps the cookie key with app-bound encryption that only opens under an admin token; when hit we bail with this marker so the Tauri side can offer a UAC retry instead of just saying "failed"
 #[cfg(target_os = "windows")]
 pub const ELEVATION_REQUIRED: &str = platform::windows::ELEVATION_REQUIRED;
 
@@ -79,8 +74,7 @@ pub async fn list_browsers() -> Vec<BrowserInfo> {
 fn list_browsers_sync() -> Vec<BrowserInfo> {
     let mut browsers = Vec::new();
 
-    // Probe each browser by trying to read its cookie store — no actual cookies fetched,
-    // just a quick "can we open the database" check to set the available flag
+    // Probe each browser by trying to open its cookie store — no cookies fetched, just a "can we open the database" check to set the available flag
     macro_rules! probe {
         ($id:literal, $name:literal, $ua:expr, $config:expr) => {{
             let available = browser::chromium::extract_cookies(&$config, None).is_ok();

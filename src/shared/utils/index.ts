@@ -17,12 +17,11 @@ import {
 	omitBy,
 	pick,
 } from "lodash";
+import { toKebabCasePreserveNumbers } from "./configKeyCase";
 
 export { bytesToSize } from "./format";
 export { formatUsenetRepairFailure } from "./usenet";
 
-// human message from an axios-style error, with a 429 special-case
-// and a caller-supplied fallback; shared by the sync + share stores
 export const getApiErrorMessage = (
 	err: unknown,
 	fallback = "Request failed",
@@ -79,6 +78,9 @@ export const parseBooleanConfig = (value: unknown, fallback = false) => {
 export const calcProgress = (totalLength, completedLength, decimal = 2) => {
 	const total = parseInt(totalLength, 10);
 	const completed = parseInt(completedLength, 10);
+	if (!Number.isFinite(total) || !Number.isFinite(completed)) {
+		return 0;
+	}
 	if (total === 0 || completed === 0) {
 		return 0;
 	}
@@ -90,6 +92,9 @@ export const calcProgress = (totalLength, completedLength, decimal = 2) => {
 export const calcRatio = (totalLength, uploadLength) => {
 	const total = parseInt(totalLength, 10);
 	const upload = parseInt(uploadLength, 10);
+	if (!Number.isFinite(total) || !Number.isFinite(upload)) {
+		return 0;
+	}
 	if (total === 0 || upload === 0) {
 		return 0;
 	}
@@ -107,19 +112,6 @@ export const timeRemaining = (totalLength, completedLength, downloadSpeed) => {
 	return Math.ceil(remainingLength / downloadSpeed);
 };
 
-/**
- * timeFormat
- * @param {int} seconds
- * @param {string} prefix
- * @param {string} suffix
- * @param {object} i18n
- * i18n: {
- *  gt1d: 'More than one day',
- *  hour: 'h',
- *  minute: 'm',
- *  second: 's'
- * }
- */
 export const timeFormat = (seconds, { prefix = "", suffix = "", i18n }) => {
 	let result = "";
 	let hours = "";
@@ -189,7 +181,7 @@ export const stripTempDownloadSuffix = (name = "") => {
 export const getTaskName = (task, options = {}) => {
 	const o = {
 		defaultName: "",
-		maxLen: 64, // -1: no length limit
+		maxLen: 64,
 		...options,
 	};
 	const { defaultName, maxLen } = o;
@@ -219,7 +211,7 @@ export const getFileNameFromFile = (file) => {
 		return "";
 	}
 
-	let { path } = file;
+	let path = file.path || "";
 	if (!path && file.uris && file.uris.length > 0) {
 		path = decodeURI(file.uris[0].uri);
 	}
@@ -262,9 +254,6 @@ const YOUTUBE_HOSTS = new Set([
 	"youtube-nocookie.com",
 ]);
 
-// registrable-domain suffixes routed to the yt-dlp media engine; keep in
-// sync with MEDIA_HOST_SUFFIXES in
-// src-tauri/risuko-engine/src/engine/media.rs
 const MEDIA_HOST_SUFFIXES = [
 	"youtube.com",
 	"youtu.be",
@@ -326,14 +315,10 @@ const isYoutubeUri = (uri: string): boolean => {
 	);
 };
 
-// true when the URL's host is in the media allowlist; mirrors the engine's
-// is_media_uri. URLs outside the list can still be forced via the add-task
-// "Download with yt-dlp" toggle
 export const isMediaUri = (uri: string): boolean => {
 	if (!uri || typeof uri !== "string") {
 		return false;
 	}
-	// enforce HTTP(S) protocol to match engine behavior
 	if (!uri.startsWith("http://") && !uri.startsWith("https://")) {
 		return false;
 	}
@@ -354,11 +339,6 @@ const isM3u8Uri = (uri: string): boolean => {
 	return lower.endsWith(".m3u8") || lower.endsWith(".m3u");
 };
 
-/**
- * Friendly protocol label inferred from a URI, or `null` when the scheme is
- * unrecognised. Order matters: specific schemes (magnet, yt-dlp hosts, m3u8
- * path suffix) take precedence over generic HTTP
- */
 export const detectUriProtocol = (uri: string): string | null => {
 	if (!uri || typeof uri !== "string") {
 		return null;
@@ -431,7 +411,7 @@ export const getTaskUri = (task, withTracker = false) => {
 
 	if (files && files.length === 1) {
 		const { uris } = files[0];
-		result = uris[0].uri;
+		result = uris?.[0]?.uri || "";
 	}
 
 	return result;
@@ -455,21 +435,9 @@ const buildMagnetLink = (task, withTracker = false) => {
 	return params.join("&");
 };
 
-// guard, not default param: a failed tell_status nulls the current task
-// and default params only cover undefined
 export const checkTaskIsBT = (task?: Partial<DownloadTask> | null) =>
 	!!task?.bittorrent;
 
-// Task kinds (engine-side `TaskKind`, lowercase) where force-pause + resume
-// recovers a stalled connection: a single TCP socket gets stuck and
-// reopening it kicks the download free. HTTP/HTTPS, FTP/SFTP (both folded
-// into `ftp`), HTTP-segment streams (`media`, `m3u8`) all fit
-//
-// Peer-swarm protocols (`torrent`, `ed2k`, `adc`, `gnutella`, `g2`, `gift`)
-// do NOT. Pause tears down peer connections and aborts in-flight tracker
-// announces and choke-unchoke negotiations; a swarm that spent minutes
-// warming up is wiped in 500 ms, and the recovery cooldown refires before
-// it can rebuild, leaving speed permanently at zero
 const LOW_SPEED_RECOVERABLE_KINDS = new Set(["http", "ftp", "media", "m3u8"]);
 
 export const taskBenefitsFromLowSpeedRecovery = (
@@ -478,27 +446,14 @@ export const taskBenefitsFromLowSpeedRecovery = (
 	if (checkTaskIsBT(task)) {
 		return false;
 	}
-	// legacy/unknown task shapes that lack `kind` but expose a peer-swarm
-	// sentinel field must still be excluded
 	if (task.ed2kLink) {
 		return false;
 	}
 	const kind = `${task.kind || ""}`.toLowerCase();
 	if (!kind) {
-		// no kind reported. Without a positive signal we can't tell whether
-		// pause/resume is safe, so opt out — losing recovery on an HTTP task
-		// is harmless, applying it to a swarm task is destructive
 		return false;
 	}
 	return LOW_SPEED_RECOVERABLE_KINDS.has(kind);
-};
-
-const toKebabCasePreserveNumbers = (key = "") => {
-	return `${key}`
-		.replace(/([A-Z])([A-Z][a-z])/g, "$1-$2")
-		.replace(/([a-z0-9])([A-Z])/g, "$1-$2")
-		.replace(/[_\s]+/g, "-")
-		.toLowerCase();
 };
 
 export const changeKeysToCamelCase = (obj = {}) => {
@@ -553,6 +508,15 @@ export const filterFilesBySuffix = (files = [], suffixes = []) => {
 	return files.filter((item) => suffixes.includes(item.extension));
 };
 
+const decodeBase64Utf8 = (value = "") => {
+	const binary = atob(value);
+	const bytes = new Uint8Array(binary.length);
+	for (let i = 0; i < binary.length; i += 1) {
+		bytes[i] = binary.charCodeAt(i);
+	}
+	return new TextDecoder().decode(bytes);
+};
+
 const decodeThunderLink = (url = "") => {
 	if (!url.startsWith("thunder://")) {
 		return url;
@@ -560,15 +524,11 @@ const decodeThunderLink = (url = "") => {
 
 	let result = url.trim();
 	result = result.split("thunder://")[1];
-	result = Buffer.from(result, "base64").toString("utf8");
+	result = decodeBase64Utf8(result);
 	result = result.substring(2, result.length - 2);
 	return result;
 };
 
-// trailing ` Rename: <filename>` on a link line overrides the output
-// filename per URL without the form `out` field. Capture is greedy to
-// end-of-line so filenames with spaces survive; we trim and reject path
-// separators to keep it strictly a name
 const RENAME_SUFFIX_REGEX = /\s+Rename:\s*(\S.*?)\s*$/i;
 
 export interface ParsedTaskLink {
@@ -583,7 +543,6 @@ const parseRenameDirective = (line = ""): ParsedTaskLink => {
 	}
 	const rename = m[1].trim();
 	const uri = line.slice(0, m.index).trim();
-	// reject path separators — `out` is a filename, never a path
 	if (!rename || rename.includes("/") || rename.includes("\\")) {
 		return { uri };
 	}
@@ -620,8 +579,6 @@ export const listTorrentFiles = (files) => {
 	const result = files.map((file, index) => {
 		const extension = getFileExtension(file.path);
 		const item = {
-			// aria2 select-file start index at 1
-			// possible values: 1-1048576
 			idx: index + 1,
 			extension: `.${extension}`,
 			...file,
@@ -665,6 +622,9 @@ export const parseHeader = (header = "") => {
 	const headers = splitTextRows(header);
 	headers.forEach((line) => {
 		const index = line.indexOf(":");
+		if (index < 0) {
+			return;
+		}
 		const name = line.substring(0, index);
 		const value = line.substring(index + 1).trim();
 		result[name] = value;

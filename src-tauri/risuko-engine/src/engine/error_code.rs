@@ -1,15 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
-/// Risuko error codes for download failures
-///
-/// Codes are grouped by category:
-/// - 1xx: General / unknown errors
-/// - 2xx: Network errors (DNS, connection, timeout)
-/// - 3xx: HTTP errors (4xx/5xx responses, redirects)
-/// - 4xx: File system errors (disk full, permission, path)
-/// - 5xx: Protocol-specific errors (torrent, ed2k, m3u8, ftp)
-/// - 9xx: Internal / engine errors
+/// Risuko download-failure error codes grouped by category: 1xx general/unknown, 2xx network (DNS/connection/timeout), 3xx HTTP (4xx/5xx/redirects), 4xx file system (disk/permission/path), 5xx protocol-specific (torrent/ed2k/m3u8/ftp), 9xx internal/engine
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ErrorCode(pub u16);
 
@@ -36,10 +28,7 @@ impl ErrorCode {
     pub const HTTP_SERVICE_UNAVAILABLE: Self = Self(306);
     pub const HTTP_REDIRECT_LOOP: Self = Self(307);
     pub const HTTP_RESPONSE_ERROR: Self = Self(308);
-    /// Cloudflare bot-protection challenge detected on a 403/503/429
-    /// response carrying cf-ray, `server: cloudflare`, or a "Just a
-    /// moment..." body. Resolved by importing browser cookies plus a
-    /// matching User-Agent
+    /// Cloudflare bot-protection challenge on a 403/503/429 response carrying cf-ray, `server: cloudflare`, or a "Just a moment..." body; resolved by importing browser cookies plus a matching User-Agent
     pub const CLOUDFLARE_CHALLENGE: Self = Self(315);
 
     // -- File system --
@@ -50,9 +39,7 @@ impl ErrorCode {
     pub const TORRENT_METADATA_FAILED: Self = Self(500);
     pub const TORRENT_NO_SEEDS: Self = Self(501);
     pub const TORRENT_INVALID_FILE: Self = Self(502);
-    /// Pure-v2 magnet resolved the info dict but no peer served the BEP 52
-    /// piece-layer hashes. The torrent is unverifiable until layers are
-    /// obtained (importing the .torrent file always works)
+    /// Pure-v2 magnet resolved the info dict but no peer served the BEP 52 piece-layer hashes; unverifiable until layers are obtained (importing the .torrent file always works)
     pub const TORRENT_PIECE_LAYERS_UNAVAILABLE: Self = Self(503);
     pub const ED2K_SERVER_UNREACHABLE: Self = Self(510);
     pub const ED2K_FILE_NOT_FOUND: Self = Self(511);
@@ -83,9 +70,7 @@ impl fmt::Display for ErrorCode {
     }
 }
 
-/// Returns true when `code` appears as a standalone ASCII number
-///
-/// Avoids `contains("500")` matching embedded runs like "5003" or "15000"
+/// True when `code` appears as a standalone ASCII number, avoiding `contains("500")` matching embedded runs like "5003" or "15000"
 fn contains_status(haystack: &str, code: &str) -> bool {
     let bytes = haystack.as_bytes();
     let mut start = 0;
@@ -102,9 +87,7 @@ fn contains_status(haystack: &str, code: &str) -> bool {
     false
 }
 
-/// Classify an error message string into an error code
-///
-/// For HTTP downloads, also pass the protocol kind for better classification
+/// Classify an error message into an error code; for HTTP downloads also pass the protocol kind for better classification
 pub fn classify_error(msg: &str, protocol: &str) -> ErrorCode {
     let lower = msg.to_lowercase();
 
@@ -134,10 +117,7 @@ pub fn classify_error(msg: &str, protocol: &str) -> ErrorCode {
 
     // -- HTTP status codes (skip for media: its match arm classifies these) --
     if protocol != "media" {
-        // Cloudflare has to beat the generic 403/503/429 catch-alls
-        // below. The HTTP downloader prefixes its message with
-        // [cloudflare-challenge] when it sniffs the response (see
-        // http.rs::looks_like_cloudflare_block)
+        // Cloudflare must beat the generic 403/503/429 catch-alls below; the HTTP downloader prefixes its message with [cloudflare-challenge] when it sniffs the response (see http.rs::looks_like_cloudflare_block)
         if lower.contains("[cloudflare-challenge]")
             || lower.contains("cloudflare challenge")
             || lower.contains("cf_clearance required")
@@ -188,9 +168,7 @@ pub fn classify_error(msg: &str, protocol: &str) -> ErrorCode {
     // -- Protocol-specific patterns --
     match protocol {
         "torrent" => {
-            // Check piece-layers FIRST: the message also contains the
-            // word "metadata" / "peer" so a more general pattern would
-            // shadow this typed error
+            // Check piece-layers FIRST: the message also contains "metadata"/"peer" so a more general pattern would shadow this typed error
             if lower.contains("piece layers unavailable") {
                 return ErrorCode::TORRENT_PIECE_LAYERS_UNAVAILABLE;
             }
@@ -391,9 +369,7 @@ mod tests {
 
     #[test]
     fn classify_torrent_piece_layers_unavailable() {
-        // The bt::magnet error contract: messages prefixed with this
-        // string must surface as the typed code so the UI can prompt the
-        // user to import the .torrent instead
+        // bt::magnet error contract: messages prefixed with this string must surface as the typed code so the UI can prompt the user to import the .torrent instead
         assert_eq!(
             classify_error(
                 "Failed to resolve magnet: piece layers unavailable: no peer served the BEP 52 piece-layer hashes for this magnet",
@@ -472,8 +448,7 @@ mod tests {
 
     #[test]
     fn classify_media_wins_over_http_403() {
-        // A YouTube-specific message that also contains an HTTP status code
-        // must be classified by the media arm, not the generic HTTP arm
+        // A YouTube-specific message that also contains an HTTP status code must be classified by the media arm, not the generic HTTP arm
         assert_eq!(
             classify_error("HTTP Error 403: age-restricted content", "media"),
             ErrorCode::MEDIA_AUTH_REQUIRED

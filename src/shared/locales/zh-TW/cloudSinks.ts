@@ -15,7 +15,6 @@ export default {
 	labelPlaceholder: "例如：家用 NAS",
 	protocol: "協定",
 
-	// WebDAV
 	endpoint: "服務端 URL",
 	basePath: "基礎路徑",
 	basePathHint: "選填。檔案會儲存在伺服器的此路徑下。",
@@ -26,7 +25,6 @@ export default {
 	allowInsecure: "允許自簽憑證",
 	allowInsecureHint: "略過 TLS 憑證驗證。僅在受信任的私有伺服器上啟用。",
 
-	// S3
 	s3Endpoint: "端點",
 	s3EndpointPlaceholder: "如 https://s3.amazonaws.com 或 http://minio:9000",
 	s3Region: "區域",
@@ -40,7 +38,6 @@ export default {
 	s3PathStyleHint:
 		"使用 bucket-in-path 的 URL（MinIO 與多數自架 S3 需要啟用）。",
 
-	// SFTP
 	host: "主機",
 	port: "連接埠",
 	privateKey: "私鑰（PEM）",
@@ -48,7 +45,6 @@ export default {
 	sftpBasePath: "基礎路徑",
 	sftpBasePathPlaceholder: "/home/user/uploads",
 
-	// FTP
 	ftpSecure: "FTPS（TLS）",
 	ftpSecureHint: "在控制通道上協商顯式 TLS（FTPS）。",
 	postAction: "上傳後動作",
@@ -88,7 +84,6 @@ export default {
 	save: "儲存",
 	close: "關閉",
 
-	// Rules
 	rules: "路由規則",
 	rulesHint:
 		"依序比對已完成的下載任務；首個命中的規則決定目標儲存。無規則時所有任務都使用預設儲存。",

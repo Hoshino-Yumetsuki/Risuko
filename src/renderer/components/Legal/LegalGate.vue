@@ -41,8 +41,6 @@ export default {
 	computed: {
 		showGate() {
 			const config = usePreferenceStore().config;
-			// treat anything but an explicit true as "not accepted" so a missing
-			// key on first launch still shows the gate
 			return !!config && config.legalAccepted !== true;
 		},
 	},
@@ -63,7 +61,6 @@ export default {
 			invoke("plugin:shell|open", { path: url }).catch(() => {});
 		},
 		onKey(e) {
-			// gate is a hard block — Escape must not dismiss it; trap Tab inside
 			if (e.key === "Escape") {
 				e.preventDefault();
 				return;

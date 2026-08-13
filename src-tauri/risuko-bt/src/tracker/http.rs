@@ -99,8 +99,7 @@ fn parse_response(bytes: &[u8]) -> Result<AnnounceResponse, TrackerError> {
             peers.push(SocketAddr::new(IpAddr::V4(ip), port));
         }
     } else if let Some(list) = value.get(b"peers").and_then(|v| v.as_list()) {
-        // Dictionary model (BEP-3 original). Each entry is a dict with
-        // `ip` and `port` keys
+        // Dictionary model (BEP-3 original): each entry is a dict with `ip` and `port` keys
         for entry in list {
             if entry.as_dict().is_some() {
                 let ip = entry.get(b"ip").and_then(|v| v.as_str());

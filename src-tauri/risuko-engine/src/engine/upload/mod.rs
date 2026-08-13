@@ -15,23 +15,17 @@ pub use sink::{
     UploadProgress, UploadSink, UploadSinkRecord, WebdavConfig,
 };
 
-/// DTO produced by `TaskManager::files_for_upload` and consumed
-/// by `UploadSinkManager::enqueue_for_file` — kept outside the trait to avoid
-/// pulling task-internal types into the sink layer
+/// DTO produced by `TaskManager::files_for_upload` and consumed by `UploadSinkManager::enqueue_for_file` — kept outside the trait to avoid pulling task-internal types into the sink layer
 #[derive(Debug, Clone)]
 pub struct UploadFileSnapshot {
     pub local_path: std::path::PathBuf,
     pub remote_relative: String,
     pub size: u64,
-    /// Resolved file-category key (matches `RuleMatch::categories` values:
-    /// "music", "video", "image", "document", "compressed", "program")
-    /// `None` when the extension doesn't fall into any known bucket
+    /// Resolved file-category key (matches `RuleMatch::categories` values: "music", "video", "image", "document", "compressed", "program"); `None` when the extension doesn't fall into any known bucket
     pub category: Option<String>,
 }
 
-/// Resolve a file's category bucket from its name/extension. Single source
-/// of truth — the Tauri-layer `resolve_file_category` command delegates here
-/// so rule matching and the user-facing category-dirs feature stay in sync
+/// Resolve a file's category bucket from its name/extension; single source of truth — the Tauri-layer `resolve_file_category` command delegates here so rule matching and the user-facing category-dirs feature stay in sync
 pub fn resolve_category(name: &str) -> Option<String> {
     if name.is_empty() {
         return None;

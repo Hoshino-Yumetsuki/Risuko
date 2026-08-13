@@ -24,6 +24,7 @@ internal class PackageManagerHook(
 
     private lateinit var binderCache: MutableMap<String, IBinder>
     private var cachedWebViewAppInfo: ApplicationInfo? = null
+    private var realPackageManagerInterface: IInterface? = null
 
     private val interceptors: Map<String, Reflect.Interceptor> = mapOf(
         "getPackageInfo" to Reflect.Interceptor { args, original ->
@@ -191,13 +192,18 @@ internal class PackageManagerHook(
 
     override fun onProxyBinderCreate(binder: IBinder): ProxyBinder {
         val realInterface: IInterface = Framework.packageManagerAsInterface(binder)
+        realPackageManagerInterface = realInterface
         val proxyInterface = Reflect.newInterfaceProxy(realInterface, interceptors) as IInterface
         binderCache = Framework.serviceCache()
         return ProxyBinder(realInterface.asBinder(), proxyInterface)
     }
 
     override fun onTargetBinderRestore(binder: IBinder) {
-        val realInterface = binder.queryLocalInterface(binder.interfaceDescriptor ?: "")
+        // The "package" service is a remote BinderProxy, so queryLocalInterface on it
+        // returns null. Restore the real IInterface captured in onProxyBinderCreate,
+        // falling back to re-deriving it from the binder if unavailable
+        val realInterface = realPackageManagerInterface
+            ?: Framework.packageManagerAsInterface(binder)
         binderCache[Framework.SERVICE_PACKAGE] = binder
         Framework.setActivityThreadPackageManager(realInterface)
         Framework.flushContextImplPackageManager(context)

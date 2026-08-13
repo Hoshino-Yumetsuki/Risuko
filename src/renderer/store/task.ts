@@ -13,16 +13,12 @@ const TASKS_PER_PAGE_STORAGE_KEY = "risuko.tasks-per-page";
 const SORT_BY_STORAGE_KEY = "risuko.task-sort-by";
 const SORT_ORDER_STORAGE_KEY = "risuko.task-sort-order";
 
-/** Max speed samples kept per task */
 export const SPEED_HISTORY_LIMIT = 60;
 
-/** Max tasks tracked in the speed-history LRU */
 const SPEED_HISTORY_GID_LIMIT = 200;
 
 type SpeedSample = { download: number; upload: number };
 
-/** Module cache: gid -> speed samples */
-// please work please work please work
 const speedHistoryCache = new Map<string, SpeedSample[]>();
 type StatsTaskAccumulator = {
 	gid: string;
@@ -151,10 +147,8 @@ function sampleSpeedsFromTasks(tasks: DownloadTask[]): boolean {
 		const sample: SpeedSample = { download, upload };
 		const prev = speedHistoryCache.get(task.gid) || [];
 		const next = [...prev, sample].slice(-SPEED_HISTORY_LIMIT);
-		// Re-insert so the sampled gid becomes most-recently-used
 		speedHistoryCache.delete(task.gid);
 		speedHistoryCache.set(task.gid, next);
-		// Bound tracked gids by evicting least-recently-used entries
 		while (speedHistoryCache.size > SPEED_HISTORY_GID_LIMIT) {
 			const oldest = speedHistoryCache.keys().next().value;
 			if (oldest === undefined) {
@@ -270,7 +264,6 @@ export const useTaskStore = defineStore("task", {
 			return state.currentPageMap[state.currentList] || 1;
 		},
 		displayTaskList(state) {
-			// One card per task
 			return state.taskList.map((task) => ({
 				...task,
 				_displayKey: task.gid,
@@ -353,7 +346,6 @@ export const useTaskStore = defineStore("task", {
 		selectedGids(state): string[] {
 			return state.selectedGidList;
 		},
-		// Selected rows as `DisplayTask` objects
 		selectedTaskRows(state): DisplayTask[] {
 			if (state.selectedGidList.length === 0) {
 				return [];
@@ -461,7 +453,6 @@ export const useTaskStore = defineStore("task", {
 					type: fetchType,
 				})) as DownloadTask[];
 
-				// Drop stale results if the user switched tabs mid-flight
 				if (type !== this.currentList) {
 					return [];
 				}
@@ -481,7 +472,6 @@ export const useTaskStore = defineStore("task", {
 
 				const orderedData = this.applyTaskOrder(type, data);
 				this.taskList = orderedData;
-				// Count visible rows, not raw backend tasks, so the sidebar matches the list
 				this.taskCountMap = {
 					...this.taskCountMap,
 					[type]: orderedData.length,
@@ -583,13 +573,8 @@ export const useTaskStore = defineStore("task", {
 				stopped: stoppedCount,
 			};
 		},
-		/**
-		 * Sample speeds for all active/seeding tasks
-		 * Called every polling tick from EngineClient
-		 */
 		async sampleActiveSpeeds() {
 			try {
-				// The active list already has speeds
 				if (this.currentList === "active" && this.taskList.length > 0) {
 					if (sampleSpeedsFromTasks(this.taskList)) {
 						this.speedHistoryRev++;
@@ -597,7 +582,6 @@ export const useTaskStore = defineStore("task", {
 					return;
 				}
 
-				// Other tabs fetch a small active-task projection
 				const tasks = (await api.fetchTaskList({
 					type: "active",
 					keys: [
@@ -614,9 +598,7 @@ export const useTaskStore = defineStore("task", {
 				if (sampleSpeedsFromTasks(tasks)) {
 					this.speedHistoryRev++;
 				}
-			} catch {
-				// Sampling is best effort
-			}
+			} catch {}
 		},
 		selectTasks(list: string[]) {
 			this.selectedGidList = list;
@@ -783,14 +765,9 @@ export const useTaskStore = defineStore("task", {
 
 			return api
 				.removeTask({ gid })
-				.then(() =>
-					// Engine `remove()` only marks the task as Removed
-					// Drop the record too so it disappears from every view, including all
-					api.removeTaskRecord({ gid }).catch(() => undefined),
-				)
+				.then(() => api.removeTaskRecord({ gid }).catch(() => undefined))
 				.finally(() => {
 					speedHistoryCache.delete(gid);
-					// Drop cloudflare retry flags for tasks that no longer exist
 					useAppStore().clearCloudflareRetryFlag(gid);
 					this.fetchList();
 					this.saveSession();
@@ -914,7 +891,6 @@ export const useTaskStore = defineStore("task", {
 			return api
 				.batchRemoveTask({ gids })
 				.then(() =>
-					// Drop records so removed rows disappear from every view
 					Promise.all(
 						gids.map((gid) =>
 							api.removeTaskRecord({ gid }).catch(() => undefined),
@@ -925,7 +901,6 @@ export const useTaskStore = defineStore("task", {
 					const appStore = useAppStore();
 					for (const gid of gids) {
 						speedHistoryCache.delete(gid);
-						// Prune the cloudflare retry flag for removed tasks
 						appStore.clearCloudflareRetryFlag(gid);
 					}
 					this.fetchList();

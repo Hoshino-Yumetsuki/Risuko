@@ -31,8 +31,7 @@ fn resolve_rpc_host() -> String {
     read_options_from_config().rpc_host()
 }
 
-/// Read rpc-secret from the config files, returning None if empty or absent
-/// user.json takes precedence over system.json
+/// Read rpc-secret from the config files (user.json takes precedence over system.json), returning None if empty or absent
 fn read_secret_from_config() -> Option<String> {
     let secret = read_options_from_config().rpc_secret();
     if secret.is_empty() {
@@ -533,8 +532,7 @@ pub async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
     let engine = start_headless_engine(args.rpc_port).await?;
     tracing::info!("Risuko engine running, press Ctrl+C to stop");
 
-    // Shut down on Ctrl+C or RPC `risuko.shutdown`
-    // The `shutdown_requested()` borrow ends with `select!`, so `engine.shutdown()` can consume `engine`
+    // Shut down on Ctrl+C or RPC `risuko.shutdown`; the `shutdown_requested()` borrow ends with `select!` so `engine.shutdown()` can consume `engine`
     tokio::select! {
         res = tokio::signal::ctrl_c() => {
             res?;

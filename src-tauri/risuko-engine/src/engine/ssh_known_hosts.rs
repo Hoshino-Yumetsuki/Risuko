@@ -1,9 +1,4 @@
-//! Process-wide SSH/SFTP TOFU (trust-on-first-use) known-hosts store
-//!
-//! Records `host:port` -> SHA256 fingerprint pairs on first connect and
-//! rejects any subsequent mismatch. Backed by a JSON file under the user
-//! config dir so pinning survives restarts. Shared between the SFTP
-//! download path and the SFTP upload sink so trust state stays consistent
+//! Process-wide SSH/SFTP TOFU known-hosts store: records `host:port` -> SHA256 fingerprint on first connect, rejects any subsequent mismatch, backed by a JSON file under the user config dir and shared by the SFTP download path and upload sink
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -39,9 +34,7 @@ impl KnownHosts {
         }
         let s =
             serde_json::to_string_pretty(map).map_err(|e| format!("serialize known_hosts: {e}"))?;
-        // Atomic replace: write to a sibling temp file, fsync, then rename
-        // over the target so a partial write can never truncate the existing
-        // pinned-host state
+        // Atomic replace: write to a sibling temp file, fsync, then rename over the target so a partial write can never truncate the existing pinned-host state
         let tmp = path.with_extension("json.tmp");
         {
             use std::io::Write as _;
@@ -68,24 +61,14 @@ pub fn fingerprint(key: &russh::keys::PublicKey) -> Result<String, russh::Error>
     Ok(format!("SHA256:{}", STANDARD_NO_PAD.encode(h.finalize())))
 }
 
-/// SSH client handler enforcing TOFU host-key verification.
-///
-/// - When `pinned` is set: accept only that exact fingerprint, never persist.
-/// - Otherwise consult the shared known-hosts store: accept on match,
-///   refuse on mismatch, pin-and-persist on first sight. If persisting
-///   fails the connection is refused so a future mismatch can't go
-///   silently undetected.
+/// SSH client handler enforcing TOFU host-key verification: consults the shared known-hosts store — accept on match, refuse on mismatch, pin-and-persist on first sight; if persisting fails the connection is refused so a future mismatch can't go silently undetected
 pub struct TofuHandler {
     pub host_key: String,
-    pub pinned: Option<String>,
 }
 
 impl TofuHandler {
     pub fn new(host_key: String) -> Self {
-        Self {
-            host_key,
-            pinned: None,
-        }
+        Self { host_key }
     }
 }
 
@@ -107,18 +90,6 @@ impl client::Handler for TofuHandler {
                 return Ok(false);
             }
         };
-        if let Some(ref pin) = self.pinned {
-            if pin == &fp {
-                return Ok(true);
-            }
-            tracing::warn!(
-                "SFTP host key mismatch for {}: expected {} got {}",
-                self.host_key,
-                pin,
-                fp
-            );
-            return Ok(false);
-        }
         let mut store = KNOWN_HOSTS.lock();
         match store.map.get(&self.host_key) {
             Some(existing) if existing == &fp => Ok(true),

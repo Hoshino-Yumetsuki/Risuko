@@ -48,8 +48,7 @@ pub(crate) enum MaybeTls {
     Tls(Box<TlsStream<BoxedIo>>),
 }
 
-/// Type-erased AsyncRead+AsyncWrite stream so TLS can sit on top of either
-/// TCP or a SOCKS-tunneled TCP without compile-time enum gymnastics
+/// Type-erased AsyncRead+AsyncWrite stream so TLS sits on plain TCP or a SOCKS-tunneled TCP without enum gymnastics
 pub struct BoxedIo {
     inner: Box<dyn AsyncReadWrite + Send + Unpin>,
 }
@@ -301,9 +300,7 @@ impl Connector {
         self.happy_eyeballs(host, ordered).await
     }
 
-    /// Staggered-parallel connect over a family-interleaved address list
-    /// Each address gets its own attempt started `ATTEMPT_DELAY` after the
-    /// previous one; the first stream to connect wins and the rest are dropped
+    /// Staggered-parallel connect: each address starts `ATTEMPT_DELAY` after the previous, first to connect wins, rest dropped
     async fn happy_eyeballs(&self, host: &str, addrs: Vec<SocketAddr>) -> Result<TcpStream, Error> {
         /// Connection Attempt Delay
         const ATTEMPT_DELAY: Duration = Duration::from_millis(300);
@@ -322,8 +319,7 @@ impl Connector {
         tokio::pin!(stagger);
 
         loop {
-            // Wait for either the next in-flight attempt to finish or the
-            // stagger timer to fire, whichever comes first
+            // Wait for whichever comes first: next in-flight attempt finishing or the stagger timer firing
             tokio::select! {
                 biased;
                 finished = in_flight.next(), if !in_flight.is_empty() => {
@@ -416,10 +412,7 @@ impl Connector {
                     .ok_or_else(|| Error::Url("proxy missing host".into()))?
                     .to_string();
                 let pport = proxy.url().port().unwrap_or(1080);
-                // Proxy credentials in URLs are percent-encoded
-                // (RFC 3986). Decode before handing to either the SOCKS5
-                // username/password auth method or HTTP `Basic` so creds
-                // containing `@`, `:`, spaces, etc. authenticate correctly
+                // Percent-decode URL creds (RFC 3986) before SOCKS5 user/pass auth or HTTP `Basic` so `@`, `:`, spaces authenticate correctly
                 let user_raw = proxy.url().username();
                 let pass_raw = proxy.url().password().unwrap_or("");
                 let user = percent_decode_str(user_raw);
@@ -571,9 +564,7 @@ fn interleave_by_family(addrs: impl Iterator<Item = SocketAddr>) -> Vec<SocketAd
     out
 }
 
-/// Percent-decode a URL component (lossy: invalid UTF-8 is replaced).
-/// `url::Url::username()` / `password()` return the raw encoded form, but
-/// proxy auth needs the decoded bytes
+/// Percent-decode a URL component (lossy on invalid UTF-8): `Url::username()`/`password()` return raw encoded, proxy auth needs decoded bytes
 fn percent_decode_str(s: &str) -> String {
     percent_encoding::percent_decode_str(s)
         .decode_utf8_lossy()
@@ -589,9 +580,7 @@ fn format_socket_endpoint(host: &str, port: u16) -> String {
     }
 }
 
-/// SOCKS5 connect with optional local DNS and username/password auth
-///
-/// Split out so the connect-timeout wrapper covers every path
+/// SOCKS5 connect with optional local DNS and username/password auth; split out so the connect-timeout wrapper covers every path
 async fn socks5_connect(
     proxy_addr: &str,
     host: &str,

@@ -150,10 +150,7 @@ impl Session {
         let local_port = listener.local_addr()?.port();
         tracing::info!("session listening on port {local_port}");
 
-        // µTP (BEP-29) endpoint: bind UDP on the same port as the TCP listener so
-        // peers reach us at the same ip:port over either transport
-        // Outbound dials retry over µTP when TCP fails. A bind failure is non-fatal—
-        // µTP is disabled and we fall back to TCP only
+        // µTP (BEP-29) endpoint: bind UDP on the TCP listener's port so peers reach us over either transport, with outbound dials retrying µTP when TCP fails; a bind failure is non-fatal (µTP disabled, TCP only)
         let utp =
             match super::utp::UtpSocket::bind(SocketAddr::from(([0, 0, 0, 0], local_port))).await {
                 Ok(s) => {
@@ -241,34 +238,26 @@ impl Session {
         }
 
         if !session.opts.disable_dht {
-            // Reuse the process-wide warm DHT (also used by magnet resolution and each
-            // torrent's ongoing get_peers poller) rather than spawning a session-local one.
-            // shared() spawns + bootstraps a single long-lived instance on first use
+            // Reuse the process-wide warm DHT (also used by magnet resolution and each torrent's get_peers poller) rather than a session-local one; shared() spawns + bootstraps a single long-lived instance on first use
             match super::dht::Dht::shared().await {
                 Some(dht) => *session.dht.lock() = Some(dht),
                 None => tracing::warn!("dht: not started"),
             }
         }
 
-        // Hold a Weak reference inside the accept loop so the loop does not keep the
-        // session alive. When the last external Arc is dropped the session's Drop
-        // aborts the spawned task via `accept_handle`
+        // Hold a Weak reference inside the accept loop so it doesn't keep the session alive; when the last external Arc is dropped the session's Drop aborts the spawned task via `accept_handle`
         let weak = Arc::downgrade(&session);
         let accept_handle = tokio::spawn(run_accept_loop(listener, weak));
         *session.accept_handle.lock() = Some(accept_handle);
 
-        // Inbound µTP (BEP-29) accept loop. Only spawned when µTP bound. This
-        // drains the µTP socket's accept queue so inbound SYNs become real
-        // peers instead of leaking queued streams + driver tasks, and gives us
-        // inbound µTP connectivity on par with the TCP listener
+        // Inbound µTP (BEP-29) accept loop, only spawned when µTP bound; drains the socket's accept queue so inbound SYNs become real peers instead of leaking queued streams + driver tasks, giving inbound µTP connectivity on par with the TCP listener
         if let Some(utp) = session.utp.clone() {
             let weak_utp = Arc::downgrade(&session);
             let h = tokio::spawn(run_utp_accept_loop(utp, weak_utp));
             *session.utp_accept_handle.lock() = Some(h);
         }
 
-        // Optional v6 listener on the same port. Failure to bind is not
-        // fatal: log and continue with v4 only
+        // Optional v6 listener on the same port; failure to bind is not fatal, so log and continue with v4 only
         let listen_v6 = session
             .opts
             .listen
@@ -300,8 +289,7 @@ impl Session {
         cmd_tx: mpsc::Sender<PeerCommand>,
         mut event_rx: mpsc::Receiver<PeerEvent>,
     ) {
-        // Consuming the Handshook event here is fine: adopting a peer does
-        // not depend on it being re-delivered to the torrent loop
+        // Consuming the Handshook event here is fine: adopting a peer does not depend on it being re-delivered to the torrent loop
         let Some(first) = event_rx.recv().await else {
             return;
         };
@@ -354,8 +342,7 @@ impl Session {
         self.dht.lock().is_some()
     }
 
-    /// Number of nodes currently held in the DHT routing table. Returns 0
-    /// when the DHT is disabled or has not yet learned any contacts
+    /// Number of nodes currently held in the DHT routing table; returns 0 when the DHT is disabled or has not yet learned any contacts
     pub fn dht_routing_table_len(&self) -> usize {
         self.dht
             .lock()
@@ -364,9 +351,7 @@ impl Session {
             .unwrap_or(0)
     }
 
-    /// Snapshot of UPnP forwarder state: whether it was enabled at startup
-    /// and the count of currently confirmed router-side mappings (0 if not
-    /// enabled or no router responded yet)
+    /// Snapshot of UPnP forwarder state: whether it was enabled at startup and the count of currently confirmed router-side mappings (0 if not enabled or no router responded yet)
     pub fn upnp_status(&self) -> UpnpStatus {
         let guard = self.upnp_handle.lock();
         let enabled = guard.is_some();
@@ -439,6 +424,8 @@ impl Session {
                 if let Some(t) = inner.torrents.get(&id).cloned() {
                     return Ok(AddTorrentResponse::AlreadyManaged(id, t));
                 }
+                // by_hash is claimed but torrents has no entry yet: another add_from_meta for this info-hash reserved the id and is still spawning; bail out instead of racing past to allocate a duplicate id (which would spawn a second torrent and break the first task's rollback guard)
+                return Err("torrent for this info-hash is already being added".to_string());
             }
         }
 
@@ -446,10 +433,7 @@ impl Session {
             .output_folder
             .map(PathBuf::from)
             .unwrap_or_else(|| self.output_dir.clone());
-        // For multi-file torrents, files are laid out under <output>/<name>/
-        // when `create_subfolder` is set (default). When unset, files are
-        // placed directly under <output>/. Single-file torrents always
-        // store the file directly under <output>/
+        // For multi-file torrents, files are laid out under <output>/<name>/ when `create_subfolder` is set (default), else directly under <output>/; single-file torrents always store the file directly under <output>/
         let create_subfolder = opts.create_subfolder;
         let root_dir = if info.single_file_mode || !create_subfolder {
             root_dir
@@ -477,15 +461,15 @@ impl Session {
                 meta.announce_list.push(expanded);
             }
         }
-        // Reserve an id and claim the info-hash atomically so a concurrent
-        // add_from_meta cannot race past the duplicate check above. If spawn
-        // fails we roll the reservation back
+        // Reserve an id and claim the info-hash atomically so a concurrent add_from_meta cannot race past the duplicate check above; if spawn fails we roll the reservation back
         let id = {
             let mut inner = self.inner.lock();
             if let Some(&existing) = inner.by_hash.get(&meta.info_hash) {
                 if let Some(t) = inner.torrents.get(&existing).cloned() {
                     return Ok(AddTorrentResponse::AlreadyManaged(existing, t));
                 }
+                // Reserved by a concurrent add that is still spawning; don't allocate a duplicate id / overwrite the existing reservation
+                return Err("torrent for this info-hash is already being added".to_string());
             }
             let id = inner.next_id;
             inner.next_id += 1;
@@ -502,12 +486,7 @@ impl Session {
                 return Err(format!("build verifier: {e}"));
             }
         };
-        // Reserved-bit advertisement is set only for *pure-v2* torrents
-        // (no v1 hash). Hybrid torrents connect via the v1 info-hash and we
-        // intentionally do not assert the BEP-52 v2 bit there: empirically
-        // some swarms (notably CN Thunder/Xunlei clients) close the
-        // connection right after the BT handshake when v2 is asserted on a
-        // v1 info_hash
+        // Reserved-bit advertisement is set only for *pure-v2* torrents (no v1 hash); hybrid torrents connect via the v1 info-hash and we intentionally don't assert the BEP-52 v2 bit there since empirically some swarms (notably CN Thunder/Xunlei clients) close the connection right after the BT handshake when v2 is asserted on a v1 info_hash
         let advertise_v2 = matches!(meta.meta_version, crate::core::metainfo::MetaVersion::V2);
         let init = TorrentInit {
             meta: meta.clone(),
@@ -576,8 +555,7 @@ impl Session {
                         let Some(t) = weak.upgrade() else { return };
                         let cmd_tx = t.cmd_tx();
                         drop(t);
-                        // get_peers to find seeders AND announce_peer so other clients
-                        // searching this info-hash can find and dial us
+                        // get_peers to find seeders AND announce_peer so other clients searching this info-hash can find and dial us
                         let mut rx = dht.get_peers_stream(
                             info_hash,
                             std::time::Duration::from_secs(60),
@@ -588,9 +566,7 @@ impl Session {
                                 return; // torrent loop ended
                             }
                         }
-                        // A single lookup rarely returns the whole swarm and DHT peer sets
-                        // churn; re-query on a steady cadence to keep the peer list topped up
-                        // (mirrors a tracker re-announce interval)
+                        // A single lookup rarely returns the whole swarm and DHT peer sets churn; re-query on a steady cadence to keep the peer list topped up (mirrors a tracker re-announce interval)
                         tokio::time::sleep(std::time::Duration::from_secs(120)).await;
                     }
                 });
@@ -648,15 +624,10 @@ impl Session {
 
     pub async fn delete(&self, which: TorrentIdOrHash, with_files: bool) -> Result<(), String> {
         let handle = self.get(which).ok_or_else(|| "not found".to_string())?;
-        // Capture file paths for optional deletion before stopping the torrent
-        // (the torrent loop owns storage and will drop it on Stop)
+        // Capture file paths for optional deletion before stopping the torrent (the torrent loop owns storage and drops it on Stop)
         let file_paths: Option<Vec<(PathBuf, bool)>> = if with_files {
             let create_subfolder = handle.create_subfolder;
-            // Use the torrent's resolved root_dir (which honors a per-torrent
-            // `opts.output_folder` override) rather than the session-wide
-            // `output_dir`. For grouped multi-file layouts this root already
-            // points at `<output>/<name>/`; for flat / single-file it points
-            // at the parent directory
+            // Use the torrent's resolved root_dir (which honors a per-torrent `opts.output_folder` override) rather than the session-wide `output_dir`; for grouped multi-file layouts this root already points at `<output>/<name>/`, for flat / single-file at the parent directory
             let root = handle.root_dir.clone();
             handle
                 .with_metadata(|meta| {
@@ -665,21 +636,22 @@ impl Session {
                         // Single-file: file lives directly under root
                         vec![(root.join(&meta.info.name), false)]
                     } else if !meta.info.single_file_mode && create_subfolder && !name_empty {
-                        // Multi-file grouped: root_dir IS the torrent folder,
-                        // safe to remove wholesale
+                        // Multi-file grouped: root_dir IS the torrent folder, safe to remove wholesale
                         vec![(root, true)]
                     } else {
-                        // Flat layout, or any case with an empty torrent
-                        // name (defensive): enumerate per-file paths under
-                        // root so we never `remove_dir_all` the parent
+                        // Flat layout, or any case with an empty torrent name (defensive): enumerate per-file paths under root so we never `remove_dir_all` the parent
                         meta.info
                             .iter_file_details()
-                            .map(|f| {
+                            .filter_map(|f| {
                                 let mut p = root.clone();
+                                // Defense-in-depth: metainfo parsing already rejects unsafe path components, but never join a `..`/`.`/empty/root component here so an upstream regression can't turn deletion into an arbitrary-path removal
                                 for c in f.filename.split('/') {
+                                    if c.is_empty() || c == "." || c == ".." {
+                                        return None;
+                                    }
                                     p.push(c);
                                 }
-                                (p, false)
+                                Some((p, false))
                             })
                             .collect()
                     }
@@ -740,15 +712,12 @@ fn upnp_mapping_specs(tcp_port: u16, utp_port: Option<u16>) -> Vec<(u16, super::
     mappings
 }
 
-/// Bind a TCP listener on an IPv6 address with `IPV6_V6ONLY` set to avoid
-/// dual-stack conflicts when an IPv4 listener already bound the same port
+/// Bind a TCP listener on an IPv6 address with `IPV6_V6ONLY` set to avoid dual-stack conflicts when an IPv4 listener already bound the same port
 fn bind_v6_listener(addr: SocketAddr) -> std::io::Result<std::net::TcpListener> {
     use socket2::{Domain, Protocol, Socket, Type};
     let sock = Socket::new(Domain::IPV6, Type::STREAM, Some(Protocol::TCP))?;
     sock.set_only_v6(true)?;
-    // On Unix, SO_REUSEADDR allows rebinding a port in TIME_WAIT which is
-    // desirable. On Windows it has different semantics — it permits multiple
-    // processes to bind the same port, enabling hijacking — so skip it there
+    // On Unix, SO_REUSEADDR allows rebinding a port in TIME_WAIT (desirable); on Windows it has different semantics (permits multiple processes to bind the same port, enabling hijacking), so skip it there
     #[cfg(not(target_os = "windows"))]
     sock.set_reuse_address(true)?;
     sock.set_nonblocking(true)?;
@@ -757,8 +726,7 @@ fn bind_v6_listener(addr: SocketAddr) -> std::io::Result<std::net::TcpListener> 
     Ok(sock.into())
 }
 
-/// Snapshot of every managed torrent's info-hash + v2 flag + ext-handshake
-/// builder, handed to the connection layer as the inbound allow-list
+/// Snapshot of every managed torrent's info-hash + v2 flag + ext-handshake builder, handed to the connection layer as the inbound allow-list
 fn known_infohashes(s: &Session) -> Vec<KnownInfoHash> {
     s.inner
         .lock()
@@ -772,8 +740,7 @@ fn known_infohashes(s: &Session) -> Vec<KnownInfoHash> {
         .collect()
 }
 
-/// Shared inbound accept loop. Parameterised on a `Weak<Session>` so the
-/// task does not keep the session alive; the session's Drop aborts it
+/// Shared inbound accept loop, parameterised on a `Weak<Session>` so the task does not keep the session alive; the session's Drop aborts it
 async fn run_accept_loop(listener: TcpListener, weak: std::sync::Weak<Session>) {
     loop {
         match listener.accept().await {
@@ -811,16 +778,12 @@ async fn run_accept_loop(listener: TcpListener, weak: std::sync::Weak<Session>) 
     }
 }
 
-/// Inbound µTP (BEP-29) accept loop. Mirrors [`run_accept_loop`] but over the shared
-/// µTP endpoint: each accepted connection runs the plaintext BT responder handshake
-/// (µTP carries no MSE layer) and is routed to its torrent by info-hash. Parameterised
-/// on a `Weak<Session>` so it does not keep the session alive; the session's Drop
-/// aborts it via `utp_accept_handle`
+/// Inbound µTP (BEP-29) accept loop; mirrors [`run_accept_loop`] but over the shared µTP endpoint where each accepted connection runs the plaintext BT responder handshake (µTP carries no MSE layer) and is routed to its torrent by info-hash; parameterised on a `Weak<Session>` so it doesn't keep the session alive and the session's Drop aborts it via `utp_accept_handle`
 async fn run_utp_accept_loop(utp: Arc<super::utp::UtpSocket>, weak: std::sync::Weak<Session>) {
     loop {
         let stream = match utp.accept().await {
             Ok(s) => s,
-            // The endpoint closed (last Arc dropped); nothing more to accept.
+            // The endpoint closed (last Arc dropped); nothing more to accept
             Err(_) => return,
         };
         let Some(s) = weak.upgrade() else {
@@ -829,8 +792,7 @@ async fn run_utp_accept_loop(utp: Arc<super::utp::UtpSocket>, weak: std::sync::W
         let addr = stream.peer_addr();
         tokio::spawn(async move {
             let allowed = known_infohashes(&s);
-            // No managed torrents—nothing this peer could be after, so drop the stream
-            // (its driver tears the connection down)
+            // No managed torrents—nothing this peer could be after, so drop the stream (its driver tears the connection down)
             if allowed.is_empty() {
                 return;
             }

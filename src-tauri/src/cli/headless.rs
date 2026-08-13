@@ -20,8 +20,7 @@ fn init_headless_tracing() {
         .try_init();
 }
 
-/// Start the engine in headless mode (no Tauri, no GUI).
-/// Returns a handle to shut down when done
+/// Start the engine in headless mode (no Tauri, no GUI). Returns a handle to shut down when done
 pub async fn start_headless_engine(
     rpc_port: u16,
 ) -> Result<HeadlessEngine, Box<dyn std::error::Error>> {

@@ -53,10 +53,7 @@ pub struct PeerHandle {
     pub tx: mpsc::Sender<PeerCommand>,
 }
 
-/// Builds the BEP-10 extended handshake bytes for a peer given that peer's
-/// IP. The connection layer invokes this once per dial / accept after
-/// reading the remote BT handshake, so the resulting message can include
-/// the `yourip` field set to the peer's actual IP
+/// Builds the BEP-10 extended handshake bytes for a peer given that peer's IP, invoked once per dial/accept after the remote BT handshake so the message can set `yourip`
 pub type ExtHandshakeBuilder = Arc<dyn Fn(IpAddr) -> Bytes + Send + Sync>;
 
 /// Parameters for spawning an outbound peer connection
@@ -69,11 +66,7 @@ pub struct SpawnPeer {
     pub read_timeout: Duration,
     pub encryption: EncryptionPolicy,
     pub advertise_v2: bool,
-    /// Optional builder for the BEP-10 extended handshake bytes. Invoked
-    /// right after the BT handshake exchange, in the same task, so there's no
-    /// tokio hop between "BT handshake done" and "ext handshake on the wire",
-    /// and callers can populate `yourip`. Sent only when the remote advertises
-    /// the BEP-10 reserved bit
+    /// Optional BEP-10 ext handshake builder invoked right after the BT handshake in the same task (no tokio hop, so callers can populate `yourip`); sent only when the remote advertises the BEP-10 reserved bit
     pub ext_handshake_builder: Option<ExtHandshakeBuilder>,
 }
 
@@ -81,9 +74,7 @@ pub struct SpawnPeer {
 pub struct KnownInfoHash {
     pub info_hash: Id20,
     pub advertise_v2: bool,
-    /// See `SpawnPeer::ext_handshake_builder` — same builder, applied to
-    /// the inbound accept path so seeders also get our extended handshake
-    /// on the wire as quickly as possible (and with `yourip` set)
+    /// See `SpawnPeer::ext_handshake_builder` — same builder on the inbound accept path so seeders also get our extended handshake quickly (with `yourip` set)
     pub ext_handshake_builder: Option<ExtHandshakeBuilder>,
 }
 
@@ -97,8 +88,7 @@ impl From<Id20> for KnownInfoHash {
     }
 }
 
-/// Connect to a peer, perform the BEP-3 handshake, and split the socket into
-/// reader/writer tasks. Returns (handle, event receiver)
+/// Connect to a peer, perform the BEP-3 handshake, and split the socket into reader/writer tasks; returns (handle, event receiver)
 pub async fn connect(spawn: SpawnPeer) -> std::io::Result<(PeerHandle, mpsc::Receiver<PeerEvent>)> {
     let stream = timeout(spawn.connect_timeout, TcpStream::connect(spawn.addr))
         .await
@@ -107,14 +97,7 @@ pub async fn connect(spawn: SpawnPeer) -> std::io::Result<(PeerHandle, mpsc::Rec
     drive_handshake(stream, spawn).await
 }
 
-/// Run the plaintext BT handshake over an already-established µTP (BEP-29) connection,
-/// mirroring [`connect`] for the µTP transport. The peer connection layer is
-/// transport-agnostic (see [`finish_spawn`]), so the resulting reader/writer tasks
-/// behave identically to the TCP path
-///
-/// MSE-over-µTP is intentionally not attempted: µTP peers in the swarms this client
-/// targets speak plaintext, and TCP remains the path for encrypted peers. The caller
-/// obtains `stream` from [`crate::utp::UtpSocket::connect`]
+/// Run the plaintext BT handshake over an established µTP (BEP-29) connection, mirroring [`connect`]; the transport-agnostic layer (see [`finish_spawn`]) yields tasks identical to the TCP path. MSE-over-µTP is intentionally skipped (µTP peers speak plaintext, TCP handles encrypted peers); caller obtains `stream` from [`crate::utp::UtpSocket::connect`]
 pub async fn connect_utp_plaintext(
     stream: crate::utp::UtpStream,
     spawn: SpawnPeer,
@@ -215,12 +198,7 @@ fn alternate_dial_cannot_help(err: &std::io::Error) -> bool {
     message == "info hash mismatch" || message.starts_with("self-connection ")
 }
 
-/// Accept an inbound peer connection: peer sends handshake first, we reply
-/// `known_hashes` is the list of info-hashes the responder currently hosts;
-/// it is used both to validate plaintext handshakes and to resolve the
-/// obfuscated req2 field in MSE handshakes. The first byte is peeked:
-/// `0x13` means plaintext BEP-3; any other byte is treated as the start of
-/// an MSE handshake (Ya)
+/// Accept an inbound peer: peer sends handshake first, we reply. `known_hashes` lists info-hashes the responder hosts, used to validate plaintext handshakes and resolve the obfuscated req2 field in MSE. First byte peeked: `0x13` means plaintext BEP-3, any other byte starts an MSE handshake (Ya)
 pub async fn accept(
     stream: TcpStream,
     our_peer_id: Id20,
@@ -230,13 +208,7 @@ pub async fn accept(
 ) -> std::io::Result<(PeerHandle, mpsc::Receiver<PeerEvent>)> {
     let addr = stream.peer_addr()?;
 
-    // Peek the first 20 bytes (1 pstrlen + 19-byte "BitTorrent protocol")
-    // so we can reliably distinguish plaintext from MSE. A single-byte check
-    // would misclassify ~1/256 MSE connections whose Ya happens to start with 0x13
-    //
-    // `TcpStream::peek` can return fewer than 20 bytes if the peer's handshake
-    // arrives slowly, so we loop until we have 20 bytes, see a definitive
-    // non-plaintext first byte, or hit the read timeout
+    // Peek 20 bytes (pstrlen + "BitTorrent protocol") to distinguish plaintext from MSE reliably; a single-byte check would misclassify ~1/256 MSE connections whose Ya starts with 0x13. `peek` may return fewer than 20 bytes on a slow peer, so loop until 20 bytes, a definitive non-plaintext first byte, or the read timeout
     let mut probe = [0u8; 20];
     let plaintext_first_byte = timeout(read_timeout, async {
         loop {
@@ -247,15 +219,14 @@ pub async fn accept(
                     "eof before handshake",
                 ));
             }
-            // If the very first byte isn't 0x13, this is definitely not a
-            // plaintext BT handshake — no need to wait for more data
+            // A first byte other than 0x13 is definitely not a plaintext BT handshake — no need to wait for more data
             if probe[0] != 0x13 {
                 return Ok(false);
             }
             if n >= 20 {
                 return Ok(&probe[1..20] == b"BitTorrent protocol");
             }
-            // We have a 0x13 lead but not enough bytes yet; yield and retry
+            // 0x13 lead but not enough bytes yet; yield and retry
             tokio::task::yield_now().await;
         }
     })
@@ -298,12 +269,7 @@ pub async fn accept(
     }
 }
 
-/// Accept an inbound µTP peer: run the plaintext BEP-3 responder handshake directly
-/// over an established [`crate::utp::UtpStream`]. µTP carries no MSE layer (it is its
-/// own transport), so unlike the TCP accept path there is no first-byte probe—the BT
-/// handshake runs straight on the stream. `known_hashes` lists the
-/// info-hashes we currently host; it is used both to validate the peer's handshake and
-/// to choose the matching ext-handshake capabilities
+/// Accept an inbound µTP peer: run the plaintext BEP-3 responder handshake directly over an established [`crate::utp::UtpStream`]. µTP carries no MSE layer, so unlike TCP there is no first-byte probe—the BT handshake runs straight on the stream. `known_hashes` lists info-hashes we host, used to validate the peer's handshake and choose matching ext-handshake capabilities
 pub async fn accept_utp_plaintext(
     stream: crate::utp::UtpStream,
     our_peer_id: Id20,
@@ -323,11 +289,7 @@ pub async fn accept_utp_plaintext(
     .await
 }
 
-/// Responder side of the plaintext BEP-3 handshake, generic over the transport
-/// so TCP (`into_split` halves) and µTP (`tokio::io::split` halves) share the
-/// exact same logic: read the peer's handshake, validate the info-hash against
-/// `known_hashes`, reply with ours, optionally write the ext-handshake, then
-/// hand off to `finish_spawn`
+/// Responder side of the plaintext BEP-3 handshake, generic over the transport so TCP (`into_split`) and µTP (`tokio::io::split`) share the exact logic: read the peer's handshake, validate the info-hash against `known_hashes`, reply with ours, optionally write the ext-handshake, then hand off to `finish_spawn`
 async fn accept_plaintext_generic<R, W>(
     mut reader: R,
     mut writer: W,
@@ -412,6 +374,7 @@ async fn drive_handshake(
                 return Err(fallback_err);
             }
             tracing::debug!("plaintext handshake to {addr} failed: {fallback_err}; trying mse");
+            // Intentionally dial a fresh socket: the plaintext attempt already consumed (and likely corrupted, from the peer's view) the first connection, so the MSE retry cannot reuse it
             let mse = timeout(spawn.connect_timeout, async {
                 let stream = TcpStream::connect(spawn.addr).await?;
                 let _ = stream.set_nodelay(true);
@@ -435,10 +398,7 @@ async fn drive_handshake(
     }
 }
 
-/// Run the plaintext BEP-3 handshake over an already-split byte stream and
-/// spawn the reader/writer tasks. Generic over the transport so both TCP
-/// (`OwnedReadHalf`/`OwnedWriteHalf`) and µTP (`tokio::io::split` halves) can
-/// share the exact same handshake logic
+/// Run the plaintext BEP-3 handshake over an already-split byte stream and spawn the reader/writer tasks. Generic over the transport so both TCP (`OwnedReadHalf`/`OwnedWriteHalf`) and µTP (`tokio::io::split` halves) share the exact handshake logic
 async fn connect_plaintext<R, W>(
     mut reader: R,
     mut writer: W,
@@ -481,8 +441,7 @@ where
     )
 }
 
-/// Read from `r` until `buf` holds at least `n` bytes, bounded by `deadline`.
-/// `what` labels the phase in timeout / EOF error messages
+/// Read from `r` until `buf` holds at least `n` bytes, bounded by `deadline`; `what` labels the phase in timeout/EOF error messages
 async fn read_until(
     r: &mut (impl AsyncRead + Unpin),
     buf: &mut Vec<u8>,
@@ -513,8 +472,7 @@ async fn read_until(
     Ok(())
 }
 
-/// Perform the BEP-8 MSE handshake as the initiator (A), then send the BEP-3
-/// handshake over the now-encrypted stream
+/// Perform the BEP-8 MSE handshake as initiator (A), then send the BEP-3 handshake over the now-encrypted stream
 async fn connect_mse(
     stream: TcpStream,
     addr: SocketAddr,
@@ -531,9 +489,7 @@ async fn connect_mse(
     out.extend_from_slice(&pad_a);
     write_h.write_all(&out).await?;
 
-    // Step 2: read Yb (96 bytes); PadB follows but we don't know its length
-    // until we sync on HASH('req1', S) — which is how PadB is implicitly
-    // delimited on our side
+    // Step 2: read Yb (96 bytes); PadB follows but its length is unknown until we sync on HASH('req1', S) — which is how PadB is implicitly delimited on our side
     let mut yb = [0u8; DH_LEN];
     timeout(hs_timeout, read_h.read_exact(&mut yb))
         .await
@@ -547,9 +503,7 @@ async fn connect_mse(
     let mut enc_out = mse::init_rc4(&key_a);
     let mut dec_in = mse::init_rc4(&key_b);
 
-    // Step 3: A -> B: HASH('req1',S) || HASH('req2',SKEY)^HASH('req3',S)
-    //                  || ENCRYPT(VC || crypto_provide || len(PadC) || PadC
-    //                           || len(IA) || IA)
+    // Step 3: A -> B: HASH('req1',S) || HASH('req2',SKEY)^HASH('req3',S) || ENCRYPT(VC || crypto_provide || len(PadC) || PadC || len(IA) || IA)
     let req1 = mse::req1(&s);
     let req2 = mse::req2(&skey);
     let req3 = mse::req3(&s);
@@ -560,8 +514,7 @@ async fn connect_mse(
     if !matches!(spawn.encryption, EncryptionPolicy::RequireEncryption) {
         crypto_provide |= mse::crypto::PLAINTEXT;
     }
-    // Send IA = our BT handshake immediately so the responder can begin on
-    // its very first reply packet — saves a round trip
+    // Send IA = our BT handshake immediately so the responder can begin on its very first reply packet — saves a round trip
     let our_hs_bytes =
         Handshake::new_with_v2(spawn.info_hash, spawn.our_peer_id, spawn.advertise_v2).to_bytes();
     let mut payload = mse::build_initiator_payload(crypto_provide, &pad_c, &our_hs_bytes)
@@ -608,12 +561,7 @@ async fn connect_mse(
         let scan_from = mse::scan_start_after_append(recv.len(), 8);
         recv.extend_from_slice(&chunk[..rn]);
 
-        // Scan new candidate offsets. The responder encrypts with keyB
-        // starting at its keystream byte 0, so the first 8 encrypted bytes
-        // of its reply (which are VC = 00..00) equal keystream[0..8]. PadB
-        // is unencrypted and precedes the encrypted region, so the match
-        // offset in `recv` is `pad_b.len()`. We detect it by scanning for
-        // any offset `off` where recv[off..off+8] == keystream[0..8]
+        // Scan new candidate offsets: the responder encrypts with keyB from keystream byte 0, so the first 8 encrypted bytes of its reply (VC = 00..00) equal keystream[0..8]. PadB is unencrypted and precedes the encrypted region, so the match offset in `recv` is `pad_b.len()`; detect it by scanning for any offset `off` where recv[off..off+8] == keystream[0..8]
         if recv.len() >= 8 && keystream.len() >= 8 {
             let needle = &keystream[..8];
             found_offset = mse::find_subsequence_from(&recv, needle, scan_from);
@@ -625,10 +573,7 @@ async fn connect_mse(
     let off = found_offset
         .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "mse vc not found"))?;
 
-    // Rebuild dec_in from the key. The encrypted region begins at `off` in
-    // `recv`, and B's cipher starts at its keystream byte 0 there — so we
-    // do NOT fast-forward; instead we simply discard the `off` bytes of
-    // PadB that preceded it
+    // Rebuild dec_in from the key. The encrypted region begins at `off` in `recv`, and B's cipher starts at its keystream byte 0 there — so we do NOT fast-forward; instead we simply discard the `off` bytes of PadB that preceded it
     let mut dec_in = mse::init_rc4(&key_b);
     // We have recv[off..] pending; need at least 8 (VC) + 4 (select) + 2 (len) = 14 bytes
     let tail_start = off;
@@ -646,8 +591,7 @@ async fn connect_mse(
         ));
     }
 
-    // Ensure we have PadD buffered (and decrypt it), then anything after is
-    // already-plaintext-in-our-BT-sense data
+    // Ensure we have PadD buffered (and decrypt it), then anything after is already-plaintext-in-our-BT-sense data
     read_until(&mut read_h, &mut tail, 14 + pad_d_len, deadline, "mse padd").await?;
     if pad_d_len > 0 {
         dec_in.apply_keystream(&mut tail[14..14 + pad_d_len]);
@@ -672,16 +616,14 @@ async fn connect_mse(
         ));
     };
 
-    // Now read the peer's BT handshake from the still-encrypted (or now
-    // plaintext) stream, starting with any leftover bytes we already buffered
+    // Now read the peer's BT handshake from the still-encrypted (or now plaintext) stream, starting with any leftover bytes we already buffered
     let (reader_boxed, mut writer_boxed, remote_hs): (
         Box<dyn AsyncRead + Unpin + Send>,
         Box<dyn AsyncWrite + Unpin + Send>,
         Handshake,
     ) = if use_rc4 {
         let mut pending = leftover;
-        // Read BT handshake (68 bytes) from pending + stream, decrypting as
-        // we go
+        // Read BT handshake (68 bytes) from pending + stream, decrypting as we go
         let mut hs_bytes = Vec::with_capacity(HANDSHAKE_LEN);
         read_until(&mut read_h, &mut pending, HANDSHAKE_LEN, deadline, "mse hs").await?;
         hs_bytes.extend_from_slice(&pending[..HANDSHAKE_LEN]);
@@ -701,8 +643,7 @@ async fn connect_mse(
         let w = Rc4WriteHalf::new(write_h, enc_out);
         (Box::new(r), Box::new(w), remote_hs)
     } else {
-        // Plaintext after MSE negotiation. Leftover bytes are already BT
-        // handshake beginning
+        // Plaintext after MSE negotiation. Leftover bytes are already BT handshake beginning
         let mut pending = leftover;
         read_until(
             &mut read_h,
@@ -885,8 +826,14 @@ async fn accept_mse(
     let ia_bytes = enc_buf[ia_off..ia_off + ia_len].to_vec();
     let leftover = enc_buf[ia_off + ia_len..].to_vec();
 
-    // Choose crypto_select: prefer RC4; fall back to plaintext if allowed
-    // and requested. Require encryption policy forces RC4
+    // A spec-compliant peer may pack its BT handshake *and* further pipelined messages into IA. Bytes past the 68-byte handshake are already decrypted (the whole IA region had the keystream applied above) and must be replayed to the consumer ahead of the still-encrypted `leftover` tail
+    let ia_extra: Vec<u8> = if ia_bytes.len() > HANDSHAKE_LEN {
+        ia_bytes[HANDSHAKE_LEN..].to_vec()
+    } else {
+        Vec::new()
+    };
+
+    // Choose crypto_select: prefer RC4; fall back to plaintext if allowed and requested. Require encryption policy forces RC4
     let allow_plain = !matches!(policy, EncryptionPolicy::RequireEncryption);
     let crypto_select = if crypto_provide & mse::crypto::RC4 != 0 {
         mse::crypto::RC4
@@ -906,8 +853,7 @@ async fn accept_mse(
     enc_out.apply_keystream(&mut reply);
     write_h.write_all(&reply).await?;
 
-    // IA may contain A's BT handshake. MSE peers are allowed to send an
-    // empty IA and defer the BT handshake to the encrypted stream
+    // IA may contain A's BT handshake. MSE peers are allowed to send an empty IA and defer the BT handshake to the encrypted stream
     if !ia_bytes.is_empty() && ia_bytes.len() < HANDSHAKE_LEN {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
@@ -938,11 +884,7 @@ async fn accept_mse(
         write_h.write_all(&encoded).await?;
         let mut r = Rc4ReadHalf::new(
             read_h, dec_in,
-            // Any bytes A sent after IA belong on the encrypted stream;
-            // they are already decrypted up to ia_off+ia_len (in enc_buf)
-            // but any after that are still encrypted. leftover is
-            // the raw, still-encrypted tail; the Rc4ReadHalf will decrypt
-            // as it streams
+            // Any bytes A sent after IA belong on the encrypted stream; they are already decrypted up to ia_off+ia_len (in enc_buf) but any after that are still encrypted. leftover is the raw, still-encrypted tail; the Rc4ReadHalf will decrypt as it streams
             leftover,
         );
         let remote_hs = match remote_hs_from_ia {
@@ -975,10 +917,19 @@ async fn accept_mse(
             known_info.ext_handshake_builder.as_ref(),
         )
         .await?;
-        finish_spawn(addr, our_peer_id, remote_hs, true, Box::new(r), Box::new(w))
+        // `ia_extra` (plaintext, already decrypted) must precede anything the encrypted reader yields. It is only non-empty when IA carried the handshake, so the deferred-read branch above never touched `r`
+        let reader: Box<dyn AsyncRead + Unpin + Send> = if ia_extra.is_empty() {
+            Box::new(r)
+        } else {
+            Box::new(std::io::Cursor::new(ia_extra).chain(r))
+        };
+        finish_spawn(addr, our_peer_id, remote_hs, true, reader, Box::new(w))
     } else {
         write_h.write_all(&our_hs).await?;
-        let r = std::io::Cursor::new(leftover).chain(read_h);
+        // Prepend any extra IA bytes (past the handshake) to the leftover tail; both are plaintext here
+        let mut prefix = ia_extra;
+        prefix.extend_from_slice(&leftover);
+        let r = std::io::Cursor::new(prefix).chain(read_h);
         let remote_hs = match remote_hs_from_ia {
             Some(hs) => hs,
             None => {
@@ -1006,14 +957,7 @@ async fn accept_mse(
     }
 }
 
-/// Write our BEP-10 extended handshake to the wire if the remote advertised
-/// the extension-protocol reserved bit. The bytes are produced by `builder`
-/// per-peer so the message can include the peer's IP in the `yourip` field
-/// Called inline by every connection-establishment path (plaintext + MSE,
-/// inbound + outbound) so the message ships in the same async frame that
-/// just completed the BT handshake — no event-channel hop, no writer-task
-/// hop. Some real-world peers RST the connection if our follow-up doesn't
-/// arrive promptly
+/// Write our BEP-10 extended handshake to the wire if the remote advertised the extension-protocol reserved bit. The bytes are produced by `builder` per-peer so the message can include the peer's IP in the `yourip` field Called inline by every connection-establishment path (plaintext + MSE, inbound + outbound) so the message ships in the same async frame that just completed the BT handshake — no event-channel hop, no writer-task hop. Some real-world peers RST the connection if our follow-up doesn't arrive promptly
 async fn write_ext_handshake_if_supported<W: AsyncWrite + Unpin + ?Sized>(
     writer: &mut W,
     remote_hs: &Handshake,
@@ -1038,24 +982,18 @@ fn finish_spawn(
     reader: Box<dyn AsyncRead + Unpin + Send>,
     writer: Box<dyn AsyncWrite + Unpin + Send>,
 ) -> std::io::Result<(PeerHandle, mpsc::Receiver<PeerEvent>)> {
-    // Reject self-connections: the DHT can hand us our own externally-mapped
-    // address, and without this we complete a full handshake with ourselves,
-    // burning a peer slot on a connection that can never serve data
+    // Reject self-connections: the DHT can hand us our own externally-mapped address, and without this we complete a full handshake with ourselves, burning a peer slot on a connection that can never serve data
     if remote_hs.peer_id == our_peer_id {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
             "self-connection (peer_id matches ours)",
         ));
     }
-    // Sized for high-throughput pipelining: with up to ~64 outstanding
-    // chunk requests and Piece replies of 16 KiB arriving back-to-back,
-    // a 64-slot channel would backpressure the reader and cap throughput
+    // Sized for high-throughput pipelining: with up to ~64 outstanding chunk requests and Piece replies of 16 KiB arriving back-to-back, a 64-slot channel would backpressure the reader and cap throughput
     let (event_tx, event_rx) = mpsc::channel(1024);
     let (cmd_tx, cmd_rx) = mpsc::channel(1024);
 
-    // Deliver the handshake synchronously before spawning the reader so that
-    // consumers always observe `Handshook` before any peer messages. The
-    // channel was just created with capacity 1024 so this cannot block
+    // Deliver the handshake synchronously before spawning the reader so that consumers always observe `Handshook` before any peer messages. The channel was just created with capacity 1024 so this cannot block
     event_tx
         .try_send(PeerEvent::Handshook {
             peer_id: remote_hs.peer_id,
@@ -1083,10 +1021,7 @@ fn finish_spawn(
     Ok((PeerHandle { addr, tx: cmd_tx }, event_rx))
 }
 
-/// RC4-encrypting read half. Any residual bytes we already pulled from the
-/// socket while scanning the MSE handshake are replayed via the chained
-/// cursor prefix; they are *still encrypted* under the peer's key, so the
-/// same cipher applies to everything the chain yields
+/// RC4-encrypting read half. Any residual bytes we already pulled from the socket while scanning the MSE handshake are replayed via the chained cursor prefix; they are *still encrypted* under the peer's key, so the same cipher applies to everything the chain yields
 struct Rc4ReadHalf {
     inner: tokio::io::Chain<std::io::Cursor<Vec<u8>>, tokio::net::tcp::OwnedReadHalf>,
     cipher: MseRc4,
@@ -1123,9 +1058,7 @@ impl AsyncRead for Rc4ReadHalf {
     }
 }
 
-/// RC4-encrypting write half. Writes are buffered into a small scratch
-/// vector, encrypted, then written through. We keep scratch sized to each
-/// call to avoid a long-lived heap buffer
+/// RC4-encrypting write half. Writes are buffered into a small scratch vector, encrypted, then written through. We keep scratch sized to each call to avoid a long-lived heap buffer
 struct Rc4WriteHalf {
     inner: tokio::net::tcp::OwnedWriteHalf,
     cipher: MseRc4,
@@ -1143,8 +1076,7 @@ impl Rc4WriteHalf {
         }
     }
 
-    /// Write queued ciphertext through to the socket, in order. Clears the
-    /// pending buffer once fully drained
+    /// Write queued ciphertext through to the socket, in order. Clears the pending buffer once fully drained
     fn poll_drain(&mut self, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
         while self.pending_off < self.pending.len() {
             match Pin::new(&mut self.inner).poll_write(cx, &self.pending[self.pending_off..]) {
@@ -1187,9 +1119,7 @@ impl AsyncWrite for Rc4WriteHalf {
         self.pending = scratch;
         self.pending_off = 0;
         let consumed = buf.len();
-        // Opportunistically flush. If the socket is not ready, report the
-        // caller's bytes as consumed; the ciphertext is safely queued in
-        // `pending`
+        // Opportunistically flush. If the socket is not ready, report the caller's bytes as consumed; the ciphertext is safely queued in `pending`
         match self.poll_drain(cx) {
             Poll::Ready(Err(e)) => Poll::Ready(Err(e)),
             Poll::Ready(Ok(())) | Poll::Pending => Poll::Ready(Ok(consumed)),
@@ -1216,9 +1146,7 @@ async fn reader_task(
     mut reader: Box<dyn AsyncRead + Unpin + Send>,
     tx: mpsc::Sender<PeerEvent>,
 ) -> String {
-    // Larger temp buffer => fewer read syscalls per Piece message. Each
-    // Piece reply is up to 16 KiB of payload + 13 B header; 64 KiB lets us
-    // ingest several pipelined replies per syscall
+    // Larger temp buffer => fewer read syscalls per Piece message. Each Piece reply is up to 16 KiB of payload + 13 B header; 64 KiB lets us ingest several pipelined replies per syscall
     let mut buf = BytesMut::with_capacity(256 * 1024);
     loop {
         // Try to decode any complete frame already buffered
@@ -1253,10 +1181,7 @@ async fn writer_task(
     mut writer: Box<dyn AsyncWrite + Unpin + Send>,
     mut rx: mpsc::Receiver<PeerCommand>,
 ) -> String {
-    // Coalesce all commands currently queued into a single write_all so a
-    // burst of 128 pipelined Request frames becomes one syscall instead of
-    // 128. Per-message write_all + write_all overhead was a major
-    // bottleneck on high-fan-in torrents
+    // Coalesce all commands currently queued into a single write_all so a burst of 128 pipelined Request frames becomes one syscall instead of 128. Per-message write_all + write_all overhead was a major bottleneck on high-fan-in torrents
     let mut batch = BytesMut::with_capacity(64 * 1024);
     while let Some(first) = rx.recv().await {
         batch.clear();
@@ -1620,8 +1545,7 @@ mod tests {
             .unwrap();
         let server_addr = server_sock.local_addr();
 
-        // Minimal peer: accept a µTP stream, exchange BT handshakes, then push
-        // one peer message so the client's reader task surfaces it
+        // Minimal peer: accept a µTP stream, exchange BT handshakes, then push one peer message so the client's reader task surfaces it
         let server = tokio::spawn(async move {
             let mut s = server_sock.accept().await.unwrap();
             let mut buf = [0u8; HANDSHAKE_LEN];
@@ -1689,9 +1613,7 @@ mod tests {
         let client_id = Id20([1u8; 20]);
         let server_id = Id20([2u8; 20]);
 
-        // The peer listens on µTP only — no TCP listener exists on this UDP
-        // port number — so the client's TCP dial is refused and it must fall
-        // back to µTP to connect
+        // The peer listens on µTP only — no TCP listener exists on this UDP port number — so the client's TCP dial is refused and it must fall back to µTP to connect
         let server_sock = UtpSocket::bind("127.0.0.1:0".parse().unwrap())
             .await
             .unwrap();
@@ -1751,9 +1673,7 @@ mod tests {
             .unwrap();
         let server_addr = server_sock.local_addr();
 
-        // Responder: accept the inbound µTP stream and run the plaintext BT
-        // handshake through the production `accept_utp_plaintext` path, then
-        // push one message so the initiator's reader surfaces it
+        // Responder: accept the inbound µTP stream and run the plaintext BT handshake through the production `accept_utp_plaintext` path, then push one message so the initiator's reader surfaces it
         let server = tokio::spawn(async move {
             let s = server_sock.accept().await.unwrap();
             let known = vec![KnownInfoHash {

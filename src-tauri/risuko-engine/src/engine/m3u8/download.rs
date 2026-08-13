@@ -13,9 +13,7 @@ use crate::engine::speed_limiter::{SpeedEma, SpeedLimiter};
 
 static TEMP_DIR_COUNTER: AtomicU64 = AtomicU64::new(0);
 
-/// Run an M3U8/HLS download
-/// Main entry point called from manager.rs
-/// Returns the final output file path on success
+/// Run an M3U8/HLS download Main entry point called from manager.rs Returns the final output file path on success
 #[allow(clippy::too_many_arguments)]
 pub async fn run_m3u8_download(
     uri: &str,

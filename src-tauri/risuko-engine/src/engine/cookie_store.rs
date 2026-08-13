@@ -1,18 +1,4 @@
-//! Domain-keyed cookie / User-Agent store
-//!
-//! Persists imported browser credentials to a single JSON file in the
-//! engine's config directory. Two consumers:
-//!
-//! 1. The HTTP downloader auto-applies a saved entry when a new task's
-//!    URL matches by host
-//! 2. The IPC layer surfaces these entries in the renderer's "Saved
-//!    domain credentials" preferences pane, with delete controls
-//!
-//! Thin by design: no encryption, no scheduled refresh. Entries leave
-//! the store when the user deletes them in preferences, when the
-//! downloader re-detects a Cloudflare challenge for a saved host (logic
-//! lives in `manager.rs`), or when the store grows past `MAX_ENTRIES`
-//! and the oldest by `last_validated_at` is evicted
+//! Domain-keyed cookie / User-Agent store: persists imported browser credentials to one JSON file in the engine config dir, consumed by the HTTP downloader (auto-applies a saved entry when a task URL matches by host) and the IPC layer (surfaces entries in the "Saved domain credentials" pane with delete controls); thin by design (no encryption, no scheduled refresh) — entries leave on user delete, on the downloader re-detecting a Cloudflare challenge for a saved host (logic in `manager.rs`), or when the store exceeds `MAX_ENTRIES` and the oldest by `last_validated_at` is evicted
 
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
@@ -61,11 +47,7 @@ impl CookieStore {
         let state = match load_from_disk(&path) {
             Ok(s) => s,
             Err(err) => {
-                // A corrupted or unreadable file would be silently
-                // overwritten by the next write if we treated it as
-                // empty. Sidestep the file by renaming it with a
-                // timestamped `.corrupt-N` suffix so the user can recover
-                // it manually, and start with an empty in-memory store
+                // A corrupt/unreadable file would be silently overwritten by the next write if treated as empty; rename it with a timestamped `.corrupt-N` suffix so the user can recover it manually, then start with an empty in-memory store
                 tracing::warn!(
                     "cookie store load failed for {}: {err}. Backing up to .corrupt and starting empty",
                     path.display()
@@ -78,10 +60,7 @@ impl CookieStore {
                             path.display(),
                             backup.display()
                         );
-                        // Last-resort safety: if we can't move the file
-                        // aside, don't risk clobbering it. Return a
-                        // store whose path points elsewhere so writes
-                        // can't destroy the original
+                        // Last-resort safety: if we can't move the file aside, don't risk clobbering it — return a store whose path points elsewhere so writes can't destroy the original
                         return Self {
                             path: backup,
                             state: RwLock::new(StoreFile::default()),
@@ -98,9 +77,7 @@ impl CookieStore {
         }
     }
 
-    /// Find an entry whose host matches `target_url`. Tries an exact
-    /// match first, then a suffix match so `example.com` covers
-    /// `dl.example.com`
+    /// Find an entry whose host matches `target_url`; tries an exact match first, then a suffix match so `example.com` covers `dl.example.com`
     pub fn find_for_url(&self, target_url: &str) -> Option<CookieEntry> {
         let host = host_of(target_url)?;
         let s = self.state.read();
@@ -128,8 +105,9 @@ impl CookieStore {
         }
         entry.last_validated_at = now;
 
-        // Lowercase host keys so exact lookup, remove, and touch share one form
+        // Lowercase host keys so exact lookup, remove, and touch share one form, keeping `entry.host` aligned with the map key so a listed entry's `host` round-trips back to the same slot on remove/touch
         let key = entry.host.to_ascii_lowercase();
+        entry.host = key.clone();
         let mut s = self.state.write();
         s.entries.insert(key, entry);
 
@@ -148,8 +126,7 @@ impl CookieStore {
         write_to_disk(&self.path, &s)
     }
 
-    /// Bump `last_validated_at` for an entry that's still working. Called
-    /// from the HTTP downloader after a successful task start
+    /// Bump `last_validated_at` for an entry that's still working; called from the HTTP downloader after a successful task start
     pub fn touch(&self, host: &str) {
         let host = host.to_ascii_lowercase();
         let mut s = self.state.write();
@@ -185,8 +162,9 @@ impl CookieStore {
 }
 
 fn host_of(target_url: &str) -> Option<String> {
+    // Use ASCII-only lowercasing to match the key normalization in `upsert` (`to_ascii_lowercase`); Unicode `to_lowercase` can fold characters differently, making exact-match lookups miss an entry whose key was stored ASCII-lowercased
     if let Ok(url) = url::Url::parse(target_url) {
-        return url.host_str().map(|s| s.to_lowercase());
+        return url.host_str().map(|s| s.to_ascii_lowercase());
     }
     let trimmed = target_url
         .trim_start_matches("http://")
@@ -195,13 +173,13 @@ fn host_of(target_url: &str) -> Option<String> {
     if host.is_empty() {
         None
     } else {
-        Some(host.to_lowercase())
+        Some(host.to_ascii_lowercase())
     }
 }
 
 fn host_matches(request_host: &str, entry_host: &str) -> bool {
-    let r = request_host.to_lowercase();
-    let e = entry_host.to_lowercase();
+    let r = request_host.to_ascii_lowercase();
+    let e = entry_host.to_ascii_lowercase();
     if r == e {
         return true;
     }
@@ -231,13 +209,21 @@ fn write_to_disk(path: &Path, state: &StoreFile) -> Result<(), String> {
     Ok(())
 }
 
-/// Render the entry's cookies into a single `Cookie:` header value
+/// Render the entry's cookies into a single `Cookie:` header value; skips already-expired cookies and drops any whose name or value carries control or separator characters (CR/LF/NUL/`;`) so a malicious stored value can't inject extra headers or forge additional cookie pairs
 pub fn cookies_to_header(cookies: &[StoredCookie]) -> String {
+    let now = now_secs();
     cookies
         .iter()
+        .filter(|c| c.expires.is_none_or(|exp| exp > now))
+        .filter(|c| is_safe_cookie_field(&c.name) && is_safe_cookie_field(&c.value))
         .map(|c| format!("{}={}", c.name, c.value))
         .collect::<Vec<_>>()
         .join("; ")
+}
+
+/// A cookie name/value is safe to serialize into a `Cookie:` header only if it carries no control characters (including CR/LF used for header injection) and no `;` separator that would split it into extra pairs
+fn is_safe_cookie_field(s: &str) -> bool {
+    !s.chars().any(|c| c.is_control() || c == ';')
 }
 
 #[cfg(test)]
@@ -356,14 +342,46 @@ mod tests {
     }
 
     #[test]
+    fn cookies_to_header_drops_injection_and_expired() {
+        let now = now_secs();
+        let cs = vec![
+            // CRLF + a smuggled header in the value must be dropped entirely
+            StoredCookie {
+                name: "evil".into(),
+                value: "x\r\nX-Injected: 1".into(),
+                ..Default::default()
+            },
+            // A stray `;` would forge a second cookie pair; drop it too
+            StoredCookie {
+                name: "split".into(),
+                value: "a; admin=1".into(),
+                ..Default::default()
+            },
+            // Already-expired cookies must not be sent
+            StoredCookie {
+                name: "stale".into(),
+                value: "1".into(),
+                expires: Some(now.saturating_sub(10)),
+                ..Default::default()
+            },
+            StoredCookie {
+                name: "good".into(),
+                value: "ok".into(),
+                expires: Some(now + 3600),
+                ..Default::default()
+            },
+        ];
+        assert_eq!(cookies_to_header(&cs), "good=ok");
+    }
+
+    #[test]
     fn corrupted_store_is_backed_up_not_overwritten() {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join(STORE_FILE);
         // Plant garbage so serde_json::from_str returns an error
         std::fs::write(&path, b"{not valid json").unwrap();
 
-        // Loading must NOT silently default. The corrupt file should be
-        // moved aside, and a sibling .corrupt-* file should now exist
+        // Loading must NOT silently default: the corrupt file should be moved aside and a sibling .corrupt-* file should now exist
         let store = CookieStore::new(dir.path());
         assert!(store.list().is_empty());
         assert!(
@@ -382,8 +400,7 @@ mod tests {
             .collect();
         assert_eq!(backups.len(), 1, "expected exactly one .corrupt-* backup");
 
-        // A subsequent upsert should write a fresh, valid file at the
-        // canonical path without touching the backup
+        // A subsequent upsert should write a fresh, valid file at the canonical path without touching the backup
         store.upsert(dummy_entry("example.com")).unwrap();
         assert!(path.exists());
         assert!(backups[0].path().exists());

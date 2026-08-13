@@ -46,7 +46,6 @@ async function init(config: AppConfig) {
 		applyTheme();
 	});
 
-	// Re-sync language and theme each show, in case either changed while running
 	await listen("clip-prompt:show", async () => {
 		const cfg = await usePreferenceStore().fetchPreference();
 		await localeManager.changeLanguageByLocale(

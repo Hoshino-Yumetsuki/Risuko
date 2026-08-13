@@ -34,6 +34,9 @@ pub fn system_defaults() -> Map<String, Value> {
     m.insert("doh-url".into(), json!(""));
     m.insert("doh-bootstrap".into(), json!(""));
     m.insert("doh-fallback".into(), json!(true));
+    // eMule Kad source discovery is enabled by default; Kad uses its own UDP socket and settings, independent of BitTorrent DHT
+    m.insert("ed2k-enable-kad".into(), json!(true));
+    m.insert("ed2k-kad-port".into(), json!(4672));
     m.insert("ed2k-server".into(), json!("176.123.5.89:4725,45.82.80.155:5687,85.239.33.123:4232,91.208.162.87:4232,145.239.2.134:4661"));
     m.insert("enable-dht".into(), json!(true));
     m.insert("enable-dht6".into(), json!(true));
@@ -62,21 +65,14 @@ pub fn system_defaults() -> Map<String, Value> {
 fn default_download_dir() -> std::path::PathBuf {
     #[cfg(target_os = "android")]
     {
-        // On Android, `dirs::download_dir()` resolves to "$HOME/Downloads"
-        // which is not a valid path (HOME is typically the app's private
-        // data dir or "/"). Use the well-known shared public Downloads
-        // folder so files land somewhere the user can browse with any
-        // file manager. The app needs storage permission to write there
-        // on Android 10+; if missing, the user can pick another folder
-        // via the directory picker.
+        // On Android `dirs::download_dir()` resolves to "$HOME/Downloads" (invalid, since HOME is the app private dir or "/"); use the shared public Downloads folder so files are browsable by any file manager (needs storage permission on Android 10+, else user picks another folder)
         let public_downloads = std::path::PathBuf::from("/storage/emulated/0/Download/Risuko");
         if let Some(parent) = public_downloads.parent() {
             if is_writable_dir(parent) {
                 return public_downloads;
             }
         }
-        // Fallback: app-specific external storage (no permission needed,
-        // but hidden from most file managers).
+        // Fallback: app-specific external storage (no permission needed, but hidden from most file managers)
         let app_external = std::path::PathBuf::from(
             "/storage/emulated/0/Android/data/app.risuko.mobile/files/Download",
         );
@@ -85,7 +81,7 @@ fn default_download_dir() -> std::path::PathBuf {
                 return app_external;
             }
         }
-        // Last resort: app-private internal storage.
+        // Last resort: app-private internal storage
         if let Some(home) = dirs::home_dir() {
             return home.join("Download");
         }
@@ -221,6 +217,8 @@ mod tests {
             "doh-url",
             "doh-bootstrap",
             "doh-fallback",
+            "ed2k-enable-kad",
+            "ed2k-kad-port",
         ];
         for key in required {
             assert!(sys.contains_key(key), "missing system key: {key}");
@@ -246,6 +244,8 @@ mod tests {
         assert_eq!(sys.get("doh-url").unwrap(), "");
         assert_eq!(sys.get("doh-bootstrap").unwrap(), "");
         assert_eq!(sys.get("doh-fallback").unwrap(), true);
+        assert_eq!(sys.get("ed2k-enable-kad").unwrap(), true);
+        assert_eq!(sys.get("ed2k-kad-port").unwrap(), 4672);
     }
 
     #[test]

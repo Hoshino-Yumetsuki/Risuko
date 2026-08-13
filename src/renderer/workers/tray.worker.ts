@@ -25,7 +25,6 @@ const drawTray = async (payload: TrayDrawPayload) => {
 			...payload,
 		});
 
-		// Read raw RGBA pixels for Tauri `Image::new_owned`
 		const ctx = canvas.getContext("2d")!;
 		const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
 

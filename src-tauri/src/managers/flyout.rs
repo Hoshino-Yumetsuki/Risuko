@@ -51,9 +51,7 @@ pub fn setup_flyout(_app: &tauri::App) -> Result<(), Box<dyn std::error::Error>>
     Ok(())
 }
 
-/// Drop to Accessory policy when the flyout closes in tray mode, but only if the
-/// main window is hidden — demoting while it is visible deactivates the app and
-/// strands the window (no Dock icon, no Cmd-Tab)
+/// Drop to Accessory policy when the flyout closes in tray mode, but only if the main window is hidden — demoting while it is visible deactivates the app and strands the window (no Dock icon, no Cmd-Tab)
 #[cfg(target_os = "macos")]
 pub fn demote_if_ui_hidden(app: &AppHandle) {
     let run_mode = crate::utils::run_mode::current_run_mode(app);

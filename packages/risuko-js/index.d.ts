@@ -1,17 +1,12 @@
 export interface EngineConfig {
-	/** Custom config directory (default: OS config dir / dev.risuko.app) */
 	configDir?: string;
-	/** RPC listen port (default: 16800) */
 	rpcPort?: number;
-	/** Whether to start the RPC server (default: true) */
 	enableRpc?: boolean;
 }
 
-// Engine lifecycle
 export function startEngine(config?: EngineConfig): Promise<void>;
 export function stopEngine(): Promise<void>;
 
-// Task operations — returns GID
 export function addUri(
 	uris: string[],
 	options?: Record<string, unknown>,
@@ -37,14 +32,12 @@ export function addFtp(
 	options?: Record<string, unknown>,
 ): Promise<string>;
 
-// Control
 export function pause(gid: string): Promise<void>;
 export function unpause(gid: string): Promise<void>;
 export function remove(gid: string): Promise<void>;
 export function pauseAll(): Promise<void>;
 export function unpauseAll(): Promise<void>;
 
-// Query
 export function tellStatus(
 	gid: string,
 	keys?: string[],
@@ -65,7 +58,6 @@ export function getFiles(gid: string): Promise<Record<string, unknown>[]>;
 export function getPeers(gid: string): Promise<Record<string, unknown>[]>;
 export function getUris(gid: string): Promise<Record<string, unknown>[]>;
 
-// Options
 export function getOption(gid: string): Promise<Record<string, unknown>>;
 export function getGlobalOption(): Promise<Record<string, unknown>>;
 export function changeOption(
@@ -76,12 +68,10 @@ export function changeGlobalOption(
 	options: Record<string, unknown>,
 ): Promise<void>;
 
-// Session
 export function saveSession(): Promise<void>;
 export function purgeDownloadResult(): Promise<void>;
 export function removeDownloadResult(gid: string): Promise<void>;
 
-// Events
 export type EngineEventName =
 	| "risuko.onDownloadStart"
 	| "risuko.onDownloadPause"

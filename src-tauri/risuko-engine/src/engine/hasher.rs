@@ -1,18 +1,8 @@
-//! Streaming content hashers for download verification
-//!
-//! Two flavors of checksum input are accepted on each task:
-//!   * `checksum=<algo>:<hex>`        — single whole-file digest
-//!   * `piece-checksums=<algo>:<hex>,<hex>...` — Metalink-style per-piece
-//!
-//! Algorithms supported: `sha-256`/`sha256`, `sha-1`/`sha1`, `md5`. Names are
-//! matched case-insensitively after stripping `-`
-//!
-//! `Hasher` is a small enum dispatch (no `dyn`) so worker hot paths don't pay
-//! a vtable cost on every chunk
+//! Streaming content hashers for download verification: accepts either `checksum=<algo>:<hex>` (single whole-file digest) or `piece-checksums=<algo>:<hex>,<hex>...` (Metalink-style per-piece); supports `sha-256`/`sha256`, `sha-1`/`sha1`, `md5` matched case-insensitively after stripping `-`, and `Hasher` is a small enum dispatch (no `dyn`) so worker hot paths don't pay a vtable cost per chunk
 
-use digest::Digest;
 use md5::Md5;
 use sha1::Sha1;
+use sha2::digest::Digest;
 use sha2::Sha256;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -50,8 +40,7 @@ impl Algo {
     }
 }
 
-/// Streaming hasher. `update` accepts byte slices; `finalize_hex` consumes
-/// the state and returns the lower-case hex digest
+/// Streaming hasher; `update` accepts byte slices and `finalize_hex` consumes the state, returning the lower-case hex digest
 pub enum Hasher {
     Sha256(Sha256),
     Sha1(Sha1),
@@ -93,10 +82,7 @@ pub struct WholeChecksum {
 
 impl WholeChecksum {
     pub fn parse(s: &str) -> Result<Self, String> {
-        // Accept a leading `checksum=` prefix (aria2 style) so callers can
-        // pass the raw option value through. Strip it before splitting on
-        // `:`, otherwise `checksum=sha-256:hex` parses as algo
-        // "checksum=sha-256" and is rejected
+        // Strip a leading `checksum=` prefix (aria2 style) before splitting on `:`, otherwise `checksum=sha-256:hex` parses as algo "checksum=sha-256" and is rejected
         let body = s
             .trim()
             .strip_prefix("checksum=")
@@ -123,11 +109,7 @@ impl WholeChecksum {
     }
 
     pub fn matches(&self, computed_hex: &str) -> bool {
-        // Case-insensitive equality check. Hex lengths are validated upstream
-        // (see `Self::parse`) so comparing different-length strings can't
-        // happen here. Note: `eq_ignore_ascii_case` is *not* constant-time —
-        // checksum verification is not a credential check, so timing leaks
-        // aren't a concern
+        // Case-insensitive compare; lengths validated in `parse`. Not constant-time, but checksum verification isn't a credential check so timing leaks are irrelevant
         self.hex.eq_ignore_ascii_case(computed_hex)
     }
 }
@@ -141,9 +123,7 @@ pub struct PieceChecksums {
 
 impl PieceChecksums {
     pub fn parse(s: &str) -> Result<Self, String> {
-        // Strip optional `piece-checksums=` prefix before splitting on `:`,
-        // otherwise the whole `piece-checksums=<algo>` chunk is treated as
-        // the algorithm name and rejected
+        // Strip optional `piece-checksums=` prefix before splitting on `:`, else the whole chunk is mistaken for the algorithm name and rejected
         let body = s
             .trim()
             .strip_prefix("piece-checksums=")

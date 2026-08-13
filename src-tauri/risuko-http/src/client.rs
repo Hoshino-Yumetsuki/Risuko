@@ -94,11 +94,7 @@ impl Client {
                 headers.insert(USER_AGENT, ua.clone());
             }
         }
-        // `HeaderMap::drain` yields `(Option<HeaderName>, HeaderValue)`:
-        // `Some(name)` introduces a new header, subsequent `None` entries
-        // belong to the same name. Track the last name so multi-valued
-        // request headers survive the merge, and remove any default entries
-        // for names the request sets so we don't end up with duplicates
+        // `drain` yields the name only on a group's first entry (`None` after belongs to it): track last name so multi-valued request headers survive and drop defaults the request overrides
         let mut last_name: Option<http::HeaderName> = None;
         let mut overridden: std::collections::HashSet<http::HeaderName> =
             std::collections::HashSet::new();
@@ -165,8 +161,7 @@ impl Client {
                 .join(&location)
                 .map_err(|e| Error::Redirect(e.to_string()))?;
 
-            // RFC 7231 §6.4: 301/302/303 may downgrade method to GET
-            // 307/308 preserve method and body
+            // RFC 7231 §6.4: 301/302/303 may downgrade method to GET, 307/308 preserve method and body
             if matches!(
                 status,
                 StatusCode::MOVED_PERMANENTLY | StatusCode::FOUND | StatusCode::SEE_OTHER
@@ -177,10 +172,7 @@ impl Client {
                 body = ReqBody::Empty;
                 headers.remove(CONTENT_LENGTH);
                 headers.remove(http::header::CONTENT_TYPE);
-                // Strip caller-supplied body-framing headers too. Forwarding
-                // `Transfer-Encoding: chunked` together with `ReqBody::Empty`
-                // would produce a malformed request the upstream may reject
-                // or interpret ambiguously
+                // Strip caller-supplied body-framing headers too. Forwarding `Transfer-Encoding: chunked` together with `ReqBody::Empty` would produce a malformed request the upstream may reject or interpret ambiguously
                 headers.remove(http::header::TRANSFER_ENCODING);
             }
 
@@ -188,10 +180,7 @@ impl Client {
             if !same_origin(&url, &next) {
                 headers.remove(http::header::AUTHORIZATION);
                 headers.remove(http::header::COOKIE);
-                // Always strip an explicit Host so `send_once` can
-                // regenerate it from the new origin. Otherwise an explicit
-                // Host (set by the caller or via `default_headers`) would
-                // leak the old origin to the redirect target
+                // Always strip an explicit Host so `send_once` can regenerate it from the new origin. Otherwise an explicit Host (set by the caller or via `default_headers`) would leak the old origin to the redirect target
                 headers.remove(HOST);
             }
 
@@ -216,9 +205,7 @@ impl Client {
         let req_headers = builder
             .headers_mut()
             .ok_or_else(|| Error::Builder("no headers".into()))?;
-        // `HeaderMap::iter` yields the header name on every entry (unlike
-        // `drain`, which only yields it on the first entry of a group), so
-        // appending each (k, v) is enough to preserve multi-valued headers
+        // `HeaderMap::iter` yields the header name on every entry (unlike `drain`, which only yields it on the first entry of a group), so appending each (k, v) is enough to preserve multi-valued headers
         for (k, v) in headers.iter() {
             req_headers.append(k.clone(), v.clone());
         }
@@ -253,17 +240,13 @@ impl Client {
                 }
             }
         }
-        // Auto Accept-Encoding when the user enabled compression and didn't
-        // override it themselves. Skip when no codec is enabled so we don't
-        // emit an empty header (which servers may treat as ambiguous)
+        // Auto Accept-Encoding when the user enabled compression and didn't override it themselves. Skip when no codec is enabled so we don't emit an empty header (which servers may treat as ambiguous)
         if !self.inner.accepts.is_empty()
             && !req_headers.contains_key(http::header::ACCEPT_ENCODING)
         {
             req_headers.insert(http::header::ACCEPT_ENCODING, self.inner.accepts.clone());
         }
-        // Cookie jar injection. Preserve any caller-provided Cookie header
-        // (matching reqwest's behaviour) so manual overrides win over the jar
-        // and we never silently clobber the user's value
+        // Cookie jar injection. Preserve any caller-provided Cookie header (matching reqwest's behaviour) so manual overrides win over the jar and we never silently clobber the user's value
         if let Some(jar) = &self.inner.cookie_jar {
             if !req_headers.contains_key(http::header::COOKIE) {
                 if let Some(cookie) = jar.cookies(url) {
@@ -272,19 +255,10 @@ impl Client {
             }
         }
 
-        // For streaming bodies with a known length, advertise Content-Length
-        // when the caller didn't already set framing headers. Without either
-        // Content-Length or Transfer-Encoding hyper would buffer the entire
-        // body to compute one — defeating streaming. Bytes/Empty bodies are
-        // sized automatically by hyper from the body's `size_hint`
+        // For streaming bodies with a known length, advertise Content-Length when the caller didn't already set framing headers. Without either Content-Length or Transfer-Encoding hyper would buffer the entire body to compute one — defeating streaming. Bytes/Empty bodies are sized automatically by hyper from the body's `size_hint`
         if matches!(body, ReqBody::Stream { .. }) {
             let has_length = req_headers.contains_key(CONTENT_LENGTH);
-            // RFC 9112: a request that already carries Transfer-Encoding
-            // *must not* also advertise Content-Length, regardless of which
-            // codings appear (the final coding is implicitly chunked). Detect
-            // both an explicit "chunked" token and the broader "any TE
-            // header present at all" case so we never inject a conflicting
-            // Content-Length on top of the caller's framing
+            // RFC 9112: a request that already carries Transfer-Encoding *must not* also advertise Content-Length, regardless of which codings appear (the final coding is implicitly chunked). Detect both an explicit "chunked" token and the broader "any TE header present at all" case so we never inject a conflicting Content-Length on top of the caller's framing
             let has_chunked = req_headers
                 .get_all(http::header::TRANSFER_ENCODING)
                 .iter()
@@ -340,8 +314,7 @@ impl Client {
             body.map_err(Error::from).boxed()
         };
 
-        // Strip Content-Length / Content-Encoding when we decoded so callers
-        // don't trust stale lengths
+        // Strip Content-Length / Content-Encoding when we decoded so callers don't trust stale lengths
         let mut response_headers = parts.headers;
         if should_decode {
             response_headers.remove(CONTENT_LENGTH);

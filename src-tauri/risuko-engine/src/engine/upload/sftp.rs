@@ -35,13 +35,7 @@ impl SftpSink {
         Ok(Self { cfg })
     }
 
-    /// Returned together so callers keep the russh `Handle` alive for the
-    /// lifetime of the SFTP session. Dropping the `Handle` issues an SSH
-    /// `Disconnect`, which tears down the channel that `SftpSession` is
-    /// streaming over and turns the next SFTP request into an error
-    /// (observed as `russh::client: drop handle` immediately after the
-    /// SFTP `VERSION` reply, followed by an SFTP `STATUS` failure on the
-    /// first real request)
+    /// Returns both so callers keep the russh `Handle` alive for the session lifetime; dropping it issues an SSH `Disconnect` that kills the `SftpSession` channel and fails the next request
     async fn connect(&self) -> Result<(client::Handle<TofuHandler>, SftpSession), String> {
         let config = Arc::new(client::Config::default());
         let addr = format!("{}:{}", self.cfg.host, self.cfg.port);
@@ -100,8 +94,7 @@ impl SftpSink {
         Ok((session, sftp))
     }
 
-    /// Walk the parent path one directory at a time creating any missing
-    /// segments. SFTP `mkdir` errors when the parent doesn't exist
+    /// Walk the parent path one segment at a time creating missing dirs; SFTP `mkdir` errors when the parent doesn't exist
     async fn ensure_parent_dirs(&self, sftp: &SftpSession, full_path: &str) -> Result<(), String> {
         let parent = match full_path.rsplit_once('/') {
             Some((p, _)) if !p.is_empty() => p.to_string(),
@@ -137,9 +130,7 @@ impl SftpSink {
     }
 
     fn full_remote_path(&self, remote_relative: &str) -> String {
-        // A configured base of "/" is an absolute root mount and must be
-        // preserved — naive trim_end_matches('/') would collapse it to "" and
-        // produce a non-absolute path
+        // A configured base of "/" is an absolute root mount and must be preserved; naive trim_end_matches('/') would collapse it to "" and produce a non-absolute path
         let rel = remote_relative.trim_start_matches('/');
         if self.cfg.base_path == "/" {
             return format!("/{rel}");
@@ -170,10 +161,7 @@ impl UploadSink for SftpSink {
             .await
             .inspect_err(|e| tracing::debug!("SFTP ensure_parent_dirs({remote}) failed: {e}"))?;
 
-        // Stage writes to a sibling `.part` file so an existing good upload
-        // at the final path is never truncated or unlinked on failure.
-        // Only the successful end-state (full body flushed + closed) renames
-        // the temp into the final name
+        // Stage writes to a sibling `.part` file so an existing good upload at the final path is never truncated or unlinked on failure; only the successful end-state (full body flushed + closed) renames the temp into the final name
         let remote_tmp = format!("{remote}.part");
         let mut remote_file = sftp
             .open_with_flags(
@@ -182,11 +170,7 @@ impl UploadSink for SftpSink {
             )
             .await
             .map_err(|e| {
-                // Don't echo `remote_tmp` (user-controlled, may include
-                // home directory or other host layout details) into
-                // the returned error or info logs. The full path is
-                // still emitted at debug level for operators with
-                // log access
+                // Don't echo `remote_tmp` (user-controlled, may leak host layout) into the returned error or info logs; the full path is still emitted at debug level for operators with log access
                 tracing::debug!("SFTP open {remote_tmp}: {e}");
                 tracing::error!("SFTP open failed: {e}");
                 format!("SFTP open failed: {e}")
@@ -200,11 +184,7 @@ impl UploadSink for SftpSink {
         let mut buf = vec![0u8; COPY_BUF];
         let mut sent: u64 = 0;
 
-        // Helper: best-effort cleanup of the partially-written temp file.
-        // Closes the handle (so the server releases its lock) and unlinks
-        // the temp path so a retry doesn't see a torn file. Errors are
-        // logged but never override the original failure. Crucially this
-        // never touches the final `remote` name
+        // Best-effort cleanup of the partial temp: close the handle (releasing the server lock) and unlink the temp so a retry doesn't see a torn file; errors are logged but never override the original failure and the final `remote` name is never touched
         async fn discard_partial(
             mut remote_file: russh_sftp::client::fs::File,
             sftp: &SftpSession,
@@ -241,19 +221,14 @@ impl UploadSink for SftpSink {
         }
 
         if let Err(e) = remote_file.shutdown().await {
-            // Close failed after a complete write — drop the temp so a
-            // half-flushed file isn't left behind. Final `remote` is
-            // untouched
+            // Close failed after a complete write; drop the temp so a half-flushed file isn't left behind, final `remote` is untouched
             if let Err(re) = sftp.remove_file(&remote_tmp).await {
                 tracing::debug!("SFTP cleanup after close failure ignored: {re}");
             }
             return Err(format!("SFTP close: {e}"));
         }
 
-        // Rename the staged temp over the final path. SFTPv3 `rename` may
-        // fail if the destination already exists on some servers; on that
-        // failure unlink the existing remote and retry once so users can
-        // overwrite previous uploads
+        // Rename the staged temp over the final path; SFTPv3 `rename` may fail if the destination exists on some servers, so on failure unlink the existing remote and retry once to allow overwrites
         if let Err(e) = sftp.rename(&remote_tmp, &remote).await {
             tracing::debug!(
                 "SFTP rename {remote_tmp} -> {remote} failed ({e}); retrying after unlink"
@@ -266,9 +241,7 @@ impl UploadSink for SftpSink {
         }
 
         ctl.report(file.size, file.size);
-        // Always insert exactly one '/' between port and the remote path so
-        // the resulting URL is well-formed regardless of whether `remote`
-        // is absolute or relative
+        // Always insert exactly one '/' between port and the remote path so the URL is well-formed whether `remote` is absolute or relative
         let remote_for_url = remote.trim_start_matches('/');
         Ok(format!(
             "sftp://{}@{}:{}/{}",
@@ -277,8 +250,7 @@ impl UploadSink for SftpSink {
     }
 
     async fn test(&self) -> Result<(), String> {
-        // Connect with a short overall timeout — if any step hangs we want
-        // a fast failure in the UI
+        // Connect with a short overall timeout so a hung step fails fast in the UI
         tokio::time::timeout(Duration::from_secs(20), async {
             let (_ssh, sftp) = self.connect().await?;
             // Stat the base dir or `/` to confirm we can talk SFTP

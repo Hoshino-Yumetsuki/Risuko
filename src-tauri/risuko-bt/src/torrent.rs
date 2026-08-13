@@ -154,8 +154,7 @@ pub async fn spawn(
     our_peer_id: Id20,
     listen_port: u16,
 ) -> std::io::Result<Arc<ManagedTorrent>> {
-    // `only_files` reaches TorrentInit, but the scheduler still fetches every piece
-    // Warn so callers do not think a subset-only download is active
+    // `only_files` reaches TorrentInit, but the scheduler still fetches every piece; warn so callers don't think a subset-only download is active
     if init.only_files.is_some() {
         tracing::warn!(
             "torrent {id}: selective download (only_files) is not yet supported; \
@@ -395,13 +394,9 @@ async fn torrent_loop(
     let mut choke_dirty = false;
     let mut last_pex = Instant::now();
     let mut bytes_this_tick = (0u64, 0u64);
-    // Upload bytes accumulate from spawned send tasks; share via atomic so
-    // we only credit them after the disk read and channel send succeed
+    // Upload bytes accumulate from spawned send tasks; share via atomic so we only credit them after the disk read and channel send succeed
     let upload_tick: Arc<AtomicU64> = Arc::new(AtomicU64::new(0));
-    // Track in-flight piece write/hash tasks so Stop can wait for (or
-    // cancel) them. Without this, a Stop racing with a piece-completion
-    // write_at could leave a partially-written piece on disk while the
-    // torrent loop has already returned
+    // Track in-flight piece write/hash tasks so Stop can wait for or cancel them; without this, a Stop racing with a piece-completion write_at could leave a partially-written piece on disk while the torrent loop has already returned
     let mut write_tasks: tokio::task::JoinSet<VerifyResult> = tokio::task::JoinSet::new();
     let mut outbound_tasks: tokio::task::JoinSet<()> = tokio::task::JoinSet::new();
 
@@ -1131,7 +1126,7 @@ async fn run_outbound_peer(
         } else {
             OUTBOUND_CONNECT_TIMEOUT
         },
-        // Post-handshake piece IO; MSE/handshake phases use connect_timeout.
+        // Post-handshake piece IO; MSE/handshake phases use connect_timeout
         read_timeout: Duration::from_secs(120),
         encryption,
         advertise_v2,
@@ -1325,8 +1320,7 @@ async fn process_peer_event(
                         return false;
                     }
                     let initial_window = useful_peers
-                        .get(&addr)
-                        .copied()
+                        .remove(&addr)
                         .unwrap_or(pipeline_floor)
                         .clamp(pipeline_floor, pipeline_cap);
                     if initial_window > pipeline_floor {
@@ -1372,9 +1366,7 @@ async fn process_peer_event(
                             supports_fast,
                         },
                     );
-                    // Extended handshake (when peer supports BEP-10) is
-                    // already on the wire — the connection layer wrote it
-                    // synchronously before the Handshook event was emitted
+                    // Extended handshake (when peer supports BEP-10) is already on the wire — the connection layer wrote it synchronously before the Handshook event was emitted
                     let bf = piece_tracker.bitfield();
                     if should_send_initial_bitfield(&bf) {
                         let _ = cmd_tx
@@ -1514,9 +1506,7 @@ async fn process_peer_event(
                         return false;
                     }
                     let offset = lengths.piece_offset(vpi) + begin as u64;
-                    // Offload the disk read + send to a task. Awaiting on the
-                    // main loop here would stall every download peer for the
-                    // duration of every upload `read_at`
+                    // Offload the disk read + send to a task; awaiting on the main loop here would stall every download peer for the duration of every upload `read_at`
                     let storage = storage.clone();
                     let cmd_tx = peer.cmd_tx.clone();
                     let stats = stats.clone();
@@ -1543,10 +1533,7 @@ async fn process_peer_event(
                         {
                             return;
                         }
-                        // Only credit the upload after both the disk read
-                        // and the send to the peer succeeded. Crediting
-                        // before would over-report on read errors or when
-                        // the peer's command channel was closed mid-flight
+                        // Only credit the upload after both the disk read and the send to the peer succeeded; crediting before would over-report on read errors or when the peer's command channel was closed mid-flight
                         upload_tick.fetch_add(upload_len, Ordering::Relaxed);
                         peer_uploaded.fetch_add(upload_len, Ordering::Relaxed);
                         stats.lock().uploaded_bytes += upload_len;
@@ -1556,8 +1543,7 @@ async fn process_peer_event(
                     let Ok(vpi) = lengths.validate_piece(index) else {
                         return false;
                     };
-                    // Only accept pieces that match an outstanding request;
-                    // reject unsolicited or mismatched frames
+                    // Only accept pieces that match an outstanding request; reject unsolicited or mismatched frames
                     let requested = peer.outstanding.iter().position(|&(p, b, l)| {
                         p == index && b == begin && l as usize == data.len()
                     });
@@ -1570,12 +1556,7 @@ async fn process_peer_event(
                         return false;
                     }
                     peer.outstanding.swap_remove(req_idx);
-                    // Clear the snubbing flag the moment any
-                    // chunk arrives: this is what makes snubbing a soft,
-                    // self-healing back-off rather than a permanent
-                    // demotion. A peer that timed out earlier in this
-                    // session is allowed back into the request rotation
-                    // as soon as it proves it can still deliver bytes
+                    // Clear the snubbing flag the moment any chunk arrives: this makes snubbing a soft, self-healing back-off rather than a permanent demotion, so a peer that timed out earlier this session rejoins the request rotation as soon as it proves it can still deliver bytes
                     peer.snubbing = false;
                     peer.snub_since = None;
                     peer.consecutive_rejects = 0;
@@ -1630,10 +1611,7 @@ async fn process_peer_event(
                         return kick;
                     }
 
-                    // Accumulate the chunk in an in-memory piece buffer
-                    // instead of hitting disk per chunk. The previous
-                    // `storage.write_at(...).await` here serialised every
-                    // download peer through one disk write per 16 KiB chunk
+                    // Accumulate the chunk in an in-memory piece buffer instead of hitting disk per chunk; the previous `storage.write_at(...).await` here serialised every download peer through one disk write per 16 KiB chunk
                     let assembly = piece_assemblies
                         .entry(index)
                         .or_insert_with(|| PieceAssembly {
@@ -1675,9 +1653,7 @@ async fn process_peer_event(
                             return kick;
                         }
                         if assembly.received_bytes != assembly.expected_bytes {
-                            // Missing bytes from a peer that disconnected
-                            // before all chunks arrived: hash will fail anyway,
-                            // so just reset and re-request
+                            // Missing bytes from a peer that disconnected before all chunks arrived: hash will fail anyway, so just reset and re-request
                             piece_assemblies.remove(&index);
                             chunk_tracker.reset_piece(vpi);
                             maybe_clear_endgame(chunk_tracker);
@@ -1694,9 +1670,7 @@ async fn process_peer_event(
                             let verify_handle = tokio::task::spawn_blocking(move || {
                                 verifier.verify(index, &bytes_for_verify).is_ok()
                             });
-                            // If the write fails (ENOSPC, EIO, …) the data
-                            // on disk is incomplete — signal that to the
-                            // torrent loop so it does not mark the piece local
+                            // If the write fails (ENOSPC, EIO, …) the on-disk data is incomplete — signal that to the torrent loop so it doesn't mark the piece local
                             let write_failed = storage.write_at_owned(poff, buf).await.is_err();
                             let verify_ok = verify_handle.await.unwrap_or(false);
                             VerifyResult {
@@ -1727,13 +1701,7 @@ async fn process_peer_event(
                 Message::Hashes { .. } | Message::HashReject { .. } => {
                     // Discard: no outstanding HASH_REQUEST to correlate
                 }
-                // BEP-10 extended messages. We handle:
-                //  - The handshake itself (`ext_id == 0`): record the peer's `ut_metadata`
-                //    id so subsequent REQUESTs can be validated
-                //  - `ut_metadata` REQUESTs (`ext_id == OUR_UT_METADATA_ID`): serve a 16 KiB
-                //    block of our raw info dict, or REJECT for out-of-range pieces
-                //  - `ut_pex` (`ext_id == OUR_UT_PEX_ID`): BEP-11 peer exchange—feed gossiped
-                //    peers into the dial path
+                // BEP-10 extended messages we handle: the handshake (`ext_id == 0`) records the peer's `ut_metadata` id so later REQUESTs validate; `ut_metadata` REQUESTs (`ext_id == OUR_UT_METADATA_ID`) serve a 16 KiB block of our raw info dict or REJECT out-of-range pieces; `ut_pex` (`ext_id == OUR_UT_PEX_ID`) is BEP-11 peer exchange feeding gossiped peers into the dial path
                 Message::Extended { ext_id, payload } => {
                     if ext_id == EXT_HANDSHAKE_ID {
                         if let Some(peer_ext) = ExtHandshake::decode(&payload) {
@@ -1883,21 +1851,12 @@ async fn process_verify_result(
         maybe_clear_endgame(chunk_tracker);
         return;
     }
-    // Verification has already completed in the per-piece write task
-    // (see write_tasks.spawn in process_peer_event). Doing the hash here
-    // would re-serialise every piece completion through the torrent
-    // loop's select arm and stall all peer events for the hash duration
+    // Verification already completed in the per-piece write task (see write_tasks.spawn in process_peer_event); hashing here would re-serialise every piece completion through the torrent loop's select arm and stall all peer events for the hash duration
     if vr.verify_ok {
         let became_local = mark_verified_piece_local(piece_tracker, vpi);
-        // Piece is verified + on disk; its dense chunk state is no longer
-        // needed. Dropping keeps `release_peer` and `pending_chunks`
-        // bounded by the working set of in-flight pieces rather than the
-        // torrent's lifetime piece count
+        // Piece is verified + on disk; its dense chunk state is no longer needed, and dropping keeps `release_peer` and `pending_chunks` bounded by the working set of in-flight pieces rather than the torrent's lifetime piece count
         chunk_tracker.forget_piece(vpi);
-        // Tell every peer to stop sending the rest of this piece. Without
-        // this, endgame duplicates of the remaining chunks keep arriving
-        // (silently dropped by the has_local guard) and saturate
-        // downstream during the final pieces
+        // Tell every peer to stop sending the rest of this piece; without it, endgame duplicates of the remaining chunks keep arriving (silently dropped by the has_local guard) and saturate downstream during the final pieces
         cancel_piece_outstanding(peers, vr.piece_index);
         broadcast_have(peers, vr.piece_index).await;
         let mut s = stats.lock();
@@ -1907,20 +1866,14 @@ async fn process_verify_result(
         s.finished = piece_tracker.is_complete();
     } else {
         tracing::debug!("piece {} verify failed", vr.piece_index);
-        // Same reasoning as write_failed: stale chunks from the prior
-        // attempt would interleave with the re-request
+        // Same reasoning as write_failed: stale chunks from the prior attempt would interleave with the re-request
         cancel_piece_outstanding(peers, vr.piece_index);
         chunk_tracker.reset_piece(vpi);
         maybe_clear_endgame(chunk_tracker);
     }
 }
 
-/// Clear the endgame flag once the working set has grown back above the activation
-/// threshold. Endgame is otherwise a one-way ratchet (set when `pending_chunks() <= 64`,
-/// never cleared), which prevents pieces re-queued via `reset_piece` after a
-/// hash/write failure from regaining the cheap sequential-scan path in `next_chunk`
-/// and forces every peer through the `choose_piece_excluding` fallback for the rest
-/// of the download
+/// Clear the endgame flag once the working set grows back above the activation threshold; endgame is otherwise a one-way ratchet (set when `pending_chunks() <= 64`, never cleared) that would keep pieces re-queued via `reset_piece` after a hash/write failure off the cheap sequential-scan path in `next_chunk` and force every peer through the `choose_piece_excluding` fallback for the rest of the download
 fn maybe_clear_endgame(chunk_tracker: &mut ChunkTracker) {
     if chunk_tracker.endgame() && chunk_tracker.pending_chunks() > 64 {
         chunk_tracker.set_endgame(false);
@@ -1928,6 +1881,7 @@ fn maybe_clear_endgame(chunk_tracker: &mut ChunkTracker) {
 }
 
 /// Handle an inbound BEP-55 ut_holepunch message
+#[allow(clippy::too_many_arguments)]
 fn handle_holepunch(
     hp: HolepunchMsg,
     from_addr: SocketAddr,
@@ -2160,7 +2114,8 @@ fn enqueue_peer_candidate(
         let evicted = peer_backlog
             .pop_back()
             .or_else(|| dial_retries.pop_back().map(|(candidate, _)| candidate))
-            .or_else(|| useful_redials.pop_back().map(|(candidate, _)| candidate));
+            .or_else(|| useful_redials.pop_back().map(|(candidate, _)| candidate))
+            .or_else(|| priority_backlog.pop_back());
         let Some(evicted) = evicted else {
             return false;
         };
@@ -2200,6 +2155,7 @@ fn dial_slot_available(
     live_peers.saturating_add(pending_dials) < max_peers && pending_dials < pending_limit
 }
 
+#[allow(clippy::too_many_arguments)]
 fn drain_peer_backlog(
     priority_backlog: &mut VecDeque<SocketAddr>,
     peer_backlog: &mut VecDeque<SocketAddr>,
@@ -2222,7 +2178,7 @@ fn drain_peer_backlog(
     utp: &Option<Arc<UtpSocket>>,
     outbound_tasks: &mut tokio::task::JoinSet<()>,
 ) {
-    // Promote due useful-peer redials into the priority backlog.
+    // Promote due useful-peer redials into the priority backlog
     let now = Instant::now();
     while useful_redials.front().is_some_and(|(_, due)| *due <= now) {
         let Some((addr, _)) = useful_redials.pop_front() else {
@@ -2298,8 +2254,7 @@ fn drain_peer_backlog(
     }
 }
 
-/// On a failed direct dial to `target`, ask the peer that gossiped it via
-/// PEX to perform a BEP-55 rendezvous
+/// On a failed direct dial to `target`, ask the peer that gossiped it via PEX to perform a BEP-55 rendezvous
 fn try_initiate_holepunch(
     target: SocketAddr,
     pex_source: &HashMap<SocketAddr, u32>,
@@ -2309,8 +2264,7 @@ fn try_initiate_holepunch(
     if holepunch_attempted.contains(&target) {
         return;
     }
-    // Only peers we learned via PEX have a known relay; tracker/DHT peers that
-    // fail to connect have no rendezvous path we can use
+    // Only peers we learned via PEX have a known relay; tracker/DHT peers that fail to connect have no rendezvous path we can use
     let Some(&relay_pid) = pex_source.get(&target) else {
         return;
     };
@@ -2386,7 +2340,7 @@ async fn drive_requests(
 
 fn pipeline_bounds(configured: Option<usize>) -> (usize, usize) {
     let cap = configured
-        .map(|value| value.max(1).min(ABSOLUTE_MAX_OUTSTANDING_PER_PEER))
+        .map(|value| value.clamp(1, ABSOLUTE_MAX_OUTSTANDING_PER_PEER))
         .unwrap_or(DEFAULT_ADAPTIVE_MAX_OUTSTANDING_PER_PEER);
     (DEFAULT_MAX_OUTSTANDING_PER_PEER.min(cap), cap)
 }
@@ -2534,13 +2488,7 @@ fn run_choke_eval(
     }
 }
 
-/// Send a `Cancel` message to every peer (other than `except_pid`) that has
-/// the chunk `(index, begin, length)` in its outstanding queue, and remove
-/// the entry from each peer's local outstanding Vec. Best-effort: if a
-/// peer's command channel is full or closed we skip it (the chunk will
-/// arrive and be dedup-dropped, no worse than today). This is the only
-/// thing that keeps endgame mode from saturating downstream with duplicate
-/// blocks at the very end of a download
+/// Send a `Cancel` to every peer (other than `except_pid`) that has the chunk `(index, begin, length)` outstanding, removing the entry from each peer's local Vec; best-effort (if a peer's command channel is full or closed we skip it, the chunk just arrives and is dedup-dropped), and this is the only thing that keeps endgame mode from saturating downstream with duplicate blocks at the very end of a download
 fn cancel_outstanding(
     peers: &mut HashMap<u32, Peer>,
     except_pid: u32,
@@ -2559,8 +2507,7 @@ fn cancel_outstanding(
         else {
             continue;
         };
-        // Drop our local record first so a duplicate Piece response will be
-        // rejected as unsolicited even if the peer ignores Cancel
+        // Drop our local record first so a duplicate Piece response is rejected as unsolicited even if the peer ignores Cancel
         other.outstanding.swap_remove(slot);
         let _ = other.cmd_tx.try_send(PeerCommand::Send(Message::Cancel {
             index,
@@ -2570,13 +2517,7 @@ fn cancel_outstanding(
     }
 }
 
-/// Send `Cancel` for every outstanding chunk request matching `piece_index`
-/// across every peer. Called when the piece is no longer needed — either
-/// because it was verified successfully (other peers' endgame duplicates
-/// would now be wasted bytes) or because it failed verification / disk write
-/// and is about to be re-requested from scratch (delivering stale chunks
-/// from the previous attempt would inflate received_bytes past the
-/// expected_bytes guard, forcing a second reset)
+/// Send `Cancel` for every outstanding chunk request matching `piece_index` across every peer; called when the piece is no longer needed — either verified successfully (other peers' endgame duplicates would now be wasted bytes) or failed verification / disk write and about to be re-requested from scratch (delivering stale chunks from the previous attempt would inflate received_bytes past the expected_bytes guard, forcing a second reset)
 fn cancel_piece_outstanding(peers: &mut HashMap<u32, Peer>, piece_index: u32) {
     for other in peers.values_mut() {
         let mut i = 0;
@@ -2596,11 +2537,7 @@ fn cancel_piece_outstanding(peers: &mut HashMap<u32, Peer>, piece_index: u32) {
     }
 }
 
-/// Pipeline requests for a single peer up to its adaptive
-/// `max_outstanding`. Called both on the tick and inline after events
-/// that can unblock a peer (Unchoke, Bitfield, Have, Piece). Without the
-/// inline calls, throughput is capped at
-/// `max_outstanding * CHUNK_SIZE / tick_interval`
+/// Pipeline requests for a single peer up to its adaptive `max_outstanding`; called both on the tick and inline after events that can unblock a peer (Unchoke, Bitfield, Have, Piece), since without the inline calls throughput is capped at `max_outstanding * CHUNK_SIZE / tick_interval`
 async fn drive_peer(
     pid: u32,
     peers: &mut HashMap<u32, Peer>,
@@ -2672,9 +2609,7 @@ async fn drive_peer(
                 current_piece = Some(piece);
                 let info = chunk.info;
                 let prior = chunk.prior_state;
-                // try_send + rollback so a single peer with a full writer
-                // queue cannot block the entire main loop. send().await on
-                // a full channel here would freeze every other download peer
+                // try_send + rollback so a single peer with a full writer queue cannot block the entire main loop; send().await on a full channel here would freeze every other download peer
                 use tokio::sync::mpsc::error::TrySendError;
                 let req = Message::Request {
                     index: info.piece_index.get(),
@@ -2688,8 +2623,7 @@ async fn drive_peer(
                         request_slots -= 1;
                     }
                     Err(TrySendError::Full(_)) => {
-                        // Roll the chunk back so a different peer (or this
-                        // one on the next tick) can pick it up
+                        // Roll the chunk back so a different peer (or this one on the next tick) can pick it up
                         chunk_tracker.unrequest_chunk(info.piece_index, info.chunk_index, prior);
                         break;
                     }
@@ -2701,11 +2635,7 @@ async fn drive_peer(
             }
             None => {
                 current_piece = None;
-                // All chunks of this piece are already requested or received
-                // (under endgame, also already requested by THIS peer). Mark
-                // in_flight so non-endgame `choose_requestable_piece` skips
-                // it, and record it locally so the endgame fallback path does
-                // not pick it again on the next loop iteration
+                // All chunks of this piece are already requested or received (under endgame, also already requested by THIS peer); mark in_flight so non-endgame `choose_requestable_piece` skips it, and record it locally so the endgame fallback path doesn't pick it again next loop iteration
                 piece_tracker.mark_in_flight(piece);
                 exhausted.insert(piece.get());
                 continue;
@@ -2720,20 +2650,13 @@ async fn scan_existing_pieces(
     lengths: &Lengths,
     piece_tracker: &mut PieceTracker,
 ) {
-    // Sequential scanning of every piece blocks the torrent loop before any
-    // peer can connect. For a 50 GB torrent that is many seconds of dead
-    // time. Hash pieces in parallel batches so disk reads + verify overlap
+    // Sequential scanning of every piece blocks the torrent loop before any peer can connect — many seconds of dead time for a 50 GB torrent; hash pieces in parallel batches so disk reads + verify overlap
     use tokio::task::JoinSet;
     let total = lengths.total_pieces();
     if total == 0 {
         return;
     }
-    // Cap memory rather than parallelism: the previous fixed concurrency=16
-    // allocated 16 * piece_length bytes per batch, which on torrents with
-    // multi-MiB pieces could push hundreds of MiB through this scan.
-    // Derive the batch size from a byte budget so each batch allocates at
-    // most ~MAX_SCAN_BYTES, and still cap at 16 to avoid saturating the
-    // spawn_blocking pool on tiny-piece torrents
+    // Cap memory rather than parallelism: the previous fixed concurrency=16 allocated 16 * piece_length bytes per batch, which on multi-MiB pieces could push hundreds of MiB through this scan; derive the batch size from a byte budget so each batch allocates at most ~MAX_SCAN_BYTES, still capping at 16 to avoid saturating the spawn_blocking pool on tiny-piece torrents
     const MAX_SCAN_BYTES: usize = 64 * 1024 * 1024;
     let plen_hint = lengths
         .validate_piece(0)
@@ -2803,9 +2726,7 @@ fn add_piece_progress(
     }
 }
 
-/// Distribute the bytes of every completed piece across the files it
-/// overlaps. Used to populate `TorrentStats::file_progress` so per-file
-/// completion can be reported in the UI
+/// Distribute the bytes of every completed piece across the files it overlaps; used to populate `TorrentStats::file_progress` so per-file completion can be reported in the UI
 fn compute_file_progress(
     pt: &PieceTracker,
     lengths: &Lengths,
@@ -3148,26 +3069,20 @@ fn build_hash_response(
     }
 }
 
-/// Serve a single inbound BEP-9 `ut_metadata` request. The peer's payload
-/// is a bencoded `{msg_type, piece}` dict (DATA / REQUEST / REJECT). We
-/// only act on REQUEST; for in-range pieces we reply with DATA carrying
-/// the corresponding 16 KiB block of `info_bytes`, otherwise REJECT
+/// Serve a single inbound BEP-9 `ut_metadata` request; the peer's payload is a bencoded `{msg_type, piece}` dict (DATA / REQUEST / REJECT) and we only act on REQUEST — for in-range pieces reply with DATA carrying the corresponding 16 KiB block of `info_bytes`, otherwise REJECT
 fn serve_ut_metadata(peer: &Peer, payload: &Bytes, info_bytes: &Arc<Vec<u8>>) {
     let Some(msg) = super::wire::extended::parse_ut_metadata(payload.clone()) else {
         return;
     };
     if msg.msg_type != ut_metadata_type::REQUEST {
-        // We never initiate a request from the torrent loop, so DATA /
-        // REJECT replies here are unsolicited \u2014 ignore
+        // We never initiate a request from the torrent loop, so DATA / REJECT replies here are unsolicited — ignore
         return;
     }
     let total = info_bytes.len();
     let total_pieces = total.div_ceil(META_PIECE_SIZE);
     let piece = msg.piece;
     if piece < 0 || (piece as usize) >= total_pieces {
-        // Only send REJECT when the peer has told us which ext_id to use;
-        // if we haven't received their handshake yet, sending on an id they
-        // don't recognise is useless and potentially confusing
+        // Only send REJECT when the peer has told us which ext_id to use; before their handshake, sending on an id they don't recognise is useless and potentially confusing
         if let Some(their_id) = peer.their_ut_metadata_id {
             let reject = super::wire::extended::ut_metadata_reject(piece);
             let _ = peer.cmd_tx.try_send(PeerCommand::Send(Message::Extended {
@@ -3178,9 +3093,7 @@ fn serve_ut_metadata(peer: &Peer, payload: &Bytes, info_bytes: &Arc<Vec<u8>>) {
         return;
     }
     let Some(their_id) = peer.their_ut_metadata_id else {
-        // Peer asked for ut_metadata without first telling us which ext
-        // id to use. Drop silently \u2014 a well-behaved client always
-        // sends its handshake first
+        // Peer asked for ut_metadata without first telling us which ext id to use; drop silently — a well-behaved client always sends its handshake first
         return;
     };
     let start = piece as usize * META_PIECE_SIZE;
@@ -3529,8 +3442,7 @@ mod tests {
         for (i, b) in data.iter_mut().enumerate() {
             *b = (i as u8).wrapping_mul(31).wrapping_add(7);
         }
-        // Per-piece root: SHA-256 Merkle subtree over 16 KiB blocks,
-        // zero-padded to `blocks_per_piece`
+        // Per-piece root: SHA-256 Merkle subtree over 16 KiB blocks, zero-padded to `blocks_per_piece`
         let piece_roots: Vec<Id32> = data
             .chunks(piece_length as usize)
             .map(|p| {
@@ -3743,10 +3655,7 @@ mod tests {
 
     #[test]
     fn build_hash_response_hybrid_torrent_served_via_tables() {
-        // Hybrid torrents use V1Sha1 for piece verification, but must still
-        // serve BEP-52 hash requests. Simulate this by passing Some(tables)
-        // while having a V1Sha1 verifier — the function no longer looks at
-        // the verifier at all
+        // Hybrid torrents use V1Sha1 for piece verification but must still serve BEP-52 hash requests; simulate this by passing Some(tables) with a V1Sha1 verifier — the function no longer looks at the verifier at all
         let (tables, root) = make_v2_tables(4, 64 * 1024);
         let base = tables[0].piece_layer_base();
         let length = tables[0].piece_layer_padded_len();

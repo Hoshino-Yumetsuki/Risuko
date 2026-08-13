@@ -37,6 +37,17 @@ export default {
 		"Tip: Thunder links may not be downloadable after decoding",
 	"ed2k-link-detected":
 		"ed2k link detected. File will be downloaded via the eDonkey network.",
+	"ed2k-kad-status": "Kad source discovery",
+	"ed2k-kad-sources": "{{count}} sources",
+	"ed2k-kad-nodes": "{{count}} nodes queried",
+	"ed2k-kad-state-disabled": "Disabled",
+	"ed2k-kad-state-bootstrapping": "Bootstrapping",
+	"ed2k-kad-state-searching": "Searching",
+	"ed2k-kad-state-complete": "Complete",
+	"ed2k-kad-state-ready": "Ready",
+	"ed2k-kad-state-timeout": "Timed out",
+	"ed2k-kad-state-error": "Error",
+	"ed2k-kad-state-stopped": "Stopped",
 	"m3u8-link-detected":
 		"M3U8 playlist link detected. Segments will be downloaded and merged.",
 	"ftp-link-detected": "FTP/FTPS link detected. Credentials can be set below.",

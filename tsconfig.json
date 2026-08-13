@@ -15,7 +15,7 @@
 		"allowImportingTsExtensions": true,
 		"noEmit": true,
 		"useDefineForClassFields": true,
-		"types": ["node"],
+		"types": ["node", "vite/client"],
 		"paths": {
 			"@/*": ["./src/renderer/*"],
 			"@shared/*": ["./src/shared/*"],

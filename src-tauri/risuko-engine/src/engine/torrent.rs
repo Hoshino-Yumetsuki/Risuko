@@ -10,8 +10,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::{watch, Mutex};
 
-/// BitTorrent session tuning passed from the user/system config. All
-/// fields are optional; missing entries fall back to `risuko-bt` defaults
+/// BitTorrent session tuning passed from the user/system config; all fields are optional, missing entries fall back to `risuko-bt` defaults
 #[derive(Clone, Debug, Default)]
 pub struct BtTuning {
     pub max_outstanding_per_peer: Option<usize>,
@@ -208,8 +207,7 @@ impl TorrentEngine {
         })
     }
 
-    /// Snapshot of BitTorrent session health for the `/health` panel
-    /// Returns `None` when the torrent engine has been torn down
+    /// Snapshot of BitTorrent session health for the `/health` panel; `None` when the torrent engine has been torn down
     pub fn health_snapshot(&self) -> Option<BtHealthSnapshot> {
         let session = self.session.as_ref()?;
         let upnp = session.upnp_status();
@@ -543,14 +541,7 @@ impl TorrentEngine {
             .map_err(|e| format!("Failed to unpause: {}", e))
     }
 
-    /// Drop a torrent from the bt session
-    ///
-    /// `with_files = true` also wipes the on-disk payload (used by
-    /// "remove task" / orphan purge). `with_files = false` keeps files but
-    /// still releases the in-memory `by_hash` reservation, which is required
-    /// by `remove_download_result` / `purge_download_result` so re-adding
-    /// the same magnet does not short-circuit to `AlreadyManaged` and
-    /// surface as "magnet shows complete with no download" until restart
+    /// Drop a torrent from the bt session; `with_files=true` also wipes the on-disk payload, `with_files=false` keeps files but still releases the `by_hash` reservation so re-adding the same magnet isn't blocked as `AlreadyManaged`
     pub async fn remove(&self, torrent_id: usize, with_files: bool) -> Result<(), String> {
         let session = self.get_session()?;
         session
@@ -592,9 +583,7 @@ fn extract_file_details(info: &bt::ValidatedTorrentMetaV1Info) -> Vec<TorrentFil
         .collect()
 }
 
-/// Aggregate `announce` and `announce_list` into the BEP-12 nested-tier
-/// shape expected by the frontend (`string[][]`). Falls back to a single
-/// tier containing the primary announce URL when no list is present
+/// Aggregate `announce` and `announce_list` into the BEP-12 nested-tier shape the frontend expects (`string[][]`), falling back to a single tier with the primary announce URL when no list is present
 fn build_announce_list(meta: &bt::TorrentMeta) -> Vec<Vec<String>> {
     if !meta.announce_list.is_empty() {
         return meta
@@ -712,9 +701,7 @@ async fn save_torrent_metadata_if_enabled(
     }
 }
 
-/// Map an optional config string to a concrete BitTorrent encryption
-/// policy. Unknown / missing values fall back to `Prefer` (MSE first,
-/// plaintext fallback) which matches the system default
+/// Map an optional config string to a concrete BitTorrent encryption policy; unknown/missing values fall back to `Prefer` (MSE first, plaintext fallback) matching the system default
 fn encryption_policy_from_str(s: Option<&str>) -> bt::EncryptionPolicy {
     match s {
         Some("plaintext") => bt::EncryptionPolicy::PlaintextOnly,

@@ -46,13 +46,7 @@ pub fn detect_ftp_protocol(uri: &str) -> Option<FtpProtocol> {
     }
 }
 
-/// Parse an FTP/FTPS/SFTP URI into components
-///
-/// Supports formats:
-/// - `ftp://host/path`
-/// - `ftp://user:pass@host:21/path`
-/// - `sftp://host/path`
-/// - `ftps://host/path`
+/// Parse an FTP/FTPS/SFTP URI into components. Supports `ftp://host/path`, `ftp://user:pass@host:21/path`, `sftp://host/path`, `ftps://host/path`
 pub fn parse_ftp_uri(uri: &str) -> Result<FtpUri, String> {
     let protocol = detect_ftp_protocol(uri).ok_or("Not an FTP/FTPS/SFTP URI")?;
 

@@ -1,22 +1,4 @@
-//! Android `Intent` helpers for opening files and folders
-//!
-//! `tauri-plugin-shell::open` only constructs `Intent(ACTION_VIEW, uri)`
-//! without an explicit MIME type or any extras. On Android, that is
-//! enough on a real device with a file manager (Files by Google,
-//! Material Files, etc.) preinstalled — the system narrows candidates
-//! by querying the documents provider's MIME and dispatches to the
-//! right viewer. But on the AOSP emulator or stripped-down Android
-//! builds, the Messages app's `mimeType="*/*"` filter wins because no
-//! other app advertises a more specific match
-//!
-//! File opens are delegated to `MainActivity.openFile`, which builds and
-//! starts the Android `Intent` on the UI thread with detailed logcat output.
-//!
-//! ## JNI bootstrap
-//!
-//! Tauri 2 mobile does not initialize `ndk-context` on this path
-//! We capture the `JavaVM` in `JNI_OnLoad`, keep it in a `OnceLock`, then attach threads as needed
-//! When Rust needs a context, we resolve the current `Application` through `ActivityThread`
+//! Android `Intent` helpers for opening files and folders `tauri-plugin-shell::open` only constructs `Intent(ACTION_VIEW, uri)` without an explicit MIME type or any extras. On Android, that is enough on a real device with a file manager (Files by Google, Material Files, etc.) preinstalled — the system narrows candidates by querying the documents provider's MIME and dispatches to the right viewer. But on the AOSP emulator or stripped-down Android builds, the Messages app's `mimeType="*/*"` filter wins because no other app advertises a more specific match File opens are delegated to `MainActivity.openFile`, which builds and starts the Android `Intent` on the UI thread with detailed logcat output. ## JNI bootstrap Tauri 2 mobile does not initialize `ndk-context` on this path We capture the `JavaVM` in `JNI_OnLoad`, keep it in a `OnceLock`, then attach threads as needed When Rust needs a context, we resolve the current `Application` through `ActivityThread`
 
 #![cfg(target_os = "android")]
 
@@ -41,16 +23,10 @@ static DIRECTORY_PICKERS: OnceLock<
 > = OnceLock::new();
 static DIRECTORY_PICKER_COUNTER: AtomicU64 = AtomicU64::new(1);
 
-/// JNI entry point called when Android loads `libapp_lib.so`
-/// Store the `JavaVM` so background Rust threads can call back into Kotlin
-///
-/// `#[no_mangle]` keeps the symbol name visible to the dynamic linker
-/// Return `JNI_VERSION_1_6`, the lowest version we need
+/// JNI entry point called when Android loads `libapp_lib.so` Store the `JavaVM` so background Rust threads can call back into Kotlin `#[no_mangle]` keeps the symbol name visible to the dynamic linker Return `JNI_VERSION_1_6`, the lowest version we need
 #[no_mangle]
 pub extern "system" fn JNI_OnLoad(vm: *mut jni::sys::JavaVM, _: *mut c_void) -> jint {
-    // SAFETY: Android gives us a process-lifetime `JavaVM*`. In jni 0.22,
-    // `JavaVM::from_raw` initializes the crate-wide singleton and returns an
-    // owned handle directly (it no longer returns a `Result`).
+    // SAFETY: Android gives us a process-lifetime `JavaVM*`. In jni 0.22, `JavaVM::from_raw` initializes the crate-wide singleton and returns an owned handle directly (it no longer returns a `Result`)
     let vm_raw = vm.cast::<c_void>();
     let vm = unsafe { JavaVM::from_raw(vm) };
     let _ = JAVA_VM.set(vm);
@@ -91,7 +67,7 @@ fn init_ndk_context(java_vm: *mut c_void) -> Result<(), String> {
     if ANDROID_APP.set(app_global).is_err() {
         return Err("ANDROID_APP already set".to_string());
     }
-    // SAFETY: pointers are valid for the process lifetime; called exactly once.
+    // SAFETY: pointers are valid for the process lifetime; called exactly once
     unsafe {
         ndk_context::initialize_android_context(java_vm, ctx_ptr);
     }
@@ -138,8 +114,7 @@ pub extern "system" fn Java_app_risuko_mobile_MainActivity_nativeOnDirectoryPick
     uri: JString<'local>,
 ) {
     env.with_env(|env| -> jni::errors::Result<()> {
-        // `try_to_string` returns an error for a null `JString`, so a null
-        // `request_id` collapses to an empty string and a null `uri` to `None`.
+        // `try_to_string` returns an error for a null `JString`, so a null `request_id` collapses to an empty string and a null `uri` to `None`
         let request_id = request_id.try_to_string(env).unwrap_or_default();
         if request_id.is_empty() {
             return Ok(());
@@ -292,15 +267,7 @@ pub fn hide_download_notification() -> Result<(), String> {
     .map_err(|e: jni::errors::Error| format!("MainActivity.hideDownloadNotification: {e}"))
 }
 
-/// Open `path` in a system file manager via `MainActivity.revealFolder`
-///
-/// The Kotlin helper tries several intent shapes in order: a chooser with
-/// `vnd.android.document/directory` MIME, direct dispatch with the same
-/// MIME, then direct dispatch with no MIME. Each attempt logs to logcat
-/// under the `RisukoReveal` tag so we can trace whatever the device did.
-/// Returns `"ok"` on success, or a diagnostic string we pass back
-/// verbatim. The renderer already logs the error and shows a localized
-/// toast
+/// Open `path` in a system file manager via `MainActivity.revealFolder` The Kotlin helper tries several intent shapes in order: a chooser with `vnd.android.document/directory` MIME, direct dispatch with the same MIME, then direct dispatch with no MIME. Each attempt logs to logcat under the `RisukoReveal` tag so we can trace whatever the device did. Returns `"ok"` on success, or a diagnostic string we pass back verbatim. The renderer already logs the error and shows a localized toast
 pub fn reveal_folder(path: &str) -> Result<(), String> {
     let vm = JAVA_VM
         .get()
@@ -388,8 +355,7 @@ fn main_activity_class<'local>(env: &mut Env<'local>) -> jni::errors::Result<JCl
     JClass::cast_local(env, activity)
 }
 
-/// Resolve the current `Application` through `ActivityThread`
-/// Background Rust threads do not hold an `Activity`, so helpers resolve the app context first
+/// Resolve the current `Application` through `ActivityThread` Background Rust threads do not hold an `Activity`, so helpers resolve the app context first
 fn current_application<'local>(env: &mut Env<'local>) -> jni::errors::Result<JObject<'local>> {
     let class = env.find_class(jni_str!("android/app/ActivityThread"))?;
     let thread = env

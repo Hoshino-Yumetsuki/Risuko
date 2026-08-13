@@ -120,7 +120,7 @@ function createPlaceholderFile(pkgName, filePath) {
     return;
   }
 
-  // For executable-style files without extension, create a simple script.
+  // For executable-style files without extension, create a simple script
   writeFileSync(filePath, "#!/usr/bin/env sh\necho \"hello world (bootstrap placeholder)\"\n");
 }
 
@@ -210,5 +210,5 @@ if (dryRun) {
   console.log("\nBootstrap publish completed.");
 }
 
-// Keep the temp directory for troubleshooting unless explicitly cleaned by user.
+// Keep the temp directory for troubleshooting unless explicitly cleaned by user
 console.log(`Temp workspace kept at: ${tempRoot}`);

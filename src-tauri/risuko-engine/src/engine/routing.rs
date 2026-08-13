@@ -1,9 +1,4 @@
-//! Task routing rules — pattern-based download directory + tag assignment
-//!
-//! Evaluated at task creation time by `TaskManager`. Precedence:
-//!   1. Custom `task_routing_rules` (first enabled match wins)
-//!   2. Legacy `file_category_dirs` fallback (backend-resolved category)
-//!   3. Default global `dir`
+//! Pattern-based download dir + tag assignment at task creation; precedence: custom `task_routing_rules` (first enabled match) > legacy `file_category_dirs` fallback > default global `dir`
 
 use serde::{Deserialize, Serialize};
 
@@ -30,8 +25,7 @@ pub struct RoutingDecision {
     pub dir: String,
 }
 
-/// Resolve routing for a file name by evaluating custom rules first, then
-/// falling back to the legacy category-based directory system
+/// Resolve routing for a file name: custom rules first, then legacy category-based dir
 pub fn resolve_routing(
     rules: &[TaskRoutingRule],
     filename: &str,

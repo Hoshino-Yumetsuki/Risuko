@@ -1,6 +1,4 @@
-//! `UploadSinkManager` — owns sinks/rules state, runs a bounded job queue,
-//! emits lifecycle events. Mirrors the `RssManager` pattern so persistence
-//! and event plumbing are the same shape
+//! `UploadSinkManager` — owns sinks/rules state, runs a bounded job queue, emits lifecycle events. Mirrors the `RssManager` pattern so persistence and event plumbing are the same shape
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -26,9 +24,7 @@ use super::webdav::WebdavSink;
 
 const UPLOAD_STORE_KEY: &str = "upload-sinks";
 
-/// Upper bound for retained terminal upload jobs
-///
-/// Queued and active jobs are never evicted by this cap
+/// Upper bound for retained terminal upload jobs Queued and active jobs are never evicted by this cap
 const MAX_TERMINAL_JOBS: usize = 200;
 
 use crate::engine::util::now_secs;
@@ -43,8 +39,7 @@ struct UploadStore {
     default_sink_id: Option<String>,
     #[serde(default = "default_concurrency")]
     max_concurrency: usize,
-    /// Fallback secret map used when the OS keychain vault is unavailable.
-    /// Key is a sink id, value the JSON secrets object that would normally live in the vault
+    /// Fallback secret map used when the OS keychain vault is unavailable. Key is a sink id, value the JSON secrets object that would normally live in the vault
     #[serde(default)]
     secret_fallback: HashMap<String, Value>,
 }
@@ -86,9 +81,7 @@ pub struct UploadSinkManager {
     event_sink: StdMutex<Arc<dyn EventSink>>,
     jobs: Arc<Mutex<HashMap<String, UploadJob>>>,
     active: Arc<Mutex<HashMap<String, watch::Receiver<UploadProgress>>>>,
-    /// Cancellation tokens for every spawned job — populated at enqueue
-    /// time so even queued jobs (still waiting on the semaphore) can be
-    /// cancelled by the user. Cleared once the job reaches a terminal state
+    /// Cancellation tokens for every spawned job — populated at enqueue time so even queued jobs (still waiting on the semaphore) can be cancelled by the user. Cleared once the job reaches a terminal state
     cancels: Arc<Mutex<HashMap<String, CancellationToken>>>,
     semaphore: Arc<RwLock<Arc<Semaphore>>>,
 }
@@ -109,9 +102,7 @@ impl UploadSinkManager {
         }
     }
 
-    /// Swap in a new event sink at runtime. Used by the Tauri host to upgrade
-    /// from the bootstrap `NoopEventSink` to a `TauriEventSink` once the
-    /// `AppHandle` is available
+    /// Swap in a new event sink at runtime. Used by the Tauri host to upgrade from the bootstrap `NoopEventSink` to a `TauriEventSink` once the `AppHandle` is available
     pub fn set_event_sink(&self, sink: Arc<dyn EventSink>) {
         if let Ok(mut s) = self.event_sink.lock() {
             *s = sink;
@@ -130,8 +121,7 @@ impl UploadSinkManager {
                 *s = data;
                 s.max_concurrency = new_concurrency;
                 drop(s);
-                // Rebuild the semaphore with the persisted concurrency value
-                // so configured limits actually apply at startup
+                // Rebuild the semaphore with the persisted concurrency value so configured limits actually apply at startup
                 let mut sem = self.semaphore.blocking_write();
                 *sem = Arc::new(Semaphore::new(new_concurrency));
             }
@@ -186,8 +176,7 @@ impl UploadSinkManager {
 
     pub async fn list_jobs(&self) -> Vec<UploadJob> {
         let mut jobs: Vec<UploadJob> = self.jobs.lock().await.values().cloned().collect();
-        // Stitch live progress in so the frontend sees fresh numbers without
-        // a separate event per byte
+        // Stitch live progress in so the frontend sees fresh numbers without a separate event per byte
         let active = self.active.lock().await;
         for job in jobs.iter_mut() {
             if let Some(a) = active.get(&job.id) {
@@ -205,8 +194,7 @@ impl UploadSinkManager {
             record.id = Uuid::new_v4().to_string();
         }
         record.created_at = now_secs();
-        // Sanity-check by trying to build the runtime — surfaces e.g. an
-        // empty WebDAV endpoint at insert time, not at upload time
+        // Sanity-check by trying to build the runtime — surfaces e.g. an empty WebDAV endpoint at insert time, not at upload time
         let _ = build_sink_runtime(&record.config)?;
 
         let mut s = self.store.write().await;
@@ -229,15 +217,9 @@ impl UploadSinkManager {
             .iter_mut()
             .find(|x| x.id == record.id)
             .ok_or_else(|| format!("unknown sink {}", record.id))?;
-        // Secret fields are stripped from the wire (`skip_serializing` on the
-        // Config structs), so the renderer can't echo them back when editing
-        // an existing sink. Treat an empty incoming secret as \u201cunchanged\u201d
-        // and inherit the value already on disk \u2014 otherwise editing any
-        // unrelated field would silently wipe stored credentials
+        // Secret fields are stripped from the wire (`skip_serializing` on the Config structs), so the renderer can't echo them back when editing an existing sink. Treat an empty incoming secret as \u201cunchanged\u201d and inherit the value already on disk \u2014 otherwise editing any unrelated field would silently wipe stored credentials
         merge_secrets(&mut record.config, &slot.config);
-        // Validate after the merge so we surface real misconfigurations
-        // (rather than the post-merge config still being structurally fine
-        // while the unmerged one would have failed)
+        // Validate after the merge so we surface real misconfigurations (rather than the post-merge config still being structurally fine while the unmerged one would have failed)
         let _ = build_sink_runtime(&record.config)?;
         *slot = record;
         drop(s);
@@ -276,9 +258,7 @@ impl UploadSinkManager {
 
     pub async fn set_max_concurrency(&self, n: usize) -> Result<(), String> {
         let n = n.clamp(1, 16);
-        // Persist first; live resize follows. `tokio::Semaphore` cannot
-        // shrink permits already handed out, but we can swap in a fresh
-        // semaphore for future jobs — in-flight jobs keep their old permit
+        // Persist first; live resize follows. `tokio::Semaphore` cannot shrink permits already handed out, but we can swap in a fresh semaphore for future jobs — in-flight jobs keep their old permit
         let mut s = self.store.write().await;
         s.max_concurrency = n;
         drop(s);
@@ -286,10 +266,7 @@ impl UploadSinkManager {
             let mut sem = self.semaphore.write().await;
             std::mem::replace(&mut *sem, Arc::new(Semaphore::new(n)))
         };
-        // Close the retired semaphore so any queued workers waiting on it
-        // wake up with `AcquireError`, observe the swap, and re-acquire on
-        // the new one. Without this, a resize wouldn't reach jobs already
-        // queued behind the previous limit
+        // Close the retired semaphore so any queued workers waiting on it wake up with `AcquireError`, observe the swap, and re-acquire on the new one. Without this, a resize wouldn't reach jobs already queued behind the previous limit
         old.close();
         self.save().await
     }
@@ -355,9 +332,7 @@ impl UploadSinkManager {
     // job control
 
     pub async fn cancel_job(&self, id: &str) -> Result<(), String> {
-        // The cancel token is stored as soon as the job is enqueued so this
-        // works for queued jobs (still waiting on the semaphore) too. The
-        // spawned task checks the token after acquiring its permit and bails
+        // The cancel token is stored as soon as the job is enqueued so this works for queued jobs (still waiting on the semaphore) too. The spawned task checks the token after acquiring its permit and bails
         let cancels = self.cancels.lock().await;
         let token = cancels
             .get(id)
@@ -375,8 +350,7 @@ impl UploadSinkManager {
 
     // enqueue (called from completion hook)
 
-    /// Decide which sink, if any, should handle this file and enqueue if so
-    /// `override_sink_id` is the per-task explicit choice (highest priority)
+    /// Decide which sink, if any, should handle this file and enqueue if so `override_sink_id` is the per-task explicit choice (highest priority)
     pub async fn enqueue_for_file(
         self: &Arc<Self>,
         gid: &str,
@@ -401,8 +375,7 @@ impl UploadSinkManager {
             return;
         };
 
-        // Snapshot sink record up front — we copy the config into the worker
-        // so subsequent edits to the sink don't change an in-flight job
+        // Snapshot sink record up front — we copy the config into the worker so subsequent edits to the sink don't change an in-flight job
         let sink_record = {
             let s = self.store.read().await;
             match s.sinks.iter().find(|x| x.id == sink_id).cloned() {
@@ -436,8 +409,7 @@ impl UploadSinkManager {
             // Trim oldest terminal jobs only; queued and active jobs stay
             prune_terminal_jobs(&mut jobs, MAX_TERMINAL_JOBS);
         }
-        // Pre-create the cancel token so users can cancel queued jobs that
-        // haven't acquired a semaphore permit yet
+        // Pre-create the cancel token so users can cancel queued jobs that haven't acquired a semaphore permit yet
         let cancel = CancellationToken::new();
         self.cancels
             .lock()
@@ -469,10 +441,7 @@ impl UploadSinkManager {
     ) -> Option<String> {
         let s = self.store.read().await;
 
-        // Per-task override wins, but must reference a real sink. If the
-        // referenced sink no longer exists fail closed: rerouting through the
-        // rule/default chain would silently send the file to a different
-        // destination than the caller asked for
+        // Per-task override wins, but must reference a real sink. If the referenced sink no longer exists fail closed: rerouting through the rule/default chain would silently send the file to a different destination than the caller asked for
         if let Some(id) = override_sink_id {
             return if s.sinks.iter().any(|x| x.id == id) {
                 Some(id)
@@ -504,19 +473,13 @@ impl UploadSinkManager {
         size: u64,
         cancel: CancellationToken,
     ) {
-        // Wait for a slot. Re-read the current `Arc<Semaphore>` on every
-        // attempt so a runtime resize via `set_max_concurrency` doesn't leave
-        // queued workers blocked on a semaphore that's already been swapped
-        // out (the new permits would never reach them otherwise)
+        // Wait for a slot. Re-read the current `Arc<Semaphore>` on every attempt so a runtime resize via `set_max_concurrency` doesn't leave queued workers blocked on a semaphore that's already been swapped out (the new permits would never reach them otherwise)
         let permit = loop {
             let sem = self.semaphore.read().await.clone();
             tokio::select! {
                 res = sem.clone().acquire_owned() => match res {
                     Ok(p) => break p,
-                    // The semaphore was closed — either engine shutdown or the
-                    // exact one we just snapshotted was retired by a resize.
-                    // Retry against the live one rather than failing the job
-                    // for what is, from the user's perspective, a no-op
+                    // The semaphore was closed — either engine shutdown or the exact one we just snapshotted was retired by a resize. Retry against the live one rather than failing the job for what is, from the user's perspective, a no-op
                     Err(_) => {
                         if Arc::ptr_eq(&sem, &*self.semaphore.read().await) {
                             self.cancels.lock().await.remove(&job_id);
@@ -549,9 +512,7 @@ impl UploadSinkManager {
         });
         self.active.lock().await.insert(job_id.clone(), rx);
 
-        // Mark active. Mutate under the lock, then drop the guard before
-        // emitting so the broadcast/event sink can never re-enter the manager
-        // while we still hold `jobs`
+        // Mark active. Mutate under the lock, then drop the guard before emitting so the broadcast/event sink can never re-enter the manager while we still hold `jobs`
         let snapshot = {
             let mut jobs = self.jobs.lock().await;
             jobs.get_mut(&job_id).map(|j| {
@@ -673,8 +634,7 @@ impl UploadSinkManager {
     }
 
     fn emit_event(&self, name: &str, job: &UploadJob) {
-        // Snapshot the current sink with a quick std-lock — virtually never
-        // contended (only `set_event_sink` writes, once at startup)
+        // Snapshot the current sink with a quick std-lock — virtually never contended (only `set_event_sink` writes, once at startup)
         let sink = match self.event_sink.lock() {
             Ok(g) => g.clone(),
             Err(p) => p.into_inner().clone(),
@@ -709,8 +669,7 @@ fn prune_terminal_jobs(jobs: &mut HashMap<String, UploadJob>, max_terminal: usiz
     }
 }
 
-/// Build the runtime sink object from its persisted config. Centralised so
-/// adding a new protocol means adding one match arm here plus one new module
+/// Build the runtime sink object from its persisted config. Centralised so adding a new protocol means adding one match arm here plus one new module
 pub fn build_sink_runtime(cfg: &SinkConfig) -> Result<BoxedSink, String> {
     match cfg {
         SinkConfig::Webdav(c) => Ok(Arc::new(WebdavSink::new(c.clone())?)),
@@ -728,9 +687,7 @@ async fn run_post_action(
     match action {
         PostUploadAction::Keep => Ok(()),
         PostUploadAction::Trash => {
-            // Best-effort delete; trash crates aren't a workspace dep here.
-            // Use unlink as a pragmatic fallback — the desktop app can swap
-            // in its `trash_item` command via a future trait
+            // Best-effort delete; trash crates aren't a workspace dep here. Use unlink as a pragmatic fallback — the desktop app can swap in its `trash_item` command via a future trait
             tokio::fs::remove_file(path)
                 .await
                 .map_err(|e| format!("remove {}: {e}", path.display()))
@@ -747,10 +704,7 @@ async fn run_post_action(
                 .file_name()
                 .ok_or_else(|| "source has no file name".to_string())?;
             let dst = target.join(file_name);
-            // Try rename; only fall back to copy + delete on cross-device.
-            // Other errors (permission, source missing, target busy, etc.)
-            // are surfaced so we don't silently turn a logical move failure
-            // into a successful copy that leaves stale state behind
+            // Try rename; only fall back to copy + delete on cross-device. Other errors (permission, source missing, target busy, etc.) are surfaced so we don't silently turn a logical move failure into a successful copy that leaves stale state behind
             if let Err(e) = tokio::fs::rename(path, &dst).await {
                 if !is_cross_device_error(&e) {
                     return Err(format!(
@@ -771,10 +725,7 @@ async fn run_post_action(
     }
 }
 
-/// Detect EXDEV / cross-volume rename failures across platforms. Newer
-/// toolchains classify this via `ErrorKind::CrossesDevices`; older releases
-/// still report it as `Other`, so we also probe the raw OS code (EXDEV=18 on
-/// Linux/macOS, ERROR_NOT_SAME_DEVICE=17 on Windows)
+/// Detect EXDEV / cross-volume rename failures across platforms. Newer toolchains classify this via `ErrorKind::CrossesDevices`; older releases still report it as `Other`, so we also probe the raw OS code (EXDEV=18 on Linux/macOS, ERROR_NOT_SAME_DEVICE=17 on Windows)
 fn is_cross_device_error(e: &std::io::Error) -> bool {
     if e.kind() == std::io::ErrorKind::CrossesDevices {
         return true;
@@ -788,11 +739,7 @@ fn is_cross_device_error(e: &std::io::Error) -> bool {
     }
 }
 
-/// Carry forward secret fields from `old` whenever the corresponding field in
-/// `new` is empty. Mirrors the `skip_serializing` set on the protocol Config
-/// structs so the renderer can omit secrets it never received in the first
-/// place. Any non-empty incoming value wins (i.e. the user explicitly retyped
-/// the credential)
+/// Carry forward secret fields from `old` whenever the corresponding field in `new` is empty. Mirrors the `skip_serializing` set on the protocol Config structs so the renderer can omit secrets it never received in the first place. Any non-empty incoming value wins (i.e. the user explicitly retyped the credential)
 fn merge_secrets(new: &mut SinkConfig, old: &SinkConfig) {
     match (new, old) {
         (SinkConfig::Webdav(n), SinkConfig::Webdav(o)) if n.password.is_empty() => {
@@ -1076,10 +1023,7 @@ mod tests {
         let mgr = &ctx.mgr;
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(mgr.set_max_concurrency(0)).unwrap();
-        // list_sinks doesn't expose concurrency and test_manager() owns the
-        // TempDir, so we can't re-open to read it back. set_max_concurrency
-        // calls save(); just check it doesn't error and swaps the semaphore —
-        // no panic = success for this smoke test
+        // list_sinks doesn't expose concurrency and test_manager() owns the TempDir, so we can't re-open to read it back. set_max_concurrency calls save(); just check it doesn't error and swaps the semaphore — no panic = success for this smoke test
         rt.block_on(mgr.set_max_concurrency(100)).unwrap();
     }
 

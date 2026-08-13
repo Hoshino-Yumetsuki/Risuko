@@ -1,49 +1,21 @@
-//! µTP (BEP-29) packet header + extension codec.
-//!
-//! Wire layout of the fixed 20-byte header (all multi-byte fields big-endian):
-//!
-//! ```text
-//!  0       4       8               16              24              32
-//! +-------+-------+---------------+-------------------------------+
-//! | type  | ver=1 | extension     | connection_id                 |
-//! +-------+-------+---------------+-------------------------------+
-//! | timestamp_microseconds                                        |
-//! +---------------------------------------------------------------+
-//! | timestamp_difference_microseconds                             |
-//! +---------------------------------------------------------------+
-//! | wnd_size                                                      |
-//! +-------------------------------+-------------------------------+
-//! | seq_nr                        | ack_nr                        |
-//! +-------------------------------+-------------------------------+
-//! ```
-//!
-//! `type` is the high nibble of byte 0, `ver` the low nibble. A non-zero
-//! `extension` byte introduces a linked list of `(next_ext, len, data)`
-//! records following the header; the only one we care about is Selective
-//! ACK (extension type 1), whose `data` is a little-endian-bit bitmask of
-//! sequence numbers received past `ack_nr`.
+//! µTP (BEP-29) packet header + extension codec Wire layout of the fixed 20-byte header (all multi-byte fields big-endian): ```text 0       4       8               16              24              32 +-------+-------+---------------+-------------------------------+ | type  | ver=1 | extension     | connection_id                 | +-------+-------+---------------+-------------------------------+ | timestamp_microseconds                                        | +---------------------------------------------------------------+ | timestamp_difference_microseconds                             | +---------------------------------------------------------------+ | wnd_size                                                      | +-------------------------------+-------------------------------+ | seq_nr                        | ack_nr                        | +-------------------------------+-------------------------------+ ``` `type` is the high nibble of byte 0, `ver` the low nibble; a non-zero `extension` byte introduces a linked list of `(next_ext, len, data)` records following the header, of which we only care about Selective ACK (extension type 1) whose `data` is a little-endian-bit bitmask of sequence numbers received past `ack_nr`
 
 use std::io;
 
-/// µTP protocol version we speak (the only version defined by BEP-29).
+/// µTP protocol version we speak (the only version defined by BEP-29)
 pub const UTP_VERSION: u8 = 1;
-/// Length of the fixed µTP header. Extensions and payload follow.
+/// Length of the fixed µTP header; extensions and payload follow
 pub const HEADER_LEN: usize = 20;
-/// Extension id for Selective ACK (BEP-29).
+/// Extension id for Selective ACK (BEP-29)
 const EXT_SELECTIVE_ACK: u8 = 1;
 
-/// µTP packet type (the high nibble of the first header byte).
+/// µTP packet type (the high nibble of the first header byte)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PacketType {
-    /// Carries application data.
     Data = 0,
-    /// Sender is done writing; consumes a sequence number like Data.
     Fin = 1,
-    /// Pure acknowledgement; does NOT consume a sequence number.
     State = 2,
-    /// Hard reset / abort.
     Reset = 3,
-    /// Connection initiation.
     Syn = 4,
 }
 
@@ -60,31 +32,21 @@ impl PacketType {
     }
 }
 
-/// A decoded µTP header. Payload bytes are returned separately by
-/// [`UtpHeader::decode`] so the header type stays `Copy`-cheap to clone.
+/// A decoded µTP header; payload bytes are returned separately by [`UtpHeader::decode`] so the header type stays `Copy`-cheap to clone
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UtpHeader {
     pub packet_type: PacketType,
-    /// Connection id this packet is stamped with. The receiver demuxes on it.
     pub connection_id: u16,
-    /// Microsecond timestamp sampled by the sender when the packet left.
     pub timestamp_micros: u32,
-    /// Sender's measured one-way delay (its `now - peer_timestamp`). Drives
-    /// LEDBAT congestion control on the receiver side.
     pub timestamp_diff_micros: u32,
-    /// Bytes of receive-buffer space the sender still has free (flow control).
     pub wnd_size: u32,
-    /// Sequence number of this packet (meaningful for Data/Fin/Syn).
     pub seq_nr: u16,
-    /// Highest in-order sequence number the sender has received.
     pub ack_nr: u16,
-    /// Selective-ACK bitmask (extension type 1) if the packet carried one.
-    /// Bit `i` (LSB-first within each byte) acks `ack_nr + 2 + i`.
     pub selective_ack: Option<Vec<u8>>,
 }
 
 impl UtpHeader {
-    /// Serialize this header plus `payload` into a single datagram body.
+    /// Serialize this header plus `payload` into a single datagram body
     pub fn encode(&self, payload: &[u8]) -> Vec<u8> {
         let sack = self.selective_ack.as_deref().filter(|s| !s.is_empty());
         let ext_len = sack.map_or(0, |s| 2 + s.len());
@@ -98,7 +60,7 @@ impl UtpHeader {
         out.extend_from_slice(&self.seq_nr.to_be_bytes());
         out.extend_from_slice(&self.ack_nr.to_be_bytes());
         if let Some(s) = sack {
-            // Single extension, then end-of-chain marker (0).
+            // Single extension, then end-of-chain marker (0)
             out.push(0);
             out.push(s.len() as u8);
             out.extend_from_slice(s);
@@ -107,7 +69,7 @@ impl UtpHeader {
         out
     }
 
-    /// Parse a datagram body into a header and its trailing payload slice.
+    /// Parse a datagram body into a header and its trailing payload slice
     pub fn decode(buf: &[u8]) -> io::Result<(UtpHeader, &[u8])> {
         if buf.len() < HEADER_LEN {
             return Err(io::Error::new(
@@ -130,8 +92,7 @@ impl UtpHeader {
         let seq_nr = u16::from_be_bytes([buf[16], buf[17]]);
         let ack_nr = u16::from_be_bytes([buf[18], buf[19]]);
 
-        // Walk the extension chain. `ext` names the type of the record at
-        // `off`; a value of 0 terminates the list.
+        // Walk the extension chain; `ext` names the type of the record at `off` and a value of 0 terminates the list
         let mut ext = buf[1];
         let mut off = HEADER_LEN;
         let mut selective_ack = None;
@@ -197,7 +158,7 @@ mod tests {
         let payload = b"hello utp";
         let bytes = h.encode(payload);
         assert_eq!(bytes.len(), HEADER_LEN + payload.len());
-        // First byte: type in high nibble, version in low nibble.
+        // First byte: type in high nibble, version in low nibble
         assert_eq!(bytes[0], (PacketType::Data as u8) << 4 | UTP_VERSION);
         assert_eq!(bytes[1], 0); // no extension
         let (decoded, rest) = UtpHeader::decode(&bytes).unwrap();
@@ -228,7 +189,7 @@ mod tests {
         h.selective_ack = Some(vec![0b1010_0101, 0x00, 0x00, 0xFF]);
         let bytes = h.encode(&[]);
         assert_eq!(bytes[1], EXT_SELECTIVE_ACK);
-        // Extension record: next_ext=0, len=4, then 4 bytes of mask.
+        // Extension record: next_ext=0, len=4, then 4 bytes of mask
         assert_eq!(bytes[HEADER_LEN], 0);
         assert_eq!(bytes[HEADER_LEN + 1], 4);
         let (decoded, rest) = UtpHeader::decode(&bytes).unwrap();

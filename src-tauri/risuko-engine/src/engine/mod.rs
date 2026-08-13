@@ -53,6 +53,8 @@ pub const STARTUP_ONLY_KEYS: &[&str] = &[
     "listen-port",
     "dht-listen-port",
     "ed2k-port",
+    "ed2k-enable-kad",
+    "ed2k-kad-port",
     "bt-max-peers-per-torrent",
     "bt-max-outstanding-per-peer",
     "bt-upload-rate-limit",
@@ -91,15 +93,12 @@ pub async fn set_usenet_credential_resolver(
     *USENET_CREDENTIAL_RESOLVER.write().await = Some(resolver);
 }
 
-/// Install a file-backed resolver for hosts that own the engine lifecycle
-/// (standalone/headless and NAPI). Unlike `ensure_*`, this refreshes the path
-/// on every host start so a reused process cannot retain an old config dir.
+/// Install a file-backed resolver for hosts that own the engine lifecycle (standalone/headless and NAPI); unlike `ensure_*`, this refreshes the path on every host start so a reused process cannot retain an old config dir
 pub async fn set_file_usenet_credential_resolver(config_dir: impl Into<PathBuf>) {
     set_usenet_credential_resolver(Arc::new(FileUsenetCredentialResolver::new(config_dir))).await;
 }
 
-/// Install the file-backed resolver only when the host has not supplied a
-/// stronger resolver (for example, the Tauri OS-keychain resolver).
+/// Install the file-backed resolver only when the host has not supplied a stronger resolver (for example, the Tauri OS-keychain resolver)
 pub async fn ensure_file_usenet_credential_resolver(config_dir: impl Into<PathBuf>) {
     let mut guard = USENET_CREDENTIAL_RESOLVER.write().await;
     if guard.is_none() {
@@ -107,15 +106,12 @@ pub async fn ensure_file_usenet_credential_resolver(config_dir: impl Into<PathBu
     }
 }
 
-/// Location of the durable plaintext fallback used when an OS keychain is
-/// unavailable. The file is deliberately separate from user.json so secrets
-/// do not cross the normal renderer configuration boundary.
+/// Location of the durable plaintext fallback used when an OS keychain is unavailable; deliberately separate from user.json so secrets do not cross the normal renderer configuration boundary
 pub fn usenet_credential_fallback_path(config_dir: &Path) -> PathBuf {
     config_dir.join("usenet-credentials.json")
 }
 
-/// File-backed credential resolver for standalone and NAPI hosts. Tauri uses
-/// the same file only as a fallback behind its keychain resolver.
+/// File-backed credential resolver for standalone and NAPI hosts; Tauri uses the same file only as a fallback behind its keychain resolver
 pub struct FileUsenetCredentialResolver {
     path: PathBuf,
 }
@@ -164,10 +160,7 @@ impl usenet::UsenetCredentialResolver for FileUsenetCredentialResolver {
 }
 
 pub async fn usenet_credential_resolver() -> std::sync::Arc<dyn usenet::UsenetCredentialResolver> {
-    // Host entry points call `ensure_file_usenet_credential_resolver` (or
-    // install their own resolver) before creating a manager. Keep the
-    // anonymous fallback for direct library users that intentionally construct
-    // a manager without a host credential store.
+    // Host entry points call `ensure_file_usenet_credential_resolver` (or install their own resolver) before creating a manager; keep the anonymous fallback for direct library users that intentionally construct a manager without a host credential store
     USENET_CREDENTIAL_RESOLVER
         .read()
         .await
@@ -191,8 +184,7 @@ pub fn engine_uptime() -> Option<Duration> {
         .and_then(|g| g.as_ref().map(|t| Instant::now().duration_since(*t)))
 }
 
-/// Snapshot of startup-only keys captured the last time the engine started
-/// `None` until the engine has run at least once in this process
+/// Snapshot of startup-only keys captured the last time the engine started; `None` until the engine has run at least once in this process
 pub fn startup_snapshot() -> Option<std::collections::HashMap<String, serde_json::Value>> {
     STARTUP_SNAPSHOT.lock().ok().and_then(|g| g.clone())
 }
@@ -229,12 +221,7 @@ pub fn should_start_embedded_engine(config: &ConfigManager) -> bool {
     !external_enabled
 }
 
-/// Start the engine with explicit dependencies (no Tauri required)
-///
-/// - `config`: the loaded ConfigManager
-/// - `event_sink`: receives engine events (Tauri emitter, NAPI callback, or no-op)
-/// - `upload_sinks`: optional cloud-upload manager — when present, completed
-///   downloads are forwarded to it via the event bridge
+/// Start the engine with explicit dependencies (no Tauri required): `config` is the loaded ConfigManager, `event_sink` receives engine events (Tauri emitter, NAPI callback, or no-op), and `upload_sinks` is an optional cloud-upload manager to which completed downloads are forwarded via the event bridge
 pub async fn start_engine(
     config: &ConfigManager,
     event_sink: Arc<dyn EventSink>,
@@ -349,14 +336,7 @@ pub async fn start_engine(
                     let payload = serde_json::json!({ "gid": gid });
                     sink.emit(name, payload);
 
-                    // Forward completed downloads to the upload pipeline. We
-                    // dispatch on `download-complete` only — the BT-specific
-                    // event fires before the final move-to-dir step on some
-                    // tasks, so it's the wrong hook for cloud sync
-                    //
-                    // Hand off to a detached task so a slow files_for_upload
-                    // / enqueue_for_file pair can't stall the broadcast
-                    // receiver and cause it to lag behind other events
+                    // Forward completed downloads to the upload pipeline, dispatching on `download-complete` only (the BT-specific event fires before the final move-to-dir step on some tasks, so it's the wrong hook for cloud sync); hand off to a detached task so a slow files_for_upload/enqueue_for_file pair can't stall the broadcast receiver and lag other events
                     if matches!(event, EngineEvent::DownloadComplete { .. }) {
                         if let Some(uploads) = upload_mgr.clone() {
                             let mgr = mgr_for_uploads.clone();
@@ -407,8 +387,7 @@ pub async fn start_engine(
 
     *ENGINE_INSTANCE.lock().await = Some(instance);
 
-    // Capture startup-only key snapshot + start time so health checks can
-    // detect drift and report uptime
+    // Capture startup-only key snapshot + start time so health checks can detect drift and report uptime
     if let Ok(mut g) = STARTUP_SNAPSHOT.lock() {
         let mut snap = std::collections::HashMap::new();
         for key in STARTUP_ONLY_KEYS {

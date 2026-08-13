@@ -1,15 +1,11 @@
-//! Per-chunk state machine: schedules outstanding chunk requests and
-//! coordinates endgame (duplicate requests to multiple peers)
+//! Per-chunk state machine: schedules outstanding chunk requests and coordinates endgame (duplicate requests to multiple peers)
 
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use super::super::core::lengths::{ChunkInfo, Lengths, ValidPieceIndex};
 
-/// A chunk that was reclaimed from a peer whose request exceeded the
-/// request timeout. Returned by [`ChunkTracker::reclaim_stale`] so the
-/// torrent loop can also clear the piece's in-flight flag (so it becomes
-/// requestable again) and optionally free the peer's outstanding slot
+/// A chunk reclaimed from a peer whose request exceeded the request timeout; returned by [`ChunkTracker::reclaim_stale`] so the torrent loop can also clear the piece's in-flight flag (making it requestable again) and optionally free the peer's outstanding slot
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ReclaimedChunk {
     pub piece: u32,
@@ -28,21 +24,16 @@ pub enum ChunkState {
 
 pub struct ChunkRequest {
     pub info: ChunkInfo,
-    /// State that was overwritten when this request was issued. Used by
-    /// `unrequest_chunk` to roll back without losing another peer's
-    /// outstanding `Requested` slot in endgame mode
+    /// State overwritten when this request was issued; used by `unrequest_chunk` to roll back without losing another peer's outstanding `Requested` slot in endgame mode
     pub prior_state: ChunkState,
 }
 
 #[derive(Debug)]
 pub struct ChunkTracker {
     lengths: Lengths,
-    // chunk_index -> state. We allocate lazily per piece to avoid upfront
-    // memory cost on very large torrents. The `pieces` map keys on piece
-    // index; the value is a dense Vec<ChunkState> sized to the piece's chunks
+    // chunk_index -> state, allocated lazily per piece to avoid upfront memory cost on very large torrents; keyed on piece index with a dense Vec<ChunkState> sized to the piece's chunks
     pieces: HashMap<u32, Vec<ChunkState>>,
-    /// Global switch: when the set of missing chunks is small we issue
-    /// duplicate requests to multiple peers to finish faster
+    /// Global switch: when the set of missing chunks is small we issue duplicate requests to multiple peers to finish faster
     endgame: bool,
 }
 
@@ -67,14 +58,7 @@ impl ChunkTracker {
         self.endgame
     }
 
-    /// Return the next chunk to request from a peer for `piece`, if any. In
-    /// endgame mode, `Requested` chunks owned by other peers are also
-    /// returned (duplicated). In endgame, scanning starts at a `peer`-derived
-    /// offset so different peers spread duplication across the piece instead
-    /// of all re-requesting chunk 0 first — mirrors aria2's `std::shuffle`
-    /// in `createRequestMessagesOnEndGame`. In normal mode the scan stays
-    /// sequential so a single peer's chunks land in offset order, which
-    /// helps disk write coalescing
+    /// Return the next chunk to request from a peer for `piece`, if any; in endgame mode `Requested` chunks owned by other peers are also returned (duplicated) and scanning starts at a `peer`-derived offset so peers spread duplication across the piece instead of all re-requesting chunk 0 first (mirrors aria2's `std::shuffle` in `createRequestMessagesOnEndGame`); in normal mode the scan stays sequential so a single peer's chunks land in offset order, which helps disk write coalescing
     pub fn next_chunk(&mut self, piece: ValidPieceIndex, peer: u32) -> Option<ChunkRequest> {
         let endgame = self.endgame;
         let states = self.states_for(piece);
@@ -83,8 +67,7 @@ impl ChunkTracker {
             return None;
         }
         let start = if endgame {
-            // Stable per-(peer, piece) offset; cheap mixing constant from
-            // Knuth's multiplicative hash. No RNG needed
+            // Stable per-(peer, piece) offset; cheap mixing constant from Knuth's multiplicative hash, no RNG needed
             (peer as usize)
                 .wrapping_mul(2_654_435_761)
                 .wrapping_add(piece.get() as usize)
@@ -137,8 +120,7 @@ impl ChunkTracker {
         }
     }
 
-    /// Re-mark outstanding chunks as missing — used when a peer disconnects
-    /// Returns piece indices that now have freed chunks
+    /// Re-mark outstanding chunks as missing — used when a peer disconnects; returns piece indices that now have freed chunks
     pub fn release_peer(&mut self, peer: u32) -> Vec<u32> {
         let mut affected = Vec::new();
         for (&piece_idx, states) in self.pieces.iter_mut() {
@@ -158,7 +140,7 @@ impl ChunkTracker {
         affected
     }
 
-    /// Reset chunk state for a piece — called on SHA-1 mismatch.=
+    /// Reset chunk state for a piece — called on SHA-1 mismatch
     pub fn reset_piece(&mut self, piece: ValidPieceIndex) {
         if let Some(states) = self.pieces.get_mut(&piece.get()) {
             for s in states {
@@ -167,12 +149,7 @@ impl ChunkTracker {
         }
     }
 
-    /// Roll back a single chunk request (e.g. peer's send channel was full).
-    /// Restores the state that `next_chunk` overwrote, so an in-flight
-    /// `Requested` slot owned by a different peer (endgame duplication) is
-    /// preserved. Without this, a try_send failure would either strand the
-    /// chunk in `Requested` forever or wipe another peer's outstanding
-    /// request
+    /// Roll back a single chunk request (e.g. peer's send channel was full); restores the state `next_chunk` overwrote so an in-flight `Requested` slot owned by a different peer (endgame duplication) is preserved — without this a try_send failure would either strand the chunk in `Requested` forever or wipe another peer's outstanding request
     pub fn unrequest_chunk(
         &mut self,
         piece: ValidPieceIndex,
@@ -210,19 +187,7 @@ impl ChunkTracker {
             .sum()
     }
 
-    /// Scan for chunks that have been in `Requested` state longer than
-    /// `timeout` and revert them to `Missing` so a different peer can
-    /// pick them up. Returns one entry per reclaimed chunk so the
-    /// torrent loop can clear the corresponding piece's in-flight flag
-    /// and free the slow peer's outstanding slot
-    ///
-    /// Without this, a peer that TCP-alive but stops delivering data
-    /// eventually hoards every piece it touches: every chunk sits in
-    /// `Requested { peer: A, .. }`, which makes `next_chunk` return
-    /// `None` for the piece, which makes `drive_peer` mark the piece
-    /// in-flight — and from then on `choose_requestable_piece` skips
-    /// it forever. That is the primary cause of download throughput
-    /// decaying over time even while peer count stays high
+    /// Scan for chunks in `Requested` state longer than `timeout` and revert them to `Missing` so a different peer can pick them up; returns one entry per reclaimed chunk so the torrent loop can clear the piece's in-flight flag and free the slow peer's outstanding slot. Without this a peer that is TCP-alive but stops delivering data eventually hoards every piece it touches (every chunk sits in `Requested { peer: A, .. }`, so `next_chunk` returns `None`, `drive_peer` marks the piece in-flight, and `choose_requestable_piece` skips it forever) — the primary cause of download throughput decaying over time even while peer count stays high
     pub fn reclaim_stale(&mut self, timeout: Duration) -> Vec<ReclaimedChunk> {
         let now = Instant::now();
         let chunk_size = super::super::core::CHUNK_SIZE;
@@ -245,12 +210,7 @@ impl ChunkTracker {
         out
     }
 
-    /// Drop all chunk state for a piece. Called once the piece is
-    /// verified and marked locally owned, because the dense state
-    /// vector is only useful while the piece is being fetched.
-    /// Prevents `self.pieces` from growing unbounded with completed
-    /// pieces whose entries would otherwise inflate `release_peer`
-    /// and `pending_chunks` into `O(total_pieces_ever_touched)`
+    /// Drop all chunk state for a piece, called once the piece is verified and marked locally owned (the dense state vector is only useful while the piece is being fetched); prevents `self.pieces` from growing unbounded with completed pieces whose entries would otherwise inflate `release_peer` and `pending_chunks` into `O(total_pieces_ever_touched)`
     pub fn forget_piece(&mut self, piece: ValidPieceIndex) {
         self.pieces.remove(&piece.get());
     }
@@ -338,9 +298,7 @@ mod tests {
 
     #[test]
     fn release_preserves_received_from_other_peers() {
-        // Bug 3 regression guard: when peer B disconnects, peer A's already
-        // Received chunks must stay Received so the in-memory PieceAssembly
-        // we keep around remains consistent with the chunk-state vec
+        // Bug 3 regression guard: when peer B disconnects, peer A's already-Received chunks must stay Received so the in-memory PieceAssembly we keep around remains consistent with the chunk-state vec
         let l = Lengths::new(64 * 1024, 32 * 1024).unwrap();
         let mut t = ChunkTracker::new(l);
         let p = l.validate_piece(0).unwrap();
@@ -348,8 +306,7 @@ mod tests {
         let _r1 = t.next_chunk(p, 2).unwrap(); // peer 2 takes chunk 1
                                                // Peer 1 delivers chunk 0
         assert!(!t.mark_received(r0.info));
-        // Peer 2 disconnects; its chunk 1 reverts to Missing but chunk 0
-        // (Received from peer 1) must remain Received
+        // Peer 2 disconnects; its chunk 1 reverts to Missing but chunk 0 (Received from peer 1) must remain Received
         let freed = t.release_peer(2);
         assert_eq!(freed, vec![0]);
         // A new peer can now grab chunk 1 and complete the piece

@@ -64,8 +64,7 @@ pub const TAG_VERSION: u8 = 0x11;
 /// eMule meta tag special IDs
 pub const TAG_EMULE_UDP_PORT: u8 = 0x21;
 
-/// Client ID threshold for High/Low ID
-/// IDs below this value are "Low ID" (behind NAT)
+/// Client ID threshold for High/Low ID; IDs below this value are "Low ID" (behind NAT)
 pub const LOW_ID_THRESHOLD: u32 = 16_777_216; // 0x01000000
 
 /// Check if a client ID is a High ID (directly reachable)

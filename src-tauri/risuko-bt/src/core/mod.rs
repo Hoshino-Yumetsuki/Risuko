@@ -1,5 +1,4 @@
-//! Primitive BitTorrent types: hashes, peer ids, magnet URIs, piece/chunk math,
-//! and `.torrent` metainfo parsing
+//! Primitive BitTorrent types: hashes, peer ids, magnet URIs, piece/chunk math, `.torrent` metainfo parsing
 
 pub mod hash;
 pub mod lengths;

@@ -1,9 +1,4 @@
-//! Magnet URI parser (BEP-9 / BEP-52 / BEP-53 subset)
-//!
-//! Supports v1 magnet links with `xt=urn:btih:<hex|base32>`, v2 magnet
-//! links with `xt=urn:btmh:<multihash-hex>` (SHA-256 only), hybrid magnets
-//! carrying both `xt` values, plus optional trackers (`tr=`), display
-//! name (`dn=`), and `so=` (BEP-53) file-select indices
+//! Magnet URI parser (BEP-9 / BEP-52 / BEP-53 subset): v1 (`xt=urn:btih:<hex|base32>`), v2 (`xt=urn:btmh:<multihash-hex>`, SHA-256 only) and hybrid magnets, plus optional trackers (`tr=`), display name (`dn=`) and `so=` (BEP-53) file-select indices
 
 use std::str::FromStr;
 
@@ -35,8 +30,7 @@ pub struct Magnet {
 }
 
 impl Magnet {
-    /// Wire infohash used for BEP-3 handshakes / trackers / v1 DHT
-    /// For pure-v2 magnets this is the leading 20 bytes of the SHA-256 hash
+    /// Wire infohash used for BEP-3 handshakes / trackers / v1 DHT; for pure-v2 magnets this is the leading 20 bytes of the SHA-256 hash
     pub fn info_hash(&self) -> Id20 {
         self.info_hash
     }
@@ -86,10 +80,7 @@ impl Magnet {
                             .map_err(|_| MagnetError::BadInfoHash(rest.into()))?;
                         info_hash_v1 = Some(id);
                     } else if let Some(rest) = v.strip_prefix("urn:btmh:") {
-                        // BEP 52: multihash hex string. Multihash framing:
-                        // first byte = hash function code (0x12 = SHA-256),
-                        // second byte = digest length (0x20 = 32 bytes),
-                        // remaining bytes = digest
+                        // BEP 52 multihash hex: byte 0 = hash function code (0x12 = SHA-256), byte 1 = digest length (0x20 = 32 bytes), remaining = digest
                         let raw = hex::decode(rest.trim())
                             .map_err(|_| MagnetError::BadInfoHash(rest.into()))?;
                         if raw.len() != 34 || raw[0] != 0x12 || raw[1] != 0x20 {

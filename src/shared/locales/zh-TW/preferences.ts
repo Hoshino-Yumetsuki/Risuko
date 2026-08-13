@@ -117,7 +117,7 @@ export default {
 	"font-size-extra-large": "特大",
 	"font-size-extra-large-short": "特大",
 	"auto-hide-window": "自動隱藏視窗",
-	"run-mode": "運作模式", //macOS only feature
+	"run-mode": "運作模式",
 	"run-mode-standard": "標準應用程式",
 	"run-mode-tray": "托盤應用程式",
 	"run-mode-hide-tray": "隱藏托盤應用程式",

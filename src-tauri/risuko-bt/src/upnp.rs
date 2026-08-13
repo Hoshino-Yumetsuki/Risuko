@@ -1,12 +1,4 @@
-//! SSDP + UPnP IGD WANIPConnection port mapping
-//!
-//! Discovers an Internet Gateway Device via SSDP M-SEARCH, parses its
-//! description XML, and issues `AddPortMapping` SOAP requests against the
-//! `WANIPConnection:1` (or `WANPPPConnection:1`) service. Leases are renewed
-//! periodically from a background task until cancelled.
-//!
-//! Scope: IPv4 only. IPv6 has no UPnP IGD equivalent (PCP/NAT-PMP covers
-//! a subset of routers; left to a follow-up)
+//! SSDP + UPnP IGD WANIPConnection port mapping: discovers an Internet Gateway Device via SSDP M-SEARCH, parses its description XML, and issues `AddPortMapping` SOAP against `WANIPConnection:1` (or `WANPPPConnection:1`), renewing leases periodically from a background task until cancelled; scope is IPv4 only (IPv6 has no UPnP IGD equivalent)
 
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -50,12 +42,10 @@ const DISCOVER_TIMEOUT: Duration = Duration::from_secs(3);
 /// Description shown in the router's port-mapping table
 const MAPPING_DESCRIPTION: &str = "risuko";
 
-/// Forwarder spec: builds a handle that runs discovery and renewal in the
-/// background
+/// Forwarder spec: builds a handle that runs discovery and renewal in the background
 pub struct UpnpPortForwarder {
     ports: Vec<(u16, MapProto)>,
-    /// How long a single mapping lease lives on the router. Renewed at
-    /// `lease / 2` so brief network blips don't drop the mapping
+    /// How long a single mapping lease lives on the router; renewed at `lease / 2` so brief network blips don't drop the mapping
     lease: Duration,
 }
 
@@ -64,8 +54,7 @@ impl UpnpPortForwarder {
         Self { ports, lease }
     }
 
-    /// Spawn the forwarder. The returned handle aborts all background tasks
-    /// and best-effort deletes active mappings when dropped
+    /// Spawn the forwarder; the returned handle aborts all background tasks and best-effort deletes active mappings when dropped
     pub fn spawn(self) -> UpnpHandle {
         let (shutdown_tx, shutdown_rx) = mpsc::channel::<()>(1);
         let active = Arc::new(Mutex::new(Vec::<ActiveMapping>::new()));
@@ -93,8 +82,7 @@ impl UpnpPortForwarder {
     }
 }
 
-/// Handle to a running forwarder. Dropping it stops the forwarder and issues
-/// a best-effort `DeletePortMapping` for any still-active mappings
+/// Handle to a running forwarder; dropping it stops the forwarder and issues a best-effort `DeletePortMapping` for any still-active mappings
 pub struct UpnpHandle {
     shutdown: Option<mpsc::Sender<()>>,
     join: Option<JoinHandle<()>>,
@@ -108,10 +96,7 @@ impl UpnpHandle {
         self.active.lock().len()
     }
 
-    /// Number of completed discover/map passes since spawn. Health checks
-    /// use this to distinguish "haven't tried yet" (== 0, still negotiating)
-    /// from "tried and got no IGD response" (>= 1, router likely doesn't
-    /// support UPnP or has it disabled)
+    /// Number of completed discover/map passes since spawn; health checks use this to distinguish "haven't tried yet" (== 0, still negotiating) from "tried and got no IGD response" (>= 1, router likely lacks or has disabled UPnP)
     pub fn discovery_attempts(&self) -> usize {
         self.attempts.load(Ordering::Relaxed)
     }
@@ -122,8 +107,7 @@ impl Drop for UpnpHandle {
         if let Some(tx) = self.shutdown.take() {
             let _ = tx.try_send(());
         }
-        // Let run_forever finish its cleanup (DeletePortMapping) instead of
-        // aborting immediately. A timeout wrapper caps how long we wait
+        // Let run_forever finish its cleanup (DeletePortMapping) instead of aborting immediately; a timeout wrapper caps how long we wait
         if let Some(h) = self.join.take() {
             tokio::spawn(async move {
                 let _ = tokio::time::timeout(Duration::from_secs(3), h).await;
@@ -132,9 +116,7 @@ impl Drop for UpnpHandle {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Core loop
-// ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone)]
 struct ActiveMapping {
@@ -248,9 +230,7 @@ async fn discover_and_map(
     Ok(())
 }
 
-// ---------------------------------------------------------------------------
 // SSDP M-SEARCH
-// ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone)]
 struct DiscoverResponse {
@@ -343,9 +323,7 @@ fn parse_ssdp_response(buf: &[u8], from: SocketAddrV4) -> std::io::Result<Discov
     })
 }
 
-// ---------------------------------------------------------------------------
 // Device description + service walk
-// ---------------------------------------------------------------------------
 
 #[derive(Debug, Deserialize)]
 struct RootDesc {
@@ -380,11 +358,7 @@ struct ServiceXml {
     control_url: String,
 }
 
-/// Shared HTTP client for UPnP description fetches and SOAP calls, so
-/// connection pools, TLS context and timeouts are reused across
-/// `discover_and_map` calls instead of rebuilt per call. Returns an
-/// `io::Error` instead of panicking when client init fails, so callers
-/// surface it through their `io::Result` plumbing
+/// Shared HTTP client for UPnP description fetches and SOAP calls so connection pools, TLS context and timeouts are reused across `discover_and_map` calls; returns an `io::Error` instead of panicking when client init fails, so callers surface it through their `io::Result` plumbing
 fn upnp_http_client() -> std::io::Result<&'static risuko_http::Client> {
     static CLIENT: std::sync::OnceLock<risuko_http::Client> = std::sync::OnceLock::new();
     if let Some(c) = CLIENT.get() {
@@ -444,8 +418,7 @@ fn pick_local_ipv4(ifaces: &[NetworkInterface], gateway: Ipv4Addr) -> Option<Ipv
                 if ip.is_loopback() {
                     continue;
                 }
-                // Same /24 heuristic: good enough on home LANs, and works on
-                // platforms that don't expose netmasks via network-interface
+                // Same /24 heuristic: good enough on home LANs, and works on platforms that don't expose netmasks via network-interface
                 let ip_bits = u32::from_be_bytes(ip.octets());
                 if (ip_bits & 0xffff_ff00) == (gw_bits & 0xffff_ff00) {
                     return Some(ip);
@@ -457,9 +430,7 @@ fn pick_local_ipv4(ifaces: &[NetworkInterface], gateway: Ipv4Addr) -> Option<Ipv
     fallback
 }
 
-// ---------------------------------------------------------------------------
 // SOAP
-// ---------------------------------------------------------------------------
 
 async fn add_port_mapping(
     control_url: &Url,

@@ -27,8 +27,7 @@ pub struct ParsedMeta {
     pub episode: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub absolute_episode: Option<u32>,
-    /// Always serialized (as `[]` when empty) so the renderer can rely on the
-    /// key being present in JSON payloads
+    /// Always serialized (as `[]` when empty) so the renderer can rely on the key being present in JSON payloads
     #[serde(default)]
     pub quality_tags: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -54,8 +53,7 @@ pub struct RssItem {
     pub link: String,
     pub pub_date: Option<u64>,
     pub description: String,
-    /// Full body HTML (content:encoded / atom:content) when the feed provides
-    /// one beyond the short summary. Empty when the feed has no separate body
+    /// Full body HTML (content:encoded / atom:content) when the feed provides one beyond the short summary. Empty when the feed has no separate body
     #[serde(default)]
     pub content: String,
     pub enclosure_url: Option<String>,
@@ -69,10 +67,7 @@ pub struct RssItem {
     pub parsed_meta: Option<ParsedMeta>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub matched_rule_id: Option<String>,
-    /// Additional media URLs scraped from the entry's HTML body (img/video/audio/source)
-    /// plus any enclosure-style links beyond the primary `enclosure_url`. Useful for
-    /// content feeds where the primary enclosure is just a cover image and the real
-    /// payloads live inline
+    /// Additional media URLs scraped from the entry's HTML body (img/video/audio/source) plus any enclosure-style links beyond the primary `enclosure_url`. Useful for content feeds where the primary enclosure is just a cover image and the real payloads live inline
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub media_urls: Vec<String>,
 }
@@ -271,10 +266,7 @@ pub struct RssStore {
     pub episode_history: HashMap<String, EpisodeRecord>,
 }
 
-/// Lossy deserializer: when `rules` is an array, drop only the elements that
-/// fail to parse (e.g. a single legacy/v1 rule entry) instead of discarding
-/// the whole list. Anything else falls back to a best-effort whole-value
-/// decode and finally an empty list
+/// Lossy deserializer: when `rules` is an array, drop only the elements that fail to parse (e.g. a single legacy/v1 rule entry) instead of discarding the whole list. Anything else falls back to a best-effort whole-value decode and finally an empty list
 fn deserialize_rules_lossy<'de, D>(deserializer: D) -> Result<Vec<RssRule>, D::Error>
 where
     D: serde::Deserializer<'de>,

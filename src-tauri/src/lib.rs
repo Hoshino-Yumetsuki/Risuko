@@ -32,11 +32,14 @@ fn with_desktop_plugins<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri:
                 let _ = window.show();
                 let _ = window.set_focus();
 
-                if let Some(path) = args.get(1) {
-                    if std::path::Path::new(path).exists() {
-                        tracing::info!("Single instance received file: {}", path);
-                        let _ = window.emit("open-file", path);
-                    }
+                // A relaunched second instance may carry leading flags (e.g. --opened-at-login=1), so scan all args for the first path that exists rather than assuming it is at a fixed index
+                if let Some(path) = args
+                    .iter()
+                    .skip(1)
+                    .find(|arg| !arg.starts_with('-') && std::path::Path::new(arg).exists())
+                {
+                    tracing::info!("Single instance received file: {}", path);
+                    let _ = window.emit("open-file", path);
                 }
             }
         }))
@@ -173,18 +176,10 @@ fn init_logging(
     guard
 }
 
-/// Apply environment workarounds for known WebKitGTK/Linux rendering issues
-/// before any GTK/WebKit code initializes. Only sets variables not already
-/// defined, so users can override
+/// Apply environment workarounds for known WebKitGTK/Linux rendering issues before any GTK/WebKit code initializes. Only sets variables not already defined, so users can override
 #[cfg(target_os = "linux")]
 fn apply_linux_webkit_workarounds() {
-    // WebKitGTK's DMA-BUF renderer (default since 2.42) frequently fails to
-    // initialize EGL/GBM on NVIDIA, virtualized GPUs, Wayland sessions without
-    // a working GBM backend, or older Mesa stacks. The failure manifests as:
-    //   "Could not create GBM EGL display: EGL_NOT_INITIALIZED. Aborting..."
-    // followed by SIGABRT before the window is shown.
-    // Disabling DMA-BUF forces the legacy GLES path which is far more
-    // compatible. See: https://github.com/tauri-apps/tauri/issues/9304
+    // WebKitGTK's DMA-BUF renderer (default since 2.42) frequently fails to initialize EGL/GBM on NVIDIA, virtualized GPUs, Wayland sessions without a working GBM backend, or older Mesa stacks. The failure manifests as: "Could not create GBM EGL display: EGL_NOT_INITIALIZED. Aborting..." followed by SIGABRT before the window is shown. Disabling DMA-BUF forces the legacy GLES path which is far more compatible. See: https://github.com/tauri-apps/tauri/issues/9304
     for (key, value) in [
         ("WEBKIT_DISABLE_DMABUF_RENDERER", "1"),
         ("WEBKIT_DISABLE_COMPOSITING_MODE", "1"),
@@ -278,8 +273,7 @@ pub fn run() {
             });
         }
 
-        // Windows/Linux use a custom title bar, so disable native decorations
-        // macOS keeps decorations and uses `titleBarStyle: Overlay`
+        // Windows/Linux use a custom title bar, so disable native decorations macOS keeps decorations and uses `titleBarStyle: Overlay`
         #[cfg(not(any(target_os = "macos", target_os = "android")))]
         if let Some(window) = app.get_webview_window("main") {
             let _ = window.set_decorations(false);
@@ -294,7 +288,10 @@ pub fn run() {
 
         let config_guard = app.state::<state::AppState>();
         let should_start = {
-            let config = config_guard.config.lock().unwrap();
+            let config = config_guard
+                .config
+                .lock()
+                .map_err(|_| "Configuration lock poisoned")?;
             risuko_engine::engine::should_start_embedded_engine(&config)
         };
 
@@ -324,7 +321,10 @@ pub fn run() {
         }
 
         if should_start {
-            let config_ref = config_guard.config.lock().unwrap();
+            let config_ref = config_guard
+                .config
+                .lock()
+                .map_err(|_| "Configuration lock poisoned")?;
             let config_dir = config_ref.config_dir().to_path_buf();
             drop(config_ref);
 
@@ -392,8 +392,9 @@ pub fn run() {
         }
 
         let rss = app.state::<state::AppState>().rss.clone();
+        // `RssManager::start_polling` uses `tokio::spawn`, so enter Tauri's async runtime before invoking it from this synchronous setup hook
         tauri::async_runtime::spawn(async move {
-            std::mem::drop(RssManager::start_polling(rss));
+            drop(RssManager::start_polling(rss));
         });
 
         Ok(())
@@ -424,8 +425,7 @@ pub fn run() {
         if let tauri::WindowEvent::Focused(false) = event {
             #[cfg(not(target_os = "android"))]
             if window.label() == managers::flyout::FLYOUT_LABEL {
-                // blur also fires when the flyout hands focus to the main window it
-                // just opened; demoting then would strand the visible UI
+                // blur also fires when the flyout hands focus to the main window it just opened; demoting then would strand the visible UI
                 #[cfg(target_os = "macos")]
                 managers::flyout::demote_if_ui_hidden(window.app_handle());
                 let _ = window.hide();

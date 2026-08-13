@@ -21,9 +21,7 @@ const PROGRESS_FILENAME: &str = ".m3u8.progress";
 pub struct ProgressState {
     pub completed_indices: HashSet<usize>,
     progress_path: PathBuf,
-    /// Append-only progress file handle opened once in `load`
-    ///
-    /// Completed segments append one line, avoiding O(N^2) rewrites on large playlists
+    /// Append-only progress file handle opened once in `load` Completed segments append one line, avoiding O(N^2) rewrites on large playlists
     append_file: Option<std::fs::File>,
 }
 
@@ -91,8 +89,7 @@ impl KeyCache {
     }
 }
 
-/// Download all segments concurrently, with resume and decryption support
-/// Returns paths to the downloaded segment files in order
+/// Download all segments concurrently, with resume and decryption support Returns paths to the downloaded segment files in order
 #[allow(clippy::too_many_arguments)]
 pub async fn download_segments(
     segments: &[Segment],
@@ -128,8 +125,7 @@ pub async fn download_segments(
     }
     completed.store(resumed_bytes, Ordering::Relaxed);
 
-    // We don't know total bytes upfront; estimate after first segment completes
-    // Use AtomicBool to ensure we only estimate once
+    // We don't know total bytes upfront; estimate after first segment completes Use AtomicBool to ensure we only estimate once
     let total_estimated = Arc::new(AtomicBool::new(false));
 
     let total_segments = segments.len() as u64;
@@ -198,8 +194,7 @@ pub async fn download_segments(
         handles.push(Some(handle));
     }
 
-    // Collect results
-    // On error, cancel remaining tasks via cancel_token
+    // Collect results On error, cancel remaining tasks via cancel_token
 
     for idx in 0..handles.len() {
         if cancel_token.is_cancelled() {
@@ -243,8 +238,7 @@ async fn abort_remaining(handles: &mut [Option<JoinHandle<Result<usize, String>>
     }
 }
 
-/// Download a single segment
-/// Returns the number of bytes written on success
+/// Download a single segment Returns the number of bytes written on success
 #[allow(clippy::too_many_arguments)]
 async fn download_single_segment(
     client: &Client,
@@ -290,8 +284,7 @@ async fn download_single_segment(
     }
 }
 
-/// Single attempt to download a segment
-/// Returns the number of bytes written on success
+/// Single attempt to download a segment Returns the number of bytes written on success
 #[allow(clippy::too_many_arguments)]
 async fn attempt_segment_download(
     client: &Client,
@@ -328,8 +321,7 @@ async fn attempt_segment_download(
         .as_ref()
         .is_some_and(|enc| enc.method == "AES-128");
 
-    // Throttle each network chunk instead of sleeping once after buffering
-    // Encrypted segments still buffer ciphertext, but only after rate limiting
+    // Throttle each network chunk instead of sleeping once after buffering Encrypted segments still buffer ciphertext, but only after rate limiting
     let mut stream = resp.bytes_stream();
     let mut file = tokio::fs::File::create(output_path)
         .await

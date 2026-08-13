@@ -13,11 +13,6 @@ import logger from "@shared/utils/logger";
 import { invoke } from "@tauri-apps/api/core";
 import { toast } from "vue-sonner";
 
-// Android SAF folder picker returns a tree URI like
-// `content://com.android.externalstorage.documents/tree/primary%3ADownload`.
-// Engine writes via filesystem paths, so map common external-storage
-// authorities back to `/storage/...`. Other authorities (SD/USB/cloud) are
-// returned as-is. Shared by SelectDirectory + Share
 export function safUriToFilesystemPath(uri: string): string {
 	if (typeof uri !== "string" || !uri.startsWith("content://")) {
 		return uri;
@@ -57,8 +52,7 @@ function dirname(path = ""): string {
 			? value.charAt(0)
 			: value;
 	}
-	// Windows drive root: "C:\file.tmp" → "C:\"; the separator immediately follows the drive letter
-	if (value.charCodeAt(index - 1) === 58 /* ':' */) {
+	if (value.charCodeAt(index - 1) === 58) {
 		return value.slice(0, index + 1);
 	}
 	return value.slice(0, index);
@@ -70,9 +64,6 @@ const sleep = (ms: number): Promise<void> =>
 	new Promise((resolve) => window.setTimeout(resolve, ms));
 
 const cleanupTempSidecars = async (paths: string[]): Promise<void> => {
-	// only retry paths that actually throw (locked/busy, like a Windows file handle)
-	// trash_item false = sidecar never existed, true = already gone; retrying
-	// either just spams IPC/logs and adds needless sleeps on the no-op path
 	let pending = [
 		...new Set(paths.map((path) => `${path || ""}`.trim())),
 	].filter(Boolean);
@@ -117,9 +108,6 @@ export const showItemInFolder = async (
 		`[Risuko] showItemInFolder: path="${revealPath}", fallback="${fallback}"`,
 	);
 
-	// One call for desktop and Android
-	// Rust picks the native reveal path; Android opens the folder via ACTION_VIEW
-	// skips the old picker detour where the user had to tap the file again
 	try {
 		await invoke("reveal_in_folder", { path: revealPath || fallback });
 	} catch (err) {
@@ -184,12 +172,6 @@ export const getTaskFullPath = (
 	return result;
 };
 
-/**
- * Directory that contains the task's downloaded artifact
- * Multi-file BT tasks use `<task.dir>/<torrent name>`
- * Single-file and pre-resolved magnet tasks use `task.dir`
- * Mobile callers pass this to the file picker so it opens the real download folder
- */
 export const getTaskRevealDir = (task: DownloadTask): string => {
 	if (!task) {
 		return "";
@@ -287,8 +269,6 @@ export const moveTaskFilesToTrash = async (
 	const files = Array.isArray(task.files) ? task.files : [];
 
 	if (isMagnetTask(task)) {
-		// Magnet task with no metadata resolved — try trashing the dir as last resort
-		// (but don't trash the top-level download dir itself)
 		await cleanupGeneratedTorrentSidecars(task);
 		return true;
 	}
@@ -297,7 +277,6 @@ export const moveTaskFilesToTrash = async (
 		`[Risuko] moveTaskFilesToTrash: dir="${dir}", status="${status}", files=${files.length}`,
 	);
 
-	// For multi-file BT tasks, trash the torrent folder
 	const isBtMultiFile = !!bittorrent?.info?.name && files.length > 1;
 	if (isBtMultiFile) {
 		const torrentFolder = joinPath(dir, bittorrent.info.name);
@@ -311,7 +290,6 @@ export const moveTaskFilesToTrash = async (
 			}
 		} catch (err) {
 			logger.warn(`[Risuko] trash torrent folder failed: ${err}`);
-			// Fall through to try individual files
 			let trashedAny = false;
 			for (const file of files) {
 				const filePath = `${file?.path || ""}`.trim();
@@ -336,7 +314,6 @@ export const moveTaskFilesToTrash = async (
 		return true;
 	}
 
-	// Single file task (HTTP or single-file BT)
 	const path = getTaskFullPath(task);
 	logger.info(
 		`[Risuko] moveTaskFilesToTrash: path="${path}", dir="${dir}", status="${status}"`,
@@ -346,15 +323,12 @@ export const moveTaskFilesToTrash = async (
 		throw new Error("task.file-path-error");
 	}
 
-	// For incomplete tasks, the file on disk may still have the .part suffix
 	const partPath =
 		status !== TASK_STATUS.COMPLETE &&
 		!path.toLowerCase().endsWith(TEMP_DOWNLOAD_SUFFIX)
 			? `${path}${TEMP_DOWNLOAD_SUFFIX}`
 			: null;
 
-	// yt-dlp may leave sidecar state files while downloading
-	// Try removing them when deleting a task with files
 	const tempSidecarPaths = (() => {
 		const set = new Set<string>();
 		const add = (value?: string | null) => {

@@ -1,18 +1,4 @@
-//! Cross-platform file pre-allocation
-//!
-//! On Linux this issues `fallocate(2)` so the kernel reserves real blocks
-//! up-front (no later `ENOSPC` mid-download, less fragmentation). On macOS we
-//! ask HFS/APFS to pre-allocate via `fcntl(F_PREALLOCATE)` then extend the
-//! logical length with `set_len`. On Windows or any failure path we fall back
-//! to plain `set_len`, which only updates the file metadata
-//!
-//! The mode is selectable via the `file-allocation` option:
-//!   * `falloc` (default) — try platform fallocate, fall back to `set_len`
-//!   * `trunc`            — `set_len` only
-//!   * `none`             — neither; writes grow the file as needed
-//!
-//! `Mode::from_option` accepts the JSON value from the global/task options
-//! map and falls back to `Falloc` when the key is missing or invalid
+//! Cross-platform file pre-allocation: Linux `fallocate(2)`, macOS `fcntl(F_PREALLOCATE)`+`set_len`, else plain `set_len`; `file-allocation` mode is `falloc` (default, platform fallocate then `set_len` fallback), `trunc` (`set_len` only), or `none` (writes grow the file); `Mode::from_option` reads the options-map JSON value and defaults to `Falloc` on missing/invalid keys
 
 use std::fs::File;
 use std::io;
@@ -31,18 +17,14 @@ impl Mode {
         match v.and_then(Value::as_str) {
             Some("none") => Mode::None,
             Some("trunc") => Mode::Trunc,
-            // Accept both the canonical `falloc` and the aria2-compatible
-            // `prealloc` spelling so users migrating configs aren't surprised
+            // Accept the canonical `falloc` and the aria2-compatible `prealloc` spelling so users migrating configs aren't surprised
             Some("falloc") | Some("prealloc") => Mode::Falloc,
             _ => Mode::Falloc,
         }
     }
 }
 
-/// Pre-allocate `file` to `len` bytes according to `mode`. Returns Ok(()) on
-/// success. `Falloc` silently degrades to `set_len` on `ENOTSUP`/`EOPNOTSUPP`
-/// (network/exotic filesystems) so users on tmpfs/SMB don't see spurious
-/// errors
+/// Pre-allocate `file` to `len` bytes per `mode`; `Falloc` silently degrades to `set_len` on `ENOTSUP`/`EOPNOTSUPP` (network/exotic filesystems) so tmpfs/SMB users don't see spurious errors
 pub fn allocate(file: &File, len: u64, mode: Mode) -> io::Result<()> {
     match mode {
         Mode::None => Ok(()),
@@ -63,18 +45,14 @@ pub fn allocate(file: &File, len: u64, mode: Mode) -> io::Result<()> {
 #[cfg(target_os = "linux")]
 fn platform_fallocate(file: &File, len: u64) -> io::Result<()> {
     use nix::fcntl::{fallocate, FallocateFlags};
-    // 0 flags == reserve blocks AND extend logical length, matching aria2
-    // `fallocate(2)` takes a signed length; reject sizes that don't fit so we
-    // never pass a negative value (which the kernel rejects with EINVAL but
-    // would otherwise look like a corrupt request)
+    // 0 flags == reserve blocks AND extend logical length, matching aria2; `fallocate(2)` takes a signed length, so reject sizes that don't fit rather than pass a negative value (kernel rejects with EINVAL but it would look like a corrupt request)
     let signed_len = i64::try_from(len).map_err(|_| {
         io::Error::new(
             io::ErrorKind::InvalidInput,
             "fallocate length exceeds i64::MAX",
         )
     })?;
-    // nix 0.30 expects an `AsFd` implementor — `&File` qualifies and avoids
-    // the unsafe-ish round-trip through `RawFd`
+    // nix 0.30 expects an `AsFd` implementor — `&File` qualifies and avoids the unsafe-ish round-trip through `RawFd`
     fallocate(file, FallocateFlags::empty(), 0, signed_len)
         .map_err(|e| io::Error::from_raw_os_error(e as i32))
 }
@@ -82,9 +60,7 @@ fn platform_fallocate(file: &File, len: u64) -> io::Result<()> {
 #[cfg(target_os = "macos")]
 fn platform_fallocate(file: &File, len: u64) -> io::Result<()> {
     use std::os::unix::io::AsRawFd;
-    // F_PREALLOCATE only reserves blocks; logical size still needs set_len
-    // Try contiguous first (F_ALLOCATECONTIG) — if it fails (fragmented free
-    // space), retry without the contiguous hint so we still get the reserve
+    // F_PREALLOCATE only reserves blocks (logical size still needs set_len); try contiguous first (F_ALLOCATECONTIG), then retry without the hint on fragmented free space so we still get the reserve
     #[repr(C)]
     struct Fstore {
         fst_flags: libc::c_uint,
@@ -99,7 +75,13 @@ fn platform_fallocate(file: &File, len: u64) -> io::Result<()> {
     const F_PEOFPOSMODE: libc::c_int = 3;
 
     let fd = file.as_raw_fd();
-    let signed_len = libc::off_t::try_from(len).map_err(|_| {
+    // `F_PEOFPOSMODE` reserves `fst_length` bytes past the current physical end of file, so a resumed/non-empty file must only ask for the shortfall (the full target would over-allocate by bytes already backed on disk); nothing to reserve when the file already occupies at least `len` physical bytes
+    let current_len = file.metadata()?.len();
+    if current_len >= len {
+        return file.set_len(len);
+    }
+    let needed = len - current_len;
+    let signed_len = libc::off_t::try_from(needed).map_err(|_| {
         io::Error::new(
             io::ErrorKind::InvalidInput,
             "fallocate length exceeds off_t range",
@@ -114,21 +96,14 @@ fn platform_fallocate(file: &File, len: u64) -> io::Result<()> {
     };
     let rc = unsafe { libc::fcntl(fd, F_PREALLOCATE, &mut store as *mut Fstore) };
     if rc == -1 {
-        // Capture the contiguous-attempt error before retrying so it can be
-        // surfaced if the second call also fails. Otherwise we would only
-        // report the (often less informative) non-contiguous failure
+        // Capture the contiguous-attempt error before retrying so it can be surfaced if the second call also fails; otherwise we'd only report the (often less informative) non-contiguous failure
         let first_err = io::Error::last_os_error();
-        // Retry without contiguous hint.
+        // Retry without contiguous hint
         store.fst_flags = F_ALLOCATEALL;
         let rc2 = unsafe { libc::fcntl(fd, F_PREALLOCATE, &mut store as *mut Fstore) };
         if rc2 == -1 {
             let second_err = io::Error::last_os_error();
-            // Log the contextual message (Fstore / F_PREALLOCATE / fst_flags=
-            // F_ALLOCATEALL, fd, both attempts) and return `second_err`
-            // directly so `raw_os_error()` is preserved. Wrapping with
-            // `io::Error::new` would erase the OS code and silently disable
-            // the `is_unsupported` fallback for filesystems that don't
-            // implement F_PREALLOCATE
+            // Log the contextual message and return `second_err` directly so `raw_os_error()` is preserved — wrapping with `io::Error::new` would erase the OS code and silently disable the `is_unsupported` fallback for filesystems that don't implement F_PREALLOCATE
             tracing::debug!(
                 fd = fd,
                 first_err = %first_err,
@@ -138,30 +113,19 @@ fn platform_fallocate(file: &File, len: u64) -> io::Result<()> {
             return Err(second_err);
         }
     }
-    // F_PREALLOCATE only reserves blocks; the file's logical length is still
-    // whatever it was before. `set_len` commits the new size so subsequent
-    // writes within `len` see allocated space. If `set_len` fails, the
-    // reserved blocks remain attached to the file until it is closed or
-    // unlinked, which is acceptable because the caller will treat the
-    // allocation as having failed and clean up the file
+    // F_PREALLOCATE only reserves blocks; `set_len` commits the new logical size so writes within `len` see allocated space. On `set_len` failure the reserved blocks stay attached until close/unlink, which is fine because the caller treats the allocation as failed and cleans up the file
     file.set_len(len)
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
 fn platform_fallocate(file: &File, len: u64) -> io::Result<()> {
-    // No good cross-platform reservation primitive on Windows without
-    // Administrator/SeManageVolumePrivilege. Fall back to set_len, which is
-    // what `Mode::Trunc` does anyway
+    // No good cross-platform reservation primitive on Windows without Administrator/SeManageVolumePrivilege; fall back to set_len, which is what `Mode::Trunc` does anyway
     file.set_len(len)
 }
 
 #[cfg(unix)]
 fn is_unsupported(e: &io::Error) -> bool {
-    // Documented "unsupported" errnos: ENOTSUP/EOPNOTSUPP/ENOSYS. Older Linux
-    // kernels and certain filesystems (e.g. some FUSE drivers) report this as
-    // EINVAL instead, so on Linux we additionally treat EINVAL as a fallback
-    // signal. Other Unixes (notably macOS' F_PREALLOCATE) use EINVAL for
-    // genuine invalid-argument errors, so we must not mask those there
+    // Documented "unsupported" errnos: ENOTSUP/EOPNOTSUPP/ENOSYS. Older Linux kernels and some filesystems (e.g. FUSE drivers) report EINVAL instead, so on Linux we also treat EINVAL as a fallback signal — but other Unixes (notably macOS' F_PREALLOCATE) use EINVAL for genuine invalid-argument errors, which must not be masked
     let Some(code) = e.raw_os_error() else {
         return false;
     };
@@ -215,5 +179,29 @@ mod tests {
         allocate(&f, 4096, Mode::None).unwrap();
         let meta = std::fs::metadata(&path).unwrap();
         assert_eq!(meta.len(), 0);
+    }
+
+    #[test]
+    fn allocate_on_resumed_file_reaches_target_len() {
+        // Mimic a resumed download: file already holds bytes and we (re)allocate to the full target; final logical size must be exactly `target`, never `existing + target`
+        use std::io::Write;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("blob");
+        let mut f = std::fs::File::create(&path).unwrap();
+        f.write_all(&[0u8; 2048]).unwrap();
+        allocate(&f, 8192, Mode::Falloc).unwrap();
+        assert_eq!(std::fs::metadata(&path).unwrap().len(), 8192);
+    }
+
+    #[test]
+    fn allocate_below_current_len_truncates_to_target() {
+        // Target smaller than the file's current size should end at `target`
+        use std::io::Write;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("blob");
+        let mut f = std::fs::File::create(&path).unwrap();
+        f.write_all(&[0u8; 8192]).unwrap();
+        allocate(&f, 4096, Mode::Falloc).unwrap();
+        assert_eq!(std::fs::metadata(&path).unwrap().len(), 4096);
     }
 }

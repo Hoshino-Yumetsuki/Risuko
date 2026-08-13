@@ -117,9 +117,7 @@ export function parseShareInput(raw: string): string {
 		if (segment) {
 			return decodeURIComponent(segment).toUpperCase();
 		}
-	} catch {
-		// not a URL
-	}
+	} catch {}
 	const deep = trimmed.match(/risuko:\/\/share\/([^/?#]+)/i);
 	if (deep?.[1]) {
 		return decodeURIComponent(deep[1]).toUpperCase();
@@ -162,7 +160,6 @@ export const useShareStore = defineStore("share", {
 			return useAuthStore().getAuthHeaders();
 		},
 
-		// Register the Tauri event listener exactly once
 		async ensureListener(): Promise<void> {
 			if (listenerRegistered) {
 				return;
@@ -241,7 +238,6 @@ export const useShareStore = defineStore("share", {
 			}
 		},
 
-		// Mutate a transfer through the reactive store array
 		patchTransfer(id: string, partial: Partial<ShareTransfer>): void {
 			const transfer = this.transfers.find((t) => t.id === id);
 			if (transfer) {
@@ -277,7 +273,6 @@ export const useShareStore = defineStore("share", {
 					total: info.files.reduce((sum, f) => sum + (f.size || 0), 0),
 				});
 
-				// direction kept for backend deployments that still validate it
 				const { data } = await shareAxios.post(
 					`${this.serverUrl}/share`,
 					{ direction: "send", ticket: info.ticket, files: info.files },
@@ -292,14 +287,12 @@ export const useShareStore = defineStore("share", {
 			} catch (err) {
 				const message = getApiErrorMessage(err, "Share request failed");
 				this.patchTransfer(id, { status: "error", error: message });
-				// tear down the native side if the rendezvous failed
 				await invoke("share_cancel", { id }).catch(() => undefined);
 				throw new Error(message);
 			}
 			return id;
 		},
 
-		// Resolve a session by device code
 		async resolveByCode(code: string): Promise<ResolvedSession> {
 			const normalized = code.trim().toUpperCase();
 			const { data } = await shareAxios.get(
@@ -309,7 +302,6 @@ export const useShareStore = defineStore("share", {
 			return data as ResolvedSession;
 		},
 
-		// Resolve a session by share id (magic URL / deep link)
 		async resolveById(shareId: string): Promise<ResolvedSession> {
 			const { data } = await shareAxios.get(
 				`${this.serverUrl}/share/${encodeURIComponent(shareId)}`,
@@ -318,11 +310,9 @@ export const useShareStore = defineStore("share", {
 			return data as ResolvedSession;
 		},
 
-		// Open the Receive tab pre-filled from a magic URL / deep link id
 		async openFromShareId(shareId: string): Promise<void> {
 			this.role = "receive";
 			this.pendingShareId = shareId;
-			// Resolution requires auth; defer until the user signs in
 			if (!useAuthStore().isLoggedIn) {
 				return;
 			}
@@ -359,7 +349,6 @@ export const useShareStore = defineStore("share", {
 			}
 		},
 
-		//  Begin downloading a resolved session into `destDir`
 		async receivePending(destDir: string): Promise<string> {
 			if (!useAuthStore().isLoggedIn) {
 				throw new Error("Login required");

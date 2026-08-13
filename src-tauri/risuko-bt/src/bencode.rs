@@ -125,7 +125,7 @@ pub fn decode_external(input: &[u8], limits: DecodeLimits) -> Result<Decoded, Er
     p.parse_value(0)
 }
 
-/// Decode one bounded network value, allowing only trailing ASCII whitespace.
+/// Decode one bounded network value, allowing only trailing ASCII whitespace
 pub fn decode_all_external(input: &[u8], limits: DecodeLimits) -> Result<Value, Error> {
     let d = decode_external(input, limits)?;
     if !input[d.span.end..]
@@ -348,8 +348,7 @@ impl<'a> Parser<'a> {
     }
 }
 
-/// Look up a top-level dict value and return both the decoded value and its
-/// raw byte span within `input`. Useful for hashing the `info` dict
+/// Look up a top-level dict value and return both the decoded value and its raw byte span within `input`; useful for hashing the `info` dict
 pub fn decode_dict_field_raw<'a>(
     input: &'a [u8],
     key: &[u8],
@@ -402,8 +401,7 @@ pub fn encode_to_writer<W: Write>(v: &Value, w: &mut W) -> Result<(), Error> {
             w.write_all(b"e")?;
         }
         Value::Dict(items) => {
-            // Sort into a BTreeMap to enforce canonical key order. Reject
-            // duplicates explicitly instead of silently dropping them.
+            // Sort into a BTreeMap to enforce canonical key order, rejecting duplicates explicitly instead of silently dropping them
             let mut sorted: BTreeMap<&[u8], &Value> = BTreeMap::new();
             for (k, vv) in items {
                 if sorted.insert(k.as_slice(), vv).is_some() {

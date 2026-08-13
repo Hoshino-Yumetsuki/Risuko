@@ -1,9 +1,4 @@
-//! `.torrent` metainfo parsing (BEP-3)
-//!
-//! Produces [`TorrentMeta`] with the raw `info` dict bytes preserved so the
-//! info-hash can be recomputed. [`ValidatedTorrentMetaV1Info`] wraps a parsed
-//! info dict with an enumerator over per-file details, matching the API shape
-//! that `engine::torrent` consumes from librqbit
+//! `.torrent` metainfo parsing (BEP-3) Produces [`TorrentMeta`] with the raw `info` dict bytes preserved so the info-hash can be recomputed. [`ValidatedTorrentMetaV1Info`] wraps a parsed info dict with an enumerator over per-file details, matching the API shape that `engine::torrent` consumes from librqbit
 
 use super::super::bencode::{decode_dict_field_raw, Value};
 use super::hash::{sha1, sha256, Id20, Id32};
@@ -53,8 +48,7 @@ impl MetaVersion {
     }
 }
 
-/// Pair of optional v1/v2 info-hashes identifying a torrent. At least one
-/// is always populated. Hybrid torrents populate both
+/// Pair of optional v1/v2 info-hashes identifying a torrent. At least one is always populated. Hybrid torrents populate both
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TorrentInfoHashes {
     pub v1: Option<Id20>,
@@ -62,9 +56,7 @@ pub struct TorrentInfoHashes {
 }
 
 impl TorrentInfoHashes {
-    /// All 20-byte hashes to announce on for this torrent. Hybrid returns
-    /// both the v1 hash and the truncated v2 hash so peers from either swarm
-    /// are reachable; v1-only or v2-only returns a single hash
+    /// All 20-byte hashes to announce on for this torrent. Hybrid returns both the v1 hash and the truncated v2 hash so peers from either swarm are reachable; v1-only or v2-only returns a single hash
     pub fn announce_infohashes(&self) -> Vec<Id20> {
         let mut out = Vec::with_capacity(2);
         if let Some(v1) = self.v1 {
@@ -93,9 +85,7 @@ pub struct TorrentMeta {
     pub created_by: Option<String>,
     pub creation_date: Option<i64>,
     pub encoding: Option<String>,
-    /// Info-hash computed over the raw bytes of the `info` dict.
-    /// For hybrid torrents this is the v1 (SHA-1) hash. Used by BEP-3
-    /// handshakes, trackers, MSE/PE SKEY and the v1 DHT
+    /// Info-hash computed over the raw bytes of the `info` dict. For hybrid torrents this is the v1 (SHA-1) hash. Used by BEP-3 handshakes, trackers, MSE/PE SKEY and the v1 DHT
     pub info_hash: Id20,
     /// Parsed v2 (BEP 52) `info` view, when present (hybrid torrents)
     pub info_v2: Option<ValidatedTorrentMetaV2Info>,
@@ -103,16 +93,9 @@ pub struct TorrentMeta {
     pub info_hash_v2: Option<Id32>,
     /// Which BEP versions this torrent declares
     pub meta_version: MetaVersion,
-    /// `piece layers` dictionary from BEP 52: file pieces-root -> concatenated
-    /// SHA-256 layer hashes (32 bytes each, one per piece-sized chunk)
-    /// Empty when the torrent has no v2 dict, or when no file is large
-    /// enough to require explicit layer hashes (single-piece files)
+    /// `piece layers` dictionary from BEP 52: file pieces-root -> concatenated SHA-256 layer hashes (32 bytes each, one per piece-sized chunk) Empty when the torrent has no v2 dict, or when no file is large enough to require explicit layer hashes (single-piece files)
     pub piece_layers: std::collections::BTreeMap<Id32, Vec<u8>>,
-    /// Raw bytes of the `info` dict, exactly as they appeared in the
-    /// source `.torrent` (or as fetched via BEP-9 ut_metadata). Required
-    /// for serving ut_metadata to other peers — the SHA-1 / SHA-256 of
-    /// these bytes is the canonical info-hash, so any re-encoding would
-    /// break verification on the receiver. Stored once per torrent
+    /// Raw bytes of the `info` dict, exactly as they appeared in the source `.torrent` (or as fetched via BEP-9 ut_metadata). Required for serving ut_metadata to other peers — the SHA-1 / SHA-256 of these bytes is the canonical info-hash, so any re-encoding would break verification on the receiver. Stored once per torrent
     pub info_bytes: Vec<u8>,
 }
 
@@ -125,8 +108,7 @@ impl TorrentMeta {
         }
     }
 
-    /// All 20-byte hashes to announce on (BEP-3 trackers, v1 DHT, LSD)
-    /// Hybrid torrents return both the v1 hash and the truncated v2 hash
+    /// All 20-byte hashes to announce on (BEP-3 trackers, v1 DHT, LSD) Hybrid torrents return both the v1 hash and the truncated v2 hash
     pub fn announce_infohashes(&self) -> Vec<Id20> {
         self.info_hashes().announce_infohashes()
     }
@@ -171,8 +153,7 @@ impl ValidatedTorrentMetaV1Info {
 
     pub fn piece_count(&self) -> u32 {
         if self.pieces.is_empty() {
-            // Pure-v2 facade: derive piece count from total length and piece
-            // length. v2 verification doesn't use the SHA-1 `pieces` blob
+            // Pure-v2 facade: derive piece count from total length and piece length. v2 verification doesn't use the SHA-1 `pieces` blob
             let total = self.total_length();
             if self.piece_length == 0 || total == 0 {
                 return 0;
@@ -190,8 +171,7 @@ impl ValidatedTorrentMetaV1Info {
 
 // BEP 52 (v2) info dict
 
-/// One file entry derived from the v2 `file tree` (BEP 52). Path components
-/// are sanitised the same way as v1
+/// One file entry derived from the v2 `file tree` (BEP 52). Path components are sanitised the same way as v1
 #[derive(Debug, Clone)]
 pub struct TorrentMetaInfoV2 {
     pub path: Vec<String>,
@@ -229,10 +209,7 @@ impl ValidatedTorrentMetaV2Info {
     }
 }
 
-/// Parse a raw `info` dict (as fetched via BEP-9 `ut_metadata`) and return
-/// its v2 view if the dict declares `meta version=2` with a `file tree`.
-/// Returns `Ok(None)` for v1-only info dicts. Used by the magnet resolver
-/// to identify the v2 file roots that need piece-layer hashes
+/// Parse a raw `info` dict (as fetched via BEP-9 `ut_metadata`) and return its v2 view if the dict declares `meta version=2` with a `file tree`. Returns `Ok(None)` for v1-only info dicts. Used by the magnet resolver to identify the v2 file roots that need piece-layer hashes
 pub fn parse_info_v2_from_bytes(
     info_bytes: &[u8],
 ) -> Result<Option<ValidatedTorrentMetaV2Info>, MetaError> {
@@ -297,16 +274,12 @@ pub fn parse_torrent(bytes: &[u8]) -> Result<TorrentMeta, MetaError> {
     };
 
     if !has_v1 {
-        // Pure-v2: synthesize a v1-shaped facade so the rest of the engine
-        // can iterate files / piece counts uniformly. Verification is
-        // routed through `PieceVerifier::V2Merkle` instead of SHA-1
+        // Pure-v2: synthesize a v1-shaped facade so the rest of the engine can iterate files / piece counts uniformly. Verification is routed through `PieceVerifier::V2Merkle` instead of SHA-1
         let v2 = validate_info_v2(&info_value)?;
         let info_hash_v2_val = sha256(info_raw);
         let piece_layers = parse_piece_layers(&value)?;
         let info = synthesize_v1_facade_from_v2(&v2);
-        // Pure-v2 from a `.torrent` requires `piece layers` for every file
-        // larger than one piece (otherwise per-piece verification has no
-        // anchor). Reject up front rather than fail mid-download
+        // Pure-v2 from a `.torrent` requires `piece layers` for every file larger than one piece (otherwise per-piece verification has no anchor). Reject up front rather than fail mid-download
         for file in &v2.files {
             if file.length <= v2.piece_length as u64 {
                 continue;
@@ -431,7 +404,7 @@ fn validate_info(value: &Value) -> Result<ValidatedTorrentMetaV1Info, MetaError>
                 let s = c
                     .as_str()
                     .ok_or(MetaError::BadUtf8 { field: "file path" })?;
-                if s.is_empty() || s == ".." || s.contains('/') || s.contains('\\') {
+                if s.is_empty() || s == "." || s == ".." || s.contains('/') || s.contains('\\') {
                     return Err(MetaError::BadInfo("file path component unsafe"));
                 }
                 path_components.push(s.to_string());
@@ -480,19 +453,8 @@ fn validate_info(value: &Value) -> Result<ValidatedTorrentMetaV1Info, MetaError>
 }
 
 // BEP 52 v2 parsing
-//
-/// Build a v1-shaped facade from a parsed v2 info view, so the rest of the
-/// engine — which iterates `files`, `name`, `piece_length` and
-/// `single_file_mode` — keeps working uniformly. The synthesized facade has
-/// `pieces` empty and `private` defaulted to false: piece verification on
-/// pure-v2 torrents routes through `PieceVerifier::V2Merkle` instead of
-/// the SHA-1 `pieces` blob
-///
-/// Path-component reconciliation: the BEP 52 `file tree` includes the
-/// torrent name as the root key for multi-file torrents, while v1's
-/// per-file `path` lists are relative to that name. We normalize the v2
-/// paths to match v1 semantics so storage layout helpers stay version-
-/// agnostic
+
+/// Build a v1-shaped facade from a parsed v2 info view, so the rest of the engine — which iterates `files`, `name`, `piece_length` and `single_file_mode` — keeps working uniformly. The synthesized facade has `pieces` empty and `private` defaulted to false: piece verification on pure-v2 torrents routes through `PieceVerifier::V2Merkle` instead of the SHA-1 `pieces` blob. Path-component reconciliation: the BEP 52 `file tree` includes the torrent name as the root key for multi-file torrents, while v1's per-file `path` lists are relative to that name. We normalize the v2 paths to match v1 semantics so storage layout helpers stay version-agnostic
 fn synthesize_v1_facade_from_v2(v2: &ValidatedTorrentMetaV2Info) -> ValidatedTorrentMetaV1Info {
     let single_file_mode =
         v2.files.len() == 1 && v2.files[0].path.len() == 1 && v2.files[0].path[0] == v2.name;
@@ -501,8 +463,7 @@ fn synthesize_v1_facade_from_v2(v2: &ValidatedTorrentMetaV2Info) -> ValidatedTor
         .files
         .iter()
         .map(|f| {
-            // For multi-file torrents v2 paths start with the torrent name;
-            // strip it to match the v1 `info.files[].path` convention
+            // For multi-file torrents v2 paths start with the torrent name; strip it to match the v1 `info.files[].path` convention
             let path = if !single_file_mode && f.path.first().is_some_and(|p| p == &v2.name) {
                 f.path[1..].to_vec()
             } else {
@@ -524,8 +485,7 @@ fn synthesize_v1_facade_from_v2(v2: &ValidatedTorrentMetaV2Info) -> ValidatedTor
     }
 }
 
-/// Parse the v2 view of an `info` dict. Caller has already verified the
-/// presence of `meta version=2` and `file tree`
+/// Parse the v2 view of an `info` dict. Caller has already verified the presence of `meta version=2` and `file tree`
 fn validate_info_v2(value: &Value) -> Result<ValidatedTorrentMetaV2Info, MetaError> {
     value
         .as_dict()
@@ -596,8 +556,7 @@ fn validate_info_v2(value: &Value) -> Result<ValidatedTorrentMetaV2Info, MetaErr
     })
 }
 
-/// Recursively decode the `file tree` dict. Each leaf is a child dict with a
-/// single key `""` (empty bencoded string) holding `{length, pieces root?}`
+/// Recursively decode the `file tree` dict. Each leaf is a child dict with a single key `""` (empty bencoded string) holding `{length, pieces root?}`
 fn parse_file_tree(value: &Value) -> Result<FileTreeNode, MetaError> {
     let dict = value
         .as_dict()
@@ -672,8 +631,7 @@ fn flatten_file_tree(
             length,
             pieces_root,
         } => {
-            // Skip zero-length files in the flat list (BEP 52 allows them
-            // and they have no Merkle root)
+            // Skip zero-length files in the flat list (BEP 52 allows them and they have no Merkle root)
             if *length == 0 {
                 return Ok(());
             }
@@ -689,9 +647,7 @@ fn flatten_file_tree(
     }
 }
 
-/// Parse top-level `piece layers` dict (BEP 52). Each key is a 32-byte
-/// pieces-root; each value is the concatenated SHA-256 hashes of the
-/// piece-aligned chunks below it (one 32-byte hash per piece)
+/// Parse top-level `piece layers` dict (BEP 52). Each key is a 32-byte pieces-root; each value is the concatenated SHA-256 hashes of the piece-aligned chunks below it (one 32-byte hash per piece)
 fn parse_piece_layers(top: &Value) -> Result<std::collections::BTreeMap<Id32, Vec<u8>>, MetaError> {
     let Some(value) = top.get(b"piece layers") else {
         return Ok(std::collections::BTreeMap::new());
@@ -721,8 +677,7 @@ mod tests {
     use super::*;
 
     fn synth_single_file(name: &str, piece_len: u32, data_len: u64) -> Vec<u8> {
-        // Craft a minimal valid single-file .torrent (announce-less). Piece
-        // hashes are zeroed; sufficient for parser tests
+        // Craft a minimal valid single-file .torrent (announce-less). Piece hashes are zeroed; sufficient for parser tests
         let piece_count = data_len.div_ceil(piece_len as u64);
         let pieces = vec![0u8; (piece_count * 20) as usize];
         // Build info dict via the encoder to guarantee canonical output
@@ -752,8 +707,7 @@ mod tests {
         assert_eq!(meta.info.files[0].length, 100_000);
         assert!(meta.info.single_file_mode);
         assert_eq!(meta.announce.as_deref(), Some("http://tracker/announce"));
-        // info-hash must be stable regardless of re-encode order (dict keys
-        // are sorted by the encoder already)
+        // info-hash must be stable regardless of re-encode order (dict keys are sorted by the encoder already)
         assert_ne!(meta.info_hash.to_hex(), "0".repeat(40));
     }
 
@@ -782,8 +736,7 @@ mod tests {
         assert!(matches!(parse_torrent(&bytes), Err(MetaError::BadInfo(_))));
     }
 
-    /// Build a hybrid v1+v2 .torrent with a single-file `file tree`. Hashes
-    /// are zero-filled; sufficient for parser-shape tests
+    /// Build a hybrid v1+v2 .torrent with a single-file `file tree`. Hashes are zero-filled; sufficient for parser-shape tests
     fn synth_hybrid_single_file(name: &str, piece_len: u32, data_len: u64) -> Vec<u8> {
         let piece_count = data_len.div_ceil(piece_len as u64);
         let v1_pieces = vec![0u8; (piece_count * 20) as usize];
@@ -834,8 +787,7 @@ mod tests {
         assert_eq!(v2.files.len(), 1);
         assert_eq!(v2.files[0].length, 100_000);
         assert_eq!(v2.files[0].path, vec!["hybrid.bin"]);
-        // 100_000 bytes / 16 KiB pieces = 7 pieces; piece layers must
-        // contain 7 * 32 bytes for the file's pieces_root
+        // 100_000 bytes / 16 KiB pieces = 7 pieces; piece layers must contain 7 * 32 bytes for the file's pieces_root
         let layer = meta
             .piece_layers
             .get(&v2.files[0].pieces_root)
@@ -854,8 +806,7 @@ mod tests {
 
     #[test]
     fn pure_v2_small_file_parses_without_layers() {
-        // Pure-v2 .torrent: single file <= piece_length needs no piece-layer
-        // entries (BEP 52: only files larger than one piece have layers)
+        // Pure-v2 .torrent: single file <= piece_length needs no piece-layer entries (BEP 52: only files larger than one piece have layers)
         let pieces_root = Id32([0x22u8; 32]);
         let file_leaf = Value::Dict(vec![(
             b"".to_vec(),
@@ -886,9 +837,7 @@ mod tests {
 
     #[test]
     fn pure_v2_large_file_without_layers_rejected() {
-        // Pure-v2 .torrent missing required piece-layer entries for a file
-        // larger than one piece must be rejected (BEP 52); only magnet-v2
-        // can defer this via HASH_REQUEST
+        // Pure-v2 .torrent missing required piece-layer entries for a file larger than one piece must be rejected (BEP 52); only magnet-v2 can defer this via HASH_REQUEST
         let pieces_root = Id32([0x55u8; 32]);
         let file_leaf = Value::Dict(vec![(
             b"".to_vec(),
@@ -920,8 +869,7 @@ mod tests {
 
     #[test]
     fn v2_rejects_non_power_of_two_piece_length() {
-        // Build a hybrid-shaped torrent with a 24 KiB piece length to trigger
-        // the v2 power-of-two validation before v1 (validate_info accepts any)
+        // Build a hybrid-shaped torrent with a 24 KiB piece length to trigger the v2 power-of-two validation before v1 (validate_info accepts any)
         let bad_piece_len: u32 = 24 * 1024;
         let pieces_root = Id32([0x33u8; 32]);
         let file_leaf = Value::Dict(vec![(

@@ -49,7 +49,6 @@ export const ONE_SECOND = 1000;
 const ONE_MINUTE = ONE_SECOND * 60;
 const ONE_HOUR = ONE_MINUTE * 60;
 
-// 12 hours
 export const AUTO_SYNC_TRACKER_INTERVAL = ONE_HOUR * 12;
 
 export const MAX_BT_TRACKER_LENGTH = 6144;
@@ -166,10 +165,6 @@ export const PROXY_SCOPE_OPTIONS = [
 	PROXY_SCOPES.UPDATE_TRACKERS,
 ];
 
-// DNS over HTTPS providers. `url` is the RFC 8484 endpoint; `bootstrap` is a
-// comma-separated set of IPs for reaching it without leaking the lookup to
-// system DNS. `custom` ships empty for the user to fill in the URL (and
-// bootstrap IPs)
 export const DOH_PROVIDERS = {
 	cloudflare: {
 		url: "https://cloudflare-dns.com/dns-query",
@@ -211,23 +206,14 @@ export const TRAY_CANVAS_CONFIG = {
 };
 
 export const SUPPORT_RTL_LOCALES = [
-	/* 'العربية', Arabic */
 	"ar",
-	/* 'فارسی', Persian */
 	"fa",
-	/* 'עברית', Hebrew */
 	"he",
-	/* 'Kurdî / كوردی', Kurdish */
 	"ku",
-	/* 'پنجابی', Western Punjabi */
 	"pa",
-	/* 'پښتو', Pashto, */
 	"ps",
-	/* 'سنڌي', Sindhi */
 	"sd",
-	/* 'اردو', Urdu */
 	"ur",
-	/* 'ייִדיש', Yiddish */
 	"yi",
 ];
 
