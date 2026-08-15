@@ -108,6 +108,19 @@ export default {
 		"Avançat: estableix claus arbitràries d'opcions del motor com a objecte JSON. Els canvis tenen efecte després de reiniciar.",
 	"engine-overrides-invalid":
 		"Les sobreescriptures del motor han de ser un objecte JSON vàlid.",
+	"ed2k-kad": "eMule Kad",
+	"ed2k-enable-kad": "Activa la descoberta de fonts mitjançant Kad",
+	"ed2k-enable-kad-tips":
+		"Descobreix fonts ED2K a través de la xarxa eMule Kad (cal reiniciar el motor)",
+	"ed2k-kad-port": "Port UDP de Kad",
+	"ed2k-kad-port-tips":
+		"Port UDP utilitzat per a la descoberta mitjançant Kad. Els valors vàlids són de l'1 al 65535 (cal reiniciar el motor)",
+	"ed2k-kad-port-invalid":
+		"El port UDP de Kad ha de ser un enter entre 1 i 65535",
+	"engine-overrides-reserved-keys":
+		"S'han ignorat les claus reservades de les sobreescriptures del motor: {{keys}}",
+	"engine-overrides-too-large":
+		"Les sobreescriptures del motor són massa grans: com a màxim 64 claus, 64 caràcters per clau i 2048 caràcters per valor.",
 	"external-engine-enable": "Utilitza un motor extern",
 	"external-engine-enable-tips":
 		"Quan s'activa, Risuko no iniciarà automàticament el motor integrat.",

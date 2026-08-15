@@ -98,6 +98,18 @@ export default {
 		"Nâng cao: đặt các khóa tùy chọn engine bất kỳ dưới dạng đối tượng JSON. Các thay đổi sẽ có hiệu lực sau khi khởi động lại.",
 	"engine-overrides-invalid":
 		"Ghi đè engine phải là một đối tượng JSON hợp lệ.",
+	"ed2k-kad": "eMule Kad",
+	"ed2k-enable-kad": "Bật tìm kiếm nguồn qua Kad",
+	"ed2k-enable-kad-tips":
+		"Tìm nguồn ED2K qua mạng eMule Kad (cần khởi động lại engine)",
+	"ed2k-kad-port": "Cổng UDP Kad",
+	"ed2k-kad-port-tips":
+		"Cổng UDP dùng để tìm nguồn qua Kad. Giá trị hợp lệ là 1-65535 (cần khởi động lại engine)",
+	"ed2k-kad-port-invalid": "Cổng UDP Kad phải là số nguyên từ 1 đến 65535",
+	"engine-overrides-reserved-keys":
+		"Đã bỏ qua các khóa ghi đè engine dành riêng: {{keys}}",
+	"engine-overrides-too-large":
+		"Ghi đè engine quá lớn: tối đa 64 khóa, 64 ký tự cho mỗi khóa và 2048 ký tự cho mỗi giá trị.",
 	"external-engine-enable": "Sử dụng engine bên ngoài",
 	"external-engine-enable-tips":
 		"Khi bật, Risuko sẽ không tự động khởi động engine tích hợp.",

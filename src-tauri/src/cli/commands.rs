@@ -464,5 +464,32 @@ fn write_secret_file(path: &std::path::Path, data: &[u8]) -> std::io::Result<()>
         opts.mode(0o600);
     }
     let mut file = opts.open(path)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+    }
     file.write_all(data)
+}
+
+#[cfg(all(test, unix))]
+mod secret_file_tests {
+    use super::write_secret_file;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn existing_secret_output_is_made_private_before_reuse() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cookies.json");
+        std::fs::write(&path, b"old").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        write_secret_file(&path, b"secret").unwrap();
+
+        assert_eq!(std::fs::read(&path).unwrap(), b"secret");
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+    }
 }

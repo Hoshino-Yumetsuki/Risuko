@@ -7,6 +7,7 @@ export default {
 	stopped: "Durdu",
 	"new-task": "Yeni Görev",
 	"new-bt-task": "Yeni BT Görevi",
+	"unknown-task-type": "Desteklenmeyen görev türü",
 	"open-file": "Torrent Dosyasını Aç...",
 	"uri-task": "URL",
 	"torrent-task": "Torrent",

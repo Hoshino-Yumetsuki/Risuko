@@ -1,5 +1,32 @@
 use serde_json::Value;
-use std::path::PathBuf;
+use std::io::Write;
+use std::path::{Path, PathBuf};
+
+pub(crate) fn write_file_atomically(path: &Path, data: &[u8]) -> Result<(), String> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| format!("{} has no parent directory", path.display()))?;
+    std::fs::create_dir_all(parent)
+        .map_err(|e| format!("Failed to create dir {}: {e}", parent.display()))?;
+
+    let mut temp = tempfile::NamedTempFile::new_in(parent)
+        .map_err(|e| format!("Failed to create temp file in {}: {e}", parent.display()))?;
+    temp.as_file_mut()
+        .write_all(data)
+        .map_err(|e| format!("Failed to write temporary file for {}: {e}", path.display()))?;
+    temp.as_file()
+        .sync_all()
+        .map_err(|e| format!("Failed to sync temporary file for {}: {e}", path.display()))?;
+    temp.persist(path)
+        .map_err(|e| format!("Failed to persist {}: {}", path.display(), e.error))?;
+
+    // Best effort: the file itself is durable and atomically replaced even on
+    // platforms that do not allow opening a directory for syncing.
+    if let Ok(directory) = std::fs::File::open(parent) {
+        let _ = directory.sync_all();
+    }
+    Ok(())
+}
 
 /// Provides the directory used for app configuration and data files - Tauri impl: uses `AppHandle::path().app_config_dir()` - Standalone impl: uses `dirs::config_dir().join("dev.risuko.app")`
 pub trait ConfigDirProvider: Send + Sync {
@@ -68,18 +95,41 @@ impl StorageBackend for FileStorage {
 
     fn save(&self, key: &str, value: &Value) -> Result<(), String> {
         let path = self.safe_path(key)?;
-        std::fs::create_dir_all(&self.dir)
-            .map_err(|e| format!("Failed to create dir {}: {e}", self.dir.display()))?;
         let data =
             serde_json::to_string_pretty(value).map_err(|e| format!("Failed to serialize: {e}"))?;
-        // Atomic write: temp file + rename so a crash mid-write can't corrupt the existing persisted JSON
-        let tmp = path.with_extension("json.tmp");
-        std::fs::write(&tmp, data)
-            .map_err(|e| format!("Failed to write {}: {e}", tmp.display()))?;
-        std::fs::rename(&tmp, &path).map_err(|e| {
-            let _ = std::fs::remove_file(&tmp);
-            format!("Failed to persist {}: {e}", path.display())
-        })?;
-        Ok(())
+        write_file_atomically(&path, data.as_bytes())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use std::sync::{Arc, Barrier};
+
+    #[test]
+    fn concurrent_saves_of_one_key_use_independent_temp_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = Arc::new(FileStorage::new(dir.path().to_path_buf()));
+        let barrier = Arc::new(Barrier::new(3));
+
+        let handles: Vec<_> = [json!({"writer": 1}), json!({"writer": 2})]
+            .into_iter()
+            .map(|value| {
+                let storage = Arc::clone(&storage);
+                let barrier = Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    storage.save("shared", &value)
+                })
+            })
+            .collect();
+        barrier.wait();
+
+        for handle in handles {
+            handle.join().unwrap().unwrap();
+        }
+        let saved = storage.load("shared").unwrap().unwrap();
+        assert!(saved == json!({"writer": 1}) || saved == json!({"writer": 2}));
     }
 }

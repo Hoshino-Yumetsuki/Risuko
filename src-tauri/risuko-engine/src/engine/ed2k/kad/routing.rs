@@ -1,9 +1,10 @@
 //! Kad node IDs, XOR distance ordering, and bounded routing buckets
 
 use std::cmp::Ordering;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt;
 use std::net::{Ipv4Addr, SocketAddrV4};
+use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
@@ -19,6 +20,20 @@ pub const MAX_LOOKUP_SOURCES: usize = 300;
 
 pub type KadId = [u8; ID_BYTES];
 
+// Wall-clock timestamps intentionally remain persisted for diagnostics, but probe snapshots need
+// an ordering token that cannot collide when two refreshes happen in the same second.
+static NEXT_REFRESH_GENERATION: AtomicU64 = AtomicU64::new(1);
+
+fn next_refresh_generation() -> u64 {
+    let generation = NEXT_REFRESH_GENERATION.fetch_add(1, AtomicOrdering::Relaxed);
+    // Zero is reserved for old state files that predate the generation field.
+    if generation == 0 {
+        1
+    } else {
+        generation
+    }
+}
+
 /// A strongly named Kad node ID; the newtype prevents accidental interchange with an ED2K file hash at integration boundaries
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct NodeId(pub KadId);
@@ -26,28 +41,12 @@ pub struct NodeId(pub KadId);
 impl NodeId {
     pub const ZERO: Self = Self([0; ID_BYTES]);
 
-    pub fn new(bytes: KadId) -> Self {
-        Self(bytes)
-    }
-
     pub fn random() -> Self {
         Self(rand::random())
     }
 
-    pub fn as_bytes(&self) -> &KadId {
-        &self.0
-    }
-
-    pub fn into_bytes(self) -> KadId {
-        self.0
-    }
-
     pub fn is_zero(self) -> bool {
         self == Self::ZERO
-    }
-
-    pub fn distance(self, other: Self) -> KadId {
-        xor_distance(&self.0, &other.0)
     }
 }
 
@@ -140,6 +139,9 @@ pub struct Contact {
     pub version: u8,
     pub last_seen: u64,
     pub last_verified: u64,
+    /// Process-local monotonic refresh order used to validate liveness probe snapshots.
+    #[serde(skip)]
+    refresh_generation: u64,
 }
 
 impl Contact {
@@ -152,6 +154,7 @@ impl Contact {
             version,
             last_seen: seen,
             last_verified: seen,
+            refresh_generation: next_refresh_generation(),
         }
     }
 
@@ -170,19 +173,12 @@ impl Contact {
             version,
             last_seen,
             last_verified,
+            refresh_generation: next_refresh_generation(),
         }
-    }
-
-    pub fn id_bytes(&self) -> KadId {
-        self.id.0
     }
 
     pub fn udp_addr(&self) -> SocketAddrV4 {
         self.addr
-    }
-
-    pub fn tcp_addr(&self) -> Option<SocketAddrV4> {
-        (self.tcp_port != 0).then(|| SocketAddrV4::new(*self.addr.ip(), self.tcp_port))
     }
 
     pub fn is_self(&self, local: NodeId) -> bool {
@@ -210,6 +206,7 @@ impl Contact {
         if verified {
             self.last_verified = self.last_seen;
         }
+        self.refresh_generation = next_refresh_generation();
     }
 }
 
@@ -217,7 +214,6 @@ impl Contact {
 pub enum InsertResult {
     Inserted,
     Updated,
-    Replaced,
     Rejected,
     SelfContact,
 }
@@ -240,10 +236,6 @@ impl RoutingTable {
         }
     }
 
-    pub fn local_id(&self) -> NodeId {
-        self.local_id
-    }
-
     pub fn len(&self) -> usize {
         self.by_id.len()
     }
@@ -252,19 +244,11 @@ impl RoutingTable {
         self.by_id.is_empty()
     }
 
-    pub fn bucket_len(&self, index: usize) -> usize {
-        self.buckets.get(index).map(VecDeque::len).unwrap_or(0)
-    }
-
     pub fn contacts(&self) -> Vec<Contact> {
         self.buckets
             .iter()
             .flat_map(|bucket| bucket.iter().cloned())
             .collect()
-    }
-
-    pub fn contains(&self, id: NodeId) -> bool {
-        self.by_id.contains_key(&id)
     }
 
     pub fn get(&self, id: NodeId) -> Option<Contact> {
@@ -352,9 +336,10 @@ impl RoutingTable {
             self.by_id.remove(&contact.id);
         }
 
-        // Contacts reconstructed from disk carry their original validation metadata; fresh wire contacts come from `Contact::new` and already have a current timestamp, so do not erase persisted timestamps here
-        if contact.last_seen == 0 {
-            contact.mark_seen(true);
+        // Contacts reconstructed from old state files have no process-local generation. Assign one
+        // without changing their persisted wall-clock timestamps before they can be probed.
+        if contact.refresh_generation == 0 {
+            contact.refresh_generation = next_refresh_generation();
         }
         let bucket = &mut self.buckets[index];
         if bucket.len() < K {
@@ -393,6 +378,7 @@ impl RoutingTable {
         if current.addr != expected.addr
             || current.last_seen != expected.last_seen
             || current.last_verified != expected.last_verified
+            || current.refresh_generation != expected.refresh_generation
         {
             return None;
         }
@@ -418,6 +404,9 @@ impl RoutingTable {
     }
 
     pub fn closest_with_replacements(&self, target: NodeId, limit: usize) -> Vec<Contact> {
+        // Replacements are an auxiliary lookup source, so apply the same hard cap before
+        // collecting either active contacts or replacements.
+        let limit = limit.min(MAX_LOOKUP_QUERIES);
         let mut contacts = self.closest(target, limit);
         if contacts.len() < limit {
             let mut replacements: Vec<_> = self
@@ -431,10 +420,6 @@ impl RoutingTable {
             contacts.extend(replacements.into_iter().take(limit - contacts.len()));
         }
         contacts
-    }
-
-    pub fn replacement_len(&self) -> usize {
-        self.replacements.iter().map(VecDeque::len).sum()
     }
 
     fn promote_replacement(&mut self, index: usize) {
@@ -483,78 +468,54 @@ impl LookupConfig {
 
 /// Tracks queried nodes for one iterative lookup and prevents duplicate work
 #[derive(Debug)]
-pub struct LookupTracker {
-    target: NodeId,
-    queried: HashMap<NodeId, bool>,
+pub(super) struct LookupTracker {
+    queried: HashSet<NodeId>,
     max_queries: usize,
 }
 
 impl LookupTracker {
-    pub fn new(target: NodeId, config: &LookupConfig) -> Self {
+    pub(super) fn new(config: &LookupConfig) -> Self {
         Self {
-            target,
-            queried: HashMap::new(),
+            queried: HashSet::new(),
             max_queries: config.max_queries,
         }
     }
 
-    pub fn target(&self) -> NodeId {
-        self.target
-    }
-
-    pub fn queried_count(&self) -> usize {
+    pub(super) fn queried_count(&self) -> usize {
         self.queried.len()
     }
 
-    pub fn mark_queried(&mut self, id: NodeId) -> bool {
-        if self.queried.len() >= self.max_queries || self.queried.contains_key(&id) {
+    pub(super) fn mark_queried(&mut self, id: NodeId) -> bool {
+        if self.queried.len() >= self.max_queries || self.queried.contains(&id) {
             return false;
         }
-        self.queried.insert(id, false);
-        true
-    }
-
-    pub fn mark_responded(&mut self, id: NodeId) {
-        if let Some(value) = self.queried.get_mut(&id) {
-            *value = true;
-        }
-    }
-
-    pub fn has_responded(&self, id: NodeId) -> bool {
-        self.queried.get(&id).copied().unwrap_or(false)
-    }
-
-    pub fn was_queried(&self, id: NodeId) -> bool {
-        self.queried.contains_key(&id)
+        self.queried.insert(id)
     }
 }
 
 /// Convert a socket address to an endpoint key for source de-duplication
-pub fn endpoint_key(addr: SocketAddrV4) -> (Ipv4Addr, u16) {
+fn endpoint_key(addr: SocketAddrV4) -> (Ipv4Addr, u16) {
     (*addr.ip(), addr.port())
 }
 
 /// Keep a bounded set of source endpoints; shared by the service and the eventual ED2K download scheduler
 #[derive(Debug, Default)]
-pub struct SourceSet {
+pub(super) struct SourceSet {
     entries: HashMap<(Ipv4Addr, u16), ()>,
 }
 
 impl SourceSet {
-    pub fn insert(&mut self, addr: SocketAddrV4) -> bool {
-        self.entries.insert(endpoint_key(addr), ()).is_none()
+    pub(super) fn insert(&mut self, addr: SocketAddrV4) -> bool {
+        let key = endpoint_key(addr);
+        if self.entries.contains_key(&key) || self.entries.len() >= MAX_LOOKUP_SOURCES {
+            return false;
+        }
+        self.entries.insert(key, ()).is_none()
     }
 
-    pub fn len(&self) -> usize {
+    #[cfg(test)]
+    fn len(&self) -> usize {
         self.entries.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
-    }
-
-    pub fn contains(&self, addr: SocketAddrV4) -> bool {
-        self.entries.contains_key(&endpoint_key(addr))
     }
 }
 
@@ -572,6 +533,15 @@ mod tests {
             SocketAddrV4::new(Ipv4Addr::from(ip), 4672),
             4662,
             8,
+        )
+    }
+
+    fn contact_with_id(node: KadId, ip: [u8; 4]) -> Contact {
+        Contact::new(
+            node,
+            SocketAddrV4::new(Ipv4Addr::from(ip), 4672),
+            4662,
+            MIN_SUPPORTED_KAD_VERSION,
         )
     }
 
@@ -626,12 +596,9 @@ mod tests {
         for value in 1..=K as u8 {
             let mut c = contact(value, [8, 8, 8, value]);
             c.id = NodeId([0x80 | value; 16]);
-            assert!(matches!(
-                table.insert(c),
-                InsertResult::Inserted | InsertResult::Replaced
-            ));
+            assert_eq!(table.insert(c), InsertResult::Inserted);
         }
-        assert_eq!(table.bucket_len(0), K);
+        assert_eq!(table.len(), K);
         let mut overflow = contact(99, [8, 8, 8, 99]);
         overflow.id = NodeId([0x80 | 99; 16]);
         assert_eq!(table.insert(overflow), InsertResult::Rejected);
@@ -687,15 +654,15 @@ mod tests {
             .liveness_probe_target(&replacement)
             .expect("full bucket has an LRU contact");
         assert!(table.mark_alive(first_lru.id));
-        assert!(table.contains(first_lru.id));
+        assert!(table.get(first_lru.id).is_some());
 
         let timed_out = table
             .liveness_probe_target(&replacement)
             .expect("full bucket has a later LRU contact");
         assert_ne!(timed_out.id, first_lru.id);
         assert!(table.remove_if_unchanged(&timed_out).is_some());
-        assert!(!table.contains(timed_out.id));
-        assert!(table.contains(replacement.id));
+        assert!(table.get(timed_out.id).is_none());
+        assert!(table.get(replacement.id).is_some());
         assert_eq!(table.len(), K);
     }
 
@@ -714,18 +681,69 @@ mod tests {
     }
 
     #[test]
+    fn refresh_generation_invalidates_same_second_probe_snapshot() {
+        let local = NodeId(id(0));
+        let mut table = RoutingTable::new(local);
+        let original = contact(1, [8, 8, 8, 8]);
+        let original_id = original.id;
+        assert_eq!(table.insert(original), InsertResult::Inserted);
+        let snapshot = table.get(original_id).unwrap();
+
+        // `insert` refreshes an existing contact even when the wall-clock second is unchanged.
+        let refreshed = Contact::with_times(
+            original_id.0,
+            SocketAddrV4::new(Ipv4Addr::new(8, 8, 8, 8), 4672),
+            4662,
+            MIN_SUPPORTED_KAD_VERSION,
+            snapshot.last_seen,
+            snapshot.last_verified,
+        );
+        assert_eq!(table.insert(refreshed), InsertResult::Updated);
+        assert!(table.remove_if_unchanged(&snapshot).is_none());
+    }
+
+    #[test]
+    fn closest_with_replacements_clamps_requested_limit() {
+        let local = NodeId(id(0));
+        let mut table = RoutingTable::new(local);
+        for value in 1..=70u8 {
+            let mut node = [0; ID_BYTES];
+            node[0] = 1 << (value % 8);
+            node[1] = value;
+            let _ = table.insert(contact_with_id(node, [8, 8, 0, value]));
+        }
+        assert_eq!(
+            table.closest_with_replacements(local, usize::MAX).len(),
+            MAX_LOOKUP_QUERIES
+        );
+    }
+
+    #[test]
+    fn source_set_rejects_entries_after_the_global_cap() {
+        let mut sources = SourceSet::default();
+        for value in 1..=MAX_LOOKUP_SOURCES {
+            let octet = (value % 250 + 1) as u8;
+            assert!(sources.insert(SocketAddrV4::new(
+                Ipv4Addr::new(8, 8, (value / 250) as u8, octet),
+                4000 + (value as u16 % 1000),
+            )));
+        }
+        assert_eq!(sources.len(), MAX_LOOKUP_SOURCES);
+        assert!(!sources.insert(SocketAddrV4::new(Ipv4Addr::new(8, 8, 1, 1), 4001)));
+    }
+
+    #[test]
     fn lookup_tracker_deduplicates_and_caps_queries() {
         let config = LookupConfig {
             max_queries: 2,
             ..LookupConfig::default()
         }
         .bounded();
-        let mut tracker = LookupTracker::new(NodeId(id(2)), &config);
+        let mut tracker = LookupTracker::new(&config);
         assert!(tracker.mark_queried(NodeId(id(3))));
         assert!(!tracker.mark_queried(NodeId(id(3))));
         assert!(tracker.mark_queried(NodeId(id(4))));
         assert!(!tracker.mark_queried(NodeId(id(5))));
-        tracker.mark_responded(NodeId(id(3)));
-        assert!(tracker.has_responded(NodeId(id(3))));
+        assert_eq!(tracker.queried_count(), 2);
     }
 }

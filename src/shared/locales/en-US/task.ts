@@ -44,10 +44,9 @@ export default {
 	"ed2k-kad-state-bootstrapping": "Bootstrapping",
 	"ed2k-kad-state-searching": "Searching",
 	"ed2k-kad-state-complete": "Complete",
-	"ed2k-kad-state-ready": "Ready",
 	"ed2k-kad-state-timeout": "Timed out",
 	"ed2k-kad-state-error": "Error",
-	"ed2k-kad-state-stopped": "Stopped",
+	"unknown-task-type": "Unsupported task type",
 	"m3u8-link-detected":
 		"M3U8 playlist link detected. Segments will be downloaded and merged.",
 	"ftp-link-detected": "FTP/FTPS link detected. Credentials can be set below.",

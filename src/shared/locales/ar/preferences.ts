@@ -97,6 +97,19 @@ export default {
 	"engine-overrides-tips":
 		"متقدم: عيّن أي مفاتيح لخيار المحرك ككائن JSON. تسري التغييرات بعد إعادة التشغيل.",
 	"engine-overrides-invalid": "يجب أن تكون تجاوزات المحرك كائن JSON صالحًا.",
+	"ed2k-kad": "eMule Kad",
+	"ed2k-enable-kad": "تمكين اكتشاف المصادر عبر Kad",
+	"ed2k-enable-kad-tips":
+		"اكتشاف مصادر ED2K عبر شبكة eMule Kad (يتطلب إعادة تشغيل المحرك)",
+	"ed2k-kad-port": "منفذ UDP لـ Kad",
+	"ed2k-kad-port-tips":
+		"منفذ UDP المستخدم للاكتشاف عبر Kad. القيم الصالحة من 1 إلى 65535 (يتطلب إعادة تشغيل المحرك)",
+	"ed2k-kad-port-invalid":
+		"يجب أن يكون منفذ UDP لـ Kad عددًا صحيحًا من 1 إلى 65535",
+	"engine-overrides-reserved-keys":
+		"تم تجاهل مفاتيح تجاوزات المحرك المحجوزة: {{keys}}",
+	"engine-overrides-too-large":
+		"تجاوزات المحرك كبيرة جدًا: بحد أقصى 64 مفتاحًا، و64 حرفًا لكل مفتاح، و2048 حرفًا لكل قيمة.",
 	"external-engine-enable": "استخدام محرك خارجي",
 	"external-engine-enable-tips":
 		"عند التفعيل، لن يقوم Risuko بتشغيل المحرك المدمج تلقائيًا.",

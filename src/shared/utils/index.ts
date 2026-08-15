@@ -522,11 +522,15 @@ const decodeThunderLink = (url = "") => {
 		return url;
 	}
 
-	let result = url.trim();
-	result = result.split("thunder://")[1];
-	result = decodeBase64Utf8(result);
-	result = result.substring(2, result.length - 2);
-	return result;
+	const original = url;
+	try {
+		let result = url.trim().slice("thunder://".length);
+		result = decodeBase64Utf8(result);
+		return result.substring(2, result.length - 2);
+	} catch {
+		// Keep malformed links visible so AddTask can report or let the user edit them.
+		return original;
+	}
 };
 
 const RENAME_SUFFIX_REGEX = /\s+Rename:\s*(\S.*?)\s*$/i;

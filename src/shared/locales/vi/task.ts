@@ -7,6 +7,7 @@ export default {
 	stopped: "Ngừng",
 	"new-task": "Tác vụ mới",
 	"new-bt-task": "Tác vụ BT mới",
+	"unknown-task-type": "Loại tác vụ không được hỗ trợ",
 	"open-file": "Mở tệp Torrent...",
 	"uri-task": "URL",
 	"torrent-task": "Torrent",

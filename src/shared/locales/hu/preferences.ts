@@ -103,6 +103,19 @@ export default {
 		"Haladó: tetszőleges motorbeállítás-kulcsokat adhatsz meg JSON-objektumként. A módosítások újraindítás után lépnek életbe.",
 	"engine-overrides-invalid":
 		"A motorfelülbírálásoknak érvényes JSON-objektumnak kell lenniük.",
+	"ed2k-kad": "eMule Kad",
+	"ed2k-enable-kad": "Forráskeresés engedélyezése a Kad segítségével",
+	"ed2k-enable-kad-tips":
+		"ED2K-források keresése az eMule Kad hálózaton keresztül (a motor újraindítása szükséges)",
+	"ed2k-kad-port": "Kad UDP-port",
+	"ed2k-kad-port-tips":
+		"A Kad-felderítéshez használt UDP-port. Az érvényes értékek 1 és 65535 között vannak (a motor újraindítása szükséges)",
+	"ed2k-kad-port-invalid":
+		"A Kad UDP-portjának 1 és 65535 közötti egész számnak kell lennie",
+	"engine-overrides-reserved-keys":
+		"Figyelmen kívül hagyott fenntartott motorfelülbírálási kulcsok: {{keys}}",
+	"engine-overrides-too-large":
+		"A motorfelülbírálások túl nagyok: legfeljebb 64 kulcs, kulcsonként 64 karakter és értékenként 2048 karakter engedélyezett.",
 	"external-engine-enable": "Külső motor használata",
 	"external-engine-enable-tips":
 		"Bekapcsolva a Risuko nem indítja el automatikusan a beépített motort.",

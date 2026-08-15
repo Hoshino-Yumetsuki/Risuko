@@ -4,11 +4,12 @@ use crate::engine::archive_safety::ArchiveLimits;
 use crate::engine::usenet::NzbSegment;
 use futures_util::{stream::FuturesUnordered, StreamExt};
 use sha2::{Digest, Sha256};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Duration, Instant};
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant, SystemTime};
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 use tokio_util::sync::CancellationToken;
 
@@ -17,6 +18,8 @@ const HASH_BUFFER_BYTES: usize = 64 * 1024;
 const CHECKPOINT_SEGMENT_INTERVAL: usize = 8;
 const CHECKPOINT_TIME_INTERVAL: Duration = Duration::from_secs(5);
 const FETCH_CONCURRENCY: usize = 4;
+const RESUME_TEMP_STALE_AGE: Duration = Duration::from_secs(24 * 60 * 60);
+const RESUME_TEMP_PRUNE_INTERVAL: Duration = Duration::from_secs(5 * 60);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct YencAssemblyLimits {
@@ -137,6 +140,7 @@ impl ResumeSidecar {
     }
 
     pub async fn load(path: &Path, manifest_sha256: &str) -> Result<Self, String> {
+        prune_stale_resume_temps(path).await;
         let bytes = match tokio::fs::read(path).await {
             Ok(bytes) => bytes,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -179,6 +183,97 @@ impl ResumeSidecar {
             }
         }
     }
+}
+
+async fn prune_stale_resume_temps(path: &Path) {
+    let Some(parent) = path.parent() else {
+        return;
+    };
+    if !should_prune_resume_temp_dir(parent) {
+        return;
+    }
+    let Some(current_file_name) = path.file_name().and_then(|name| name.to_str()) else {
+        return;
+    };
+    let mut entries = match tokio::fs::read_dir(parent).await {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
+        Err(error) => {
+            tracing::warn!(path = %parent.display(), %error, "could not scan stale resume metadata temps");
+            return;
+        }
+    };
+
+    loop {
+        let entry = match entries.next_entry().await {
+            Ok(Some(entry)) => entry,
+            Ok(None) => break,
+            Err(error) => {
+                tracing::warn!(path = %parent.display(), %error, "could not continue scanning stale resume metadata temps");
+                break;
+            }
+        };
+        let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+            continue;
+        };
+        let Some(without_suffix) = name.strip_suffix(".tmp") else {
+            continue;
+        };
+        let Some((with_pid, sequence)) = without_suffix.rsplit_once('.') else {
+            continue;
+        };
+        if sequence.parse::<u64>().is_err() {
+            continue;
+        }
+        let Some((sidecar_name, pid)) = with_pid.rsplit_once('.') else {
+            continue;
+        };
+        let Some(pid) = pid.parse::<u32>().ok() else {
+            continue;
+        };
+        // Production sidecars end in `.resume.json`. Also recognize the exact
+        // caller-provided filename so this helper remains correct for tests and
+        // other direct ResumeSidecar users.
+        if (sidecar_name != current_file_name && !sidecar_name.ends_with(".resume.json"))
+            || pid == std::process::id()
+        {
+            continue;
+        }
+        match entry.metadata().await {
+            Ok(metadata)
+                if metadata.is_file()
+                    && metadata
+                        .modified()
+                        .ok()
+                        .and_then(|modified| SystemTime::now().duration_since(modified).ok())
+                        .is_some_and(|age| age >= RESUME_TEMP_STALE_AGE) =>
+            {
+                if let Err(error) = tokio::fs::remove_file(entry.path()).await {
+                    tracing::warn!(path = %entry.path().display(), %error, "could not remove stale resume metadata temp");
+                }
+            }
+            Ok(_) => {}
+            Err(error) => {
+                tracing::warn!(path = %entry.path().display(), %error, "could not inspect stale resume metadata temp");
+            }
+        }
+    }
+}
+
+fn should_prune_resume_temp_dir(parent: &Path) -> bool {
+    static LAST_PRUNE: OnceLock<Mutex<HashMap<PathBuf, Instant>>> = OnceLock::new();
+
+    let now = Instant::now();
+    let mut last_prune = LAST_PRUNE
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    last_prune.retain(|_, last| now.saturating_duration_since(*last) < RESUME_TEMP_PRUNE_INTERVAL);
+    if last_prune.contains_key(parent) {
+        return false;
+    }
+    last_prune.insert(parent.to_path_buf(), now);
+    true
 }
 
 async fn write_and_rename(temp: &Path, path: &Path, payload: &[u8]) -> Result<(), String> {
@@ -1318,6 +1413,56 @@ mod tests {
                 .unwrap()
                 .completed_bytes,
             0
+        );
+    }
+
+    #[tokio::test]
+    async fn loading_resume_sidecar_prunes_prior_process_temps() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("current.bin.resume.json");
+        let foreign_pid = std::process::id().wrapping_add(1);
+        let stale = dir
+            .path()
+            .join(format!("finished.bin.resume.json.{foreign_pid}.7.tmp"));
+        let recent = path.with_extension(format!("json.{foreign_pid}.8.tmp"));
+        let active = path.with_extension(format!("json.{}.9.tmp", std::process::id()));
+        let unrelated = path.with_extension("json.backup.tmp");
+        tokio::fs::write(&stale, b"partial").await.unwrap();
+        tokio::fs::write(&recent, b"in flight").await.unwrap();
+        tokio::fs::write(&active, b"active").await.unwrap();
+        tokio::fs::write(&unrelated, b"keep").await.unwrap();
+        let stale_time = std::fs::FileTimes::new()
+            .set_modified(SystemTime::now() - RESUME_TEMP_STALE_AGE - Duration::from_secs(1));
+        for candidate in [&stale, &active] {
+            std::fs::File::open(candidate)
+                .unwrap()
+                .set_times(stale_time)
+                .unwrap();
+        }
+
+        ResumeSidecar::load(&path, "manifest").await.unwrap();
+
+        assert!(!stale.exists());
+        assert!(recent.exists());
+        assert!(active.exists());
+        assert!(unrelated.exists());
+
+        let throttled = dir
+            .path()
+            .join(format!("later.bin.resume.json.{foreign_pid}.10.tmp"));
+        tokio::fs::write(&throttled, b"old but discovered after the scan")
+            .await
+            .unwrap();
+        std::fs::File::open(&throttled)
+            .unwrap()
+            .set_times(stale_time)
+            .unwrap();
+        ResumeSidecar::load(&dir.path().join("another.bin.resume.json"), "manifest")
+            .await
+            .unwrap();
+        assert!(
+            throttled.exists(),
+            "the same directory should not be rescanned for every NZB file"
         );
     }
 

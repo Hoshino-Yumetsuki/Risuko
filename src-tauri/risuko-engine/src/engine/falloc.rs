@@ -52,13 +52,18 @@ fn platform_fallocate(file: &File, len: u64) -> io::Result<()> {
             "fallocate length exceeds i64::MAX",
         )
     })?;
+    if len == 0 {
+        return file.set_len(0);
+    }
     // nix 0.30 expects an `AsFd` implementor — `&File` qualifies and avoids the unsafe-ish round-trip through `RawFd`
     fallocate(file, FallocateFlags::empty(), 0, signed_len)
-        .map_err(|e| io::Error::from_raw_os_error(e as i32))
+        .map_err(|e| io::Error::from_raw_os_error(e as i32))?;
+    file.set_len(len)
 }
 
 #[cfg(target_os = "macos")]
 fn platform_fallocate(file: &File, len: u64) -> io::Result<()> {
+    use std::os::unix::fs::MetadataExt;
     use std::os::unix::io::AsRawFd;
     // F_PREALLOCATE only reserves blocks (logical size still needs set_len); try contiguous first (F_ALLOCATECONTIG), then retry without the hint on fragmented free space so we still get the reserve
     #[repr(C)]
@@ -75,12 +80,14 @@ fn platform_fallocate(file: &File, len: u64) -> io::Result<()> {
     const F_PEOFPOSMODE: libc::c_int = 3;
 
     let fd = file.as_raw_fd();
-    // `F_PEOFPOSMODE` reserves `fst_length` bytes past the current physical end of file, so a resumed/non-empty file must only ask for the shortfall (the full target would over-allocate by bytes already backed on disk); nothing to reserve when the file already occupies at least `len` physical bytes
-    let current_len = file.metadata()?.len();
-    if current_len >= len {
+    if file.metadata()?.len() > len {
+        file.set_len(len)?;
+    }
+    let allocated_len = file.metadata()?.blocks().saturating_mul(512);
+    if allocated_len >= len {
         return file.set_len(len);
     }
-    let needed = len - current_len;
+    let needed = len - allocated_len;
     let signed_len = libc::off_t::try_from(needed).map_err(|_| {
         io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -203,5 +210,54 @@ mod tests {
         f.write_all(&[0u8; 8192]).unwrap();
         allocate(&f, 4096, Mode::Falloc).unwrap();
         assert_eq!(std::fs::metadata(&path).unwrap().len(), 4096);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn falloc_reserves_blocks_for_an_already_sized_sparse_file() {
+        use std::os::unix::fs::MetadataExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("sparse");
+        let f = std::fs::File::create(&path).unwrap();
+        let target = 1024 * 1024;
+        f.set_len(target).unwrap();
+        let before = f.metadata().unwrap().blocks();
+
+        allocate(&f, target, Mode::Falloc).unwrap();
+
+        let metadata = f.metadata().unwrap();
+        assert_eq!(metadata.len(), target);
+        assert!(
+            metadata.blocks().saturating_mul(512) >= target,
+            "preallocation must reserve the full sparse logical file (before={before} blocks, after={} blocks)",
+            metadata.blocks()
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn falloc_remeasures_blocks_after_shrinking_a_sparse_file() {
+        use std::io::{Seek, SeekFrom, Write};
+        use std::os::unix::fs::MetadataExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("sparse-tail");
+        let mut f = std::fs::File::create(&path).unwrap();
+        let original_len = 1024 * 1024 * 1024;
+        let target = 16 * 1024;
+        f.set_len(original_len).unwrap();
+        f.seek(SeekFrom::Start(original_len - target)).unwrap();
+        f.write_all(&vec![0x5a; target as usize]).unwrap();
+        assert!(f.metadata().unwrap().blocks() > 0);
+
+        allocate(&f, target, Mode::Falloc).unwrap();
+
+        let metadata = f.metadata().unwrap();
+        assert_eq!(metadata.len(), target);
+        assert!(
+            metadata.blocks().saturating_mul(512) >= target,
+            "preallocation must replace blocks discarded by the shrink"
+        );
     }
 }

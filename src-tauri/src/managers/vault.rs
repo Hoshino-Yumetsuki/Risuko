@@ -1,4 +1,4 @@
-//! OS-keychain-backed credential vault One keyring entry per credential id under a fixed service name; the entry value is a JSON object containing only the sensitive fields. Non-secret metadata (host, label, protocol, timestamps) stays in `user.json` so the frontend can list and match credentials without unlocking the keychain Backend: `keyring-core` plus a platform-native store crate — Apple Keychain on macOS/iOS, Windows Credential Manager on Windows, and the D-Bus Secret Service on other Unix platforms. When the OS backend is unavailable (headless Linux without D-Bus, sandboxed environments, etc.) `VaultManager::probe()` reports `enabled = false` and the renderer falls back to storing secrets inline in `user.json` (legacy behavior)
+//! OS-keychain-backed credential vault
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Once;
@@ -7,12 +7,9 @@ use keyring_core::{Entry, Error};
 use serde_json::Value;
 
 const SERVICE: &str = "risuko-credentials";
-/// Separate service namespace for upload sink secrets (SFTP/FTP/WebDAV passwords, S3 secret access keys, SSH private keys). Kept distinct from the SavedCredential service so the two stores can be cleared, audited, or migrated independently
 const SINK_SERVICE: &str = "risuko-sinks";
-/// Account used by `probe()` to verify the keychain backend is reachable. Read-only — never written to, so the OS does not log a write or prompt for keychain access on every launch
 const PROBE_ACCOUNT: &str = "__probe__";
 
-/// Install the platform-native credential store as the keyring-core default. Idempotent: safe to call multiple times. Logs and swallows construction errors so callers fall back to the disabled vault path
 fn ensure_default_store() {
     static INIT: Once = Once::new();
     INIT.call_once(|| match build_default_store() {
@@ -73,7 +70,7 @@ impl VaultManager {
         self.enabled.load(Ordering::Relaxed)
     }
 
-    /// Build a manager with a forced `enabled` flag, skipping the OS probe. Test-only: lets unit tests in sibling modules exercise the vault-enabled code paths without depending on a real keychain
+    /// Build a manager with a forced `enabled` flag, skipping the OS probe.
     #[cfg(test)]
     pub(crate) fn for_test(enabled: bool) -> Self {
         Self {
@@ -81,7 +78,8 @@ impl VaultManager {
         }
     }
 
-    /// Non-destructive reachability check: confirm the keyring backend opens and lookups succeed; a `NoEntry` result is healthy (backend reachable, no probe entry stored). Avoids the write-then-delete cycle the previous implementation ran on every launch, which could trigger OS keychain prompts and audit-log noise
+    /// Non-destructive reachability check: confirm the keyring backend opens
+    /// and lookups succeed
     fn probe(&self) {
         let ok = match Entry::new(SERVICE, PROBE_ACCOUNT) {
             Ok(entry) => match entry.get_password() {
@@ -103,7 +101,7 @@ impl VaultManager {
         self.put_at(SERVICE, id, secrets)
     }
 
-    /// Retrieve the secret JSON object for the given credential id. Returns `Ok(None)` when the entry does not exist
+    /// Retrieve the secret JSON object for the given credential id.
     pub fn get(&self, id: &str) -> Result<Option<Value>, String> {
         self.get_at(SERVICE, id)
     }
@@ -190,7 +188,6 @@ mod tests {
         m.remove("any-id").unwrap();
     }
 
-    /// Integration test against the real OS keychain. Skipped by default because CI hosts and headless Linux environments may lack a usable backend; opt in by setting `RISUKO_VAULT_INTEGRATION_TEST=1`
     #[test]
     fn enabled_round_trip_real_keychain() {
         if std::env::var("RISUKO_VAULT_INTEGRATION_TEST")

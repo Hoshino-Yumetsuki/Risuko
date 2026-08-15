@@ -95,7 +95,7 @@ const addTaskByType = async (type: string) => {
 		return getTaskStore().addTorrent(payload);
 	} else {
 		logger.error("addTask fail", type, form);
-		throw new Error(`Unknown task type: ${type}`);
+		throw new Error("task.unknown-task-type");
 	}
 };
 

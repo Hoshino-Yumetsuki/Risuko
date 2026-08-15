@@ -62,12 +62,16 @@ struct ChunkMeta {
     pieces: Vec<PieceProgress>,
 }
 
-/// RFC 7232 weak comparison of two ETags: strip an optional `W/` weak prefix from each side before comparing the opaque tags, so a valid resume isn't discarded when a server returns a weak validator on one request and a strong one on another for the same representation
-fn etags_weakly_equal(a: &str, b: &str) -> bool {
-    fn opaque(tag: &str) -> &str {
-        tag.strip_prefix("W/").unwrap_or(tag)
+fn etags_strongly_equal(a: &str, b: &str) -> bool {
+    fn is_strong(tag: &str) -> bool {
+        let bytes = tag.as_bytes();
+        bytes.len() >= 2
+            && bytes.first() == Some(&b'"')
+            && bytes.last() == Some(&b'"')
+            && !tag.starts_with("W/")
     }
-    opaque(a) == opaque(b)
+
+    is_strong(a) && is_strong(b) && a == b
 }
 
 fn chunk_meta_path(part_path: &Path) -> PathBuf {
@@ -133,19 +137,13 @@ fn load_piece_meta(
         }
     }
 
-    // Saved ETag without a current probe ETag means we can't verify integrity
-    if meta.etag.is_some() && etag.is_none() {
-        let _ = fs::remove_file(&path);
-        return None;
-    }
-    if let (Some(saved), Some(current)) = (&meta.etag, etag) {
-        if !etags_weakly_equal(saved, current) {
-            let _ = fs::remove_file(&path);
-            return None;
-        }
-    }
-    // No freshness validator on either side: trusting the partial could let a server that silently changed the resource produce a corrupt final file, so reject resume and start over
-    if meta.etag.is_none() && etag.is_none() {
+    // A byte-for-byte resume is safe only when both requests carry the same
+    // strong validator. Weak or missing ETags cannot be used with If-Match and
+    // do not guarantee that byte ranges are from the same representation.
+    if !matches!(
+        (&meta.etag, etag),
+        (Some(saved), Some(current)) if etags_strongly_equal(saved, current)
+    ) {
         let _ = fs::remove_file(&path);
         return None;
     }
@@ -1823,9 +1821,11 @@ async fn piece_worker(
     worker_completed: Option<Arc<AtomicU64>>,
     max_retries: u32,
 ) -> Result<(), String> {
-    // Retry budget is per-piece, not per-worker-lifetime: `retry_count` tracks consecutive failed attempts on `retry_idx`. Claiming a different piece resets the budget so a worker isn't killed by single failures spread across several distinct pieces
+    // Track consecutive zero-progress failures across piece claims. Work
+    // stealing may hand this worker a different piece after each failure, so
+    // resetting merely because the index changed would make the retry bound
+    // ineffective. Any successful progress resets the budget below.
     let mut retry_count: u32 = 0;
-    let mut retry_idx: Option<usize> = None;
     loop {
         if cancel_token.is_cancelled() {
             return Err("Download cancelled".to_string());
@@ -1835,11 +1835,6 @@ async fn piece_worker(
             Some(i) => i,
             None => return Ok(()), // queue exhausted: this worker is done
         };
-
-        if retry_idx != Some(idx) {
-            retry_idx = Some(idx);
-            retry_count = 0;
-        }
 
         let piece_offset = queue.pieces[idx].offset;
         let piece_length = queue.pieces[idx].length;
@@ -1983,7 +1978,13 @@ async fn download_piece_stream(
         .headers(headers.clone())
         .header(RANGE, range.to_range_header_value());
 
-    if let Some(etag) = expected_etag {
+    let strong_expected_etag = expected_etag.filter(|etag| {
+        // Comparing a tag to itself is a compact validity check for the strong
+        // ETag syntax accepted by `etags_strongly_equal`.
+        etags_strongly_equal(etag, etag)
+    });
+
+    if let Some(etag) = strong_expected_etag {
         if let Ok(v) = HeaderValue::from_str(etag) {
             req = req.header(IF_MATCH, v);
         }
@@ -2003,15 +2004,16 @@ async fn download_piece_stream(
         return Err(err);
     }
 
-    if let Some(expected) = expected_etag {
+    if let Some(expected) = strong_expected_etag {
         let mismatch = resp
             .headers()
             .get(ETAG)
             .and_then(|v| v.to_str().ok())
-            .is_some_and(|actual| actual != expected);
+            .is_some_and(|actual| !etags_strongly_equal(actual, expected));
         if mismatch {
-            // Drain so the connection can be reused, matching the Cloudflare branch above
-            drain_response_body(resp).await;
+            // Do not wait for a potentially stalled response body before the
+            // worker can fail over or observe cancellation.
+            drop(resp);
             return Err("Server file changed (ETag mismatch), aborting download".to_string());
         }
     }
@@ -3212,6 +3214,15 @@ mod tests {
     }
 
     #[test]
+    fn byte_range_resume_requires_matching_strong_etags() {
+        assert!(etags_strongly_equal("\"abc\"", "\"abc\""));
+        assert!(!etags_strongly_equal("\"abc\"", "\"xyz\""));
+        assert!(!etags_strongly_equal("W/\"abc\"", "\"abc\""));
+        assert!(!etags_strongly_equal("W/\"abc\"", "W/\"abc\""));
+        assert!(!etags_strongly_equal("abc", "abc"));
+    }
+
+    #[test]
     fn piece_meta_round_trip_is_sparse() {
         let dir = std::env::temp_dir().join(format!("risuko_piecemeta_{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
@@ -3244,6 +3255,17 @@ mod tests {
         // ETag mismatch invalidates resume
         let other = Some("\"xyz\"".to_string());
         assert!(load_piece_meta(&part, PIECE_SIZE * 3, &other).is_none());
+
+        // A weak validator must never restore byte-range progress, even when
+        // its opaque value matches the previously saved strong validator.
+        save_piece_meta(&part, &q, PIECE_SIZE * 3, &etag);
+        let weak = Some("W/\"abc\"".to_string());
+        assert!(load_piece_meta(&part, PIECE_SIZE * 3, &weak).is_none());
+
+        // Likewise, a sidecar created without a validator cannot later be
+        // trusted merely because the current probe happens to return one.
+        save_piece_meta(&part, &q, PIECE_SIZE * 3, &None);
+        assert!(load_piece_meta(&part, PIECE_SIZE * 3, &etag).is_none());
 
         // Cleanup
         delete_chunk_meta(&part);

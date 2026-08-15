@@ -1,6 +1,8 @@
 use risuko_cookies::{cookies_for_url, list_browsers, BrowserInfo, HostCookies};
 use risuko_engine::engine;
-use risuko_engine::engine::cookie_store::{cookies_to_header, CookieEntry, StoredCookie};
+use risuko_engine::engine::cookie_store::{
+    cookies_to_header, eligible_cookies, CookieEntry, StoredCookie,
+};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -150,7 +152,7 @@ async fn build_imported_cookies(
         return Err(format!("no cookies found in {browser} for {host}"));
     }
 
-    let stored: Vec<StoredCookie> = cookies
+    let extracted: Vec<StoredCookie> = cookies
         .iter()
         .map(|c| StoredCookie {
             name: c.name.clone(),
@@ -162,6 +164,12 @@ async fn build_imported_cookies(
             expires: c.expires,
         })
         .collect();
+    let stored: Vec<StoredCookie> = eligible_cookies(&extracted).into_iter().cloned().collect();
+    if stored.is_empty() {
+        return Err(format!(
+            "no unexpired, header-safe cookies found in {browser} for {host}"
+        ));
+    }
     let cookie_header = cookies_to_header(&stored);
     let has_cf_clearance = stored
         .iter()

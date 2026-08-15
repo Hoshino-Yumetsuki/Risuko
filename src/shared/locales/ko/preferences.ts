@@ -96,6 +96,18 @@ export default {
 	"engine-overrides-tips":
 		"고급 설정: 임의의 엔진 옵션 키를 JSON 객체로 지정합니다. 변경 사항은 재시작 후 적용됩니다.",
 	"engine-overrides-invalid": "엔진 오버라이드는 유효한 JSON 객체여야 합니다.",
+	"ed2k-kad": "eMule Kad",
+	"ed2k-enable-kad": "Kad 소스 검색 활성화",
+	"ed2k-enable-kad-tips":
+		"eMule Kad 네트워크를 통해 ED2K 소스를 검색합니다(엔진 재시작 필요)",
+	"ed2k-kad-port": "Kad UDP 포트",
+	"ed2k-kad-port-tips":
+		"Kad 검색에 사용하는 UDP 포트입니다. 유효한 값은 1-65535입니다(엔진 재시작 필요)",
+	"ed2k-kad-port-invalid": "Kad UDP 포트는 1부터 65535까지의 정수여야 합니다",
+	"engine-overrides-reserved-keys":
+		"예약된 엔진 오버라이드 키는 무시되었습니다: {{keys}}",
+	"engine-overrides-too-large":
+		"엔진 오버라이드가 너무 큽니다. 키는 최대 64개, 키당 64자, 값당 2048자까지 허용됩니다.",
 	"external-engine-enable": "외부 엔진 사용",
 	"external-engine-enable-tips":
 		"활성화하면 Risuko는 내장 엔진을 자동으로 시작하지 않습니다.",

@@ -7,6 +7,7 @@ export default {
 	stopped: "Detenida",
 	"new-task": "Nueva Tarea",
 	"new-bt-task": "Nueva Tarea BT",
+	"unknown-task-type": "Tipo de tarea no compatible",
 	"open-file": "Abrir archivo de Torrent...",
 	"uri-task": "URL",
 	"torrent-task": "Torrent",

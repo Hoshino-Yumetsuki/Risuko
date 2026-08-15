@@ -100,6 +100,19 @@ export default {
 		"Geavanceerd: stel willekeurige engine-optiesleutels in als een JSON-object. Wijzigingen worden van kracht na een herstart.",
 	"engine-overrides-invalid":
 		"Engine-overrides moeten een geldig JSON-object zijn.",
+	"ed2k-kad": "eMule Kad",
+	"ed2k-enable-kad": "Kad-brondetectie inschakelen",
+	"ed2k-enable-kad-tips":
+		"ED2K-bronnen zoeken via het eMule Kad-netwerk (vereist herstart van de engine)",
+	"ed2k-kad-port": "Kad-UDP-poort",
+	"ed2k-kad-port-tips":
+		"UDP-poort voor Kad-brondetectie. Geldige waarden zijn 1-65535 (vereist herstart van de engine)",
+	"ed2k-kad-port-invalid":
+		"De Kad-UDP-poort moet een geheel getal van 1 tot en met 65535 zijn",
+	"engine-overrides-reserved-keys":
+		"Genegeerde gereserveerde sleutels voor engine-overrides: {{keys}}",
+	"engine-overrides-too-large":
+		"Engine-overrides zijn te groot: maximaal 64 sleutels, 64 tekens per sleutel en 2048 tekens per waarde.",
 	"external-engine-enable": "Externe engine gebruiken",
 	"external-engine-enable-tips":
 		"Wanneer ingeschakeld, start Risuko de ingebouwde engine niet automatisch.",

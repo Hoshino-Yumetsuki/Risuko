@@ -422,6 +422,25 @@ mod tests {
     }
 
     #[test]
+    fn series_filter_matches_only_when_parsed_series_contains_filter() {
+        let it = item("episode");
+        let mut rule = rule_skeleton("r");
+        rule.series_filter = Some("attack on titan".into());
+        let parsed = ParsedMeta {
+            series: Some("titan".into()),
+            ..ParsedMeta::default()
+        };
+        assert!(!evaluate_rule(&rule, &it, &parsed).matched);
+
+        rule.series_filter = Some("titan".into());
+        let parsed = ParsedMeta {
+            series: Some("Attack on Titan".into()),
+            ..ParsedMeta::default()
+        };
+        assert!(evaluate_rule(&rule, &it, &parsed).matched);
+    }
+
+    #[test]
     fn quality_scoring_orders_preferences() {
         let prefs: Vec<String> = ["2160p", "1080p", "720p"]
             .iter()

@@ -1,5 +1,5 @@
 use std::collections::HashSet;
-use std::net::{Ipv4Addr, SocketAddrV4};
+use std::net::SocketAddrV4;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
@@ -204,9 +204,12 @@ impl SourceScheduler {
     }
 
     fn submit(&self, candidate: SourceCandidate) -> bool {
-        let invalid_kad_addr =
-            candidate.origin == SourceOrigin::Kad && !usable_source_addr(candidate.addr);
-        if self.cancel_token.is_cancelled() || candidate.addr.port() == 0 || invalid_kad_addr {
+        let usable_addr = if candidate.origin == SourceOrigin::Kad {
+            usable_source_addr(candidate.addr)
+        } else {
+            candidate.addr.port() != 0
+        };
+        if self.cancel_token.is_cancelled() || !usable_addr {
             return false;
         }
         let mut seen = self.seen.lock();
@@ -230,11 +233,7 @@ impl SourceScheduler {
 }
 
 fn usable_source_addr(addr: SocketAddrV4) -> bool {
-    addr.port() != 0 && is_public_source_ip(*addr.ip())
-}
-
-fn is_public_source_ip(ip: Ipv4Addr) -> bool {
-    is_public_ipv4(ip)
+    addr.port() != 0 && is_public_ipv4(*addr.ip())
 }
 
 /// Run an ed2k download to completion or cancellation; like `http::run_http_download_multi`, updates atomic progress counters, returns Ok(final_path)/Err, and checks `cancel_token` for pause/stop
@@ -745,6 +744,7 @@ fn collect_needed_ranges(cm: &ChunkManager, max: usize) -> Vec<(u32, u32)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::net::Ipv4Addr;
     use std::sync::atomic::AtomicUsize;
     use tokio::sync::Semaphore as TestGate;
     use tokio::time::timeout;

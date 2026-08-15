@@ -1,7 +1,7 @@
 //! Durable Kad identity and contact cache
 
 use std::fs::{self, File, OpenOptions};
-use std::io::{self, Write};
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -12,6 +12,7 @@ use super::routing::{Contact, NodeId, RoutingTable, MAX_PERSISTED_CONTACTS};
 
 pub const STATE_VERSION: u32 = 1;
 pub const STATE_FILENAME: &str = "ed2k-kad-state.json";
+pub const MAX_STATE_FILE_BYTES: u64 = 256 * 1024;
 
 static TEMP_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
@@ -44,8 +45,14 @@ pub fn state_path(config_dir: &Path) -> PathBuf {
 /// Load the persisted identity and bounded contact cache; missing/corrupt/unsupported/invalid state is treated as recoverable (new identity generated, invalid contacts discarded), and only filesystem permission failures are returned as errors
 pub fn load(config_dir: &Path, local_hint: Option<NodeId>) -> io::Result<LoadedKadState> {
     let path = state_path(config_dir);
-    let bytes = match fs::read(&path) {
-        Ok(bytes) => bytes,
+    let recovered = || LoadedKadState {
+        node_id: local_hint.unwrap_or_else(NodeId::random),
+        contacts: Vec::new(),
+        kind: StateLoadKind::Recovered,
+    };
+
+    let metadata = match fs::metadata(&path) {
+        Ok(metadata) => metadata,
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
             return Ok(LoadedKadState {
                 node_id: local_hint.unwrap_or_else(NodeId::random),
@@ -53,24 +60,39 @@ pub fn load(config_dir: &Path, local_hint: Option<NodeId>) -> io::Result<LoadedK
                 kind: StateLoadKind::Created,
             });
         }
+        Err(error) if is_recoverable_path_error(&error) => return Ok(recovered()),
+        Err(error) => return Err(error),
+    };
+    if !metadata.is_file() || metadata.len() > MAX_STATE_FILE_BYTES {
+        return Ok(recovered());
+    }
+
+    let file = match File::open(&path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(recovered()),
+        Err(error) if is_recoverable_path_error(&error) => return Ok(recovered()),
         Err(error) => return Err(error),
     };
 
+    // Limit the read as well as checking metadata: a file can grow between metadata() and read().
+    let mut bytes = Vec::with_capacity(metadata.len() as usize);
+    let read_result = file
+        .take(MAX_STATE_FILE_BYTES.saturating_add(1))
+        .read_to_end(&mut bytes);
+    match read_result {
+        Ok(_) if bytes.len() as u64 <= MAX_STATE_FILE_BYTES => {}
+        Ok(_) => return Ok(recovered()),
+        Err(error) if is_recoverable_path_error(&error) => return Ok(recovered()),
+        Err(error) => return Err(error),
+    }
+
     let parsed = serde_json::from_slice::<PersistedKadState>(&bytes);
     let Ok(state) = parsed else {
-        return Ok(LoadedKadState {
-            node_id: local_hint.unwrap_or_else(NodeId::random),
-            contacts: Vec::new(),
-            kind: StateLoadKind::Recovered,
-        });
+        return Ok(recovered());
     };
 
     if state.version != STATE_VERSION || state.node_id.is_zero() {
-        return Ok(LoadedKadState {
-            node_id: local_hint.unwrap_or_else(NodeId::random),
-            contacts: Vec::new(),
-            kind: StateLoadKind::Recovered,
-        });
+        return Ok(recovered());
     }
 
     // Contacts are validated by RoutingTable::insert (which also applies local-ID and K-bucket constraints); keep only the first bounded set so an oversized cache can't cause startup work amplification
@@ -83,6 +105,13 @@ pub fn load(config_dir: &Path, local_hint: Option<NodeId>) -> io::Result<LoadedK
         contacts: routing.contacts(),
         kind: StateLoadKind::Existing,
     })
+}
+
+fn is_recoverable_path_error(error: &io::Error) -> bool {
+    matches!(
+        error.kind(),
+        io::ErrorKind::IsADirectory | io::ErrorKind::NotADirectory | io::ErrorKind::InvalidInput
+    )
 }
 
 pub fn load_or_create(config_dir: &Path) -> io::Result<LoadedKadState> {
@@ -107,10 +136,11 @@ pub fn serialize(node_id: NodeId, contacts: &[Contact]) -> Result<Vec<u8>, serde
 pub fn save(config_dir: &Path, node_id: NodeId, contacts: &[Contact]) -> io::Result<()> {
     fs::create_dir_all(config_dir)?;
     let path = state_path(config_dir);
+    let sequence = TEMP_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
     let temp_path = config_dir.join(format!(
         ".{STATE_FILENAME}.{}.{}.tmp",
         std::process::id(),
-        TEMP_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        sequence
     ));
     let payload = serialize(node_id, contacts).map_err(io::Error::other)?;
 
@@ -122,7 +152,32 @@ pub fn save(config_dir: &Path, node_id: NodeId, contacts: &[Contact]) -> io::Res
             .open(&temp_path)?;
         file.write_all(&payload)?;
         file.sync_all()?;
-        fs::rename(&temp_path, &path)?;
+
+        let quarantined = match fs::symlink_metadata(&path) {
+            Ok(metadata) if !metadata.file_type().is_file() => {
+                let backup = config_dir.join(format!(
+                    ".{STATE_FILENAME}.invalid.{}.{}",
+                    std::process::id(),
+                    sequence
+                ));
+                fs::rename(&path, &backup)?;
+                tracing::warn!(
+                    path = %path.display(),
+                    backup = %backup.display(),
+                    "moved invalid Kad state path aside"
+                );
+                Some(backup)
+            }
+            Ok(_) => None,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+            Err(error) => return Err(error),
+        };
+        if let Err(error) = fs::rename(&temp_path, &path) {
+            if let Some(backup) = quarantined {
+                let _ = fs::rename(backup, &path);
+            }
+            return Err(error);
+        }
         // Best effort directory sync; some platforms disallow opening a directory, and the durable file was already atomically replaced
         if let Ok(directory) = File::open(config_dir) {
             let _ = directory.sync_all();
@@ -190,6 +245,48 @@ mod tests {
         .unwrap();
         let recovered = load_or_create(dir.path()).unwrap();
         assert_eq!(recovered.kind, StateLoadKind::Recovered);
+    }
+
+    #[test]
+    fn invalid_state_path_recovers_as_a_new_identity() {
+        let dir = tempfile::tempdir().unwrap();
+        let invalid_path = state_path(dir.path());
+        std::fs::create_dir(&invalid_path).unwrap();
+        std::fs::write(invalid_path.join("preserved.txt"), b"invalid path contents").unwrap();
+        let recovered = load_or_create(dir.path()).unwrap();
+        assert_eq!(recovered.kind, StateLoadKind::Recovered);
+        assert_ne!(recovered.node_id, NodeId::ZERO);
+        assert!(!is_recoverable_path_error(&io::Error::from(
+            io::ErrorKind::PermissionDenied
+        )));
+
+        save(dir.path(), recovered.node_id, &[]).unwrap();
+        let persisted = load_or_create(dir.path()).unwrap();
+        assert_eq!(persisted.kind, StateLoadKind::Existing);
+        assert_eq!(persisted.node_id, recovered.node_id);
+        let backup = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .find(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.starts_with(&format!(".{STATE_FILENAME}.invalid.")))
+            })
+            .expect("invalid state path should be preserved");
+        assert_eq!(
+            std::fs::read(backup.join("preserved.txt")).unwrap(),
+            b"invalid path contents"
+        );
+    }
+
+    #[test]
+    fn oversized_state_file_is_rejected_before_json_parsing() {
+        let dir = tempfile::tempdir().unwrap();
+        let oversized = vec![b'{'; (MAX_STATE_FILE_BYTES as usize) + 1];
+        std::fs::write(state_path(dir.path()), oversized).unwrap();
+        let recovered = load_or_create(dir.path()).unwrap();
+        assert_eq!(recovered.kind, StateLoadKind::Recovered);
+        assert!(recovered.contacts.is_empty());
     }
 
     #[test]

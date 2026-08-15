@@ -126,8 +126,6 @@ export interface AppConfig {
 	dohProvider?: string;
 	ed2KEnableKad?: boolean | string;
 	ed2KKadPort?: number | string;
-	ed2kEnableKad?: boolean | string;
-	ed2kKadPort?: number | string;
 	cloudSyncEnabled?: boolean;
 	cloudSyncAuto?: boolean;
 	cloudSyncCategories?: string[];

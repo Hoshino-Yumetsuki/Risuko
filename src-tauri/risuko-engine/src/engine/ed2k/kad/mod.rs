@@ -20,7 +20,9 @@ use tokio::task::JoinHandle;
 use tokio::time::{sleep, timeout};
 use tokio_util::sync::CancellationToken;
 
-use self::routing::{is_public_ipv4, KadId, LookupConfig, NodeId, RoutingTable};
+use self::routing::{
+    is_public_ipv4, KadId, LookupConfig, LookupTracker, NodeId, RoutingTable, SourceSet,
+};
 use self::wire::{
     build_bootstrap_request, build_hello_request, build_routing_request,
     build_source_search_request, parse_bootstrap_response, parse_hello, parse_pong,
@@ -369,6 +371,10 @@ impl KadService {
         }
         let loaded = state::load(&config.config_dir, None).map_err(KadError::State)?;
         let needs_initial_save = loaded.kind != state::StateLoadKind::Existing;
+        if needs_initial_save {
+            state::save(&config.config_dir, loaded.node_id, &loaded.contacts)
+                .map_err(KadError::State)?;
+        }
         let socket = UdpSocket::bind(SocketAddrV4::new(config.bind_addr, config.udp_port))
             .await
             .map_err(KadError::Bind)?;
@@ -421,9 +427,6 @@ impl KadService {
         });
         let checkpoint_worker = tokio::spawn(run_checkpoint_worker(runtime.clone(), checkpoint_rx));
         *runtime.checkpoint_worker.lock().await = Some(checkpoint_worker);
-        if needs_initial_save {
-            persist_runtime_state(&runtime).await;
-        }
         Ok(Arc::new(Self { runtime }))
     }
 
@@ -829,7 +832,7 @@ impl KadService {
             .routing
             .lock()
             .await
-            .closest(target, routing::MAX_LOOKUP_QUERIES);
+            .closest_with_replacements(target, routing::MAX_LOOKUP_QUERIES);
         if contacts.is_empty() {
             return Err(KadError::Io(std::io::Error::new(
                 std::io::ErrorKind::NotFound,
@@ -846,8 +849,8 @@ impl KadService {
             .iter()
             .map(|contact| contact.id)
             .collect::<HashSet<_>>();
-        let mut queried = HashSet::new();
-        while !candidates.is_empty() && queried.len() < lookup.max_queries {
+        let mut tracker = LookupTracker::new(&lookup);
+        while !candidates.is_empty() && tracker.queried_count() < lookup.max_queries {
             if self.lookup_is_cancelled(cancel) {
                 return Err(KadError::Cancelled);
             }
@@ -861,13 +864,13 @@ impl KadService {
             let mut round = FuturesUnordered::new();
             while round.len() < alpha
                 && !candidates.is_empty()
-                && queried.len() < lookup.max_queries
+                && tracker.queried_count() < lookup.max_queries
             {
                 let contact = candidates.remove(0);
-                if !queried.insert(contact.id) {
+                if !tracker.mark_queried(contact.id) {
                     continue;
                 }
-                status.queried_nodes = queried.len();
+                status.queried_nodes = tracker.queried_count();
                 let _ = status_tx.send(status.clone());
                 // Kad2 requests include the recipient's ID as a sanity check; a node drops mismatches, so this must be the queried contact, not our local Kad identity
                 let request = build_routing_request(2, &file_hash, &contact.id.0);
@@ -924,16 +927,20 @@ impl KadService {
             .routing
             .lock()
             .await
-            .closest(target, routing::MAX_LOOKUP_QUERIES)
+            .closest_with_replacements(target, routing::MAX_LOOKUP_QUERIES)
             .into_iter()
             .filter(|contact| contact.version >= MIN_SOURCE_SEARCH_KAD_VERSION)
             .take(source_limit)
             .collect::<Vec<_>>();
         let mut source_candidates = source_contacts;
-        let mut source_queried = HashSet::new();
-        let mut seen_sources = HashSet::new();
+        let source_tracker_config = LookupConfig {
+            max_queries: source_limit,
+            ..lookup.clone()
+        };
+        let mut source_tracker = LookupTracker::new(&source_tracker_config);
+        let mut seen_sources = SourceSet::default();
         let mut seen_source_ids = HashSet::new();
-        while !source_candidates.is_empty() && source_queried.len() < source_limit {
+        while !source_candidates.is_empty() && source_tracker.queried_count() < source_limit {
             if self.lookup_is_cancelled(cancel) {
                 return Err(KadError::Cancelled);
             }
@@ -943,10 +950,10 @@ impl KadService {
             let mut round = FuturesUnordered::new();
             while round.len() < alpha
                 && !source_candidates.is_empty()
-                && source_queried.len() < source_limit
+                && source_tracker.queried_count() < source_limit
             {
                 let contact = source_candidates.remove(0);
-                if !source_queried.insert(contact.id) {
+                if !source_tracker.mark_queried(contact.id) {
                     continue;
                 }
                 let request = build_source_search_request(&file_hash, file_size, 0);
@@ -983,14 +990,14 @@ impl KadService {
                         let Some(addr) = usable_source(&source) else {
                             continue;
                         };
+                        if status.discovered_sources >= lookup.max_sources {
+                            break;
+                        }
                         if !seen_source_ids.insert(source.id) {
                             continue;
                         }
                         if !seen_sources.insert(addr) {
                             continue;
-                        }
-                        if status.discovered_sources >= lookup.max_sources {
-                            break;
                         }
                         let delivered = tokio::select! {
                             biased;
@@ -1677,7 +1684,6 @@ mod tests {
                         .enumerate()
                         .map(|(index, source)| {
                             wire::build_source_search_response(
-                                &node_id,
                                 &target,
                                 &[direct_source(
                                     [node_id[0].wrapping_add(1 + index as u8); 16],
@@ -1728,6 +1734,21 @@ mod tests {
     #[test]
     fn bundled_seed_asset_is_bounded() {
         assert!(bundled_seeds().len() <= MAX_BOOTSTRAP_SEEDS);
+    }
+
+    #[tokio::test]
+    async fn bind_fails_when_the_initial_identity_cannot_be_persisted() {
+        let directory = tempfile::tempdir().unwrap();
+        let blocking_file = directory.path().join("not-a-directory");
+        std::fs::write(&blocking_file, b"x").unwrap();
+        let mut config = KadConfig::new(blocking_file.join("kad"), free_loopback_port(), 4662)
+            .with_bootstrap_seeds_for_test(Vec::new());
+        config.bind_addr = Ipv4Addr::LOCALHOST;
+
+        assert!(matches!(
+            KadService::bind(config).await,
+            Err(KadError::State(_))
+        ));
     }
 
     #[test]

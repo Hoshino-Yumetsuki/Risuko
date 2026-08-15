@@ -27,6 +27,7 @@ export default {
 	"reorder-handle": "重新排序任务（使用方向键移动）",
 	"new-task": "新建任务",
 	"new-bt-task": "新建 BT 任务",
+	"unknown-task-type": "不支持的任务类型",
 	"open-file": "打开种子文件...",
 	"uri-task": "链接任务",
 	"torrent-task": "种子任务",

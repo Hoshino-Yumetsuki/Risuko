@@ -102,6 +102,19 @@ export default {
 		"Gelişmiş: rastgele motor seçenek anahtarlarını bir JSON nesnesi olarak ayarlayın. Değişiklikler yeniden başlatmadan sonra geçerli olur.",
 	"engine-overrides-invalid":
 		"Motor geçersiz kılmaları geçerli bir JSON nesnesi olmalıdır.",
+	"ed2k-kad": "eMule Kad",
+	"ed2k-enable-kad": "Kad kaynak keşfini etkinleştir",
+	"ed2k-enable-kad-tips":
+		"ED2K kaynaklarını eMule Kad ağı üzerinden keşfeder (motorun yeniden başlatılması gerekir)",
+	"ed2k-kad-port": "Kad UDP bağlantı noktası",
+	"ed2k-kad-port-tips":
+		"Kad keşfi için kullanılan UDP bağlantı noktası. Geçerli değerler 1-65535 aralığındadır (motorun yeniden başlatılması gerekir)",
+	"ed2k-kad-port-invalid":
+		"Kad UDP bağlantı noktası 1 ile 65535 arasında bir tam sayı olmalıdır",
+	"engine-overrides-reserved-keys":
+		"Yok sayılan ayrılmış motor geçersiz kılma anahtarları: {{keys}}",
+	"engine-overrides-too-large":
+		"Motor geçersiz kılmaları çok büyük: en fazla 64 anahtar, anahtar başına 64 karakter ve değer başına 2048 karakter.",
 	"external-engine-enable": "Harici motor kullan",
 	"external-engine-enable-tips":
 		"Etkinleştirildiğinde Risuko gömülü motoru otomatik olarak başlatmaz.",

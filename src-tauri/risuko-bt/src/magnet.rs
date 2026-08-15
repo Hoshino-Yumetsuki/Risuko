@@ -515,8 +515,6 @@ async fn try_fetch_from_peer_inner(
     handle: &super::peer::PeerHandle,
     mut rx: tokio::sync::mpsc::Receiver<PeerEvent>,
 ) -> Option<(Vec<u8>, BTreeMap<Id32, Vec<u8>>, bool)> {
-    // Our extended handshake was already shipped on the wire by the connection layer (see `try_fetch_from_peer`'s `ext_handshake_bytes`); validate the peer's reserved bits when we observe `Handshook` and then wait for the peer's extended handshake reply
-
     // Collect Handshook and the peer's extended handshake from a single receive loop; the extended handshake message can arrive before the BT handshake event under some orderings, and draining two sequential loops would drop whichever arrives first in the other arm
     let mut peer_supports_ext: Option<bool> = None;
     let mut peer_supports_v2 = false;

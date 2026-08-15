@@ -41,7 +41,6 @@ export interface Ed2kKadTaskStatus {
 	state: Ed2kKadLookupState;
 	queriedNodes: number;
 	discoveredSources: number;
-	contacts?: number;
 	error?: string | null;
 }
 

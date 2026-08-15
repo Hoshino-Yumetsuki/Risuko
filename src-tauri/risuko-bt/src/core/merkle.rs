@@ -321,7 +321,6 @@ pub fn supports_v2_wire(meta: &TorrentMeta) -> bool {
     })
 }
 
-/// Strategy for verifying a fully-downloaded piece. Chosen once per torrent at session-attach time. v1 torrents use SHA-1 over the piece bytes (`pieces[piece_index * 20 .. + 20]`); v2 torrents collapse 16 KiB SHA-256 block hashes through the per-file Merkle subtree Hybrid torrents currently use the v1 path — both verifiers would yield the same go/no-go outcome, and v1 piece verification is cheaper
 #[derive(Debug, Clone)]
 pub enum PieceVerifier {
     /// BEP-3 SHA-1 piece-hash list. Empty when the underlying metainfo is pure-v2 (in which case `V2Merkle` is used instead)

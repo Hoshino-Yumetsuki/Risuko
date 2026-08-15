@@ -111,6 +111,9 @@ fn split_host_port(host_port: &str, default_port: u16) -> Result<(String, u16), 
             .find(']')
             .ok_or_else(|| AdcError::InvalidUri("unterminated IPv6 host".into()))?;
         let host = rest[..close].to_string();
+        if host.is_empty() {
+            return Err(AdcError::InvalidUri("missing host".into()));
+        }
         let after = &rest[close + 1..];
         let port = if let Some(p) = after.strip_prefix(':') {
             p.parse()
@@ -213,6 +216,14 @@ mod tests {
         let h = parse_adc_hub_uri("adc://[2001:db8::1]").unwrap();
         assert_eq!(h.host, "2001:db8::1");
         assert_eq!(h.port, 411);
+    }
+
+    #[test]
+    fn rejects_empty_bracketed_hub_host() {
+        assert!(matches!(
+            parse_adc_hub_uri("adc://[]:411"),
+            Err(AdcError::InvalidUri(message)) if message == "missing host"
+        ));
     }
 
     #[test]

@@ -213,17 +213,16 @@ pub struct RoutingResponse {
     pub contacts: Vec<KadWireContact>,
 }
 
-/// Parsed source-search result; the sender ID is useful for routing-table learning and the source records are filtered by the service layer
+/// Parsed source-search result; Kad2 puts the requested file ID first and does not include a sender ID in this response
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SourceSearchResponse {
-    pub sender: KadId,
     pub target: KadId,
     pub sources: Vec<KadSourceRecord>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KadSourceRecord {
-    /// ED2K user hash for the source; distinct from the response sender's Kad routing ID
+    /// ED2K user hash for the source; distinct from the responding node's Kad routing ID
     pub id: KadId,
     pub tags: Vec<KadTag>,
 }
@@ -686,13 +685,8 @@ pub fn parse_source_search_request(payload: &[u8]) -> Result<(KadId, u16, u64), 
     Ok((file_hash, start, file_size))
 }
 
-pub fn build_source_search_response(
-    sender: &KadId,
-    target: &KadId,
-    sources: &[KadSourceRecord],
-) -> KadPacket {
-    let mut payload = Vec::with_capacity(34 + sources.len() * 64);
-    payload.extend_from_slice(&id_to_wire(sender));
+pub fn build_source_search_response(target: &KadId, sources: &[KadSourceRecord]) -> KadPacket {
+    let mut payload = Vec::with_capacity(18 + sources.len() * 64);
     payload.extend_from_slice(&id_to_wire(target));
     let count = u16::try_from(sources.len().min(300)).unwrap_or(300);
     payload.extend_from_slice(&count.to_le_bytes());
@@ -705,7 +699,6 @@ pub fn build_source_search_response(
 
 pub fn parse_source_search_response(payload: &[u8]) -> Result<SourceSearchResponse, WireError> {
     let mut cursor = Cursor::new(payload);
-    let sender = cursor.id("source response sender")?;
     let target = cursor.id("source response target")?;
     let count = cursor.u16("source response count")? as usize;
     if count > 300 {
@@ -721,11 +714,7 @@ pub fn parse_source_search_response(payload: &[u8]) -> Result<SourceSearchRespon
         sources.push(KadSourceRecord { id, tags });
     }
     cursor.finish("source response trailing bytes")?;
-    Ok(SourceSearchResponse {
-        sender,
-        target,
-        sources,
-    })
+    Ok(SourceSearchResponse { target, sources })
 }
 
 pub fn build_ping() -> KadPacket {
@@ -862,12 +851,11 @@ mod tests {
             id: canonical,
             tags: Vec::new(),
         };
-        let response = build_source_search_response(&canonical, &canonical, &[source]);
+        let response = build_source_search_response(&canonical, &[source]);
         assert_eq!(&response.payload[..16], &wire);
-        assert_eq!(&response.payload[16..32], &wire);
-        assert_eq!(&response.payload[34..50], &wire);
+        assert_eq!(&response.payload[16..18], &[1, 0]);
+        assert_eq!(&response.payload[18..34], &wire);
         let parsed = parse_source_search_response(&response.payload).unwrap();
-        assert_eq!(parsed.sender, canonical);
         assert_eq!(parsed.target, canonical);
         assert_eq!(parsed.sources[0].id, canonical);
     }
@@ -969,7 +957,7 @@ mod tests {
                 KadTag::uint(TAG_SOURCE_PORT, 4662),
             ],
         };
-        let packet = build_source_search_response(&id(8), &id(9), &[record]);
+        let packet = build_source_search_response(&id(9), &[record]);
         let parsed = parse_source_search_response(&packet.payload).unwrap();
         assert_eq!(parsed.sources[0].source_type(), Some(1));
         assert_eq!(
@@ -990,7 +978,7 @@ mod tests {
                 KadTag::uint(TAG_SOURCE_PORT, 4662),
             ],
         };
-        let packet = build_source_search_response(&id(8), &id(9), &[record]);
+        let packet = build_source_search_response(&id(9), &[record]);
         let parsed = parse_source_search_response(&packet.payload).unwrap();
         let source = &parsed.sources[0];
 
@@ -1161,7 +1149,7 @@ mod tests {
 
     #[test]
     fn source_response_rejects_trailing_and_truncated_records() {
-        let response = build_source_search_response(&id(1), &id(2), &[]);
+        let response = build_source_search_response(&id(2), &[]);
         assert!(parse_source_search_response(&response.payload).is_ok());
         let mut truncated = response.payload.clone();
         truncated.pop();

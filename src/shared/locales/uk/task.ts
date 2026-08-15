@@ -7,6 +7,7 @@ export default {
 	stopped: "Зупинено",
 	"new-task": "Нове завдання",
 	"new-bt-task": "Нове BT завдання",
+	"unknown-task-type": "Непідтримуваний тип завдання",
 	"open-file": "Відкрити Torrent файл...",
 	"uri-task": "URL",
 	"torrent-task": "Torrent",

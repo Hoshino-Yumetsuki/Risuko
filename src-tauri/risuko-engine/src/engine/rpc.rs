@@ -7,7 +7,6 @@ use axum::Router;
 use base64::Engine as _;
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use std::net::SocketAddr;
 use std::sync::Arc;
 use tower_http::cors::{Any, CorsLayer};
 
@@ -95,12 +94,17 @@ impl RpcServer {
             .layer(cors)
             .with_state(state);
 
-        let addr: SocketAddr = format!("{}:{}", self.host, self.port)
-            .parse()
-            .map_err(|e| format!("Invalid RPC address {}:{}: {}", self.host, self.port, e))?;
-        let listener = tokio::net::TcpListener::bind(addr)
+        let listener = tokio::net::TcpListener::bind((self.host.as_str(), self.port))
             .await
-            .map_err(|e| format!("Failed to bind RPC port {}: {}", self.port, e))?;
+            .map_err(|e| {
+                format!(
+                    "Failed to resolve or bind RPC address {}:{}: {e}",
+                    self.host, self.port
+                )
+            })?;
+        let addr = listener
+            .local_addr()
+            .map_err(|e| format!("Failed to inspect bound RPC address: {e}"))?;
 
         let (tx, rx) = tokio::sync::oneshot::channel::<()>();
         self.shutdown_tx = Some(tx);

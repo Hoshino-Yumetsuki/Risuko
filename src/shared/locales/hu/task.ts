@@ -7,6 +7,7 @@ export default {
 	stopped: "Lealitva",
 	"new-task": "Feladat hozzáadasa",
 	"new-bt-task": "Új BT Feladat hozzáadasa",
+	"unknown-task-type": "Nem támogatott feladattípus",
 	"open-file": "Torrent fájl megnyitása...",
 	"uri-task": "URL",
 	"torrent-task": "Torrent",

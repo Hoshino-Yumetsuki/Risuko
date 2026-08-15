@@ -475,10 +475,19 @@ fn check_ed2k_kad(options: &EngineOptions, kad: Option<&KadHealthSnapshot>) -> H
             ),
         )
         .with_details(details),
-        KadState::Bootstrapping | KadState::Searching => HealthCheck::warn(
+        KadState::Bootstrapping => HealthCheck::warn(
             "ed2k-kad",
             format!(
                 "ED2K Kad is bootstrapping on UDP {} ({} routing contacts)",
+                snapshot.udp_port, snapshot.routing_contacts
+            ),
+            None,
+        )
+        .with_details(details),
+        KadState::Searching => HealthCheck::warn(
+            "ed2k-kad",
+            format!(
+                "ED2K Kad is searching on UDP {} ({} routing contacts)",
                 snapshot.udp_port, snapshot.routing_contacts
             ),
             None,
@@ -508,6 +517,15 @@ fn check_ed2k_kad(options: &EngineOptions, kad: Option<&KadHealthSnapshot>) -> H
                 snapshot.last_error.as_deref().unwrap_or("unknown error")
             ),
             Some(HealthFix::open_pref("advanced")),
+        )
+        .with_details(details),
+        KadState::Ready if snapshot.bound => HealthCheck::warn(
+            "ed2k-kad",
+            format!(
+                "ED2K Kad is bound on UDP {} but has not learned any routing contacts yet",
+                snapshot.udp_port
+            ),
+            None,
         )
         .with_details(details),
         KadState::Ready => HealthCheck::warn(
@@ -1641,6 +1659,20 @@ mod tests {
         let lookup_check = check_ed2k_kad(&kad_options(true, json!(4672)), Some(&lookup_error));
         assert_eq!(lookup_check.status, HealthStatus::Warn);
         assert!(lookup_check.message.contains("lookup failed"));
+
+        let searching = kad_snapshot(KadState::Searching, 2);
+        let searching_check = check_ed2k_kad(&kad_options(true, json!(4672)), Some(&searching));
+        assert!(searching_check.message.contains("searching"));
+        assert!(!searching_check.message.contains("bootstrapping"));
+
+        let ready_without_contacts = kad_snapshot(KadState::Ready, 0);
+        let ready_check = check_ed2k_kad(
+            &kad_options(true, json!(4672)),
+            Some(&ready_without_contacts),
+        );
+        assert!(ready_check.message.contains("bound on UDP"));
+        assert!(ready_check.message.contains("routing contacts"));
+        assert!(!ready_check.message.contains("not bound"));
 
         let running = kad_snapshot(KadState::Ready, 3);
         let drift_check = check_ed2k_kad(&kad_options(false, json!(4672)), Some(&running));

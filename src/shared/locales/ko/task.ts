@@ -9,6 +9,7 @@ export default {
 	stopped: "중단됨",
 	"new-task": "새 작업",
 	"new-bt-task": "새 BT 작업",
+	"unknown-task-type": "지원되지 않는 작업 유형",
 	"open-file": "토렌트 파일 열기...",
 	"uri-task": "URL",
 	"torrent-task": "토렌트",

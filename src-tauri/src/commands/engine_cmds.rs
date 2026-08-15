@@ -576,7 +576,7 @@ fn nzb_source_name_from_url(uri: &str) -> String {
     if name.is_empty() {
         "download.nzb".to_string()
     } else {
-        name.to_string()
+        crate::commands::file_cmds::percent_decode_lossy(name)
     }
 }
 
@@ -1536,6 +1536,14 @@ mod tests {
         assert!(is_nzb_url("https://example.com/file.NZB?token=abc"));
         assert!(!is_nzb_url("ftp://example.com/file.nzb"));
         assert!(!is_nzb_url("nntp://example.com/file.nzb"));
+    }
+
+    #[test]
+    fn nzb_url_source_name_decodes_the_last_path_segment() {
+        assert_eq!(
+            nzb_source_name_from_url("https://example.com/path/My%20File.nzb?token=abc"),
+            "My File.nzb"
+        );
     }
 
     #[test]

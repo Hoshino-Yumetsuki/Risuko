@@ -104,6 +104,19 @@ export default {
 		"Zaawansowane: ustaw dowolne klucze opcji silnika jako obiekt JSON. Zmiany zaczną działać po ponownym uruchomieniu.",
 	"engine-overrides-invalid":
 		"Nadpisania silnika muszą być prawidłowym obiektem JSON.",
+	"ed2k-kad": "eMule Kad",
+	"ed2k-enable-kad": "Włącz wyszukiwanie źródeł przez Kad",
+	"ed2k-enable-kad-tips":
+		"Wyszukuj źródła ED2K przez sieć eMule Kad (wymaga ponownego uruchomienia silnika)",
+	"ed2k-kad-port": "Port UDP Kad",
+	"ed2k-kad-port-tips":
+		"Port UDP używany do wyszukiwania przez Kad. Prawidłowe wartości to 1-65535 (wymaga ponownego uruchomienia silnika)",
+	"ed2k-kad-port-invalid":
+		"Port UDP Kad musi być liczbą całkowitą od 1 do 65535",
+	"engine-overrides-reserved-keys":
+		"Zignorowane zastrzeżone klucze nadpisań silnika: {{keys}}",
+	"engine-overrides-too-large":
+		"Nadpisania silnika są zbyt duże: maksymalnie 64 klucze, 64 znaki na klucz i 2048 znaków na wartość.",
 	"external-engine-enable": "Użyj zewnętrznego silnika",
 	"external-engine-enable-tips":
 		"Po włączeniu Risuko nie uruchomi automatycznie wbudowanego silnika.",

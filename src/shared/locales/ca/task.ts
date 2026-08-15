@@ -7,6 +7,7 @@ export default {
 	stopped: "Detinguda",
 	"new-task": "Nova Tasca",
 	"new-bt-task": "Nova Tasca BT",
+	"unknown-task-type": "Tipus de tasca no compatible",
 	"open-file": "Obrir arxiu Torrent...",
 	"uri-task": "URL",
 	"torrent-task": "Torrent",

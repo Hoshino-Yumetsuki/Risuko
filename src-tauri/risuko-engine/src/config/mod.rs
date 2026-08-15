@@ -4,7 +4,7 @@ use serde_json::{json, Map, Value};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::traits::ConfigDirProvider;
+use crate::traits::{write_file_atomically, ConfigDirProvider};
 
 pub struct ConfigManager {
     system_config: Map<String, Value>,
@@ -124,24 +124,14 @@ impl ConfigManager {
     fn save_system(&self) -> Result<(), String> {
         let path = self.config_dir.join("system.json");
         let data = serde_json::to_string_pretty(&self.system_config).map_err(|e| e.to_string())?;
-        write_atomic(&path, &data)
+        write_file_atomically(&path, data.as_bytes())
     }
 
     fn save_user(&self) -> Result<(), String> {
         let path = self.config_dir.join("user.json");
         let data = serde_json::to_string_pretty(&self.user_config).map_err(|e| e.to_string())?;
-        write_atomic(&path, &data)
+        write_file_atomically(&path, data.as_bytes())
     }
-}
-
-/// Write `data` to `path` atomically via a sibling temp file then rename, so a crash or full disk mid-write cannot truncate/corrupt the existing file (`fs::rename` is atomic within the same directory)
-fn write_atomic(path: &Path, data: &str) -> Result<(), String> {
-    let tmp = path.with_extension("json.tmp");
-    fs::write(&tmp, data).map_err(|e| e.to_string())?;
-    fs::rename(&tmp, path).map_err(|e| {
-        let _ = fs::remove_file(&tmp);
-        e.to_string()
-    })
 }
 
 fn load_or_default(path: &Path, defaults: Map<String, Value>) -> Map<String, Value> {

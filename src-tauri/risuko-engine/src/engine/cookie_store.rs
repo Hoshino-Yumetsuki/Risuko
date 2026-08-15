@@ -209,13 +209,18 @@ fn write_to_disk(path: &Path, state: &StoreFile) -> Result<(), String> {
     Ok(())
 }
 
-/// Render the entry's cookies into a single `Cookie:` header value; skips already-expired cookies and drops any whose name or value carries control or separator characters (CR/LF/NUL/`;`) so a malicious stored value can't inject extra headers or forge additional cookie pairs
-pub fn cookies_to_header(cookies: &[StoredCookie]) -> String {
+pub fn eligible_cookies(cookies: &[StoredCookie]) -> Vec<&StoredCookie> {
     let now = now_secs();
     cookies
         .iter()
         .filter(|c| c.expires.is_none_or(|exp| exp > now))
         .filter(|c| is_safe_cookie_field(&c.name) && is_safe_cookie_field(&c.value))
+        .collect()
+}
+
+pub fn cookies_to_header(cookies: &[StoredCookie]) -> String {
+    eligible_cookies(cookies)
+        .into_iter()
         .map(|c| format!("{}={}", c.name, c.value))
         .collect::<Vec<_>>()
         .join("; ")
@@ -372,6 +377,13 @@ mod tests {
             },
         ];
         assert_eq!(cookies_to_header(&cs), "good=ok");
+        assert_eq!(
+            eligible_cookies(&cs)
+                .into_iter()
+                .map(|cookie| cookie.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["good"]
+        );
     }
 
     #[test]

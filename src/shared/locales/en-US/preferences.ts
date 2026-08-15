@@ -379,7 +379,7 @@ export default {
 		"Advanced: set arbitrary engine option keys as a JSON object. Changes take effect after restart.",
 	"engine-overrides-invalid": "Engine Overrides must be a valid JSON object.",
 	"engine-overrides-reserved-keys":
-		"Ignored reserved engine override keys: {keys}",
+		"Ignored reserved engine override keys: {{keys}}",
 	"engine-overrides-too-large":
 		"Engine Overrides is too large: at most 64 keys, 64 characters per key, and 2048 characters per value.",
 	"external-engine-enable": "Use External Engine",

@@ -1320,7 +1320,8 @@ async fn process_peer_event(
                         return false;
                     }
                     let initial_window = useful_peers
-                        .remove(&addr)
+                        .get(&addr)
+                        .copied()
                         .unwrap_or(pipeline_floor)
                         .clamp(pipeline_floor, pipeline_cap);
                     if initial_window > pipeline_floor {

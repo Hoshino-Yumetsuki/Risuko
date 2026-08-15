@@ -228,6 +228,16 @@ export default {
 	"engine-overrides-tips":
 		"高级功能：用 JSON 对象设置任意引擎配置键，保存后重启生效。",
 	"engine-overrides-invalid": "引擎覆盖配置必须是合法的 JSON 对象。",
+	"ed2k-kad": "eMule Kad",
+	"ed2k-enable-kad": "启用 Kad 来源发现",
+	"ed2k-enable-kad-tips": "通过 eMule Kad 网络发现 ED2K 来源（需要重启引擎）",
+	"ed2k-kad-port": "Kad UDP 端口",
+	"ed2k-kad-port-tips":
+		"用于 Kad 发现的 UDP 端口，有效值为 1-65535（需要重启引擎）",
+	"ed2k-kad-port-invalid": "Kad UDP 端口必须是 1 到 65535 之间的整数",
+	"engine-overrides-reserved-keys": "已忽略的保留引擎覆盖键：{{keys}}",
+	"engine-overrides-too-large":
+		"引擎覆盖配置过大：最多 64 个键，每个键 64 个字符，每个值 2048 个字符。",
 	"external-engine-enable": "使用外部引擎",
 	"external-engine-enable-tips": "启用后，Risuko 将不会自动启动内置引擎。",
 	"external-engine-ip": "外部引擎 IP",
