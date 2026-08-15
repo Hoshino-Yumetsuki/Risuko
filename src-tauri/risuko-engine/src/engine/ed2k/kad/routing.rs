@@ -131,7 +131,7 @@ fn now_secs() -> u64 {
         .unwrap_or(0)
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Contact {
     pub id: NodeId,
     pub addr: SocketAddrV4,
@@ -143,6 +143,21 @@ pub struct Contact {
     #[serde(skip)]
     refresh_generation: u64,
 }
+
+// Equality is the persisted contact contract. The process-local generation is
+// compared separately where liveness snapshot identity matters.
+impl PartialEq for Contact {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+            && self.addr == other.addr
+            && self.tcp_port == other.tcp_port
+            && self.version == other.version
+            && self.last_seen == other.last_seen
+            && self.last_verified == other.last_verified
+    }
+}
+
+impl Eq for Contact {}
 
 impl Contact {
     pub fn new(id: KadId, addr: SocketAddrV4, tcp_port: u16, version: u8) -> Self {
@@ -700,6 +715,23 @@ mod tests {
         );
         assert_eq!(table.insert(refreshed), InsertResult::Updated);
         assert!(table.remove_if_unchanged(&snapshot).is_none());
+    }
+
+    #[test]
+    fn contact_equality_matches_its_persisted_representation() {
+        let original = Contact::with_times(
+            id(1),
+            SocketAddrV4::new(Ipv4Addr::new(8, 8, 8, 8), 4672),
+            4662,
+            MIN_SUPPORTED_KAD_VERSION,
+            10,
+            9,
+        );
+        let encoded = serde_json::to_vec(&original).unwrap();
+        let restored: Contact = serde_json::from_slice(&encoded).unwrap();
+
+        assert_ne!(original.refresh_generation, restored.refresh_generation);
+        assert_eq!(original, restored);
     }
 
     #[test]

@@ -4,7 +4,7 @@ use serde_json::{json, Map, Value};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::traits::{write_file_atomically, ConfigDirProvider};
+use crate::traits::{cleanup_stale_atomic_write_files, write_file_atomically, ConfigDirProvider};
 
 pub struct ConfigManager {
     system_config: Map<String, Value>,
@@ -20,6 +20,7 @@ impl ConfigManager {
     /// Create a ConfigManager with an explicit config directory path
     pub fn with_dir(config_dir: PathBuf) -> Result<Self, Box<dyn std::error::Error>> {
         fs::create_dir_all(&config_dir)?;
+        cleanup_stale_atomic_write_files(&config_dir);
 
         let system_config =
             load_or_default(&config_dir.join("system.json"), defaults::system_defaults());

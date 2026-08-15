@@ -3,6 +3,7 @@
 
 import { readdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import ts from "typescript";
 
 const root = resolve(import.meta.dirname, "..");
@@ -186,38 +187,58 @@ function collectLocaleKeys(locale) {
 	return { keys, values };
 }
 
-const missing = [];
-const invalidInterpolations = [];
-for (const locale of LOCALES) {
-	const { keys, values } = collectLocaleKeys(locale);
-	for (const required of FEATURE_KEYS) {
-		const [namespace, ...parts] = required.split(".");
-		const localKey = `${namespace}.${parts.join(".")}`;
-		if (!keys.has(localKey)) missing.push(`${locale}: ${required}`);
-	}
+export function validateFeatureInterpolations(locale, keys, values) {
+	const invalidInterpolations = [];
 	for (const [key, variables] of FEATURE_INTERPOLATIONS) {
+		if (!keys.has(key)) continue;
 		const value = values.get(key);
-		if (value === undefined) continue;
+		if (value === undefined) {
+			invalidInterpolations.push(
+				`${locale}: ${key} must be a string literal containing ${variables
+					.map((variable) => `{{${variable}}}`)
+					.join(", ")}`,
+			);
+			continue;
+		}
 		for (const variable of variables) {
 			if (!value.includes(`{{${variable}}}`)) {
 				invalidInterpolations.push(`${locale}: ${key} must include {{${variable}}}`);
 			}
 		}
 	}
+	return invalidInterpolations;
 }
 
-if (missing.length > 0) {
-	console.error(`Missing ${missing.length} required translation key(s):`);
-	for (const item of missing) console.error(`- ${item}`);
-	process.exit(1);
+function main() {
+	const missing = [];
+	const invalidInterpolations = [];
+	for (const locale of LOCALES) {
+		const { keys, values } = collectLocaleKeys(locale);
+		for (const required of FEATURE_KEYS) {
+			const [namespace, ...parts] = required.split(".");
+			const localKey = `${namespace}.${parts.join(".")}`;
+			if (!keys.has(localKey)) missing.push(`${locale}: ${required}`);
+		}
+		invalidInterpolations.push(...validateFeatureInterpolations(locale, keys, values));
+	}
+
+	if (missing.length > 0) {
+		console.error(`Missing ${missing.length} required translation key(s):`);
+		for (const item of missing) console.error(`- ${item}`);
+		process.exit(1);
+	}
+
+	if (invalidInterpolations.length > 0) {
+		console.error(
+			`Invalid interpolation in ${invalidInterpolations.length} translation value(s):`,
+		);
+		for (const item of invalidInterpolations) console.error(`- ${item}`);
+		process.exit(1);
+	}
+
+	console.log(`i18n parity OK: ${LOCALES.length} locales, ${FEATURE_KEYS.length} feature keys`);
 }
 
-if (invalidInterpolations.length > 0) {
-	console.error(
-		`Invalid interpolation in ${invalidInterpolations.length} translation value(s):`,
-	);
-	for (const item of invalidInterpolations) console.error(`- ${item}`);
-	process.exit(1);
+if (resolve(process.argv[1] ?? "") === fileURLToPath(import.meta.url)) {
+	main();
 }
-
-console.log(`i18n parity OK: ${LOCALES.length} locales, ${FEATURE_KEYS.length} feature keys`);

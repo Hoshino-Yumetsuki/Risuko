@@ -52,13 +52,24 @@ fn platform_fallocate(file: &File, len: u64) -> io::Result<()> {
             "fallocate length exceeds i64::MAX",
         )
     })?;
+    let current_len = file.metadata()?.len();
     if len == 0 {
-        return file.set_len(0);
+        return if current_len == 0 {
+            Ok(())
+        } else {
+            file.set_len(0)
+        };
     }
     // nix 0.30 expects an `AsFd` implementor — `&File` qualifies and avoids the unsafe-ish round-trip through `RawFd`
     fallocate(file, FallocateFlags::empty(), 0, signed_len)
         .map_err(|e| io::Error::from_raw_os_error(e as i32))?;
-    file.set_len(len)
+    // Empty flags extend a shorter file to `len`, but never shrink a longer
+    // one. Avoid an extra metadata-changing truncate on the common grow path.
+    if current_len > len {
+        file.set_len(len)
+    } else {
+        Ok(())
+    }
 }
 
 #[cfg(target_os = "macos")]

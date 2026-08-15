@@ -1059,3 +1059,119 @@ async fn single_connection_auto_retries_and_resumes_on_reset() {
     let got = std::fs::read(&result).unwrap();
     assert_eq!(got, *payload, "resumed content must match payload");
 }
+
+async fn spawn_partial_range_server(payload: Arc<Vec<u8>>) -> (SocketAddr, Arc<AtomicU32>) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let partials = Arc::new(AtomicU32::new(0));
+    tokio::spawn({
+        let partials = partials.clone();
+        async move {
+            loop {
+                let (mut stream, _) = match listener.accept().await {
+                    Ok(pair) => pair,
+                    Err(_) => return,
+                };
+                let payload = payload.clone();
+                let partials = partials.clone();
+                tokio::spawn(async move {
+                    let mut request = Vec::new();
+                    let mut buffer = [0u8; 1024];
+                    loop {
+                        match stream.read(&mut buffer).await {
+                            Ok(0) => return,
+                            Ok(count) => {
+                                request.extend_from_slice(&buffer[..count]);
+                                if request.windows(4).any(|window| window == b"\r\n\r\n") {
+                                    break;
+                                }
+                            }
+                            Err(_) => return,
+                        }
+                    }
+
+                    let request = String::from_utf8_lossy(&request).to_ascii_lowercase();
+                    let Some(range) = request.lines().find_map(|line| {
+                        let value = line.strip_prefix("range: bytes=")?;
+                        let (start, end) = value.split_once('-')?;
+                        let start = start.trim().parse::<usize>().ok()?;
+                        let end = if end.trim().is_empty() {
+                            payload.len().saturating_sub(1)
+                        } else {
+                            end.trim().parse::<usize>().ok()?
+                        };
+                        Some((start, end))
+                    }) else {
+                        let _ = stream.write_all(b"HTTP/1.1 400 Bad Request\r\n\r\n").await;
+                        return;
+                    };
+                    if range.0 >= payload.len() {
+                        let _ = stream
+                            .write_all(b"HTTP/1.1 416 Range Not Satisfiable\r\n\r\n")
+                            .await;
+                        return;
+                    }
+
+                    let end = range.1.min(payload.len() - 1);
+                    let requested = end - range.0 + 1;
+                    let body_len = requested.min(1024);
+                    if body_len < requested {
+                        partials.fetch_add(1, Ordering::SeqCst);
+                    }
+                    let head = format!(
+                        "HTTP/1.1 206 Partial Content\r\nContent-Length: {requested}\r\nContent-Range: bytes {}-{end}/{}\r\nAccept-Ranges: bytes\r\nETag: \"v1\"\r\n\r\n",
+                        range.0,
+                        payload.len()
+                    );
+                    let _ = stream.write_all(head.as_bytes()).await;
+                    let _ = stream
+                        .write_all(&payload[range.0..range.0 + body_len])
+                        .await;
+                    let _ = stream.flush().await;
+                });
+            }
+        }
+    });
+    (addr, partials)
+}
+
+#[tokio::test]
+async fn multi_chunk_partial_errors_keep_progressing_mirror_alive() {
+    let payload = Arc::new(small_payload(16 * 1024));
+    let (addr, partials) = spawn_partial_range_server(payload.clone()).await;
+    tokio::task::yield_now().await;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().to_string_lossy().to_string();
+    let uris = vec![format!("http://{addr}/partial")];
+    let options = options_with(vec![
+        ("split", json!("2")),
+        ("min-split-size", json!(1)),
+        ("max-worker-retries", json!(1)),
+    ]);
+    let (total, completed, speed, conns, ct, gl, tl, cc) = dummy_state();
+
+    let result = run_http_download_multi(
+        &uris,
+        &dir,
+        "partial.bin",
+        &options,
+        total,
+        completed,
+        speed,
+        conns,
+        ct,
+        gl,
+        tl,
+        cc,
+        std::sync::Arc::new(parking_lot::Mutex::new(None)),
+    )
+    .await
+    .expect("partial progress must reset both retry and mirror failure budgets");
+
+    assert!(
+        partials.load(Ordering::SeqCst) >= 3,
+        "the server must exercise repeated partial stream errors"
+    );
+    assert_eq!(std::fs::read(result).unwrap(), *payload);
+}

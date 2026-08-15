@@ -371,10 +371,22 @@ impl KadService {
         }
         let loaded = state::load(&config.config_dir, None).map_err(KadError::State)?;
         let needs_initial_save = loaded.kind != state::StateLoadKind::Existing;
-        if needs_initial_save {
-            state::save(&config.config_dir, loaded.node_id, &loaded.contacts)
-                .map_err(KadError::State)?;
-        }
+        let loaded = if needs_initial_save {
+            let config_dir = config.config_dir.clone();
+            tokio::task::spawn_blocking(move || {
+                state::save(&config_dir, loaded.node_id, &loaded.contacts)?;
+                Ok::<_, std::io::Error>(loaded)
+            })
+            .await
+            .map_err(|error| {
+                KadError::State(std::io::Error::other(format!(
+                    "initial Kad state persistence task failed: {error}"
+                )))
+            })?
+            .map_err(KadError::State)?
+        } else {
+            loaded
+        };
         let socket = UdpSocket::bind(SocketAddrV4::new(config.bind_addr, config.udp_port))
             .await
             .map_err(KadError::Bind)?;

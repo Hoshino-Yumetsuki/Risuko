@@ -130,10 +130,14 @@ fn split_host_port(host_port: &str, default_port: u16) -> Result<(String, u16), 
 
     match host_port.rfind(':') {
         Some(idx) => {
+            let host = &host_port[..idx];
+            if host.is_empty() {
+                return Err(AdcError::InvalidUri("missing host".into()));
+            }
             let port: u16 = host_port[idx + 1..]
                 .parse()
                 .map_err(|e| AdcError::InvalidUri(format!("bad port: {e}")))?;
-            Ok((host_port[..idx].to_string(), port))
+            Ok((host.to_string(), port))
         }
         None => Ok((host_port.to_string(), default_port)),
     }
@@ -219,11 +223,13 @@ mod tests {
     }
 
     #[test]
-    fn rejects_empty_bracketed_hub_host() {
-        assert!(matches!(
-            parse_adc_hub_uri("adc://[]:411"),
-            Err(AdcError::InvalidUri(message)) if message == "missing host"
-        ));
+    fn rejects_missing_hub_host() {
+        for uri in ["adc://", "adc://:411", "adc://[]:411"] {
+            assert!(matches!(
+                parse_adc_hub_uri(uri),
+                Err(AdcError::InvalidUri(message)) if message == "missing host"
+            ));
+        }
     }
 
     #[test]

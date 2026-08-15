@@ -1803,6 +1803,16 @@ async fn run_multi_chunk(
     finalize_download(part_path, filename, dir_path, auto_rename)
 }
 
+fn charge_retry_if_no_progress(retry_count: &mut u32, downloaded: u64) -> bool {
+    if downloaded > 0 {
+        *retry_count = 0;
+        false
+    } else {
+        *retry_count = retry_count.saturating_add(1);
+        true
+    }
+}
+
 /// Worker loop: claim a piece, pick a mirror, download it, mark it done; repeat. Returns Ok(()) when the queue is exhausted (this worker is finished), or Err on cancellation or after exceeding retry budget on one piece
 #[allow(clippy::too_many_arguments)]
 async fn piece_worker(
@@ -1911,14 +1921,14 @@ async fn piece_worker(
                     queue.complete(idx);
                     retry_count = 0;
                 } else if now_completed > already {
-                    // Early EOF made progress; return the piece with progress intact Keep retry budget because per-piece resume moves toward piece_length
+                    // Early EOF made progress; return the piece with progress intact and reset the retry budget because per-piece resume moves toward piece_length
                     pool.record_success(&mirror_key, downloaded, started.elapsed().as_secs_f64());
                     queue.release(idx);
                     retry_count = 0;
                 } else {
                     // Early EOF with zero progress counts against retry budget to avoid worker spin
                     queue.release(idx);
-                    retry_count += 1;
+                    charge_retry_if_no_progress(&mut retry_count, downloaded);
                     if retry_count > max_retries {
                         return Err(format!(
                             "Worker {worker_id} failed after {max_retries} retries on \
@@ -1937,9 +1947,19 @@ async fn piece_worker(
                 return Err(e);
             }
             Err(e) => {
-                pool.record_failure(&mirror_key);
                 queue.release(idx);
-                retry_count += 1;
+                if !charge_retry_if_no_progress(&mut retry_count, downloaded) {
+                    // A stream error after bytes were flushed still advanced
+                    // the piece. Treat that attempt as mirror progress so a
+                    // flaky but productive source is not blacklisted.
+                    pool.record_success(&mirror_key, downloaded, started.elapsed().as_secs_f64());
+                    tracing::warn!(
+                        "Worker {worker_id} piece {idx} on {mirror_key} failed after writing \
+                         {downloaded} bytes: {e}; retry budget reset"
+                    );
+                    continue;
+                }
+                pool.record_failure(&mirror_key);
                 if retry_count > max_retries {
                     return Err(format!(
                         "Worker {worker_id} failed after {max_retries} retries on \
@@ -3211,6 +3231,16 @@ mod tests {
         assert_ne!(b, a, "completed piece must not be reclaimed");
         q.complete(b);
         assert!(q.claim_next().is_none());
+    }
+
+    #[test]
+    fn partial_error_progress_resets_retry_budget() {
+        let mut retry_count = 3;
+
+        assert!(!charge_retry_if_no_progress(&mut retry_count, 1));
+        assert_eq!(retry_count, 0);
+        assert!(charge_retry_if_no_progress(&mut retry_count, 0));
+        assert_eq!(retry_count, 1);
     }
 
     #[test]
