@@ -13,6 +13,7 @@ import {
 	buildUriPayload,
 	initTaskForm,
 } from "@/utils/task";
+import { decodeThunderLink } from "@/utils/thunder";
 import { checkForUpdates } from "@/utils/updater";
 
 const i18n = getLocaleManager().getI18n();
@@ -44,7 +45,7 @@ const showAboutPanel = () => {
 	getAppStore().showAboutPanel();
 };
 
-const addTask = (
+const addTask = async (
 	payload: {
 		type?: string;
 		uri?: string;
@@ -59,12 +60,12 @@ const addTask = (
 	};
 
 	if (type === ADD_TASK_TYPE.URI && uri) {
-		getAppStore().updateAddTaskUrl(uri);
+		getAppStore().updateAddTaskUrl(await decodeThunderLink(uri));
 	}
 	getAppStore().updateAddTaskOptions(options);
 
 	if (silent) {
-		addTaskSilent(type);
+		await addTaskSilent(type);
 		return;
 	}
 

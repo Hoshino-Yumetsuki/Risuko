@@ -476,6 +476,7 @@ pub fn run() {
         commands::health_cmds::run_health_checks,
         commands::health_cmds::list_log_files,
         commands::health_cmds::read_log_file,
+        commands::engine_cmds::decode_thunder_uri,
         commands::engine_cmds::add_uri,
         commands::engine_cmds::add_media,
         commands::engine_cmds::get_media_info,

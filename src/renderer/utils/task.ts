@@ -12,6 +12,7 @@ import {
 } from "@shared/utils/curl";
 import { buildOuts } from "@shared/utils/rename";
 import { isEmpty } from "lodash";
+import { decodeThunderLink } from "@/utils/thunder";
 
 interface TaskFormState {
 	app: { addTaskUrl: string; addTaskOptions: Record<string, unknown> };
@@ -201,7 +202,12 @@ export const buildUriPayload = async (form: TaskForm) => {
 		throw new Error("task.new-task-uris-required");
 	}
 
-	const parsedLines = splitTaskLinksWithRenames(rawUris);
+	const parsedLines = await Promise.all(
+		splitTaskLinksWithRenames(rawUris).map(async ({ uri, rename }) => ({
+			uri: await decodeThunderLink(uri),
+			rename,
+		})),
+	);
 	let uriList = parsedLines.map((p) => p.uri);
 	const curlHeaders = buildHeadersFromCurl(uriList);
 	uriList = buildUrisFromCurl(uriList);

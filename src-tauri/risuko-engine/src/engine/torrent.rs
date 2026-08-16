@@ -1,3 +1,4 @@
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use futures_util::FutureExt;
 use risuko_bt as bt;
 use serde_json::{Map, Value};
@@ -659,6 +660,122 @@ pub fn is_magnet_uri(uri: &str) -> bool {
     uri.trim().to_lowercase().starts_with("magnet:")
 }
 
+pub fn is_thunder_uri(uri: &str) -> bool {
+    let trimmed = uri.trim();
+    let Some(scheme_end) = trimmed.find("://") else {
+        return false;
+    };
+    trimmed[..scheme_end].eq_ignore_ascii_case("thunder")
+}
+
+fn is_zero_prefixed_suffix(value: &str, suffix: &str) -> bool {
+    value
+        .strip_suffix(suffix)
+        .is_some_and(|prefix| prefix.bytes().all(|byte| byte == b'0'))
+}
+
+fn thunder_ampersand_entity_len(value: &str) -> Option<usize> {
+    if value
+        .get(..5)
+        .is_some_and(|entity| entity.eq_ignore_ascii_case("&amp;"))
+    {
+        return Some(5);
+    }
+
+    let end = value.find(';')?;
+    let code = value.get(..=end)?.strip_prefix("&#")?.strip_suffix(';')?;
+    let is_ampersand = if let Some(hex) = code.strip_prefix(['x', 'X']) {
+        is_zero_prefixed_suffix(hex, "26")
+    } else {
+        is_zero_prefixed_suffix(code, "38")
+    };
+    is_ampersand.then_some(end + 1)
+}
+
+fn thunder_unknown_entity_len(value: &str) -> Option<usize> {
+    let end = value.find(';')?;
+    let nested_ampersand = value.get(1..end)?.find('&')?;
+    let name_end = nested_ampersand + 1;
+    let name = value.get(1..name_end)?;
+    if name.is_empty()
+        || !name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'#')
+    {
+        return None;
+    }
+
+    Some(end + 1)
+}
+
+fn decode_thunder_ampersands(value: &str) -> String {
+    let mut result = String::with_capacity(value.len());
+    let mut rest = value;
+
+    while let Some(start) = rest.find('&') {
+        result.push_str(&rest[..start]);
+        let entity = &rest[start..];
+        if let Some(entity_len) = thunder_ampersand_entity_len(entity) {
+            result.push('&');
+            rest = &entity[entity_len..];
+        } else if let Some(entity_len) = thunder_unknown_entity_len(entity) {
+            result.push_str(&entity[..entity_len]);
+            rest = &entity[entity_len..];
+        } else {
+            result.push('&');
+            rest = &entity[1..];
+        }
+    }
+
+    result.push_str(rest);
+    result
+}
+
+fn is_valid_thunder_base64(value: &str) -> bool {
+    let mut padding = 0;
+    for byte in value.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'+' | b'/' if padding == 0 => {}
+            b'=' if padding < 2 => padding += 1,
+            _ => return false,
+        }
+    }
+    !value.is_empty()
+}
+
+pub fn decode_thunder_uri(uri: &str) -> Option<String> {
+    let trimmed = uri.trim();
+    let scheme_end = trimmed.find("://")?;
+    if !is_thunder_uri(trimmed) {
+        return None;
+    }
+
+    let mut encoded: String = trimmed[scheme_end + 3..]
+        .trim_end_matches([')', '.'])
+        .chars()
+        .map(|ch| match ch {
+            '-' => '+',
+            '_' => '/',
+            _ => ch,
+        })
+        .collect();
+    if !is_valid_thunder_base64(&encoded) {
+        return None;
+    }
+
+    let padding = (4 - (encoded.len() % 4)) % 4;
+    encoded.extend(std::iter::repeat_n('=', padding));
+    let bytes = STANDARD.decode(encoded.as_bytes()).ok()?;
+    let decoded = String::from_utf8(bytes).ok()?;
+    let wrapped = decoded.strip_prefix("AA")?.strip_suffix("ZZ")?.trim();
+    if wrapped.is_empty() {
+        return None;
+    }
+
+    let normalized = decode_thunder_ampersands(wrapped);
+    Some(normalized)
+}
+
 pub fn inspect_magnet(uri: &str) -> Result<MagnetInfo, String> {
     let magnet = bt::Magnet::parse(uri).map_err(|e| e.to_string())?;
     Ok(MagnetInfo {
@@ -856,5 +973,110 @@ mod tests {
             encryption_policy_from_str(Some("REQUIRE")),
             bt::EncryptionPolicy::Prefer
         ));
+    }
+
+    #[test]
+    fn decodes_thunder_magnet_and_html_query_separator() {
+        let encoded = base64::engine::general_purpose::STANDARD.encode(
+            "AAmagnet:?xt=urn:btih:cab507494d02ebb1178b38f2e9d7be299c86b862&amp;dn=ExampleZZ",
+        );
+        let uri = decode_thunder_uri(&format!("THUNDER://{encoded}"));
+        assert_eq!(
+            uri.as_deref(),
+            Some("magnet:?xt=urn:btih:cab507494d02ebb1178b38f2e9d7be299c86b862&dn=Example")
+        );
+    }
+
+    #[test]
+    fn decodes_thunder_numeric_ampersand_entities_and_trailing_punctuation() {
+        let encoded = base64::engine::general_purpose::STANDARD.encode(
+            "AAmagnet:?xt=urn:btih:cab507494d02ebb1178b38f2e9d7be299c86b862&#x000026;dn=ExampleZZ",
+        );
+        assert_eq!(
+            decode_thunder_uri(&format!("thunder://{encoded}).")),
+            Some(
+                "magnet:?xt=urn:btih:cab507494d02ebb1178b38f2e9d7be299c86b862&dn=Example"
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn decodes_thunder_ampersands_after_existing_query_parameters() {
+        let encoded = base64::engine::general_purpose::STANDARD.encode(
+            "AAmagnet:?xt=urn:btih:cab507494d02ebb1178b38f2e9d7be299c86b862&tr=udp%3A%2F%2Ftracker.example%3A80%2Fannounce&amp;dn=ExampleZZ",
+        );
+        assert_eq!(
+            decode_thunder_uri(&format!("thunder://{encoded}")),
+            Some(
+                "magnet:?xt=urn:btih:cab507494d02ebb1178b38f2e9d7be299c86b862&tr=udp%3A%2F%2Ftracker.example%3A80%2Fannounce&dn=Example"
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn preserves_unknown_thunder_entity_with_nested_ampersand() {
+        let encoded = base64::engine::general_purpose::STANDARD
+            .encode("AAmagnet:?xt=urn:btih:cab507494d02ebb1178b38f2e9d7be299c86b862&foo&amp;barZZ");
+        assert_eq!(
+            decode_thunder_uri(&format!("thunder://{encoded}")),
+            Some(
+                "magnet:?xt=urn:btih:cab507494d02ebb1178b38f2e9d7be299c86b862&foo&amp;bar"
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn decodes_thunder_payload_with_partial_padding() {
+        let uri = "magnet:?xt=urn:btih:cab507494d02ebb1178b38f2e9d7be299c86b862&dn=Examplex";
+        let encoded = base64::engine::general_purpose::STANDARD.encode(format!("AA{uri}ZZ"));
+        assert!(encoded.ends_with("=="));
+        let partial = encoded.strip_suffix('=').unwrap();
+        let unpadded = encoded.trim_end_matches('=');
+
+        assert_eq!(
+            decode_thunder_uri(&format!("thunder://{partial}")),
+            Some(uri.to_string())
+        );
+        assert_eq!(
+            decode_thunder_uri(&format!("thunder://{unpadded}")),
+            Some(uri.to_string())
+        );
+    }
+
+    #[test]
+    fn decodes_thunder_payload_with_mixed_base64_alphabets() {
+        let uri = "magnet:?xt=urn:btih:cab507494d02ebb1178b38f2e9d7be299c86b862&dn=\u{0BFF}";
+        let encoded = base64::engine::general_purpose::STANDARD.encode(format!("AA{uri}ZZ"));
+        assert!(encoded.contains('+'));
+        assert!(encoded.contains('/'));
+        let mixed = encoded.replacen('+', "-", 1);
+
+        assert_eq!(
+            decode_thunder_uri(&format!("thunder://{mixed}")),
+            Some(uri.to_string())
+        );
+
+        let url_safe = encoded.replacen('/', "_", 1);
+        assert_eq!(
+            decode_thunder_uri(&format!("thunder://{url_safe}")),
+            Some(uri.to_string())
+        );
+    }
+
+    #[test]
+    fn rejects_thunder_payload_with_undocumented_trailing_characters() {
+        let encoded = base64::engine::general_purpose::STANDARD
+            .encode("AAmagnet:?xt=urn:btih:cab507494d02ebb1178b38f2e9d7be299c86b862ZZ");
+
+        assert_eq!(decode_thunder_uri(&format!("thunder://{encoded}!")), None);
+    }
+
+    #[test]
+    fn rejects_thunder_payload_without_envelope() {
+        let encoded = base64::engine::general_purpose::STANDARD.encode("ABC");
+        assert_eq!(decode_thunder_uri(&format!("thunder://{encoded}")), None);
     }
 }
