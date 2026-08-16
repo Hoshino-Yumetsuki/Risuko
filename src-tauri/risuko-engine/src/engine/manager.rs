@@ -815,8 +815,20 @@ impl TaskManager {
     ) -> Result<String, String> {
         let uris = uris
             .into_iter()
-            .map(|uri| torrent::decode_thunder_uri(&uri).unwrap_or(uri))
-            .collect::<Vec<_>>();
+            .map(|uri| match torrent::decode_thunder_uri(&uri) {
+                Some(decoded)
+                    if torrent::is_magnet_uri(&decoded)
+                        || url::Url::parse(&decoded)
+                            .ok()
+                            .is_some_and(|url| matches!(url.scheme(), "http" | "https")) =>
+                {
+                    Ok(decoded)
+                }
+                Some(_) => Err("Unsupported Thunder URI payload".to_string()),
+                None if torrent::is_thunder_uri(&uri) => Err("Invalid Thunder URI".to_string()),
+                None => Ok(uri),
+            })
+            .collect::<Result<Vec<_>, _>>()?;
         if let Some(magnet) = uris.iter().find(|u| torrent::is_magnet_uri(u)) {
             return self.add_magnet_task(magnet, options).await;
         }
@@ -4536,6 +4548,55 @@ mod tests {
                     .to_string()
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn add_http_task_decodes_raw_thunder_http_uri() {
+        let (mgr, _dir) = make_test_manager_with_engine().await;
+        let encoded = base64::engine::general_purpose::STANDARD
+            .encode("AAhttps://example.com/downloads/example.binZZ");
+        let mut options = Map::new();
+        options.insert("pause".to_string(), Value::Bool(true));
+
+        let gid = mgr
+            .add_http_task(vec![format!("THUNDER://{encoded}")], options)
+            .await
+            .expect("raw Thunder HTTP URI should create a task");
+
+        let tasks = mgr.tasks.read().await;
+        let task = tasks.iter().find(|task| task.gid == gid).unwrap();
+        assert_eq!(task.kind, TaskKind::Http);
+        assert_eq!(
+            task.uris,
+            vec!["https://example.com/downloads/example.bin".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn add_http_task_rejects_unsupported_thunder_uri_payload() {
+        let (mgr, _dir) = make_test_manager_with_engine().await;
+        let encoded = base64::engine::general_purpose::STANDARD.encode("AAfile:///tmp/exampleZZ");
+
+        let error = mgr
+            .add_http_task(vec![format!("thunder://{encoded}")], Map::new())
+            .await
+            .expect_err("Thunder payloads must be magnet or HTTP(S) URIs");
+
+        assert_eq!(error, "Unsupported Thunder URI payload");
+        assert!(mgr.tasks.read().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn add_http_task_rejects_invalid_thunder_uri() {
+        let (mgr, _dir) = make_test_manager_with_engine().await;
+
+        let error = mgr
+            .add_http_task(vec!["thunder://not%base64".to_string()], Map::new())
+            .await
+            .expect_err("invalid Thunder URIs must not create tasks");
+
+        assert_eq!(error, "Invalid Thunder URI");
+        assert!(mgr.tasks.read().await.is_empty());
     }
 
     #[tokio::test]

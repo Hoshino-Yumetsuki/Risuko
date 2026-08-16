@@ -660,6 +660,14 @@ pub fn is_magnet_uri(uri: &str) -> bool {
     uri.trim().to_lowercase().starts_with("magnet:")
 }
 
+pub fn is_thunder_uri(uri: &str) -> bool {
+    let trimmed = uri.trim();
+    let Some(scheme_end) = trimmed.find("://") else {
+        return false;
+    };
+    trimmed[..scheme_end].eq_ignore_ascii_case("thunder")
+}
+
 fn is_zero_prefixed_suffix(value: &str, suffix: &str) -> bool {
     value
         .strip_suffix(suffix)
@@ -738,16 +746,13 @@ fn is_valid_thunder_base64(value: &str) -> bool {
 pub fn decode_thunder_uri(uri: &str) -> Option<String> {
     let trimmed = uri.trim();
     let scheme_end = trimmed.find("://")?;
-    if !trimmed[..scheme_end].eq_ignore_ascii_case("thunder") {
+    if !is_thunder_uri(trimmed) {
         return None;
     }
 
     let mut encoded: String = trimmed[scheme_end + 3..]
-        .trim_end_matches(|ch: char| {
-            !(ch.is_ascii_alphanumeric() || matches!(ch, '+' | '/' | '=' | '-' | '_'))
-        })
+        .trim_end_matches([')', '.'])
         .chars()
-        .filter(|ch| !ch.is_whitespace())
         .map(|ch| match ch {
             '-' => '+',
             '_' => '/',
@@ -1029,9 +1034,14 @@ mod tests {
         let encoded = base64::engine::general_purpose::STANDARD.encode(format!("AA{uri}ZZ"));
         assert!(encoded.ends_with("=="));
         let partial = encoded.strip_suffix('=').unwrap();
+        let unpadded = encoded.trim_end_matches('=');
 
         assert_eq!(
             decode_thunder_uri(&format!("thunder://{partial}")),
+            Some(uri.to_string())
+        );
+        assert_eq!(
+            decode_thunder_uri(&format!("thunder://{unpadded}")),
             Some(uri.to_string())
         );
     }
@@ -1048,6 +1058,20 @@ mod tests {
             decode_thunder_uri(&format!("thunder://{mixed}")),
             Some(uri.to_string())
         );
+
+        let url_safe = encoded.replacen('/', "_", 1);
+        assert_eq!(
+            decode_thunder_uri(&format!("thunder://{url_safe}")),
+            Some(uri.to_string())
+        );
+    }
+
+    #[test]
+    fn rejects_thunder_payload_with_undocumented_trailing_characters() {
+        let encoded = base64::engine::general_purpose::STANDARD
+            .encode("AAmagnet:?xt=urn:btih:cab507494d02ebb1178b38f2e9d7be299c86b862ZZ");
+
+        assert_eq!(decode_thunder_uri(&format!("thunder://{encoded}!")), None);
     }
 
     #[test]
