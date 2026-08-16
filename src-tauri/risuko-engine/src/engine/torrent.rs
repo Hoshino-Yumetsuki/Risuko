@@ -687,7 +687,8 @@ fn thunder_ampersand_entity_len(value: &str) -> Option<usize> {
 fn thunder_unknown_entity_len(value: &str) -> Option<usize> {
     let end = value.find(';')?;
     let nested_ampersand = value.get(1..end)?.find('&')?;
-    let name = value.get(1..nested_ampersand + 1)?;
+    let name_end = nested_ampersand + 1;
+    let name = value.get(1..name_end)?;
     if name.is_empty()
         || !name
             .bytes()
@@ -1011,9 +1012,14 @@ mod tests {
 
     #[test]
     fn preserves_unknown_thunder_entity_with_nested_ampersand() {
+        let encoded = base64::engine::general_purpose::STANDARD
+            .encode("AAmagnet:?xt=urn:btih:cab507494d02ebb1178b38f2e9d7be299c86b862&foo&amp;barZZ");
         assert_eq!(
-            decode_thunder_ampersands("x&foo&amp;bar;"),
-            "x&foo&amp;bar;"
+            decode_thunder_uri(&format!("thunder://{encoded}")),
+            Some(
+                "magnet:?xt=urn:btih:cab507494d02ebb1178b38f2e9d7be299c86b862&foo&amp;bar"
+                    .to_string()
+            )
         );
     }
 

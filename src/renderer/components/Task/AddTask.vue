@@ -424,6 +424,7 @@ export default {
 			uriDraft: "",
 			uriCommit: Promise.resolve() as Promise<void>,
 			uriGeneration: 0,
+			uriCommitVersion: 0,
 			uriSessionActive: false,
 			uriPreparing: false,
 			submitting: false,
@@ -582,6 +583,7 @@ export default {
 	methods: {
 		beginUriCommitSession() {
 			this.uriGeneration += 1;
+			this.uriCommitVersion += 1;
 			this.uriSessionActive = true;
 			this.uriPreparing = false;
 			this.uriCommit = Promise.resolve();
@@ -589,6 +591,7 @@ export default {
 		},
 		invalidateUriCommitSession() {
 			this.uriGeneration += 1;
+			this.uriCommitVersion += 1;
 			this.uriSessionActive = false;
 			this.uriPreparing = false;
 			this.uriCommit = Promise.resolve();
@@ -601,9 +604,9 @@ export default {
 			);
 		},
 		restoreUriDraft(text: string) {
-		if (!(this.uriDraft || "").trim()) {
-			this.uriDraft = text;
-		}
+			if (!(this.uriDraft || "").trim()) {
+				this.uriDraft = text;
+			}
 		},
 		async handleOpen() {
 			const generation = this.beginUriCommitSession();
@@ -688,7 +691,7 @@ export default {
 			if (!firstLine || !isLikelyTaskLink(firstLine)) {
 				return;
 			}
-			if ((this.uriDraft || "").trim()) {
+			if (this.uriPreparing || (this.uriDraft || "").trim()) {
 				return;
 			}
 			this.uriDraft = text.trim();
@@ -738,11 +741,7 @@ export default {
 			this.submitForm();
 		},
 		commitUriDraft(): Promise<void> {
-			if (
-				!this.uriSessionActive ||
-				!this.visible ||
-				this.uriPreparing
-			) {
+			if (!this.uriSessionActive || !this.visible || this.uriPreparing) {
 				return this.uriCommit;
 			}
 			const text = this.uriDraft || "";
@@ -750,6 +749,7 @@ export default {
 				return this.uriCommit;
 			}
 			const generation = this.uriGeneration;
+			const commitVersion = ++this.uriCommitVersion;
 			this.uriDraft = "";
 			const commit = async () => {
 				let enqueued = false;
@@ -783,28 +783,18 @@ export default {
 				} catch (error) {
 					if (
 						!enqueued &&
-						this.isUriCommitCurrent(generation)
+						this.isUriCommitCurrent(generation) &&
+						this.uriCommitVersion === commitVersion
 					) {
 						this.restoreUriDraft(text);
 					}
 					logger.warn("[Risuko] URI commit failed; continuing:", error);
 				}
 			};
-		const previous = this.uriCommit.catch((error: unknown) => {
-			logger.warn("[Risuko] URI commit chain recovered:", error);
-		});
-		this.uriCommit = previous
-			.then(commit)
-			.catch((error: unknown) => {
-				if (
-					this.isUriCommitCurrent(generation) &&
-					!(this.uriDraft || "").trim()
-				) {
-					this.restoreUriDraft(text);
-				}
-				logger.warn("[Risuko] URI commit failed; continuing:", error);
-			})
-			.catch(() => undefined);
+			const previous = this.uriCommit.catch((error: unknown) => {
+				logger.warn("[Risuko] URI commit chain recovered:", error);
+			});
+			this.uriCommit = previous.then(commit);
 			return this.uriCommit;
 		},
 		notifyDetectedProtocols(links: string[]) {
