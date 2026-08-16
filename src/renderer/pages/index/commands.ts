@@ -1,6 +1,5 @@
 import { ADD_TASK_TYPE } from "@shared/constants";
 import logger from "@shared/utils/logger";
-import { decodeThunderLink } from "@shared/utils/thunder";
 import { invoke } from "@tauri-apps/api/core";
 import { toast } from "vue-sonner";
 import { commands } from "@/components/CommandManager/instance";
@@ -14,6 +13,7 @@ import {
 	buildUriPayload,
 	initTaskForm,
 } from "@/utils/task";
+import { decodeThunderLink } from "@/utils/thunder";
 import { checkForUpdates } from "@/utils/updater";
 
 const i18n = getLocaleManager().getI18n();
@@ -45,7 +45,7 @@ const showAboutPanel = () => {
 	getAppStore().showAboutPanel();
 };
 
-const addTask = (
+const addTask = async (
 	payload: {
 		type?: string;
 		uri?: string;
@@ -60,12 +60,12 @@ const addTask = (
 	};
 
 	if (type === ADD_TASK_TYPE.URI && uri) {
-		getAppStore().updateAddTaskUrl(decodeThunderLink(uri));
+		getAppStore().updateAddTaskUrl(await decodeThunderLink(uri));
 	}
 	getAppStore().updateAddTaskOptions(options);
 
 	if (silent) {
-		addTaskSilent(type);
+		await addTaskSilent(type);
 		return;
 	}
 

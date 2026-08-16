@@ -378,6 +378,7 @@ import {
 import { usePreferenceStore } from "@/store/preference";
 import { useTaskStore } from "@/store/task";
 import { buildOption, initTaskForm, type TaskForm } from "@/utils/task";
+import { decodeThunderLink } from "@/utils/thunder";
 
 interface FileLikeWithPath {
 	name: string;
@@ -421,6 +422,7 @@ export default {
 		return {
 			form: {} as TaskForm,
 			uriDraft: "",
+			uriCommit: Promise.resolve(),
 			submitting: false,
 			dragOver: false,
 			showAdvanced: false,
@@ -571,7 +573,7 @@ export default {
 		this._reducedMotionHandler = null;
 	},
 	methods: {
-		handleOpen() {
+		async handleOpen() {
 			this.showAdvanced = false;
 			this.form = initTaskForm({
 				app: useAppStore().$state,
@@ -592,8 +594,8 @@ export default {
 			if (seededUri?.trim()) {
 				hasSeededUri = true;
 				this.uriDraft = seededUri;
-				this.commitUriDraft();
 				useAppStore().updateAddTaskUrl("");
+				await this.commitUriDraft();
 			}
 			this.lastQueueLength = useAppStore().addTaskQueue.length;
 			this.openItemIds = useAppStore().addTaskQueue.map((it) => it.id);
@@ -673,12 +675,12 @@ export default {
 		},
 		handleUriPaste() {
 			this.$nextTick(() => {
-				this.commitUriDraft();
+				void this.commitUriDraft();
 			});
 		},
 		handleUriEnter(ev: KeyboardEvent) {
 			ev.preventDefault();
-			this.commitUriDraft();
+			void this.commitUriDraft();
 		},
 		handleUriSubmitShortcut(ev: KeyboardEvent) {
 			ev.preventDefault();
@@ -687,22 +689,31 @@ export default {
 			}
 			this.submitForm();
 		},
-		commitUriDraft() {
-			const text = this.uriDraft || "";
-			const parsed = splitTaskLinksWithRenames(text);
-			if (parsed.length === 0) {
-				return;
-			}
-			const items = parsed.map(({ uri, rename }) => {
-				const item = createUriBatchItem(uri);
-				if (rename) {
-					item.out = rename;
+		commitUriDraft(): Promise<void> {
+			this.uriCommit = this.uriCommit.then(async () => {
+				const text = this.uriDraft || "";
+				const parsed = splitTaskLinksWithRenames(text);
+				if (parsed.length === 0) {
+					return;
 				}
-				return item;
+				this.uriDraft = "";
+				const decoded = await Promise.all(
+					parsed.map(async ({ uri, rename }) => ({
+						uri: await decodeThunderLink(uri),
+						rename,
+					})),
+				);
+				const items = decoded.map(({ uri, rename }) => {
+					const item = createUriBatchItem(uri);
+					if (rename) {
+						item.out = rename;
+					}
+					return item;
+				});
+				useAppStore().enqueueBatchItems(items);
+				this.notifyDetectedProtocols(decoded.map((item) => item.uri));
 			});
-			useAppStore().enqueueBatchItems(items);
-			this.notifyDetectedProtocols(parsed.map((p) => p.uri));
-			this.uriDraft = "";
+			return this.uriCommit;
 		},
 		notifyDetectedProtocols(links: string[]) {
 			if (!links || links.length === 0) {
@@ -893,7 +904,7 @@ export default {
 			}
 			const appStore = useAppStore();
 			if ((this.uriDraft || "").trim()) {
-				this.commitUriDraft();
+				await this.commitUriDraft();
 			}
 			const items = appStore.addTaskQueue;
 			if (items.length === 0) {

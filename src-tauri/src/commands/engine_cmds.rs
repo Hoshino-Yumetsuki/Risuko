@@ -664,6 +664,11 @@ fn is_plain_http_mirror_uri(uri: &str, options: &Map<String, Value>) -> bool {
 }
 
 #[tauri::command]
+pub fn decode_thunder_uri(uri: String) -> Option<String> {
+    torrent::decode_thunder_uri(&uri)
+}
+
+#[tauri::command]
 pub async fn add_uri(
     _state: tauri::State<'_, crate::state::AppState>,
     uris: Vec<String>,
@@ -1274,7 +1279,24 @@ pub async fn resolve_routing(filename: String) -> Result<Value, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use base64::Engine as _;
     use serde_json::json;
+
+    #[test]
+    fn decode_thunder_uri_exposes_the_engine_decoder() {
+        let encoded = base64::engine::general_purpose::STANDARD.encode(
+            "AAmagnet:?xt=urn:btih:cab507494d02ebb1178b38f2e9d7be299c86b862&amp;dn=ExampleZZ",
+        );
+
+        assert_eq!(
+            decode_thunder_uri(format!("thunder://{encoded}")),
+            Some(
+                "magnet:?xt=urn:btih:cab507494d02ebb1178b38f2e9d7be299c86b862&dn=Example"
+                    .to_string()
+            )
+        );
+        assert_eq!(decode_thunder_uri("https://example.com".to_string()), None);
+    }
 
     // -- normalize_non_negative --
 

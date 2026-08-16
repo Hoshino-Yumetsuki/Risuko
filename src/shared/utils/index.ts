@@ -18,10 +18,8 @@ import {
 	pick,
 } from "lodash";
 import { toKebabCasePreserveNumbers } from "./configKeyCase";
-import { decodeThunderLink } from "./thunder";
 
 export { bytesToSize } from "./format";
-export { decodeThunderLink } from "./thunder";
 export { formatUsenetRepairFailure } from "./usenet";
 
 export const getApiErrorMessage = (
@@ -535,9 +533,7 @@ export const splitTaskLinks = (links = "") => {
 };
 
 export const splitTaskLinksWithRenames = (links = ""): ParsedTaskLink[] => {
-	return compact(splitTextRows(links))
-		.map(parseRenameDirective)
-		.map(({ uri, rename }) => ({ uri: decodeThunderLink(uri), rename }));
+	return compact(splitTextRows(links)).map(parseRenameDirective);
 };
 
 const isFtpLink = (uri: string): boolean => {
