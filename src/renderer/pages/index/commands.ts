@@ -1,5 +1,6 @@
 import { ADD_TASK_TYPE } from "@shared/constants";
 import logger from "@shared/utils/logger";
+import { decodeThunderLink } from "@shared/utils/thunder";
 import { invoke } from "@tauri-apps/api/core";
 import { toast } from "vue-sonner";
 import { commands } from "@/components/CommandManager/instance";
@@ -59,7 +60,7 @@ const addTask = (
 	};
 
 	if (type === ADD_TASK_TYPE.URI && uri) {
-		getAppStore().updateAddTaskUrl(uri);
+		getAppStore().updateAddTaskUrl(decodeThunderLink(uri));
 	}
 	getAppStore().updateAddTaskOptions(options);
 

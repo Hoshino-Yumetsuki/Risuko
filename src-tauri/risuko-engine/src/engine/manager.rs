@@ -813,6 +813,10 @@ impl TaskManager {
         uris: Vec<String>,
         options: Map<String, Value>,
     ) -> Result<String, String> {
+        let uris = uris
+            .into_iter()
+            .map(|uri| torrent::decode_thunder_uri(&uri).unwrap_or(uri))
+            .collect::<Vec<_>>();
         if let Some(magnet) = uris.iter().find(|u| torrent::is_magnet_uri(u)) {
             return self.add_magnet_task(magnet, options).await;
         }
@@ -4059,6 +4063,7 @@ fn sync_torrent_files(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use base64::Engine as _;
 
     #[test]
     fn peer_percent_from_bitfield() {
@@ -4500,6 +4505,37 @@ mod tests {
         );
         assert_eq!(task.bt_name.as_deref(), Some("Metadata Later"));
         assert_eq!(task.uris, vec![uri.to_string()]);
+    }
+
+    #[tokio::test]
+    async fn add_http_task_decodes_raw_thunder_magnet() {
+        let (mgr, _dir) = make_test_manager_with_engine().await;
+        let encoded = base64::engine::general_purpose::STANDARD.encode(
+            "AAmagnet:?xt=urn:btih:cab507494d02ebb1178b38f2e9d7be299c86b862&amp;dn=ExampleZZ",
+        );
+        let mut options = Map::new();
+        options.insert("pause".to_string(), Value::Bool(true));
+
+        let gid = mgr
+            .add_http_task(vec![format!("THUNDER://{encoded}")], options)
+            .await
+            .expect("raw Thunder magnet should create a task");
+
+        let tasks = mgr.tasks.read().await;
+        let task = tasks.iter().find(|task| task.gid == gid).unwrap();
+        assert_eq!(task.kind, TaskKind::Torrent);
+        assert_eq!(
+            task.info_hash.as_deref(),
+            Some("cab507494d02ebb1178b38f2e9d7be299c86b862")
+        );
+        assert_eq!(task.bt_name.as_deref(), Some("Example"));
+        assert_eq!(
+            task.uris,
+            vec![
+                "magnet:?xt=urn:btih:cab507494d02ebb1178b38f2e9d7be299c86b862&dn=Example"
+                    .to_string()
+            ]
+        );
     }
 
     #[tokio::test]

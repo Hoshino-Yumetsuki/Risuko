@@ -18,8 +18,10 @@ import {
 	pick,
 } from "lodash";
 import { toKebabCasePreserveNumbers } from "./configKeyCase";
+import { decodeThunderLink } from "./thunder";
 
 export { bytesToSize } from "./format";
+export { decodeThunderLink } from "./thunder";
 export { formatUsenetRepairFailure } from "./usenet";
 
 export const getApiErrorMessage = (
@@ -506,31 +508,6 @@ export const convertLineToComma = (text = "") => {
 
 export const filterFilesBySuffix = (files = [], suffixes = []) => {
 	return files.filter((item) => suffixes.includes(item.extension));
-};
-
-const decodeBase64Utf8 = (value = "") => {
-	const binary = atob(value);
-	const bytes = new Uint8Array(binary.length);
-	for (let i = 0; i < binary.length; i += 1) {
-		bytes[i] = binary.charCodeAt(i);
-	}
-	return new TextDecoder().decode(bytes);
-};
-
-const decodeThunderLink = (url = "") => {
-	if (!url.startsWith("thunder://")) {
-		return url;
-	}
-
-	const original = url;
-	try {
-		let result = url.trim().slice("thunder://".length);
-		result = decodeBase64Utf8(result);
-		return result.substring(2, result.length - 2);
-	} catch {
-		// Keep malformed links visible so AddTask can report or let the user edit them.
-		return original;
-	}
 };
 
 const RENAME_SUFFIX_REGEX = /\s+Rename:\s*(\S.*?)\s*$/i;

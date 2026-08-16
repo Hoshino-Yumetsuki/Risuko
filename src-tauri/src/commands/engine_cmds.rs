@@ -672,7 +672,10 @@ pub async fn add_uri(
 ) -> Result<Value, String> {
     let normalized_uris: Vec<String> = uris
         .into_iter()
-        .map(|uri| uri.trim().to_string())
+        .map(|uri| {
+            let trimmed = uri.trim().to_string();
+            torrent::decode_thunder_uri(&trimmed).unwrap_or(trimmed)
+        })
         .filter(|uri| !uri.is_empty())
         .collect();
 

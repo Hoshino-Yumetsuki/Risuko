@@ -1,3 +1,7 @@
+use base64::{
+    engine::general_purpose::{STANDARD, STANDARD_NO_PAD, URL_SAFE, URL_SAFE_NO_PAD},
+    Engine as _,
+};
 use futures_util::FutureExt;
 use risuko_bt as bt;
 use serde_json::{Map, Value};
@@ -659,6 +663,72 @@ pub fn is_magnet_uri(uri: &str) -> bool {
     uri.trim().to_lowercase().starts_with("magnet:")
 }
 
+fn decode_thunder_ampersands(value: &str) -> String {
+    let mut result = String::with_capacity(value.len());
+    let mut rest = value;
+
+    while let Some(start) = rest.find('&') {
+        result.push_str(&rest[..start]);
+        let entity_start = &rest[start + 1..];
+        let Some(end) = entity_start.find(';') else {
+            result.push_str(&rest[start..]);
+            return result;
+        };
+
+        let entity = &entity_start[..end];
+        let code = entity.strip_prefix('#').and_then(|digits| {
+            digits
+                .strip_prefix(['x', 'X'])
+                .map(|hex| u32::from_str_radix(hex, 16))
+                .unwrap_or_else(|| digits.parse::<u32>())
+                .ok()
+        });
+        if entity.eq_ignore_ascii_case("amp") || code == Some(38) {
+            result.push('&');
+        } else {
+            result.push('&');
+            result.push_str(entity);
+            result.push(';');
+        }
+        rest = &entity_start[end + 1..];
+    }
+
+    result.push_str(rest);
+    result
+}
+
+pub fn decode_thunder_uri(uri: &str) -> Option<String> {
+    let trimmed = uri.trim();
+    let scheme_end = trimmed.find("://")?;
+    if !trimmed[..scheme_end].eq_ignore_ascii_case("thunder") {
+        return None;
+    }
+
+    let encoded: String = trimmed[scheme_end + 3..]
+        .trim_end_matches(|ch: char| {
+            !(ch.is_ascii_alphanumeric() || matches!(ch, '+' | '/' | '=' | '-' | '_'))
+        })
+        .chars()
+        .filter(|ch| !ch.is_whitespace())
+        .collect();
+    if encoded.is_empty() {
+        return None;
+    }
+
+    let decoders = [&STANDARD, &STANDARD_NO_PAD, &URL_SAFE, &URL_SAFE_NO_PAD];
+    let bytes = decoders
+        .iter()
+        .find_map(|decoder| decoder.decode(encoded.as_bytes()).ok())?;
+    let decoded = String::from_utf8(bytes).ok()?;
+    let wrapped = decoded.strip_prefix("AA")?.strip_suffix("ZZ")?.trim();
+    if wrapped.is_empty() {
+        return None;
+    }
+
+    let normalized = decode_thunder_ampersands(wrapped);
+    Some(normalized)
+}
+
 pub fn inspect_magnet(uri: &str) -> Result<MagnetInfo, String> {
     let magnet = bt::Magnet::parse(uri).map_err(|e| e.to_string())?;
     Ok(MagnetInfo {
@@ -856,5 +926,37 @@ mod tests {
             encryption_policy_from_str(Some("REQUIRE")),
             bt::EncryptionPolicy::Prefer
         ));
+    }
+
+    #[test]
+    fn decodes_thunder_magnet_and_html_query_separator() {
+        let encoded = base64::engine::general_purpose::STANDARD.encode(
+            "AAmagnet:?xt=urn:btih:cab507494d02ebb1178b38f2e9d7be299c86b862&amp;dn=ExampleZZ",
+        );
+        let uri = decode_thunder_uri(&format!("THUNDER://{encoded}"));
+        assert_eq!(
+            uri.as_deref(),
+            Some("magnet:?xt=urn:btih:cab507494d02ebb1178b38f2e9d7be299c86b862&dn=Example")
+        );
+    }
+
+    #[test]
+    fn decodes_thunder_numeric_ampersand_entities_and_trailing_punctuation() {
+        let encoded = base64::engine::general_purpose::STANDARD.encode(
+            "AAmagnet:?xt=urn:btih:cab507494d02ebb1178b38f2e9d7be299c86b862&#x000026;dn=ExampleZZ",
+        );
+        assert_eq!(
+            decode_thunder_uri(&format!("thunder://{encoded}).")),
+            Some(
+                "magnet:?xt=urn:btih:cab507494d02ebb1178b38f2e9d7be299c86b862&dn=Example"
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn rejects_thunder_payload_without_envelope() {
+        let encoded = base64::engine::general_purpose::STANDARD.encode("ABC");
+        assert_eq!(decode_thunder_uri(&format!("thunder://{encoded}")), None);
     }
 }
