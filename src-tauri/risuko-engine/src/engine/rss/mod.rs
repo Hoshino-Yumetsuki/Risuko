@@ -16,6 +16,8 @@ use crate::traits::{EventSink, StorageBackend};
 
 const RSS_STORE_KEY: &str = "rss";
 const DEFAULT_UPDATE_INTERVAL_SECS: u64 = 1800;
+/// Floor for a feed's poll interval; guards the poller against a 0 interval (configured via `update_feed_settings`) degrading into a busy-spin
+const MIN_UPDATE_INTERVAL_SECS: u64 = 60;
 const MAX_ITEMS_PER_FEED: usize = 500;
 const MAX_CONSECUTIVE_ERRORS: u32 = 5;
 const MAX_EPISODE_HISTORY: usize = 10_000;
@@ -49,7 +51,11 @@ impl RssManager {
             if let Some(data_val) = val.get("data").cloned() {
                 let data: RssStore = serde_json::from_value(data_val)
                     .map_err(|e| format!("Failed to parse RSS data: {e}"))?;
-                let mut s = self.store.blocking_lock();
+                // Called during single-threaded startup before the Arc is shared, so the lock is uncontended. Avoid blocking_lock(), which panics if this ever runs inside a Tokio runtime worker thread (mirrors DownloadStatsManager::load)
+                let mut s = self
+                    .store
+                    .try_lock()
+                    .map_err(|_| "RSS store busy during load".to_string())?;
                 *s = data;
                 // Lazy-derive parsed metadata for items missing it
                 for items in s.items.values_mut() {
@@ -127,9 +133,7 @@ impl RssManager {
         let mut s = self.store.lock().await;
         s.feeds.retain(|f| f.id != feed_id);
         s.items.remove(feed_id);
-        // Strip the removed feed id from every rule, then drop any rule that
-        // started with a non-empty feed list and became empty (an empty list
-        // means "all feeds" — rules that were already global must be preserved)
+        // Strip the removed feed id from every rule, then drop any rule that started with a non-empty feed list and became empty (an empty list means "all feeds" — rules that were already global must be preserved)
         s.rules.retain_mut(|r| {
             let was_scoped = !r.feed_ids.is_empty();
             r.feed_ids.retain(|f| f != feed_id);
@@ -210,10 +214,7 @@ impl RssManager {
         self.update_feeds(false).await
     }
 
-    /// Update active feeds; with `only_due`, skip feeds whose own interval
-    /// has not elapsed yet
-    ///
-    /// The background poller uses this so slow feeds do not refetch at the global wake cadence
+    /// Update active feeds; with `only_due`, skip feeds whose own interval has not elapsed yet The background poller uses this so slow feeds do not refetch at the global wake cadence
     async fn update_feeds(&self, only_due: bool) -> Vec<(String, Vec<RssItem>)> {
         let now = now_secs();
         let feeds: Vec<(String, bool, u64, Option<u64>)> = {
@@ -315,7 +316,8 @@ impl RssManager {
             .find(|f| f.id == feed_id)
             .ok_or_else(|| "Feed not found".to_string())?;
         if let Some(interval) = interval {
-            feed.update_interval_secs = interval;
+            // Clamp to a floor so a 0 (or tiny) interval can't make the poller busy-spin or refetch a feed on every wake
+            feed.update_interval_secs = interval.max(MIN_UPDATE_INTERVAL_SECS);
         }
         if let Some(active) = is_active {
             feed.is_active = active;
@@ -352,8 +354,7 @@ impl RssManager {
             .await
     }
 
-    /// Mark multiple items read in a single save. `entries` is a list of
-    /// `(feed_id, item_id)` pairs
+    /// Mark multiple items read in a single save. `entries` is a list of `(feed_id, item_id)` pairs
     pub async fn mark_items_read(&self, entries: Vec<(String, String)>) -> Result<(), String> {
         let mut s = self.store.lock().await;
         for (feed_id, item_id) in &entries {
@@ -438,10 +439,7 @@ impl RssManager {
             .ok_or_else(|| "No downloadable URL found for this item".to_string())
     }
 
-    /// Return every downloadable URL for an item, primary enclosure first
-    /// followed by every inline media URL we scraped from the body. The link
-    /// fallback is included only when there is no enclosure and no media so we
-    /// don't accidentally queue an HTML page alongside real payloads
+    /// Return every downloadable URL for an item, primary enclosure first followed by every inline media URL we scraped from the body. The link fallback is included only when there is no enclosure and no media so we don't accidentally queue an HTML page alongside real payloads
     pub async fn get_item_download_urls(
         &self,
         feed_id: &str,
@@ -539,9 +537,7 @@ impl RssManager {
         self.store.lock().await.rules.clone()
     }
 
-    /// Best matching active+auto rule for the given item (and parsed meta)
-    /// Honors per-rule mode (any-match wins by priority, best-match wins by
-    /// score across all matching rules)\
+    /// Best matching active+auto rule for the given item (and parsed meta) Honors per-rule mode (any-match wins by priority, best-match wins by score across all matching rules)\
     pub async fn best_matching_rule(
         &self,
         item: &RssItem,
@@ -559,10 +555,7 @@ impl RssManager {
             }
             match rule.mode {
                 RuleMode::AnyMatch => {
-                    // Rules are pre-sorted by priority desc. "AnyMatch" wins
-                    // immediately *unless* a higher-priority BestMatch rule
-                    // already produced a strictly better score, in which case
-                    // we keep that one to avoid lower-priority preemption
+                    // Rules are pre-sorted by priority desc. "AnyMatch" wins immediately *unless* a higher-priority BestMatch rule already produced a strictly better score, in which case we keep that one to avoid lower-priority preemption
                     if let Some((_, bs)) = &best {
                         if eval.score < *bs {
                             continue;
@@ -617,18 +610,6 @@ impl RssManager {
             tokio::time::sleep(tokio::time::Duration::from_secs(30)).await;
 
             loop {
-                let min_interval = {
-                    let s = rss.store.lock().await;
-                    s.feeds
-                        .iter()
-                        .filter(|f| f.is_active)
-                        .map(|f| f.update_interval_secs)
-                        .min()
-                        .unwrap_or(DEFAULT_UPDATE_INTERVAL_SECS)
-                };
-
-                tokio::time::sleep(tokio::time::Duration::from_secs(min_interval)).await;
-
                 // The global minimum is only the wake cadence; each feed keeps its own interval
                 let new_items_per_feed = rss.update_feeds(true).await;
 
@@ -651,12 +632,26 @@ impl RssManager {
                     rss.event_sink
                         .emit("rss-new-items", serde_json::json!(total_new));
                 }
+
+                let min_interval = {
+                    let s = rss.store.lock().await;
+                    s.feeds
+                        .iter()
+                        .filter(|f| f.is_active)
+                        .map(|f| f.update_interval_secs)
+                        .min()
+                        .unwrap_or(DEFAULT_UPDATE_INTERVAL_SECS)
+                };
+                // Floor the wake cadence: a feed configured with interval 0 would otherwise turn this into a tight sleep(0) spin loop
+                let min_interval = min_interval.max(MIN_UPDATE_INTERVAL_SECS);
+
+                // Sleep *after* the fetch so the first poll fires promptly once the startup delay elapses, rather than a full interval later
+                tokio::time::sleep(tokio::time::Duration::from_secs(min_interval)).await;
             }
         })
     }
 
-    /// Evaluate rules against an item and trigger an auto-download if any
-    /// match (respecting schedule, cooldown, dedupe and upgrade)
+    /// Evaluate rules against an item and trigger an auto-download if any match (respecting schedule, cooldown, dedupe and upgrade)
     async fn evaluate_and_download(&self, feed_id: &str, item: &RssItem) {
         let parsed = item
             .parsed_meta
@@ -713,10 +708,7 @@ impl RssManager {
             return;
         };
 
-        // Branch by item kind: articles get an HTML body written to disk and
-        // their inline media fanned out, mirroring the manual download path in
-        // the rss_cmds layer. Treating an article like an enclosure would only
-        // queue the page URL and lose the body content
+        // Branch by item kind: articles get an HTML body written to disk and their inline media fanned out, mirroring the manual download path in the rss_cmds layer. Treating an article like an enclosure would only queue the page URL and lose the body content
         let kind = classify_item_kind(item);
         let download_path: Option<String> = if kind == ItemKind::Article {
             let dir = match opts.get("dir").and_then(|v| v.as_str()) {
@@ -778,9 +770,7 @@ impl RssManager {
                     return;
                 }
             };
-            // Fan inline media (images / extra enclosures) out as separate
-            // tasks so feeds whose primary enclosure is a thumbnail still
-            // capture the full payload set
+            // Fan inline media (images / extra enclosures) out as separate tasks so feeds whose primary enclosure is a thumbnail still capture the full payload set
             let mut media_opts = opts.clone();
             media_opts.remove("out");
             for extra in &item.media_urls {
@@ -795,10 +785,7 @@ impl RssManager {
                 }
             }
 
-            // Spawn a monitor task: wait for the primary download to complete,
-            // then record the actual on-disk path and update episode history.
-            // This mirrors the pattern in download_rss_item_tracked so that
-            // get_item_download_path and open-file affordances work correctly
+            // Spawn a monitor task: wait for the primary download to complete, then record the actual on-disk path and update episode history. This mirrors the pattern in download_rss_item_tracked so that get_item_download_path and open-file affordances work correctly
             let mon_store = Arc::clone(&self.store);
             let mon_storage = Arc::clone(&self.storage);
             let mon_feed_id = feed_id.to_string();
@@ -890,8 +877,7 @@ impl RssManager {
                 );
             });
 
-            // Episode history and rule stats are handled by the monitor above.
-            // Return without the synchronous mark_item_downloaded call
+            // Episode history and rule stats are handled by the monitor above. Return without the synchronous mark_item_downloaded call
             return;
         };
 
@@ -934,8 +920,7 @@ fn validate_rule(rule: &RssRule) -> Result<(), String> {
 
 // Helpers
 
-/// Post-download bookkeeping shared by both auto-download paths: flag the
-/// item, bump rule stats and record episode history (with a soft cap)
+/// Post-download bookkeeping shared by both auto-download paths: flag the item, bump rule stats and record episode history (with a soft cap)
 #[allow(clippy::too_many_arguments)]
 fn record_download(
     s: &mut RssStore,
@@ -988,11 +973,7 @@ fn record_download(
     }
 }
 
-/// Shared HTTP client for RSS feed fetches. Building a fresh `Client` on every
-/// call would rebuild TLS state and drop keep-alive between polls, so cache
-/// one for the lifetime of the process. Returns an error rather than panicking
-/// if the underlying TLS/connector setup fails so a transient init failure
-/// becomes a recoverable RSS fetch error
+/// Shared HTTP client for RSS feed fetches. Building a fresh `Client` on every call would rebuild TLS state and drop keep-alive between polls, so cache one for the lifetime of the process. Returns an error rather than panicking if the underlying TLS/connector setup fails so a transient init failure becomes a recoverable RSS fetch error
 fn http_client() -> Result<&'static risuko_http::Client, String> {
     static CLIENT: std::sync::OnceLock<risuko_http::Client> = std::sync::OnceLock::new();
     if let Some(c) = CLIENT.get() {
@@ -1003,8 +984,7 @@ fn http_client() -> Result<&'static risuko_http::Client, String> {
         .user_agent("Risuko/1.0")
         .build()
         .map_err(|e| format!("Failed to build rss http client: {e}"))?;
-    // If another thread won the race, our `client` is dropped and we return
-    // the one already stored
+    // If another thread won the race, our `client` is dropped and we return the one already stored
     let _ = CLIENT.set(client);
     Ok(CLIENT.get().expect("client just initialized"))
 }
@@ -1058,9 +1038,7 @@ fn extract_items(feed_id: &str, entries: &[feed_rs::model::Entry]) -> Vec<RssIte
                 .or_else(|| entry.content.as_ref().and_then(|c| c.body.clone()))
                 .unwrap_or_default();
 
-            // Keep the full body separately: many feeds ship a short
-            // <description> plus a full <content:encoded>, and collapsing to
-            // just the summary loses the article
+            // Keep the full body separately: many feeds ship a short <description> plus a full <content:encoded>, and collapsing to just the summary loses the article
             let content = entry
                 .content
                 .as_ref()
@@ -1075,11 +1053,7 @@ fn extract_items(feed_id: &str, entries: &[feed_rs::model::Entry]) -> Vec<RssIte
             // Extract enclosure: prefer real media payloads over thumbnail images
             let (enc_url, enc_type, enc_len) = extract_enclosure(entry);
 
-            // Scrape inline media references (img/video/audio/source) from the
-            // entry body, plus any extra enclosure-style links beyond the
-            // primary one we picked above. Many "content" feeds (blogs, news,
-            // podcasts with cover art) advertise a thumbnail JPG as the
-            // enclosure while the real article images live in the HTML body
+            // Scrape inline media references (img/video/audio/source) from the entry body, plus any extra enclosure-style links beyond the primary one we picked above. Many "content" feeds (blogs, news, podcasts with cover art) advertise a thumbnail JPG as the enclosure while the real article images live in the HTML body
             let media_urls = extract_media_urls(entry, enc_url.as_deref());
 
             let parsed_meta = if title.is_empty() {
@@ -1115,7 +1089,7 @@ fn extract_enclosure(
 ) -> (Option<String>, Option<String>, Option<u64>) {
     let mut candidates: Vec<(String, Option<String>, Option<u64>)> = Vec::new();
 
-    // media:content (skip explicit thumbnails)
+    // media:content candidates. Thumbnails aren't filtered here; they're deprioritized later by `media_score` so real payloads win
     for media in &entry.media {
         for content in &media.content {
             if let Some(ref url) = content.url {
@@ -1135,9 +1109,7 @@ fn extract_enclosure(
         }
     }
 
-    // Pick the highest-scoring candidate (first wins on ties). Score
-    // deprioritizes images so a cover-art / thumbnail JPG never wins over an
-    // actual torrent / video / audio payload
+    // Pick the highest-scoring candidate (first wins on ties). Score deprioritizes images so a cover-art / thumbnail JPG never wins over an actual torrent / video / audio payload
     match candidates
         .into_iter()
         .min_by_key(|(url, mime, _)| std::cmp::Reverse(media_score(url, mime.as_deref())))
@@ -1147,9 +1119,7 @@ fn extract_enclosure(
     }
 }
 
-/// Score a candidate enclosure so we prefer real media over thumbnails. Higher
-/// is better. Magnet links and torrents win, then video/audio, then generic
-/// binaries; HTML and images sink to the bottom
+/// Score a candidate enclosure so we prefer real media over thumbnails. Higher is better. Magnet links and torrents win, then video/audio, then generic binaries; HTML and images sink to the bottom
 fn media_score(url: &str, mime: Option<&str>) -> i32 {
     let lower_url = url.to_ascii_lowercase();
     if lower_url.starts_with("magnet:") {
@@ -1202,13 +1172,7 @@ fn has_media_ext(url: &str, exts: &[&str]) -> bool {
     exts.iter().any(|e| path.ends_with(e))
 }
 
-/// Pull every inline media URL out of an entry. This combines:
-///   * extra enclosure-style links beyond the primary picked enclosure
-///   * `<img>`, `<video>`, `<audio>`, `<source>` elements in the HTML body of
-///     `entry.content` and `entry.summary`
-///   * `<a href="…">` to known media file extensions
-///
-/// Output is deduplicated and excludes the primary enclosure URL
+/// Pull every inline media URL out of an entry. This combines: * extra enclosure-style links beyond the primary picked enclosure * `<img>`, `<video>`, `<audio>`, `<source>` elements in the HTML body of `entry.content` and `entry.summary` * `<a href="…">` to known media file extensions Output is deduplicated and excludes the primary enclosure URL
 fn extract_media_urls(entry: &feed_rs::model::Entry, primary: Option<&str>) -> Vec<String> {
     use std::collections::BTreeSet;
 
@@ -1222,8 +1186,7 @@ fn extract_media_urls(entry: &feed_rs::model::Entry, primary: Option<&str>) -> V
         if Some(trimmed) == primary {
             return;
         }
-        // Only push absolute http(s) / magnet URLs — relative paths can't be
-        // resolved without a base href and would break the downloader
+        // Only push absolute http(s) / magnet URLs — relative paths can't be resolved without a base href and would break the downloader
         let lower = trimmed.to_ascii_lowercase();
         if !(lower.starts_with("http://")
             || lower.starts_with("https://")
@@ -1269,9 +1232,7 @@ fn extract_media_urls(entry: &feed_rs::model::Entry, primary: Option<&str>) -> V
     out
 }
 
-/// Best-effort regex scrape of media URLs from an HTML fragment. We avoid
-/// pulling in a full HTML parser for this — RSS bodies are typically small
-/// and a couple of cached regexes give us img/video/audio/source/a-href in one pass
+/// Best-effort regex scrape of media URLs from an HTML fragment. We avoid pulling in a full HTML parser for this — RSS bodies are typically small and a couple of cached regexes give us img/video/audio/source/a-href in one pass
 fn scrape_media_from_html(html: &str) -> Vec<String> {
     use std::sync::OnceLock;
     static SRC_RE: OnceLock<regex::Regex> = OnceLock::new();
@@ -1375,15 +1336,12 @@ fn decode_html_entities(s: &str) -> String {
 /// What kind of payload an RSS item primarily represents
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum ItemKind {
-    /// Real binary payload (torrent / video / audio / archive). Download the
-    /// enclosure as-is
+    /// Real binary payload (torrent / video / audio / archive). Download the enclosure as-is
     Media,
     Article,
 }
 
-/// Score boundary at which a candidate enclosure is considered a real media
-/// payload rather than a thumbnail / page reference. Mirrors `media_score`
-/// values for application/video/audio/octet-stream
+/// Score boundary at which a candidate enclosure is considered a real media payload rather than a thumbnail / page reference. Mirrors `media_score` values for application/video/audio/octet-stream
 const MEDIA_PAYLOAD_THRESHOLD: i32 = 400;
 
 /// Classify an item as media or article based on its enclosure metadata
@@ -1401,10 +1359,7 @@ pub fn classify_item_kind(item: &RssItem) -> ItemKind {
     }
 }
 
-/// Build a self-contained HTML document for an article item using its stored
-/// description / content body. Inline media references stay as absolute URLs
-/// so the page renders even before sibling downloads finish; downloaded copies
-/// live next to this file for offline backup
+/// Build a self-contained HTML document for an article item using its stored description / content body. Inline media references stay as absolute URLs so the page renders even before sibling downloads finish; downloaded copies live next to this file for offline backup
 pub fn build_article_html(item: &RssItem) -> String {
     let title = if item.title.is_empty() {
         "Untitled".to_string()
@@ -1421,9 +1376,7 @@ pub fn build_article_html(item: &RssItem) -> String {
     } else {
         sanitize_article_html(body_src)
     };
-    // Only emit a <base> when the source link is an http(s) URL we can fully
-    // escape. Non-http schemes (javascript:, data:, file:) would let the feed
-    // smuggle script execution into the rendered page
+    // Only emit a <base> when the source link is an http(s) URL we can fully escape. Non-http schemes (javascript:, data:, file:) would let the feed smuggle script execution into the rendered page
     let base_tag = if is_safe_http_url(&item.link) {
         format!(r#"<base href="{}" />"#, html_escape(&item.link))
     } else {
@@ -1437,8 +1390,7 @@ pub fn build_article_html(item: &RssItem) -> String {
     } else {
         String::new()
     };
-    // Strict CSP: no scripts (inline or external), no plugins, no framing.
-    // Images / media / styles still load over http(s) so the article renders
+    // Strict CSP: no scripts (inline or external), no plugins, no framing. Images / media / styles still load over http(s) so the article renders
     let csp = "default-src 'none'; \
                img-src http: https: data:; \
                media-src http: https:; \
@@ -1479,8 +1431,7 @@ pub fn build_article_html(item: &RssItem) -> String {
     )
 }
 
-/// Sanitize an item title into a filesystem-safe filename stem, then append a
-/// short id suffix for uniqueness and an `.html` extension
+/// Sanitize an item title into a filesystem-safe filename stem, then append a short id suffix for uniqueness and an `.html` extension
 pub fn article_filename(item: &RssItem) -> String {
     const MAX_STEM: usize = 80;
     let raw = if item.title.is_empty() {
@@ -1519,10 +1470,7 @@ fn is_safe_http_url(s: &str) -> bool {
     lower.starts_with("http://") || lower.starts_with("https://")
 }
 
-/// Strip script-bearing tags and inline event-handler / `javascript:` URL
-/// attributes from feed-supplied HTML before embedding it in a generated
-/// article page. This is best-effort defence-in-depth; the strict CSP emitted
-/// in `build_article_html` is the primary control against script execution
+/// Strip script-bearing tags and inline event-handler / `javascript:` URL attributes from feed-supplied HTML before embedding it in a generated article page. This is best-effort defence-in-depth; the strict CSP emitted in `build_article_html` is the primary control against script execution
 fn sanitize_article_html(html: &str) -> String {
     use std::sync::OnceLock;
     static BLOCK_RES: OnceLock<Vec<regex::Regex>> = OnceLock::new();
@@ -1530,9 +1478,7 @@ fn sanitize_article_html(html: &str) -> String {
     static ON_ATTR_RE: OnceLock<regex::Regex> = OnceLock::new();
     static JS_HREF_RE: OnceLock<regex::Regex> = OnceLock::new();
 
-    // Drop script/style/iframe/object/embed/frame elements entirely (incl.
-    // body). The `regex` crate has no backreferences, so emit one regex per
-    // tag instead of a single `</\1>` pattern
+    // Drop script/style/iframe/object/embed/frame elements entirely (incl. body). The `regex` crate has no backreferences, so emit one regex per tag instead of a single `</\1>` pattern
     let block_res = BLOCK_RES.get_or_init(|| {
         const TAGS: &[&str] = &[
             "script", "style", "iframe", "object", "embed", "frame", "frameset", "noscript",
@@ -1557,8 +1503,7 @@ fn sanitize_article_html(html: &str) -> String {
         regex::Regex::new(r#"(?i)\son[a-z]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)"#)
             .expect("on-attr regex")
     });
-    // Neutralise javascript:/vbscript:/data: URLs in href/src/xlink:href
-    // attributes. Emit two patterns to avoid a backreference between quotes
+    // Neutralise javascript:/vbscript:/data: URLs in href/src/xlink:href attributes. Emit two patterns to avoid a backreference between quotes. Known limitation: this runs on raw HTML, so an entity-encoded scheme (e.g. href="&#106;avascript:...") is decoded by the browser at render time and slips past this literal check. The strict CSP emitted in `build_article_html` (script-src 'none', default-src 'none') is the primary control and blocks execution regardless; this regex is only defence-in-depth against unencoded schemes
     let js_href_re = JS_HREF_RE.get_or_init(|| {
         regex::Regex::new(
             r#"(?i)\b(?:href|src|xlink:href)\s*=\s*(?:"\s*(?:javascript|vbscript|data)\s*:[^"]*"|'\s*(?:javascript|vbscript|data)\s*:[^']*'|(?:javascript|vbscript|data):[^\s>]*)"#,

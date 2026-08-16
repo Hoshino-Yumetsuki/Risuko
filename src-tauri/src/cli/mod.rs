@@ -1,8 +1,7 @@
 pub mod commands;
 pub mod headless;
 
-// Shared with the standalone risuko-cli binary; the app crate reuses its
-// progress rendering and JSON-RPC client instead of keeping drifted copies
+// Shared with the standalone risuko-cli binary; the app crate reuses its progress rendering and JSON-RPC client instead of keeping drifted copies
 pub use risuko_cli::{progress, rpc_client};
 
 use clap::{Parser, Subcommand};
@@ -39,8 +38,7 @@ pub enum Command {
     /// Start headless engine (RPC server only, no GUI)
     Serve(ServeArgs),
 
-    /// Internal: extract browser cookies as JSON. Used by the Windows elevated
-    /// helper to decrypt app-bound (Chrome v20) cookies. Hidden from `--help`
+    /// Internal: extract browser cookies as JSON. Used by the Windows elevated helper to decrypt app-bound (Chrome v20) cookies. Hidden from `--help`
     #[command(hide = true)]
     ExtractCookies(ExtractCookiesArgs),
 }
@@ -95,8 +93,7 @@ pub struct DownloadArgs {
     #[arg(long, alias = "youtube-format")]
     pub media_format: Option<String>,
 
-    /// Force the URL through the yt-dlp media engine even if its host is not
-    /// in the built-in allowlist
+    /// Force the URL through the yt-dlp media engine even if its host is not in the built-in allowlist
     #[arg(long = "ytdlp")]
     pub force_ytdlp: bool,
 
@@ -191,8 +188,7 @@ pub struct ServeArgs {
 
 #[derive(clap::Args)]
 pub struct ExtractCookiesArgs {
-    /// Browser id (chrome, chromium, brave, edge, vivaldi, opera, arc,
-    /// firefox, librewolf, zen, ...)
+    /// Browser id (chrome, chromium, brave, edge, vivaldi, opera, arc, firefox, librewolf, zen, ...)
     #[arg(long)]
     pub browser: String,
 
@@ -200,8 +196,7 @@ pub struct ExtractCookiesArgs {
     #[arg(long)]
     pub url: String,
 
-    /// Write the resulting HostCookies JSON to this file instead of stdout.
-    /// The GUI passes a temp path here when relaunching elevated
+    /// Write the resulting HostCookies JSON to this file instead of stdout. The GUI passes a temp path here when relaunching elevated
     #[arg(long)]
     pub out: Option<String>,
 }

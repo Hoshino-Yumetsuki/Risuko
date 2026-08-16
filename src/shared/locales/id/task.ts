@@ -7,6 +7,7 @@ export default {
 	stopped: "Terhenti",
 	"new-task": "Tugas Baru",
 	"new-bt-task": "Tugas BT baru",
+	"unknown-task-type": "Jenis tugas tidak didukung",
 	"open-file": "Buka Berkas Torrent...",
 	"uri-task": "URL",
 	"torrent-task": "Torrent",

@@ -41,10 +41,6 @@ interface TaskRoutingRule {
 	enabled: boolean;
 }
 
-/**
- * App configuration — merged from system.json and user.json.
- * Keys here are the camelCase form; the backend stores them in kebab-case
- */
 export interface AppConfig {
 	locale: string;
 	theme?: string;
@@ -119,18 +115,17 @@ export interface AppConfig {
 	completionScriptArgs?: string;
 	completionScriptTimeoutMs?: number;
 	shutdownWhenComplete?: boolean;
-	// Clipboard Watcher — offer to download magnet/file links copied anywhere
 	clipboardWatch?: boolean;
 	clipboardWatchExtensions?: string[];
 	clipboardWatchNoticeSeen?: boolean;
-	// First-launch legal acceptance gate
 	legalAccepted?: boolean;
-	// DNS over HTTPS
 	dohEnable?: boolean;
 	dohUrl?: string;
 	dohBootstrap?: string;
 	dohFallback?: boolean;
 	dohProvider?: string;
+	ed2KEnableKad?: boolean | string;
+	ed2KKadPort?: number | string;
 	cloudSyncEnabled?: boolean;
 	cloudSyncAuto?: boolean;
 	cloudSyncCategories?: string[];

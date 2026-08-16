@@ -22,7 +22,13 @@ use tauri::{AppHandle, State};
 #[cfg(not(target_os = "android"))]
 use tauri_plugin_autostart::ManagerExt;
 
-use risuko_engine::engine::{self, media, options::EngineOptions, torrent::BtHealthSnapshot};
+use risuko_engine::engine::{
+    self,
+    ed2k::kad::{KadHealthSnapshot, KadState},
+    media,
+    options::EngineOptions,
+    torrent::BtHealthSnapshot,
+};
 
 use crate::commands::event_cmds::sleep_inhibit_active;
 use crate::state::AppState;
@@ -182,12 +188,13 @@ pub async fn run_health_checks(
     let snapshot = engine::startup_snapshot();
 
     // Live BT snapshot (None when torrent engine isn't initialized)
-    let (bt_snapshot, tracker_urls) = if let Some(mgr) = engine::get_manager().await {
+    let (bt_snapshot, tracker_urls, kad_snapshot) = if let Some(mgr) = engine::get_manager().await {
         let snap = mgr.bt_health_snapshot().await;
         let urls = mgr.list_active_tracker_urls().await;
-        (snap, urls)
+        let kad = mgr.kad_health_snapshot().await;
+        (snap, urls, Some(kad))
     } else {
-        (None, Vec::new())
+        (None, Vec::new(), None)
     };
 
     let want = |id: &str| {
@@ -208,7 +215,7 @@ pub async fn run_health_checks(
     if want("network") {
         cats.push(HealthCategory::from_checks(
             "network",
-            check_network(&options, slow).await,
+            check_network(&options, slow, kad_snapshot.as_ref()).await,
         ));
     }
     if want("bittorrent") {
@@ -320,7 +327,11 @@ fn parse_boolish(v: Option<&Value>, default: bool) -> bool {
 
 // Network
 
-async fn check_network(options: &EngineOptions, slow: bool) -> Vec<HealthCheck> {
+async fn check_network(
+    options: &EngineOptions,
+    slow: bool,
+    kad: Option<&KadHealthSnapshot>,
+) -> Vec<HealthCheck> {
     let mut out = Vec::new();
 
     let listen_port = options.get_u64("listen-port").unwrap_or(0);
@@ -357,6 +368,8 @@ async fn check_network(options: &EngineOptions, slow: bool) -> Vec<HealthCheck> 
         out.push(HealthCheck::skipped("ipv6", "IPv6 listener disabled"));
     }
 
+    out.push(check_ed2k_kad(options, kad));
+
     let proxy = options
         .get_str("all-proxy")
         .unwrap_or("")
@@ -377,6 +390,157 @@ async fn check_network(options: &EngineOptions, slow: bool) -> Vec<HealthCheck> 
     }
 
     out
+}
+
+fn check_ed2k_kad(options: &EngineOptions, kad: Option<&KadHealthSnapshot>) -> HealthCheck {
+    let configured_port = match options.ed2k_kad_port_checked() {
+        Ok(port) => port,
+        Err(error) => {
+            return HealthCheck::fail(
+                "ed2k-kad",
+                format!("ED2K Kad configuration error: {error}"),
+                Some(HealthFix::open_pref("advanced")),
+            );
+        }
+    };
+    let Some(snapshot) = kad else {
+        if !options.ed2k_enable_kad() {
+            return HealthCheck::skipped("ed2k-kad", "ED2K Kad source discovery is disabled");
+        }
+        return HealthCheck::warn(
+            "ed2k-kad",
+            format!("ED2K Kad is enabled on UDP {configured_port}, but the engine is not running"),
+            Some(HealthFix::restart_engine()),
+        );
+    };
+    let details = serde_json::json!({
+        "enabled": snapshot.enabled,
+        "bound": snapshot.bound,
+        "state": snapshot.state,
+        "port": snapshot.udp_port,
+        "routingContacts": snapshot.routing_contacts,
+        "cachedContacts": snapshot.cached_contacts,
+        "lastBootstrapAtMs": snapshot.last_bootstrap_at_ms,
+        "lastLookupAtMs": snapshot.last_lookup_at_ms,
+        "lastLookupSuccess": snapshot.last_lookup_success,
+        "lastError": snapshot.last_error,
+    });
+
+    if snapshot.bound {
+        if !options.ed2k_enable_kad() {
+            return HealthCheck::warn(
+                "ed2k-kad",
+                format!(
+                    "ED2K Kad remains bound on UDP {} until the engine is restarted",
+                    snapshot.udp_port
+                ),
+                Some(HealthFix::restart_engine()),
+            )
+            .with_details(details);
+        }
+        if configured_port != snapshot.udp_port {
+            return HealthCheck::warn(
+                "ed2k-kad",
+                format!(
+                    "ED2K Kad is running on UDP {}; configured UDP {} applies after restart",
+                    snapshot.udp_port, configured_port
+                ),
+                Some(HealthFix::restart_engine()),
+            )
+            .with_details(details);
+        }
+    }
+
+    match snapshot.state {
+        KadState::Disabled => {
+            if options.ed2k_enable_kad() {
+                HealthCheck::warn(
+                    "ed2k-kad",
+                    format!(
+                        "ED2K Kad is enabled on UDP {configured_port}, but the service is not running"
+                    ),
+                    Some(HealthFix::restart_engine()),
+                )
+                .with_details(details)
+            } else {
+                HealthCheck::skipped("ed2k-kad", "ED2K Kad source discovery is disabled")
+                    .with_details(details)
+            }
+        }
+        KadState::Ready if snapshot.bound && snapshot.routing_contacts > 0 => HealthCheck::ok(
+            "ed2k-kad",
+            format!(
+                "ED2K Kad ready on UDP {} ({} routing contacts)",
+                snapshot.udp_port, snapshot.routing_contacts
+            ),
+        )
+        .with_details(details),
+        KadState::Bootstrapping => HealthCheck::warn(
+            "ed2k-kad",
+            format!(
+                "ED2K Kad is bootstrapping on UDP {} ({} routing contacts)",
+                snapshot.udp_port, snapshot.routing_contacts
+            ),
+            None,
+        )
+        .with_details(details),
+        KadState::Searching => HealthCheck::warn(
+            "ed2k-kad",
+            format!(
+                "ED2K Kad is searching on UDP {} ({} routing contacts)",
+                snapshot.udp_port, snapshot.routing_contacts
+            ),
+            None,
+        )
+        .with_details(details),
+        KadState::Timeout => HealthCheck::warn(
+            "ed2k-kad",
+            "ED2K Kad lookup timed out; ED2K server discovery remains available",
+            Some(HealthFix::open_pref("advanced")),
+        )
+        .with_details(details),
+        KadState::Error if snapshot.bound => HealthCheck::warn(
+            "ed2k-kad",
+            format!(
+                "ED2K Kad lookup failed on UDP {}: {}; ED2K server discovery remains available",
+                snapshot.udp_port,
+                snapshot.last_error.as_deref().unwrap_or("unknown error")
+            ),
+            Some(HealthFix::open_pref("advanced")),
+        )
+        .with_details(details),
+        KadState::Error => HealthCheck::fail(
+            "ed2k-kad",
+            format!(
+                "ED2K Kad could not bind UDP {}: {}",
+                snapshot.udp_port,
+                snapshot.last_error.as_deref().unwrap_or("unknown error")
+            ),
+            Some(HealthFix::open_pref("advanced")),
+        )
+        .with_details(details),
+        KadState::Ready if snapshot.bound => HealthCheck::warn(
+            "ed2k-kad",
+            format!(
+                "ED2K Kad is bound on UDP {} but has not learned any routing contacts yet",
+                snapshot.udp_port
+            ),
+            None,
+        )
+        .with_details(details),
+        KadState::Ready => HealthCheck::warn(
+            "ed2k-kad",
+            format!("ED2K Kad is not bound on UDP {}", snapshot.udp_port),
+            Some(HealthFix::open_pref("advanced")),
+        )
+        .with_details(details),
+        KadState::Stopped => HealthCheck::warn(
+            "ed2k-kad",
+            "ED2K Kad service is stopped",
+            Some(HealthFix::restart_engine()),
+        )
+        .with_details(details),
+    }
 }
 
 async fn probe_proxy_reachability(proxy_url: &str) -> HealthCheck {
@@ -444,9 +608,7 @@ async fn check_bittorrent(
 ) -> Vec<HealthCheck> {
     let mut out = Vec::new();
 
-    // DHT needs ~30s after engine start to bootstrap. Treat the bootstrap
-    // window as "probing" rather than a warning. (UPnP uses its own attempt
-    // counter rather than a fixed window)
+    // DHT needs ~30s after engine start to bootstrap. Treat the bootstrap window as "probing" rather than a warning. (UPnP uses its own attempt counter rather than a fixed window)
     const BOOTSTRAP_WINDOW_SECS: u64 = 60;
     let uptime_secs = engine::engine_uptime().map(|d| d.as_secs()).unwrap_or(0);
     let bootstrapping = uptime_secs < BOOTSTRAP_WINDOW_SECS;
@@ -569,8 +731,7 @@ async fn check_bittorrent(
         })),
     );
 
-    // Tracker reachability, only when there are active torrents and the
-    // caller opted in to slow probes (each probe is 3s timeout-bound)
+    // Tracker reachability, only when there are active torrents and the caller opted in to slow probes (each probe is 3s timeout-bound)
     if tracker_urls.is_empty() {
         out.push(HealthCheck::skipped(
             "trackers",
@@ -598,8 +759,7 @@ async fn probe_trackers(urls: &[String]) -> HealthCheck {
     use risuko_http::{ClientBuilder, Method};
     use tokio::task::JoinSet;
 
-    // Cap concurrent probes to avoid hammering the network in trackers-heavy
-    // setups. 8 in-flight is a sensible default
+    // Cap concurrent probes to avoid hammering the network in trackers-heavy setups. 8 in-flight is a sensible default
     const MAX_CONCURRENCY: usize = 8;
     const PER_TRACKER_TIMEOUT: Duration = Duration::from_secs(3);
 
@@ -1233,7 +1393,9 @@ fn parse_log_line(raw: &str) -> (Option<String>, String, String) {
     if let Some(token) = level_token {
         if let Some(parsed) = normalize_level(token) {
             level = parsed;
-            level_end = raw.find(token).map(|start| start + token.len());
+            // Compute the offset from the token's actual position in `raw` (str::split_whitespace yields sub-slices of `raw`), rather than re-searching, which could match an identical earlier substring
+            let start = token.as_ptr() as usize - raw.as_ptr() as usize;
+            level_end = Some(start + token.len());
         }
     }
     let message = level_end
@@ -1391,6 +1553,37 @@ fn tail_count_levels(path: &Path) -> std::io::Result<(usize, usize)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::{json, Map};
+
+    fn kad_options(enabled: bool, port: Value) -> EngineOptions {
+        let mut system = Map::new();
+        system.insert("ed2k-enable-kad".into(), Value::Bool(enabled));
+        system.insert("ed2k-kad-port".into(), port);
+        EngineOptions::from_config(&system, &Map::new())
+    }
+
+    fn kad_snapshot(state: KadState, routing_contacts: usize) -> KadHealthSnapshot {
+        KadHealthSnapshot {
+            enabled: !matches!(state, KadState::Disabled),
+            bound: !matches!(
+                state,
+                KadState::Disabled | KadState::Error | KadState::Stopped
+            ),
+            state,
+            udp_port: 4672,
+            node_id: "00112233445566778899aabbccddeeff".into(),
+            routing_contacts,
+            cached_contacts: routing_contacts.saturating_add(2),
+            last_bootstrap_at_ms: Some(1_000),
+            last_lookup_at_ms: Some(2_000),
+            last_lookup_success: Some(matches!(state, KadState::Ready)),
+            last_error: if matches!(state, KadState::Error) {
+                Some("bind failed".into())
+            } else {
+                None
+            },
+        }
+    }
 
     #[test]
     fn worst_status_picks_highest_rank() {
@@ -1418,6 +1611,90 @@ mod tests {
             ],
         );
         assert_eq!(cat.status, HealthStatus::Warn);
+    }
+
+    #[test]
+    fn kad_health_classifies_disabled_invalid_and_runtime_states() {
+        let disabled = check_ed2k_kad(&kad_options(false, json!(4672)), None);
+        assert_eq!(disabled.status, HealthStatus::Skipped);
+
+        let disabled_invalid = check_ed2k_kad(&kad_options(false, json!(0)), None);
+        assert_eq!(disabled_invalid.status, HealthStatus::Fail);
+
+        let invalid = check_ed2k_kad(&kad_options(true, json!(0)), None);
+        assert_eq!(invalid.status, HealthStatus::Fail);
+        assert!(invalid.message.contains("configuration error"));
+
+        let not_running = check_ed2k_kad(&kad_options(true, json!(4672)), None);
+        assert_eq!(not_running.status, HealthStatus::Warn);
+        assert!(not_running.fix.is_some());
+
+        let cases = [
+            (KadState::Disabled, 0, HealthStatus::Warn),
+            (KadState::Bootstrapping, 0, HealthStatus::Warn),
+            (KadState::Searching, 2, HealthStatus::Warn),
+            (KadState::Ready, 0, HealthStatus::Warn),
+            (KadState::Ready, 4, HealthStatus::Ok),
+            (KadState::Timeout, 1, HealthStatus::Warn),
+            (KadState::Error, 0, HealthStatus::Fail),
+            (KadState::Stopped, 0, HealthStatus::Warn),
+        ];
+        for (state, contacts, expected) in cases {
+            let check = check_ed2k_kad(
+                &kad_options(true, json!(4672)),
+                Some(&kad_snapshot(state, contacts)),
+            );
+            assert_eq!(
+                check.status, expected,
+                "state={state:?}, contacts={contacts}"
+            );
+            assert!(
+                check.details.is_some(),
+                "state={state:?} should expose details"
+            );
+        }
+
+        let mut lookup_error = kad_snapshot(KadState::Error, 3);
+        lookup_error.bound = true;
+        let lookup_check = check_ed2k_kad(&kad_options(true, json!(4672)), Some(&lookup_error));
+        assert_eq!(lookup_check.status, HealthStatus::Warn);
+        assert!(lookup_check.message.contains("lookup failed"));
+
+        let searching = kad_snapshot(KadState::Searching, 2);
+        let searching_check = check_ed2k_kad(&kad_options(true, json!(4672)), Some(&searching));
+        assert!(searching_check.message.contains("searching"));
+        assert!(!searching_check.message.contains("bootstrapping"));
+
+        let ready_without_contacts = kad_snapshot(KadState::Ready, 0);
+        let ready_check = check_ed2k_kad(
+            &kad_options(true, json!(4672)),
+            Some(&ready_without_contacts),
+        );
+        assert!(ready_check.message.contains("bound on UDP"));
+        assert!(ready_check.message.contains("routing contacts"));
+        assert!(!ready_check.message.contains("not bound"));
+
+        let running = kad_snapshot(KadState::Ready, 3);
+        let drift_check = check_ed2k_kad(&kad_options(false, json!(4672)), Some(&running));
+        assert_eq!(drift_check.status, HealthStatus::Warn);
+        assert!(drift_check.message.contains("remains bound"));
+    }
+
+    #[test]
+    fn kad_health_details_include_runtime_counters() {
+        let check = check_ed2k_kad(
+            &kad_options(true, json!(4672)),
+            Some(&kad_snapshot(KadState::Ready, 5)),
+        );
+        let details = check.details.expect("Kad details");
+        assert_eq!(details.get("enabled"), Some(&json!(true)));
+        assert_eq!(details.get("bound"), Some(&json!(true)));
+        assert_eq!(details.get("port"), Some(&json!(4672)));
+        assert_eq!(details.get("routingContacts"), Some(&json!(5)));
+        assert_eq!(details.get("cachedContacts"), Some(&json!(7)));
+        assert_eq!(details.get("lastBootstrapAtMs"), Some(&json!(1000)));
+        assert_eq!(details.get("lastLookupAtMs"), Some(&json!(2000)));
+        assert_eq!(details.get("lastLookupSuccess"), Some(&json!(true)));
     }
 
     #[test]
@@ -1505,7 +1782,7 @@ mod tests {
         let result = parse_log_bytes(
             "risuko.2026-08-09.log".to_string(),
             bytes,
-            (MAX_LOG_READ_BYTES + 64) as u64,
+            MAX_LOG_READ_BYTES + 64,
             false,
             false,
             None,

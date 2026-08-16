@@ -102,7 +102,6 @@ export default class Api {
 			logger.info("[Risuko] save system config: ", system);
 			config.system = system;
 
-			// Startup-only keys cannot be applied to active tasks via changeOption
 			const runtimeSystemEntries = Object.entries(system).filter(
 				([key]) => !startupOnlyKeys.includes(key),
 			);
@@ -592,8 +591,6 @@ export default class Api {
 		return this.multicall("risuko.forcePause", params);
 	}
 
-	// -- RSS --
-
 	addRssFeed(url: string) {
 		return invoke("add_rss_feed", { url });
 	}
@@ -670,8 +667,6 @@ export default class Api {
 		return invoke("mark_rss_items_read", { entries });
 	}
 
-	// -- Cloud upload sinks --
-
 	listUploadSinks() {
 		return invoke<UploadSinkRecord[]>("list_upload_sinks");
 	}
@@ -682,7 +677,6 @@ export default class Api {
 			createdAt?: number;
 		},
 	) {
-		// Backend fills id/createdAt; pass placeholder values to keep shape
 		const payload: UploadSinkRecord = {
 			...record,
 			id: record.id ?? "",
@@ -740,8 +734,6 @@ export default class Api {
 		return invoke("clear_upload_history");
 	}
 
-	// -- Credential vault (OS keychain) --
-
 	vaultStatus() {
 		return invoke<{ enabled: boolean; backend: string }>("vault_status");
 	}
@@ -759,8 +751,6 @@ export default class Api {
 	vaultRemoveCredential(id: string) {
 		return invoke("vault_remove_credential", { id });
 	}
-
-	// -- Browser cookie integration --
 
 	listBrowsers() {
 		return invoke<BrowserInfo[]>("list_browsers_cmd");

@@ -50,6 +50,30 @@
           ><task-status :theme="currentTheme" :status="taskStatus"
         /></span>
       </div>
+      <div v-if="task.ed2kKad" class="general-card-row">
+        <span class="general-card-label">{{ $t('task.ed2k-kad-status') }}</span>
+        <span class="general-card-value">
+          {{ ed2kKadStatusLabel }}
+          <template v-if="Number.isFinite(Number(task.ed2kKad.discoveredSources))">
+            <span class="ml-2 text-muted-foreground">
+              {{
+                $t('task.ed2k-kad-sources', {
+                  count: Number(task.ed2kKad.discoveredSources),
+                })
+              }}
+            </span>
+          </template>
+          <template v-if="Number.isFinite(Number(task.ed2kKad.queriedNodes))">
+            <span class="ml-2 text-muted-foreground">
+              {{
+                $t('task.ed2k-kad-nodes', {
+                  count: Number(task.ed2kKad.queriedNodes),
+                })
+              }}
+            </span>
+          </template>
+        </span>
+      </div>
       <div class="general-card-row" v-if="isScheduled">
         <span class="general-card-label">{{ $t('task.schedule-start-at') }}</span>
         <span class="general-card-value">{{ scheduledStartText }}</span>
@@ -205,6 +229,15 @@ export default {
 		},
 		isBT() {
 			return checkTaskIsBT(this.task);
+		},
+		ed2kKadStatusLabel() {
+			const state = this.task?.ed2kKad?.state;
+			if (!state) {
+				return "";
+			}
+			const key = `task.ed2k-kad-state-${state}`;
+			const label = this.$t(key);
+			return label === key ? state : label;
 		},
 		usenetRepairFailureMessage() {
 			const failure = this.task?.usenetRepairFailure;

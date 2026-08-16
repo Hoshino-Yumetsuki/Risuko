@@ -8,6 +8,7 @@ use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 
 use super::cookie_store::CookieStore;
+use super::ed2k::kad::{KadConfig, KadHealthSnapshot, KadLookupStatus, KadService, KadState};
 use super::error_code::classify_error;
 use super::events::{EngineEvent, EventBroadcaster};
 use super::http;
@@ -17,8 +18,8 @@ use super::routing::{resolve_routing, TaskRoutingRule};
 use super::session::SessionManager;
 use super::speed_limiter::{parse_speed_limit, SpeedLimiter};
 use super::task::{
-    generate_gid, ChunkProgress, DownloadFile, DownloadTask, FileUri, PeerInfo, TaskKind,
-    TaskStatus, UsenetRepairFailure, UsenetTaskData, UsenetTaskFile, UsenetTaskOptions,
+    generate_gid, ChunkProgress, DownloadFile, DownloadTask, Ed2kKadTaskStatus, FileUri, PeerInfo,
+    TaskKind, TaskStatus, UsenetRepairFailure, UsenetTaskData, UsenetTaskFile, UsenetTaskOptions,
     UsenetTaskSegment,
 };
 use super::torrent::{self, TorrentEngine};
@@ -36,6 +37,24 @@ fn next_worker_epoch() -> u64 {
     WORKER_EPOCH.fetch_add(1, Ordering::Relaxed)
 }
 
+fn ed2k_kad_task_status(status: &KadLookupStatus) -> Ed2kKadTaskStatus {
+    let state = match status.state {
+        KadState::Disabled => "disabled",
+        KadState::Bootstrapping => "bootstrapping",
+        KadState::Searching => "searching",
+        KadState::Ready => "complete",
+        KadState::Timeout => "timeout",
+        KadState::Error => "error",
+        KadState::Stopped => "disabled",
+    };
+    Ed2kKadTaskStatus {
+        state: state.to_string(),
+        queried_nodes: status.queried_nodes.min(u32::MAX as usize) as u32,
+        discovered_sources: status.discovered_sources.min(u32::MAX as usize) as u32,
+        error: status.error.clone(),
+    }
+}
+
 struct ActiveDownload {
     epoch: u64,
     cancel_token: CancellationToken,
@@ -46,10 +65,10 @@ struct ActiveDownload {
     chunk_completed: Vec<Arc<AtomicU64>>,
     adopted_filename: Arc<parking_lot::Mutex<Option<String>>>,
     metalink_files: Vec<(usize, Counters)>,
+    kad_status: Arc<parking_lot::Mutex<Option<KadLookupStatus>>>,
 }
 
-/// Shared per-worker atomics plus cancellation hooks, cloned into both the
-/// ActiveDownload registry entry and the protocol worker
+/// Shared per-worker atomics plus cancellation hooks, cloned into both the ActiveDownload registry entry and the protocol worker
 #[derive(Clone)]
 struct Counters {
     cancel_token: CancellationToken,
@@ -86,11 +105,15 @@ impl Counters {
             chunk_completed,
             adopted_filename,
             metalink_files: Vec::new(),
+            kad_status: Arc::new(parking_lot::Mutex::new(None)),
         }
     }
 }
 
 fn chunk_progress(chunks: &[Arc<AtomicU64>], total: u64) -> Vec<ChunkProgress> {
+    if chunks.is_empty() {
+        return Vec::new();
+    }
     let split_count = chunks.len() as u64;
     let chunk_size = total / split_count;
     chunks
@@ -125,8 +148,17 @@ async fn finish_task(
     on_ok: impl FnOnce(&mut DownloadTask, &Path) -> u64,
     on_err: impl FnOnce(&mut DownloadTask, &str) -> super::error_code::ErrorCode,
 ) {
+    // Progress ticks normally copy this while the worker is active; capture it here too because a fast completion can remove the active entry before the next tick observes the lookup's terminal status
+    let (is_current, final_kad_status) = {
+        let active_guard = active.read().await;
+        match active_guard.get(gid) {
+            Some(active_download) if active_download.epoch == worker_epoch => {
+                (true, active_download.kad_status.lock().clone())
+            }
+            _ => (false, None),
+        }
+    };
     let mut tasks_guard = tasks.write().await;
-    let is_current = active.read().await.get(gid).map(|ad| ad.epoch) == Some(worker_epoch);
     if let Some(task) = tasks_guard
         .iter_mut()
         .find(|t| t.gid == gid)
@@ -135,6 +167,12 @@ async fn finish_task(
         task.total_length = counters.total.load(Ordering::Relaxed);
         task.completed_length = counters.completed.load(Ordering::Relaxed);
         task.download_speed = 0;
+        if let Some(status) = final_kad_status
+            .as_ref()
+            .filter(|_| task.kind == TaskKind::Ed2k)
+        {
+            task.ed2k_kad = Some(ed2k_kad_task_status(status));
+        }
         on_found(task);
 
         match result {
@@ -275,8 +313,7 @@ async fn metalink_finish(
                     gid: gid.to_string(),
                 });
             } else if failures.is_empty() {
-                // every in-flight file was cancelled (pause/stop), none finished —
-                // not a completion, leave the batch paused so it can resume
+                // Every in-flight file was cancelled (pause/stop) and none finished, so this isn't a completion; leave the batch paused so it can resume
                 task.status = TaskStatus::Paused;
             } else {
                 let names: Vec<&str> = failures.iter().map(|(n, _)| *n).collect();
@@ -303,7 +340,7 @@ async fn metalink_finish(
     }
 }
 
-/// Sum the selected files' byte totals into the aggregate task fields.
+/// Sum the selected files' byte totals into the aggregate task fields
 fn metalink_rollup_totals(task: &mut DownloadTask) {
     let mut total = 0u64;
     let mut completed = 0u64;
@@ -420,6 +457,30 @@ pub struct TaskManager {
     global_speed_limiter: Arc<SpeedLimiter>,
     cookie_store: Arc<CookieStore>,
     usenet_connection_capacity: Arc<ProviderConnectionCapacityRegistry>,
+    kad_runtime: KadRuntime,
+}
+
+#[derive(Clone)]
+enum KadRuntime {
+    Disabled { port: u16 },
+    Running(Arc<KadService>),
+    Failed { port: u16, error: String },
+}
+
+impl KadRuntime {
+    fn service(&self) -> Option<Arc<KadService>> {
+        match self {
+            Self::Running(service) => Some(service.clone()),
+            Self::Disabled { .. } | Self::Failed { .. } => None,
+        }
+    }
+
+    fn udp_port(&self) -> Option<u16> {
+        match self {
+            Self::Running(service) => Some(service.udp_port()),
+            Self::Disabled { .. } | Self::Failed { .. } => None,
+        }
+    }
 }
 
 /// Extract filename hint from the first HTTP URI by parsing URL path
@@ -428,10 +489,26 @@ fn extract_filename_from_uri(uris: &[String]) -> String {
         return String::new();
     }
 
-    // Try to extract path component from URI
     let uri = &uris[0];
 
-    // Find the path after the domain (skip scheme and host)
+    // Prefer robust parsing via the url crate: it strips query/fragment and percent-decodes the final path segment so encoded names are recovered
+    if let Ok(parsed) = url::Url::parse(uri) {
+        if let Some(segment) = parsed
+            .path_segments()
+            .and_then(|mut segs| segs.next_back())
+            .filter(|s| !s.is_empty())
+        {
+            let decoded = percent_encoding::percent_decode_str(segment)
+                .decode_utf8_lossy()
+                .into_owned();
+            if !decoded.is_empty() {
+                return decoded;
+            }
+        }
+        return String::new();
+    }
+
+    // Fallback lightweight parse for URIs the url crate cannot handle
     if let Some(start) = uri.find("://") {
         let after_scheme = &uri[start + 3..];
         // Skip the host part (up to the first / or ? or #)
@@ -472,8 +549,7 @@ fn header_contains_cookie(value: &Value) -> bool {
     })
 }
 
-/// True when `task` is the still-active magnet task the metadata resolver
-/// was spawned for
+/// True when `task` is the still-active magnet task the metadata resolver was spawned for
 fn is_live_magnet(task: &DownloadTask, gid: &str, uri: &str) -> bool {
     task.gid == gid
         && task.kind == TaskKind::Torrent
@@ -481,8 +557,7 @@ fn is_live_magnet(task: &DownloadTask, gid: &str, uri: &str) -> bool {
         && task.uris.iter().any(|u| u == uri)
 }
 
-/// Extract `host=...` from the cloudflare-challenge marker error so the
-/// manager can evict the matching saved entry on re-detection
+/// Extract `host=...` from the cloudflare-challenge marker error so the manager can evict the matching saved entry on re-detection
 fn parse_cf_host(msg: &str) -> Option<String> {
     let key = "host=";
     let start = msg.find(key)? + key.len();
@@ -539,10 +614,28 @@ impl TaskManager {
         let global_speed_limiter =
             Arc::new(SpeedLimiter::new(options.max_overall_download_limit()));
 
-        // Set up the DNS-over-HTTPS resolver (or system DNS) before any task
-        // can open a connection. This applies process-wide to every
-        // risuko-http client through the global resolver hook
+        // Set up the DNS-over-HTTPS resolver (or system DNS) before any task can open a connection; applies process-wide to every risuko-http client through the global resolver hook
         super::dns::apply_from_options(&options.global);
+
+        let kad_runtime = match options.ed2k_kad_port_checked() {
+            Err(error) => KadRuntime::Failed {
+                // The invalid value is retained in `error`; never narrow it into the port stored in the runtime snapshot
+                port: options.ed2k_kad_port(),
+                error,
+            },
+            Ok(port) if !options.ed2k_enable_kad() => KadRuntime::Disabled { port },
+            Ok(port) => {
+                let kad_config =
+                    KadConfig::new(config_dir.to_path_buf(), port, options.ed2k_port());
+                match KadService::bind(kad_config).await {
+                    Ok(service) => KadRuntime::Running(service),
+                    Err(error) => KadRuntime::Failed {
+                        port,
+                        error: error.to_string(),
+                    },
+                }
+            }
+        };
 
         let manager = Self {
             tasks: Arc::new(RevLock::new(saved_tasks)),
@@ -559,6 +652,7 @@ impl TaskManager {
             global_speed_limiter,
             cookie_store: Arc::new(CookieStore::new(config_dir)),
             usenet_connection_capacity: Arc::new(ProviderConnectionCapacityRegistry::default()),
+            kad_runtime,
         };
 
         if manager.restore_torrent_mappings().await {
@@ -622,10 +716,7 @@ impl TaskManager {
             );
         }
 
-        // Purge orphan torrents (persisted but no live task). Without this the
-        // torrent engine auto-resumes them on startup and writes files even
-        // though the user deleted or never had the task in Motrix. Orphans from
-        // purge_record_on_start keep their files
+        // Purge orphan torrents (persisted but no live task); without this the torrent engine auto-resumes them on startup and writes files even though the user deleted or never had the task in Motrix (orphans from purge_record_on_start keep their files)
         for (torrent_id, info_hash) in orphans {
             let delete_files = !purged_hashes.contains(&info_hash);
             let removal_result = te.remove(torrent_id, delete_files).await;
@@ -652,8 +743,7 @@ impl TaskManager {
         !cleanup_failed
     }
 
-    /// Resolve download directory and tag for a new task by evaluating routing
-    /// rules against the inferred output filename
+    /// Resolve download directory and tag for a new task by evaluating routing rules against the inferred output filename
     async fn resolve_routing_for_task(
         &self,
         options: &Map<String, Value>,
@@ -730,8 +820,7 @@ impl TaskManager {
         if uris.len() == 1 && super::metalink::url_hints_metalink(&uris[0]) {
             let merged = self.options.read().await.merge_task_options(&options);
             if let Ok(bytes) = http::fetch_for_metalink_probe(&uris[0], &merged).await {
-                // strict UTF-8 to match add_metalink_task's own check, so a
-                // non-UTF-8 body is never classified as metalink and rejected later
+                // Strict UTF-8 to match add_metalink_task's own check, so a non-UTF-8 body is never classified as metalink and rejected later
                 if std::str::from_utf8(&bytes)
                     .ok()
                     .is_some_and(|text| super::metalink::parse(text).is_ok())
@@ -1124,13 +1213,8 @@ impl TaskManager {
             }
         };
 
-        if should_spawn_resolver && self.torrent_engine.read().await.is_none() {
-            task.status = TaskStatus::Error;
-            task.error_code = Some(super::error_code::ErrorCode::ENGINE_NOT_RUNNING.to_string());
-            task.error_message = Some("Torrent engine not available".to_string());
-        }
-
-        let should_start_resolver = task.status == TaskStatus::Active;
+        // The resolver re-reads torrent_engine under its own guard and applies the same ENGINE_NOT_RUNNING handling if it is absent, so no pre-check here
+        let should_start_resolver = should_spawn_resolver && task.status == TaskStatus::Active;
 
         self.tasks.write().await.push(task);
         if should_start_resolver {
@@ -1349,9 +1433,7 @@ impl TaskManager {
         .await
     }
 
-    /// Add a task for one of the legacy P2P / IPC protocols (ADC, Gnutella,
-    /// G2, giFT). The protocol module's URI parser extracts an output filename
-    /// and size hint when the URI carries them
+    /// Add a task for one of the legacy P2P/IPC protocols (ADC, Gnutella, G2, giFT); the protocol module's URI parser extracts an output filename and size hint when the URI carries them
     pub async fn add_legacy_p2p_task(
         &self,
         kind: TaskKind,
@@ -1407,10 +1489,9 @@ impl TaskManager {
         let mut opts = self.options.write().await;
         let mut rules = opts.task_routing_rules();
         rules.push(rule.clone());
-        opts.set(
-            "task-routing-rules".to_string(),
-            serde_json::to_value(rules).unwrap_or_default(),
-        );
+        let value = serde_json::to_value(rules)
+            .map_err(|e| format!("Failed to serialize routing rules: {e}"))?;
+        opts.set("task-routing-rules".to_string(), value);
         Ok(rule)
     }
 
@@ -1421,10 +1502,9 @@ impl TaskManager {
         match pos {
             Some(idx) => {
                 rules[idx] = rule;
-                opts.set(
-                    "task-routing-rules".to_string(),
-                    serde_json::to_value(rules).unwrap_or_default(),
-                );
+                let value = serde_json::to_value(rules)
+                    .map_err(|e| format!("Failed to serialize routing rules: {e}"))?;
+                opts.set("task-routing-rules".to_string(), value);
                 Ok(())
             }
             None => Err("Rule not found".to_string()),
@@ -1438,10 +1518,9 @@ impl TaskManager {
         match pos {
             Some(idx) => {
                 rules.remove(idx);
-                opts.set(
-                    "task-routing-rules".to_string(),
-                    serde_json::to_value(rules).unwrap_or_default(),
-                );
+                let value = serde_json::to_value(rules)
+                    .map_err(|e| format!("Failed to serialize routing rules: {e}"))?;
+                opts.set("task-routing-rules".to_string(), value);
                 Ok(())
             }
             None => Err("Rule not found".to_string()),
@@ -1458,9 +1537,7 @@ impl TaskManager {
         resolve_routing(&rules, filename, &raw_dir, &file_category_dirs)
     }
 
-    /// Common spawn machinery for ADC / Gnutella / G2 / giFT. Each protocol's `run_*_download` shares the same
-    /// signature: takes the URI, dir, atomic counters, cancel hooks, and an
-    /// `EngineOptions` snapshot, returns `Result<PathBuf, String>`
+    /// Common spawn machinery for ADC/Gnutella/G2/giFT; each protocol's `run_*_download` shares the same signature, taking the URI, dir, atomic counters, cancel hooks, and an `EngineOptions` snapshot, and returning `Result<PathBuf, String>`
     fn spawn_legacy_p2p_download(&self, task: &DownloadTask) {
         let gid = task.gid.clone();
         let uri = task.uris.first().cloned().unwrap_or_default();
@@ -1810,13 +1887,7 @@ impl TaskManager {
         self.try_start_next().await;
     }
 
-    /// Pause an active download back to Waiting (not Paused) to yield its slot to
-    /// a higher-priority task. Unlike `pause`, the task stays runnable, so the next
-    /// reconcile restarts it once it re-enters the top-N.
-    ///
-    /// Set the status to Waiting BEFORE cancelling: the download's cancellation
-    /// handler only pauses a task that is still marked Active, so demoting first
-    /// keeps a preempted task runnable instead of racing it into a stuck Paused
+    /// Pause an active download back to Waiting (not Paused) to yield its slot to a higher-priority task; unlike `pause` the task stays runnable so the next reconcile restarts it once it re-enters the top-N. Set the status to Waiting BEFORE cancelling: the download's cancellation handler only pauses a task still marked Active, so demoting first keeps a preempted task runnable instead of racing it into a stuck Paused
     async fn preempt(&self, gid: &str) {
         let should_cancel = {
             let mut tasks = self.tasks.write().await;
@@ -1842,10 +1913,7 @@ impl TaskManager {
         }
     }
 
-    /// Inject stored browser cookies into the merged options for an HTTP
-    /// task whose URI host has a saved entry. User-supplied cookies and
-    /// User-Agent on the task itself always win; the store only fills
-    /// in fields that are absent
+    /// Inject stored browser cookies into the merged options for an HTTP task whose URI host has a saved entry; user-supplied cookies and User-Agent on the task itself always win, and the store only fills in fields that are absent
     fn apply_stored_cookies(&self, uris: &[String], merged: &mut Map<String, Value>) {
         let Some(uri) = uris.first() else {
             return;
@@ -1855,9 +1923,7 @@ impl TaskManager {
             return;
         };
 
-        // Cookie names and the destination host together leak more than
-        // we want at info level (recognizable session keys, plus what
-        // the user is downloading from). Stick to debug and elide names
+        // Cookie names and the destination host together leak more than we want at info level (recognizable session keys, plus what the user is downloading from); stick to debug and elide names
         tracing::debug!(
             "apply_stored_cookies: matched stored entry (browser={}, {} cookie(s))",
             entry.browser_id,
@@ -1908,8 +1974,7 @@ impl TaskManager {
 
     fn spawn_http_download(&self, task: &DownloadTask, merged_options: Map<String, Value>) {
         let gid = task.gid.clone();
-        // Pass the full URI list so the engine can fail over between mirrors
-        // when one returns a hard error (DNS, TLS, 5xx, connect refused)
+        // Pass the full URI list so the engine can fail over between mirrors when one returns a hard error (DNS, TLS, 5xx, connect refused)
         let uris: Vec<String> = task.uris.clone();
         let dir = task.dir.clone();
         let out = task.out.clone();
@@ -1990,8 +2055,7 @@ impl TaskManager {
                     }
                 },
                 |task, path| {
-                    // Pull the final filename off disk so the task record
-                    // matches any Content-Disposition rename in http.rs
+                    // Pull the final filename off disk so the task record matches any Content-Disposition rename in http.rs
                     if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
                         task.out = name.to_string();
                     }
@@ -1999,12 +2063,9 @@ impl TaskManager {
                 },
                 |task, e| {
                     let code = classify_error(e, "http");
-                    // Drop a saved cookie entry that stopped working so the
-                    // next attempt re-prompts the user instead of replaying
-                    // stale credentials
+                    // Drop a saved cookie entry that stopped working so the next attempt re-prompts the user instead of replaying stale credentials
                     if code == super::error_code::ErrorCode::CLOUDFLARE_CHALLENGE {
-                        // Prefer the host embedded in the challenge marker so
-                        // redirected URLs evict the right cookie entry
+                        // Prefer the host embedded in the challenge marker so redirected URLs evict the right cookie entry
                         let lookup_url = parse_cf_host(e)
                             .map(|h| format!("https://{h}/"))
                             .unwrap_or_else(|| {
@@ -2089,8 +2150,7 @@ impl TaskManager {
                 }
             }
             let mut counters = Counters::new(0, split);
-            // child token, not the parent clone: parent pause/stop still cascades to
-            // every file, but one file's stall watchdog only cancels itself
+            // child token, not the parent clone: parent pause/stop still cascades to every file, but one file's stall watchdog only cancels itself
             counters.cancel_token = parent.child_token();
             let chunk: Vec<Arc<AtomicU64>> =
                 (0..split).map(|_| Arc::new(AtomicU64::new(0))).collect();
@@ -2166,18 +2226,22 @@ impl TaskManager {
         let tasks = self.tasks.clone();
         let active = self.active_downloads.clone();
         let options = self.options.clone();
+        let kad_service = self.kad_service();
+        let kad_udp_port = self.kad_udp_port();
+        let kad_status = Arc::new(parking_lot::Mutex::new(Some(
+            self.kad_initial_task_status(),
+        )));
 
         let counters = Counters::new(task.total_length, 0);
         let worker_epoch = next_worker_epoch();
         tokio::spawn(async move {
-            active.write().await.insert(
-                gid.clone(),
-                counters.to_active(
-                    worker_epoch,
-                    Vec::new(),
-                    Arc::new(parking_lot::Mutex::new(None)),
-                ),
+            let mut active_download = counters.to_active(
+                worker_epoch,
+                Vec::new(),
+                Arc::new(parking_lot::Mutex::new(None)),
             );
+            active_download.kad_status = kad_status.clone();
+            active.write().await.insert(gid.clone(), active_download);
 
             let file_link = super::ed2k::parse_ed2k_link(&uri);
             let opts_guard = options.read().await;
@@ -2193,6 +2257,9 @@ impl TaskManager {
                         &dir,
                         ed2k_servers,
                         ed2k_port,
+                        kad_udp_port,
+                        kad_service,
+                        kad_status,
                         c.total,
                         c.completed,
                         c.speed,
@@ -2233,12 +2300,10 @@ impl TaskManager {
 
         let counters = Counters::new(0, 1);
 
-        // Watch channel: yt-dlp sends the resolved output path before
-        // download starts so the task name updates in real time
+        // Watch channel: yt-dlp sends the resolved output path before download starts so the task name updates in real time
         let (dest_tx, mut dest_rx) = tokio::sync::watch::channel(String::new());
 
-        // Spawn a lightweight watcher that updates files[0].path whenever
-        // yt-dlp reports a new destination (before_dl / Destination: lines)
+        // Spawn a lightweight watcher that updates files[0].path whenever yt-dlp reports a new destination (before_dl / Destination: lines)
         let tasks_name = tasks.clone();
         let gid_name = gid.clone();
         tokio::spawn(async move {
@@ -2267,9 +2332,7 @@ impl TaskManager {
                 ),
             );
 
-            // Snapshot the global limit at launch time for this yt-dlp child
-            // Runtime max-overall-download-limit changes do not reconfigure
-            // already-running media subprocesses
+            // Snapshot the global limit at launch time for this yt-dlp child; runtime max-overall-download-limit changes do not reconfigure already-running media subprocesses
             let global_rate_limit = global_limiter.limit_bps();
 
             let c = counters.clone();
@@ -2436,8 +2499,7 @@ impl TaskManager {
         });
     }
 
-    /// Update progress for all active downloads
-    /// Also starts waiting tasks if slots are available
+    /// Update progress for all active downloads, also starting waiting tasks if slots are available
     pub async fn update_progress(&self) {
         // Cap stopped task history once per tick to avoid long-uptime growth
         self.enforce_result_cap().await;
@@ -2456,15 +2518,10 @@ impl TaskManager {
         }
 
         {
-            // Snapshot the raw global seeding options before tasks.write() to
-            // avoid cross-lock awaits in the tick. Kept raw (not collapsed to
-            // effective values) so each task can override them from its own
-            // options below, falling back to these globals when unset
+            // Snapshot the raw global seeding options before tasks.write() to avoid cross-lock awaits in the tick; kept raw (not collapsed to effective values) so each task can override them from its own options below, falling back to these globals when unset
             let (g_manual, g_seed_time, g_seed_ratio, bt_create_subfolder_default) = {
                 let opts = self.options.read().await;
-                // Capture the global default so per-task missing values fall
-                // back to it instead of hard-coded `true`, which previously
-                // ignored a user-configured `bt-create-subfolder=false`
+                // Capture the global default so per-task missing values fall back to it instead of hard-coded `true`, which previously ignored a user-configured `bt-create-subfolder=false`
                 let csub_default = opts.get_bool("bt-create-subfolder").unwrap_or(true);
                 (
                     opts.keep_seeding(),
@@ -2515,6 +2572,9 @@ impl TaskManager {
                         task.completed_length = ad.completed.load(Ordering::Relaxed);
                         task.download_speed = ad.speed.load(Ordering::Relaxed);
                         task.connections = ad.connections.load(Ordering::Relaxed);
+                        if task.kind == TaskKind::Ed2k {
+                            task.ed2k_kad = ad.kad_status.lock().as_ref().map(ed2k_kad_task_status);
+                        }
 
                         // Sync a Content-Disposition filename into both display path fields
                         if let Some(name) = ad.adopted_filename.lock().clone() {
@@ -2702,8 +2762,7 @@ impl TaskManager {
                             }
                         }
 
-                        // Per-task seeding goals override the globals; unset keys
-                        // fall back to the global snapshot
+                        // Per-task seeding goals override the globals; unset keys fall back to the global snapshot
                         let (keep, seed_time_minutes, seed_ratio) =
                             resolve_seed_goal(&task.options, g_manual, g_seed_time, g_seed_ratio);
 
@@ -2779,9 +2838,7 @@ impl TaskManager {
 
     async fn ensure_active_magnet_resolvers(&self) {
         let jobs = {
-            // Acquire in the same order as remove() (torrent_ids -> pending_magnets -> tasks)
-            // to avoid a deadlock where remove() holds torrent_ids.write() while waiting
-            // for tasks.write() and we hold tasks.read() while waiting for torrent_ids.read()
+            // Acquire in the same order as remove() (torrent_ids -> pending_magnets -> tasks) to avoid a deadlock where remove() holds torrent_ids.write() while waiting for tasks.write() and we hold tasks.read() while waiting for torrent_ids.read()
             let torrent_ids = self.torrent_ids.read().await;
             let pending = self.pending_magnets.read().await;
             let tasks = self.tasks.read().await;
@@ -3041,10 +3098,7 @@ impl TaskManager {
         Ok(())
     }
 
-    /// Replace an HTTP task's credentials with freshly imported ones and
-    /// resume it. Called from the Cloudflare-recovery flow after the user
-    /// solves a challenge in their browser. Either `cookie` or
-    /// `user_agent` may be empty to leave that field unchanged
+    /// Replace an HTTP task's credentials with freshly imported ones and resume it; called from the Cloudflare-recovery flow after the user solves a challenge in their browser, where either `cookie` or `user_agent` may be empty to leave that field unchanged
     pub async fn retry_with_cookies(
         &self,
         gid: &str,
@@ -3227,16 +3281,57 @@ impl TaskManager {
         })
     }
 
-    /// Read-only BitTorrent diagnostics for the `/health` panel. Returns
-    /// `None` when the torrent engine is not initialized
+    /// Read-only BitTorrent diagnostics for the `/health` panel; `None` when the torrent engine is not initialized
     pub async fn bt_health_snapshot(&self) -> Option<super::torrent::BtHealthSnapshot> {
         let te_guard = self.torrent_engine.read().await;
         te_guard.as_ref().and_then(|te| te.health_snapshot())
     }
 
-    /// Unique tracker announce URLs across active/waiting BT tasks. Used by
-    /// the `/health` panel to probe per-tracker reachability without
-    /// touching the live announce loop
+    /// Read-only eMule Kad diagnostics for the `/health` panel
+    pub async fn kad_health_snapshot(&self) -> KadHealthSnapshot {
+        match &self.kad_runtime {
+            KadRuntime::Running(service) => service.health_snapshot().await,
+            KadRuntime::Disabled { port } => KadHealthSnapshot::disabled(*port),
+            KadRuntime::Failed { port, error } => KadHealthSnapshot {
+                enabled: true,
+                bound: false,
+                state: KadState::Error,
+                udp_port: *port,
+                node_id: String::new(),
+                routing_contacts: 0,
+                cached_contacts: 0,
+                last_bootstrap_at_ms: None,
+                last_lookup_at_ms: None,
+                last_lookup_success: None,
+                last_error: Some(error.clone()),
+            },
+        }
+    }
+
+    pub fn kad_service(&self) -> Option<Arc<KadService>> {
+        self.kad_runtime.service()
+    }
+
+    pub fn kad_udp_port(&self) -> Option<u16> {
+        self.kad_runtime.udp_port()
+    }
+
+    fn kad_initial_task_status(&self) -> KadLookupStatus {
+        match &self.kad_runtime {
+            KadRuntime::Running(_) => KadLookupStatus::default(),
+            KadRuntime::Disabled { .. } => KadLookupStatus {
+                state: KadState::Disabled,
+                ..KadLookupStatus::default()
+            },
+            KadRuntime::Failed { error, .. } => KadLookupStatus {
+                state: KadState::Error,
+                error: Some(error.clone()),
+                ..KadLookupStatus::default()
+            },
+        }
+    }
+
+    /// Unique tracker announce URLs across active/waiting BT tasks, used by the `/health` panel to probe per-tracker reachability without touching the live announce loop
     pub async fn list_active_tracker_urls(&self) -> Vec<String> {
         use std::collections::BTreeSet;
         let tasks = self.tasks.read().await;
@@ -3278,10 +3373,12 @@ impl TaskManager {
             "POS_SET" => pos.max(0) as usize,
             "POS_CUR" => (current_waiting_pos as i64 + pos).max(0) as usize,
             "POS_END" => {
+                // POS_END is an offset from the end: pos=0 is the last slot and negative values count backwards; a positive pos would land past the end, so it is clamped to the last slot, matching aria2
                 if pos >= 0 {
                     waiting.len().saturating_sub(1)
                 } else {
-                    (waiting.len() as i64 + pos).max(0) as usize
+                    // Negative pos counts back from the last slot: -1 is second-to-last, matching aria2's POS_END semantics
+                    (waiting.len() as i64 - 1 + pos).max(0) as usize
                 }
             }
             _ => return Err("Invalid position mode".to_string()),
@@ -3355,6 +3452,7 @@ impl TaskManager {
                             })
                         });
                     if effective_ratio.is_none_or(|r| r <= 0.0) {
+                        // Mark Complete and let the next reconcile_active_set/progress tick pause the torrent in the engine; this mirrors the seed-goal path in update_progress and avoids taking the torrent-engine locks while holding tasks.write() here (seeding may continue briefly until the next tick, which is harmless)
                         task.seeder = false;
                         task.seeding_since = 0;
                         task.status = TaskStatus::Complete;
@@ -3378,8 +3476,7 @@ impl TaskManager {
             self.global_speed_limiter.set_limit(parse_speed_limit(v));
         }
 
-        // Does this patch touch DoH config? If so, re-apply once we've merged
-        // so the change lands on the next connection without a restart
+        // Does this patch touch DoH config? If so, re-apply once we've merged so the change lands on the next connection without a restart
         let touches_doh = opts.keys().any(|k| k.starts_with("doh-"));
 
         {
@@ -3412,7 +3509,13 @@ impl TaskManager {
             let peers: Vec<Value> = task
                 .peers
                 .iter()
-                .map(|p| serde_json::to_value(p).unwrap_or(Value::Null))
+                .filter_map(|p| match serde_json::to_value(p) {
+                    Ok(v) => Some(v),
+                    Err(e) => {
+                        tracing::warn!("[task:{}] failed to serialize peer entry: {e}", gid);
+                        None
+                    }
+                })
                 .collect();
             Value::Array(peers)
         } else {
@@ -3462,25 +3565,25 @@ impl TaskManager {
         let files: Vec<Value> = task
             .files
             .iter()
-            .map(|f| serde_json::to_value(f).unwrap_or(Value::Null))
+            .filter_map(|f| match serde_json::to_value(f) {
+                Ok(v) => Some(v),
+                Err(e) => {
+                    tracing::warn!("[task:{}] failed to serialize file entry: {e}", gid);
+                    None
+                }
+            })
             .collect();
         Ok(Value::Array(files))
     }
 
-    /// Snapshot of a task's downloaded files in a form suited for the upload
-    /// pipeline. Returns `(local_path, relative_remote_path, size, task_kind,
-    /// override_sink_id)` per file. `relative_remote_path` is `out` joined
-    /// with the file's basename so directory structure on the remote mirrors
-    /// the local layout for multi-file BT tasks. Returns `None` if the gid
-    /// is unknown
+    /// Snapshot of a task's downloaded files suited for the upload pipeline, returning `(local_path, relative_remote_path, size, task_kind, override_sink_id)` per file where `relative_remote_path` is `out` joined with the file's basename so remote directory structure mirrors the local layout for multi-file BT tasks; `None` if the gid is unknown
     pub async fn files_for_upload(
         &self,
         gid: &str,
     ) -> Option<(Vec<UploadFileSnapshot>, String, Option<String>)> {
         let tasks = self.tasks.read().await;
         let task = tasks.iter().find(|t| t.gid == gid)?;
-        // TaskKind serializes with rename_all = "lowercase", producing exactly
-        // these protocol labels
+        // TaskKind serializes with rename_all = "lowercase", producing exactly these protocol labels
         let kind = serde_json::to_value(task.kind)
             .ok()
             .and_then(|v| v.as_str().map(String::from))
@@ -3510,9 +3613,7 @@ impl TaskManager {
                         return None;
                     }
                 };
-                // Relative to the task's download dir so multi-file torrents
-                // preserve their internal layout when pushed to the sink.
-                // Remote paths are always `/`-separated regardless of host OS
+                // Relative to the task's download dir so multi-file torrents preserve their internal layout when pushed to the sink; remote paths are always `/`-separated regardless of host OS
                 let rel_path = local
                     .strip_prefix(dir)
                     .map(std::path::PathBuf::from)
@@ -3522,8 +3623,7 @@ impl TaskManager {
                             .map(std::path::PathBuf::from)
                             .unwrap_or_default()
                     });
-                // Reject any parent-directory segments to prevent escaping
-                // the configured remote base path on the sink side
+                // Reject any parent-directory segments to prevent escaping the configured remote base path on the sink side
                 if rel_path
                     .components()
                     .any(|c| matches!(c, std::path::Component::ParentDir))
@@ -3540,7 +3640,8 @@ impl TaskManager {
                 } else {
                     rel
                 };
-                if rel.is_empty() || rel.split('/').any(|seg| seg == "..") {
+                // Parent-directory segments are already rejected above via Component::ParentDir, so only guard against an empty path here
+                if rel.is_empty() {
                     return None;
                 }
                 let category = local
@@ -3590,6 +3691,7 @@ impl TaskManager {
     }
 
     pub async fn save_session(&self) -> Result<(), String> {
+        // Fast path: skip if nothing changed since the last save; this lock-free check can race with a concurrent write bumping rev, so we re-read rev under the read lock below to record the exact snapshot we persist (worst case of a lost race is one redundant save, never a stale one)
         let rev = self.tasks.rev();
         if self.saved_rev.load(Ordering::Relaxed) == rev {
             return Ok(());
@@ -3604,9 +3706,7 @@ impl TaskManager {
     /// Hard cap for retained finished/failed/removed task records
     const MAX_STOPPED_RESULTS: usize = 1000;
 
-    /// Evict oldest stopped tasks beyond [`Self::MAX_STOPPED_RESULTS`]
-    ///
-    /// Drops torrent bt-session entries first so stale `by_hash` records do not block re-add
+    /// Evict oldest stopped tasks beyond [`Self::MAX_STOPPED_RESULTS`], dropping torrent bt-session entries first so stale `by_hash` records do not block re-add
     async fn enforce_result_cap(&self) {
         let to_evict: Vec<String> = {
             let tasks = self.tasks.read().await;
@@ -3640,11 +3740,7 @@ impl TaskManager {
     }
 
     pub async fn purge_download_result(&self) {
-        // Collect gids of stopped torrent tasks so we can drop their bt-session
-        // entries before evicting them from the task list. Without this, the
-        // bt session keeps the info-hash registered in `by_hash` and a later
-        // re-add of the same magnet short-circuits to `AlreadyManaged` with
-        // the old finished handle (UI shows "completed" with no download)
+        // Collect gids of stopped torrent tasks so we can drop their bt-session entries before evicting them from the task list; without this the bt session keeps the info-hash registered in `by_hash` and a later re-add of the same magnet short-circuits to `AlreadyManaged` with the old finished handle (UI shows "completed" with no download)
         let stopped_torrent_gids: Vec<String> = {
             let tasks = self.tasks.read().await;
             tasks
@@ -3661,10 +3757,7 @@ impl TaskManager {
     }
 
     pub async fn remove_download_result(&self, gid: &str) -> Result<(), String> {
-        // Drop the bt-session entry first (keep files on disk — this is a
-        // "remove from history" operation, not a payload deletion). Without
-        // this, the `by_hash` map retains the info-hash and re-adding the
-        // same magnet returns the stale completed torrent until restart
+        // Drop the bt-session entry first (keep files on disk — this is a "remove from history" operation, not a payload deletion); without this the `by_hash` map retains the info-hash and re-adding the same magnet returns the stale completed torrent until restart
         let is_stopped_torrent = {
             let tasks = self.tasks.read().await;
             tasks
@@ -3684,10 +3777,7 @@ impl TaskManager {
         }
     }
 
-    /// Drop a torrent task's entry from the underlying bt session WITHOUT
-    /// touching on-disk files, and clear the gid->torrent-id mapping. Used
-    /// by `remove_download_result` / `purge_download_result` to prevent
-    /// stale `by_hash` entries from blocking re-adds of the same magnet
+    /// Drop a torrent task's entry from the underlying bt session WITHOUT touching on-disk files, and clear the gid->torrent-id mapping; used by `remove_download_result`/`purge_download_result` to prevent stale `by_hash` entries from blocking re-adds of the same magnet
     async fn drop_torrent_engine_entry(&self, gid: &str) {
         let tid = {
             let tid_guard = self.torrent_ids.read().await;
@@ -3778,8 +3868,7 @@ impl TaskManager {
         self.try_start_next().await;
     }
 
-    /// Resolve a GID prefix to the full 16-char GID.
-    /// Accepts full GIDs as-is, or unique prefixes (minimum 4 chars)
+    /// Resolve a GID prefix to the full 16-char GID, accepting full GIDs as-is or unique prefixes (minimum 4 chars)
     pub async fn resolve_gid(&self, prefix: &str) -> Result<String, String> {
         let tasks = self.tasks.read().await;
 
@@ -3828,6 +3917,10 @@ impl TaskManager {
         if let Some(mut te) = te_guard.take() {
             te.shutdown().await;
         }
+
+        if let KadRuntime::Running(service) = &self.kad_runtime {
+            service.shutdown().await;
+        }
     }
 }
 
@@ -3864,11 +3957,7 @@ fn is_retryable_magnet_resolution_error(err: &str) -> bool {
         || lower.contains("no seeds")
 }
 
-/// Resolve a torrent's seeding goal from its per-task options, falling back to
-/// the global snapshot for any key the task doesn't set. Returns
-/// `(keep, seed_time_minutes, seed_ratio)` where `keep` is whether to seed on
-/// completion; a `keep-seeding` override zeroes the time/ratio limits so the
-/// torrent seeds until manually stopped.
+/// Resolve a torrent's seeding goal from its per-task options, falling back to the global snapshot for any key the task doesn't set; returns `(keep, seed_time_minutes, seed_ratio)` where `keep` is whether to seed on completion, and a `keep-seeding` override zeroes the time/ratio limits so the torrent seeds until manually stopped
 fn resolve_seed_goal(
     opts: &Map<String, Value>,
     g_manual: bool,
@@ -3900,15 +3989,11 @@ fn sync_peer_infos(target: &mut Vec<PeerInfo>, peers: &[torrent::PeerSnapshot], 
     *target = peers
         .iter()
         .map(|p| {
-            // one small number instead of raw bitfield hex — the hex payload
-            // was up to pieces/4 chars per peer on every detail poll tick
+            // one small number instead of raw bitfield hex — the hex payload was up to pieces/4 chars per peer on every detail poll tick
             let percent = if p.seeder {
                 100
             } else if num_pieces > 0 {
-                // real piece count as denominator: padded bitfield bits
-                // under-read small torrents (8 of 9 pieces read 50, not 88).
-                // Count only bits below num_pieces — non-conformant peers can
-                // set trailing padding bits and inflate the count otherwise
+                // real piece count as denominator: padded bitfield bits under-read small torrents (8 of 9 pieces read 50, not 88); count only bits below num_pieces since non-conformant peers can set trailing padding bits and inflate the count otherwise
                 let full_bytes = (num_pieces / 8) as usize;
                 let mut ones: u64 = p.bitfield[..full_bytes.min(p.bitfield.len())]
                     .iter()
@@ -4147,7 +4232,74 @@ mod tests {
             global_speed_limiter,
             cookie_store,
             usenet_connection_capacity: Arc::new(ProviderConnectionCapacityRegistry::default()),
+            kad_runtime: KadRuntime::Disabled { port: 4672 },
         }
+    }
+
+    #[tokio::test]
+    async fn finish_task_retains_terminal_ed2k_kad_status_without_progress_tick() {
+        let mut task = DownloadTask::new_ed2k(
+            "ed2k-kad-finish".into(),
+            "ed2k://|file|test.bin|1024|0123456789abcdef0123456789abcdef|/".into(),
+            "test.bin".into(),
+            1024,
+            "/downloads".into(),
+            None,
+            Map::new(),
+        );
+        task.status = TaskStatus::Active;
+        let manager = make_test_manager(vec![task]);
+        let counters = Counters::new(1024, 0);
+        let worker_epoch = next_worker_epoch();
+        let active_download = counters.to_active(
+            worker_epoch,
+            Vec::new(),
+            Arc::new(parking_lot::Mutex::new(None)),
+        );
+        *active_download.kad_status.lock() = Some(KadLookupStatus {
+            state: KadState::Ready,
+            queried_nodes: 9,
+            discovered_sources: 4,
+            contacts: 3,
+            error: None,
+        });
+        manager
+            .active_downloads
+            .write()
+            .await
+            .insert("ed2k-kad-finish".into(), active_download);
+
+        finish_task(
+            &manager.tasks,
+            &manager.active_downloads,
+            &manager.events,
+            "ed2k-kad-finish",
+            worker_epoch,
+            "ed2k",
+            &counters,
+            Err("server exhausted".into()),
+            |_| {},
+            |task, _| task.total_length,
+            |_, error| classify_error(error, "ed2k"),
+        )
+        .await;
+
+        let tasks = manager.tasks.read().await;
+        let status = tasks[0].ed2k_kad.as_ref().expect("final Kad status");
+        assert_eq!(status.state, "complete");
+        assert_eq!(status.queried_nodes, 9);
+        assert_eq!(status.discovered_sources, 4);
+        assert!(manager.active_downloads.read().await.is_empty());
+    }
+
+    #[test]
+    fn cancelled_ed2k_kad_lookup_is_not_serialized_as_complete() {
+        let status = KadLookupStatus {
+            state: KadState::Stopped,
+            ..KadLookupStatus::default()
+        };
+
+        assert_eq!(ed2k_kad_task_status(&status).state, "disabled");
     }
 
     #[test]
@@ -4366,6 +4518,7 @@ mod tests {
                 chunk_completed: Vec::new(),
                 adopted_filename: Arc::new(parking_lot::Mutex::new(None)),
                 metalink_files: Vec::new(),
+                kad_status: Arc::new(parking_lot::Mutex::new(None)),
             },
         );
 

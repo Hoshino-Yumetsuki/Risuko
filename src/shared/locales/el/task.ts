@@ -7,6 +7,7 @@ export default {
 	stopped: "Σταματημένα",
 	"new-task": "Νέα εργασία",
 	"new-bt-task": "Νέα εργασία BT",
+	"unknown-task-type": "Μη υποστηριζόμενος τύπος εργασίας",
 	"open-file": "Άνοιγμα αρχείου Torrent ...",
 	"uri-task": "URL",
 	"torrent-task": "Torrent",

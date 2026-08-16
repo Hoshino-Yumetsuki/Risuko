@@ -1,5 +1,6 @@
 pub mod chunks;
 pub mod download;
+pub mod kad;
 pub mod parser;
 pub mod peer;
 pub mod protocol;

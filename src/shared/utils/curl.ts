@@ -6,10 +6,12 @@ export const buildUrisFromCurl = (uris = []) => {
 			const parsedUri = curlParser(uri);
 			uri = parsedUri.url;
 			if (parsedUri.params && Object.keys(parsedUri.params).length > 0) {
-				const paramsStr = Object.keys(parsedUri.params)
-					.map((k) => `${k}=${parsedUri.params[k]}`)
-					.join("&");
-				uri = `${uri}?${paramsStr}`;
+				const search = new URLSearchParams();
+				for (const k of Object.keys(parsedUri.params)) {
+					search.append(k, `${parsedUri.params[k]}`);
+				}
+				const separator = uri.includes("?") ? "&" : "?";
+				uri = `${uri}${separator}${search.toString()}`;
 			}
 			return uri;
 		} else {

@@ -33,7 +33,6 @@ export default class CommandEmitter {
 			return false;
 		}
 
-		// Keep the current dispatch stable when listeners change subscriptions.
 		for (const listener of [...listeners]) {
 			listener.apply(this, args);
 		}

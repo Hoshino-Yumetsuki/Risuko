@@ -33,9 +33,7 @@ function loadItemsPerPage(): number {
 		if (ITEMS_PER_PAGE_OPTIONS.includes(parsed)) {
 			return parsed;
 		}
-	} catch {
-		// ignore
-	}
+	} catch {}
 	return DEFAULT_ITEMS_PER_PAGE;
 }
 
@@ -67,18 +65,14 @@ function loadPrefs(): ReaderPrefs {
 			}
 			return prefs;
 		}
-	} catch {
-		// ignore
-	}
+	} catch {}
 	return { ...DEFAULT_PREFS };
 }
 
 function savePrefs(prefs: ReaderPrefs) {
 	try {
 		localStorage.setItem(PREFS_STORAGE_KEY, JSON.stringify(prefs));
-	} catch {
-		// ignore
-	}
+	} catch {}
 }
 
 export const useRssStore = defineStore("rss", {
@@ -113,7 +107,6 @@ export const useRssStore = defineStore("rss", {
 		currentItems(): RssItem[] {
 			let items: RssItem[];
 			if (!this.currentFeedId || this.currentFeedId === "__downloaded__") {
-				// pinia getter `this` loses the Record value type here
 				const all = Object.values(
 					this.items as Record<string, RssItem[]>,
 				).flat();
@@ -317,14 +310,12 @@ export const useRssStore = defineStore("rss", {
 		async downloadItem(feedId: string, itemId: string) {
 			const options: Record<string, string> = {};
 
-			// Use RSS category dir if configured
 			const prefStore = usePreferenceStore();
 			const categoryDirs = prefStore.config.fileCategoryDirs;
 			if (categoryDirs?.rss) {
 				options.dir = categoryDirs.rss;
 			}
 
-			// Build filename from feed title
 			const feed = this.feeds.find((f) => f.id === feedId);
 			if (feed) {
 				const feedItems = this.items[feedId];
@@ -338,9 +329,7 @@ export const useRssStore = defineStore("rss", {
 						if (dotIdx > 0) {
 							ext = lastSegment.slice(dotIdx);
 						}
-					} catch {
-						// invalid URL, skip extension
-					}
+					} catch {}
 					const baseName = feed.title
 						.replace(/\s+/g, "_")
 						.replace(/[^\w\-_.]/g, "");
@@ -352,9 +341,6 @@ export const useRssStore = defineStore("rss", {
 			}
 
 			try {
-				// tracked download: backend watches completion in a background task
-				// and emits rss:download-complete / rss:download-error; returns
-				// immediately with the gid so the UI doesn't block
 				await api.downloadRssItemTracked(
 					feedId,
 					itemId,
@@ -434,7 +420,6 @@ export const useRssStore = defineStore("rss", {
 			}
 			const item = feedItems.find((i) => i.id === itemId);
 			if (item && !item.is_read) {
-				// Optimistic update
 				item.is_read = true;
 				if (this.unreadOnly) {
 					this.ensurePageInRange();
@@ -442,7 +427,6 @@ export const useRssStore = defineStore("rss", {
 				try {
 					await api.markRssItemRead(feedId, itemId);
 				} catch (_e) {
-					// Revert on failure
 					item.is_read = false;
 					if (this.unreadOnly) {
 						this.ensurePageInRange();
@@ -451,7 +435,6 @@ export const useRssStore = defineStore("rss", {
 			}
 		},
 
-		// Commit optimistic read flags, reverting them on failure
 		async _commitRead(entries: [string, string][]) {
 			if (entries.length === 0) {
 				return;
@@ -563,9 +546,7 @@ export const useRssStore = defineStore("rss", {
 			this.selectedItemIds = [];
 			try {
 				localStorage.setItem(STORAGE_KEY, String(num));
-			} catch {
-				// ignore
-			}
+			} catch {}
 		},
 
 		changePage(page: number) {
@@ -619,7 +600,6 @@ export const useRssStore = defineStore("rss", {
 		async batchDelete() {
 			const selected = new Set(this.selectedItemIds);
 			const items = this.currentItems.filter((i) => selected.has(i.id));
-			// Group by feed_id
 			const grouped = new Map<string, string[]>();
 			for (const item of items) {
 				const list = grouped.get(item.feed_id);
@@ -631,7 +611,6 @@ export const useRssStore = defineStore("rss", {
 			}
 			const itemsByFeed: [string, string[]][] = Array.from(grouped.entries());
 			await api.deleteRssItems(itemsByFeed);
-			// Remove locally
 			for (const [feedId, itemIds] of itemsByFeed) {
 				const feedItems = this.items[feedId];
 				if (feedItems) {

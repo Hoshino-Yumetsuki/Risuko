@@ -110,6 +110,19 @@ export default {
 		"Avanzato: imposta chiavi arbitrarie delle opzioni del motore come oggetto JSON. Le modifiche avranno effetto dopo il riavvio.",
 	"engine-overrides-invalid":
 		"Gli override del motore devono essere un oggetto JSON valido.",
+	"ed2k-kad": "eMule Kad",
+	"ed2k-enable-kad": "Abilita la ricerca delle fonti tramite Kad",
+	"ed2k-enable-kad-tips":
+		"Trova fonti ED2K tramite la rete eMule Kad (richiede il riavvio del motore)",
+	"ed2k-kad-port": "Porta UDP di Kad",
+	"ed2k-kad-port-tips":
+		"Porta UDP usata per la ricerca tramite Kad. I valori validi sono compresi tra 1 e 65535 (richiede il riavvio del motore)",
+	"ed2k-kad-port-invalid":
+		"La porta UDP di Kad deve essere un numero intero compreso tra 1 e 65535",
+	"engine-overrides-reserved-keys":
+		"Chiavi riservate di override del motore ignorate: {{keys}}",
+	"engine-overrides-too-large":
+		"L'override del motore è troppo grande: al massimo 64 chiavi, 64 caratteri per chiave e 2048 caratteri per valore.",
 	"external-engine-enable": "Usa motore esterno",
 	"external-engine-enable-tips":
 		"Se abilitato, Risuko non avvierà automaticamente il motore integrato.",

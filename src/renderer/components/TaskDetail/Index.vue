@@ -84,8 +84,6 @@ export default {
 	},
 	watch: {
 		visible(newVal, oldVal) {
-			// cancel the pending close from a previous open — a quick reopen
-			// otherwise gets its task nulled mid-render by the stale timer
 			if (this.closedTimer) {
 				clearTimeout(this.closedTimer);
 				this.closedTimer = null;

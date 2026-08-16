@@ -7,6 +7,7 @@ export default {
 	stopped: "المتوقفة",
 	"new-task": "اضافة تحميل جديد",
 	"new-bt-task": "اضافة تحميل تورنت جديد",
+	"unknown-task-type": "نوع المهمة غير مدعوم",
 	"open-file": "فتح ملف تورنت...",
 	"uri-task": "رابط التحميل",
 	"torrent-task": "تورنت",

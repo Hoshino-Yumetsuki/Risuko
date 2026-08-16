@@ -15,10 +15,6 @@ internal class ProxyBinder(
 
     val currentProxyInterface: IInterface get() = proxyInterface
 
-    fun setProxyInterface(iface: IInterface) {
-        proxyInterface = iface
-    }
-
     override fun queryLocalInterface(descriptor: String): IInterface = proxyInterface
 
     override fun getInterfaceDescriptor(): String? = remote.interfaceDescriptor

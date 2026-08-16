@@ -166,8 +166,7 @@ pub fn url_hints_metalink(uri: &str) -> bool {
 }
 
 fn sanitize_name(name: &str) -> String {
-    // strip any directory components, then run through the shared filename
-    // guard so OS-reserved names / invalid chars can't break file creation
+    // strip directory components, then run through the shared filename guard so OS-reserved names / invalid chars can't break file creation
     let base = Path::new(name)
         .file_name()
         .map(|n| n.to_string_lossy().to_string())

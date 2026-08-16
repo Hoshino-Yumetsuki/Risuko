@@ -1,9 +1,4 @@
-//! giFT (FastTrack/OpenFT/Gnutella IPC bridge) — Phase 5
-//!
-//! Connects to a local giftd over TCP/1213 and forwards a download request
-//! URI scheme: `gift://<inner-uri>` where `<inner-uri>` is forwarded verbatim
-//! to giftd. The legacy IPC frame format is line-oriented: each command is a
-//! single line ending in `\n`, fields are space-separated
+//! giFT (FastTrack/OpenFT/Gnutella IPC bridge) — Phase 5. Connects to a local giftd over TCP/1213 and forwards a download request; URI scheme `gift://<inner-uri>` forwards `<inner-uri>` verbatim to giftd. The legacy IPC frame format is line-oriented: each command is one line ending in `\n`, fields space-separated
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
@@ -17,8 +12,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::engine::options::EngineOptions;
 
-/// Parsed `gift://` URI; the part after the scheme is forwarded verbatim
-/// to the local giFT daemon as the inner network/file identifier
+/// Parsed `gift://` URI; the part after the scheme is forwarded verbatim to the local giFT daemon as the inner network/file identifier
 pub struct GiftLink {
     pub inner: String,
 }
@@ -41,11 +35,7 @@ pub fn parse_gift_uri(uri: &str) -> Option<GiftLink> {
     }
 }
 
-/// Drive a download through a locally-running `giftd` daemon over its IPC
-/// socket (default `127.0.0.1:1213`). Honours the `gift-enabled`,
-/// `gift-host` and `gift-port` engine options. Returns the absolute output
-/// path on success or a string describing the failure (`"cancelled"` on
-/// abort)
+/// Drive a download through a locally-running `giftd` daemon over its IPC socket (default `127.0.0.1:1213`), honouring the `gift-enabled`, `gift-host` and `gift-port` engine options; returns the output path on success or a failure string (`"cancelled"` on abort)
 pub async fn run_gift_download(
     uri: &str,
     dir: &str,
@@ -119,8 +109,7 @@ pub async fn run_gift_download(
         .await
         .map_err(|e| e.to_string())?;
 
-    // Watch transfer status events. giftd emits lines like
-    // `TRANSFER STATUS id=<n> total=<bytes> done=<bytes> state=<active|complete|...>`
+    // Watch transfer status events; giftd emits lines like `TRANSFER STATUS id=<n> total=<bytes> done=<bytes> state=<active|complete|...>`
     let mut transfer_id: Option<String> = None;
     let mut last_progress: Option<(tokio::time::Instant, u64)> = None;
     let mut line = String::new();
@@ -190,9 +179,7 @@ pub async fn run_gift_download(
     }
 }
 
-/// Derive an output filename from a giFT inner URI by taking the last path
-/// component before any query string. Returns `"gift-download"` when no
-/// usable name is present
+/// Derive an output filename from a giFT inner URI by taking the last path component before any query string; returns `"gift-download"` when no usable name is present
 pub fn extract_gift_name(inner: &str) -> String {
     if let Some(rest) = inner.split('?').next() {
         if let Some(name) = rest.rsplit('/').next() {

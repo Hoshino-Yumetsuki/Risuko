@@ -7,6 +7,7 @@ export default {
 	stopped: "Oprite",
 	"new-task": "Sarcină Nouă",
 	"new-bt-task": "Sarcină Nouă BT",
+	"unknown-task-type": "Tip de sarcină neacceptat",
 	"open-file": "Deschide fişier Torrent...",
 	"uri-task": "URL",
 	"torrent-task": "Torrent",

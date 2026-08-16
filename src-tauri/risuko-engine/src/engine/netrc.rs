@@ -1,11 +1,4 @@
-//! Tiny `.netrc` parser. Loads default user/password credentials keyed by
-//! host so HTTP/FTP requests can pick them up without putting secrets in
-//! URLs. Only the four directives we care about are recognised: `machine`,
-//! `default`, `login`, `password`. `account` and `macdef` are skipped
-//!
-//! aria2 supports `--netrc-path` and `--no-netrc`; we mirror both option
-//! names. The format is whitespace-separated tokens, optionally split
-//! across multiple lines — the canonical reference is `man 5 netrc`
+//! Tiny `.netrc` parser: loads default user/password creds keyed by host for HTTP/FTP; recognises `machine`/`default`/`login`/`password` (mirrors aria2's `--netrc-path`/`--no-netrc`); see `man 5 netrc`
 
 use std::collections::HashMap;
 use std::fs;
@@ -25,8 +18,7 @@ pub struct Netrc {
 
 impl Netrc {
     pub fn lookup(&self, host: &str) -> Option<&NetrcEntry> {
-        // Keys are stored lowercased on insert, so a single lookup with the
-        // lowercased host is enough; no need for an extra exact-case probe
+        // Keys are stored lowercased on insert, so one lowercased lookup suffices
         self.machines
             .get(&host.to_ascii_lowercase())
             .or(self.default.as_ref())
@@ -34,9 +26,7 @@ impl Netrc {
 
     pub fn parse(input: &str) -> Self {
         let mut out = Netrc::default();
-        // `macdef <name>` introduces a macro body that runs until the next
-        // blank line. We can't see blank lines after `split_whitespace`, so
-        // strip macro bodies from the input first, then tokenise the rest.
+        // Strip `macdef` macro bodies first since `split_whitespace` hides the blank lines that terminate them, then tokenise the rest
         let cleaned = strip_macdefs(input);
         let tokens: Vec<&str> = cleaned.split_whitespace().collect();
         let mut i = 0;
@@ -103,9 +93,7 @@ impl Netrc {
                 "account" => {
                     i += if i + 1 < tokens.len() { 2 } else { 1 };
                 }
-                // `macdef` bodies were already removed by `strip_macdefs`,
-                // so any remaining `macdef <name>` is a stray header line
-                // Skip the directive plus its name token
+                // Bodies were removed by `strip_macdefs`; skip any stray `macdef <name>` header (directive + name token)
                 "macdef" => {
                     i += if i + 1 < tokens.len() { 2 } else { 1 };
                 }
@@ -124,38 +112,53 @@ impl Netrc {
     }
 
     pub fn from_path(path: &Path) -> std::io::Result<Self> {
+        warn_if_permissions_too_open(path);
         let s = fs::read_to_string(path)?;
         Ok(Self::parse(&s))
     }
 }
 
-/// Per `man 5 netrc`, a `macdef <name>` line is followed by macro body
-/// lines until the first empty line (which terminates the macro). The body
-/// must not be re-tokenised as netrc directives, otherwise tokens like
-/// `login` or `password` inside the macro would be misread as credentials
+/// Warn (like curl/ftp) when a plaintext-credential `.netrc` is group/world-readable (any `0o077` bit); we warn rather than refuse so existing setups keep working but nudge toward `chmod 600`
+#[cfg(unix)]
+fn warn_if_permissions_too_open(path: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    if let Ok(meta) = fs::metadata(path) {
+        let mode = meta.permissions().mode();
+        if mode & 0o077 != 0 {
+            tracing::warn!(
+                "netrc file {} is group/world-accessible (mode {:o}); credentials are exposed — consider `chmod 600`",
+                path.display(),
+                mode & 0o777
+            );
+        }
+    }
+}
+
+#[cfg(not(unix))]
+fn warn_if_permissions_too_open(_path: &Path) {}
+
+/// Per `man 5 netrc`, a `macdef <name>` line is followed by macro body lines until the first empty line; that body must not be re-tokenised or its `login`/`password` tokens would be misread as credentials
 fn strip_macdefs(input: &str) -> String {
     let mut out = String::with_capacity(input.len());
     let mut in_macro = false;
     for line in input.split_inclusive('\n') {
         let trimmed = line.trim_start();
         if in_macro {
-            // Macro ends at the first line that is empty (only whitespace).
+            // Macro ends at the first line that is empty (only whitespace)
             if line.trim().is_empty() {
                 in_macro = false;
                 out.push_str(line);
             }
-            // else: drop the body line entirely.
+            // else: drop the body line entirely
             continue;
         }
-        // Match the literal token `macdef` only — `starts_with` alone would
-        // also match e.g. `macdefoo` and incorrectly start macro-skip mode
-        // The first whitespace-delimited token must equal `macdef`
+        // Match the literal first token `macdef` only; `starts_with` would also match e.g. `macdefoo` and wrongly start macro-skip mode
         if trimmed
             .split_whitespace()
             .next()
             .is_some_and(|tok| tok == "macdef")
         {
-            // Drop the `macdef <name>` line itself; body follows.
+            // Drop the `macdef <name>` line itself; body follows
             in_macro = true;
             continue;
         }
@@ -164,8 +167,7 @@ fn strip_macdefs(input: &str) -> String {
     out
 }
 
-/// Resolve the default netrc location: `$HOME/.netrc` on Unix,
-/// `%USERPROFILE%/_netrc` (and `.netrc` as fallback) on Windows
+/// Resolve the default netrc location: `$HOME/.netrc` on Unix, `%USERPROFILE%/_netrc` (with `.netrc` fallback) on Windows
 pub fn default_netrc_path() -> Option<std::path::PathBuf> {
     #[cfg(windows)]
     {
@@ -220,7 +222,7 @@ mod tests {
             n.lookup("b.example.com").unwrap().password.as_deref(),
             Some("2")
         );
-        // Unknown host falls back to default.
+        // Unknown host falls back to default
         assert_eq!(
             n.lookup("c.example.com").unwrap().login.as_deref(),
             Some("guest")

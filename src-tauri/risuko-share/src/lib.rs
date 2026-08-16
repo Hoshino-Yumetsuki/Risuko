@@ -126,8 +126,7 @@ fn begin_send_transfer(
 /// Interval for polling the active connection path
 const PATH_POLL_INTERVAL: Duration = Duration::from_millis(700);
 const ONLINE_TIMEOUT: Duration = Duration::from_secs(6);
-/// Minimum interval between forwarded progress events; raw updates arrive
-/// per network chunk and would flood the Tauri IPC bridge on fast links.
+/// Minimum interval between forwarded progress events; raw updates would flood the Tauri IPC bridge on fast links
 const PROGRESS_EMIT_INTERVAL: Duration = Duration::from_millis(100);
 
 /// Bind an iroh endpoint with n0 relays but WITHOUT DNS-based discovery
@@ -178,13 +177,13 @@ pub enum ShareEvent {
     },
     Completed,
     Terminated,
-    /// The transfer failed.
+    /// The transfer failed
     Error {
         message: String,
     },
 }
 
-/// A [`ShareEvent`] tagged with its transfer id, sent to the host application.
+/// A [`ShareEvent`] tagged with its transfer id, sent to the host application
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ShareEnvelope {
     pub id: String,
@@ -699,7 +698,7 @@ fn spawn_path_poll(
     })
 }
 
-/// Classify a remote's active transport addresses as direct, relay, or mixed.
+/// Classify a remote's active transport addresses as direct, relay, or mixed
 fn classify_path(info: &iroh::endpoint::RemoteInfo) -> PathKind {
     let mut direct = false;
     let mut relay = false;
@@ -744,8 +743,7 @@ fn collect_dir(dir: &Path, prefix: &str, out: &mut Vec<(String, PathBuf, u64)>) 
     Ok(())
 }
 
-/// If `target` already exists, append ` (1)`, ` (2)`, ... before the extension
-/// until a free path is found
+/// If `target` already exists, append ` (1)`, ` (2)`, ... before the extension until a free path is found
 async fn dedupe_path(target: PathBuf) -> PathBuf {
     if !tokio::fs::try_exists(&target).await.unwrap_or(false) {
         return target;
@@ -777,9 +775,7 @@ fn file_name(path: &Path) -> String {
         .unwrap_or_else(|| "file".to_string())
 }
 
-/// Convert a peer-supplied name into a safe *relative* path. Strips empty,
-/// `.`, `..`, and absolute/drive components to prevent directory traversal,
-/// while preserving legitimate subdirectories
+/// Convert a peer-supplied name into a safe *relative* path; strips empty, `.`, `..`, and absolute/drive components to prevent traversal while preserving subdirectories
 fn sanitize_rel_path(name: &str) -> PathBuf {
     let mut out = PathBuf::new();
     for component in name.split(['/', '\\']) {

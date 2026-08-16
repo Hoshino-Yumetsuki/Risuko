@@ -38,8 +38,7 @@ impl Default for SpeedSample {
 }
 
 impl SpeedSample {
-    /// Record that `bytes` have moved during the last `dt` seconds and
-    /// update the EMA with a fixed alpha
+    /// Record that `bytes` have moved during the last `dt` seconds and update the EMA with a fixed alpha
     pub fn update(&mut self, bytes: u64, dt: f32) {
         let now = Instant::now();
         self.last_update = Some(now);

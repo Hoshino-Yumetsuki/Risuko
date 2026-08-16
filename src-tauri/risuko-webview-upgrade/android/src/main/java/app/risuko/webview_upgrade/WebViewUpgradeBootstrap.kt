@@ -87,7 +87,7 @@ internal object WebViewUpgradeBootstrap {
             val pi = runCatching { WebView.getCurrentWebViewPackage() }.getOrNull()
             if (pi != null) return Triple(pi.packageName, pi.versionName, majorOf(pi.versionName))
         }
-        // Pre-O fallback: probe known packages.
+        // Pre-O fallback: probe known packages
         for (pkg in CANDIDATE_PACKAGES) {
             val major = installedMajor(context, pkg) ?: continue
             return Triple(pkg, installedVersionName(context, pkg), major)

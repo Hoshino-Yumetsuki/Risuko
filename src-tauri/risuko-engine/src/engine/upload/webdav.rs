@@ -1,9 +1,4 @@
-//! WebDAV upload sink — supports Nextcloud, ownCloud, generic Apache mod_dav,
-//! Synology, etc. Uses MKCOL to ensure parent collections exist, then
-//! streaming PUT for the file body
-//!
-//! Auth: HTTP Basic. Digest auth is intentionally out of scope (rare; needs
-//! a challenge-response round-trip)
+//! WebDAV upload sink — supports Nextcloud, ownCloud, generic Apache mod_dav, Synology, etc.; uses MKCOL to ensure parent collections exist, then streaming PUT for the file body, over HTTP Basic auth (digest auth is intentionally out of scope: rare, needs a challenge-response round-trip)
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -54,14 +49,10 @@ impl WebdavSink {
         Some(format!("Basic {}", STANDARD.encode(raw)))
     }
 
-    /// Resolve a remote relative path to an absolute URL under this sink.
-    /// The base_path config is prepended; the relative path's segments are
-    /// percent-encoded individually so spaces and unicode survive
+    /// Resolve a remote relative path to an absolute URL under this sink; the base_path config is prepended and the relative path's segments are percent-encoded individually so spaces and unicode survive
     fn resolve(&self, remote_relative: &str) -> Result<Url, String> {
         use percent_encoding::{utf8_percent_encode, AsciiSet, NON_ALPHANUMERIC};
-        // RFC 3986 path char set: keep `-._~/` plus letters/digits unencoded.
-        // Strip everything else — this is a fragment we control, so playing
-        // it safe is cheaper than parsing the full pchar grammar
+        // RFC 3986 path char set: keep `-._~/` plus letters/digits unencoded and strip everything else — this is a fragment we control, so playing it safe is cheaper than parsing the full pchar grammar
         const PATH_SAFE: &AsciiSet = &NON_ALPHANUMERIC
             .remove(b'-')
             .remove(b'_')
@@ -78,9 +69,7 @@ impl WebdavSink {
                 remote_relative.trim_start_matches('/')
             )
         };
-        // Reject `.`/`..` segments before letting `Url::join` resolve them \u2014
-        // otherwise a remote_relative like `../etc/passwd` would escape the
-        // configured base path and write to an unintended location
+        // Reject `.`/`..` segments before letting `Url::join` resolve them \u2014 otherwise a remote_relative like `../etc/passwd` would escape the configured base path and write to an unintended location
         if remote_relative
             .trim_start_matches('/')
             .split('/')
@@ -96,18 +85,11 @@ impl WebdavSink {
             .map_err(|e| format!("Invalid remote path '{combined}': {e}"))
     }
 
-    /// MKCOL each parent collection in turn. WebDAV servers reject MKCOL if
-    /// any ancestor is missing, so we walk top-down. 405 / 409 on an existing
-    /// collection are tolerated. The walk only covers segments below the
-    /// configured sink root \u2014 attempting MKCOL on `/dav/` or `/files/` on
-    /// e.g. a Nextcloud endpoint would return errors and isn't our concern
+    /// MKCOL each parent collection top-down (ancestors must exist); tolerates 405/409, walks only segments below the sink root
     async fn ensure_parent_dirs(&self, target: &Url) -> Result<(), String> {
         let base_path = self.base_url.path().trim_end_matches('/');
         let target_path = target.path();
-        // `strip_prefix` failure means the resolved target somehow ended up
-        // outside the sink root \u2014 fall back to walking from `/` rather than
-        // skipping creation entirely (the resolve guard above already rejects
-        // `..` segments, so this is just defensive)
+        // Defensive: if target escaped the sink root, walk from `/` rather than skip creation (resolve already rejects `..`)
         let rel = target_path.strip_prefix(base_path).unwrap_or(target_path);
         let mut segments: Vec<&str> = rel.split('/').filter(|s| !s.is_empty()).collect();
         // Drop the file segment \u2014 only the directories above it need MKCOL
@@ -120,9 +102,7 @@ impl WebdavSink {
         for seg in &segments {
             accum.push('/');
             accum.push_str(seg);
-            // Build the MKCOL URL relative to the sink root, never `target`,
-            // so we don't carry over query/fragment from the file URL and
-            // never attempt to create collections above `base_url`
+            // MKCOL URL relative to the sink root (never `target`) so no query/fragment carries over and nothing above `base_url` is created
             let mut url = self.base_url.clone();
             url.set_path(&format!("{base_path}{accum}/"));
 
@@ -138,9 +118,7 @@ impl WebdavSink {
             }
             let resp = req.send().await.map_err(|e| format!("MKCOL: {e}"))?;
             let status = resp.status();
-            // 201 Created (success), 405 Method Not Allowed (already exists),
-            // 301/302 (redirects already followed by client). 409 Conflict
-            // shouldn't happen given our top-down walk; surface it
+            // Accept 201 Created / 405 (exists) / OK; 409 Conflict shouldn't happen with top-down walk, so surface it
             if !matches!(
                 status,
                 StatusCode::CREATED | StatusCode::METHOD_NOT_ALLOWED | StatusCode::OK
@@ -166,12 +144,10 @@ impl UploadSink for WebdavSink {
             return Err("cancelled".into());
         }
 
-        // Ensure parents — best effort; some WebDAV servers (rclone serve)
-        // create parents implicitly on PUT but Nextcloud rejects without them
+        // Ensure parents — best effort; some WebDAV servers (rclone serve) create parents implicitly on PUT but Nextcloud rejects without them
         self.ensure_parent_dirs(&target).await?;
 
-        // Streaming PUT. The body factory opens the file lazily so retries
-        // start from byte zero with a fresh reader
+        // Streaming PUT. The body factory opens the file lazily so retries start from byte zero with a fresh reader
         let path: PathBuf = file.local_path.clone();
         // Wrap the file stream so chunks report progress and observe cancellation mid-stream
         let total = file.size;
@@ -192,9 +168,7 @@ impl UploadSink for WebdavSink {
             req = req.header("authorization", auth);
         }
 
-        // Run the send in a select so cancellation can interrupt mid-flight
-        // Hyper has no first-class cancel handle on a request future, so we
-        // rely on dropping the future to drop the underlying connection
+        // Run the send in a select so cancellation can interrupt mid-flight Hyper has no first-class cancel handle on a request future, so we rely on dropping the future to drop the underlying connection
         let send_fut = req.send();
         let resp = tokio::select! {
             _ = ctl.cancel.cancelled() => return Err("cancelled".into()),
@@ -207,16 +181,14 @@ impl UploadSink for WebdavSink {
             return Err(format!("PUT {} returned {}: {}", target, status, body));
         }
 
-        // Best-effort progress fix-up — when no streaming progress is wired
-        // through hyper, at least mark the job complete on success
+        // Best-effort progress fix-up — when no streaming progress is wired through hyper, at least mark the job complete on success
         ctl.report(file.size, file.size);
 
         Ok(target.to_string())
     }
 
     async fn test(&self) -> Result<(), String> {
-        // OPTIONS on the base URL — most WebDAV servers respond with
-        // `DAV:` capabilities header
+        // OPTIONS on the base URL — most WebDAV servers respond with `DAV:` capabilities header
         let mut req = self
             .client
             .request(risuko_http::Method::OPTIONS, self.base_url.as_str())

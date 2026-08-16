@@ -1,6 +1,7 @@
 //! Message Stream Encryption (MSE) / Protocol Encryption (PE)
 
 use std::io;
+use std::sync::OnceLock;
 
 use num_bigint::BigUint;
 use rand::{Rng, RngExt};
@@ -23,8 +24,9 @@ pub mod crypto {
     pub const RC4: u32 = 0x02;
 }
 
-fn modulus() -> BigUint {
-    BigUint::parse_bytes(P_HEX.as_bytes(), 16).expect("valid hex modulus")
+fn modulus() -> &'static BigUint {
+    static MODULUS: OnceLock<BigUint> = OnceLock::new();
+    MODULUS.get_or_init(|| BigUint::parse_bytes(P_HEX.as_bytes(), 16).expect("valid hex modulus"))
 }
 
 fn to_fixed_be(n: &BigUint, len: usize) -> Vec<u8> {
@@ -51,11 +53,11 @@ impl DhKeys {
         // 160-bit private key is plenty per spec (saves CPU vs a full 768-bit one)
         let mut x_bytes = [0u8; 20];
         rng.fill_bytes(&mut x_bytes);
-        // Ensure non-zero
+        // Force the low bit of the most-significant byte so X is a large, non-zero exponent
         x_bytes[0] |= 0x01;
         let x = BigUint::from_bytes_be(&x_bytes);
         let p = modulus();
-        let y = BigUint::from(G).modpow(&x, &p);
+        let y = BigUint::from(G).modpow(&x, p);
         let mut public_be = [0u8; DH_LEN];
         public_be.copy_from_slice(&to_fixed_be(&y, DH_LEN));
         Self {
@@ -64,20 +66,19 @@ impl DhKeys {
         }
     }
 
-    /// Compute the shared secret S = Y_other^X mod P.
-    /// Returns an error if the peer's public key is invalid (0, 1, or >= p-1)
+    /// Compute the shared secret S = Y_other^X mod P; errors if the peer's public key is invalid (0, 1, or >= p-1)
     pub fn shared_secret(&self, peer_public_be: &[u8; DH_LEN]) -> io::Result<[u8; DH_LEN]> {
         let y = BigUint::from_bytes_be(peer_public_be);
         let p = modulus();
         let one = BigUint::from(1u32);
-        let p_minus_1 = &p - &one;
+        let p_minus_1 = p - &one;
         if y <= one || y >= p_minus_1 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "invalid DH public key",
             ));
         }
-        let s = y.modpow(&self.private, &p);
+        let s = y.modpow(&self.private, p);
         let mut out = [0u8; DH_LEN];
         out.copy_from_slice(&to_fixed_be(&s, DH_LEN));
         Ok(out)
@@ -118,8 +119,7 @@ pub fn req3(s: &[u8; DH_LEN]) -> [u8; 20] {
     sha1_many(&[b"req3", s])
 }
 
-/// RC4 key derivation per BEP 8:
-/// `HASH('keyA' | 'keyB', S, SKEY)` — 20 bytes
+/// RC4 key derivation per BEP 8: `HASH('keyA' | 'keyB', S, SKEY)` — 20 bytes
 pub fn rc4_key(tag: &[u8; 4], s: &[u8; DH_LEN], skey: &[u8; 20]) -> [u8; 20] {
     sha1_many(&[tag, s, skey])
 }
@@ -151,8 +151,7 @@ pub enum MseError {
     IaTooLarge(u16),
 }
 
-/// First occurrence of `needle` in `hay` at or after `start`, else `None`.
-/// Used by the incoming side to locate `HASH('req1',S)`
+/// First occurrence of `needle` in `hay` at or after `start`, else `None`; used by the incoming side to locate `HASH('req1',S)`
 pub fn find_subsequence_from(hay: &[u8], needle: &[u8], start: usize) -> Option<usize> {
     if needle.is_empty() || needle.len() > hay.len() {
         return None;
@@ -167,15 +166,12 @@ pub fn find_subsequence_from(hay: &[u8], needle: &[u8], start: usize) -> Option<
         .map(|off| off + start)
 }
 
-/// First candidate offset to rescan after appending bytes to a searched buffer
-///
-/// Backs up by `needle_len - 1` to keep matches that cross the old/new boundary
+/// First candidate offset to rescan after appending bytes to a searched buffer; backs up by `needle_len - 1` to keep matches that cross the old/new boundary
 pub fn scan_start_after_append(previous_len: usize, needle_len: usize) -> usize {
     previous_len.saturating_sub(needle_len.saturating_sub(1))
 }
 
-/// Build the initiator's third message body (plaintext, to be RC4-encrypted
-/// by the caller): `VC || crypto_provide || len(PadC) || PadC || len(IA) || IA`
+/// Build the initiator's third message body (plaintext, RC4-encrypted by the caller): `VC || crypto_provide || len(PadC) || PadC || len(IA) || IA`
 pub fn build_initiator_payload(
     crypto_provide: u32,
     pad_c: &[u8],
@@ -197,8 +193,7 @@ pub fn build_initiator_payload(
     Ok(out)
 }
 
-/// Build the responder's reply body (plaintext, to be RC4-encrypted by the
-/// caller): `VC || crypto_select || len(PadD) || PadD`
+/// Build the responder's reply body (plaintext, RC4-encrypted by the caller): `VC || crypto_select || len(PadD) || PadD`
 pub fn build_responder_payload(crypto_select: u32, pad_d: &[u8]) -> Result<Vec<u8>, MseError> {
     if pad_d.len() > u16::MAX as usize {
         return Err(MseError::PadTooLarge(pad_d.len() as u16));

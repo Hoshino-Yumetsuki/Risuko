@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 // Check if all required translation keys are present in the locales files
 
-import { readdirSync, readFileSync } from "node:fs";
+import { readdirSync, readFileSync, realpathSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import ts from "typescript";
 
 const root = resolve(import.meta.dirname, "..");
@@ -60,6 +61,7 @@ const FEATURE_KEYS = [
 	"task.sort-ascending",
 	"task.sort-descending",
 	"task.torrent-preview-folder-select",
+	"task.unknown-task-type",
 	"preferences.history-directories",
 	"preferences.favorite-directory",
 	"preferences.unfavorite-directory",
@@ -77,6 +79,14 @@ const FEATURE_KEYS = [
 	"preferences.last-check-update-time",
 	"preferences.randomize-port",
 	"preferences.generate-rpc-secret",
+	"preferences.ed2k-kad",
+	"preferences.ed2k-enable-kad",
+	"preferences.ed2k-enable-kad-tips",
+	"preferences.ed2k-kad-port",
+	"preferences.ed2k-kad-port-tips",
+	"preferences.ed2k-kad-port-invalid",
+	"preferences.engine-overrides-reserved-keys",
+	"preferences.engine-overrides-too-large",
 	"rss.clear-filter",
 	"rss.filter-unread",
 	"rss.filter-matched",
@@ -90,6 +100,10 @@ const FEATURE_KEYS = [
 	"rss.select-all",
 	"window.close",
 ];
+
+const FEATURE_INTERPOLATIONS = new Map([
+	["preferences.engine-overrides-reserved-keys", ["keys"]],
+]);
 
 const LOCALES = [
 	"ar",
@@ -129,7 +143,7 @@ function propertyName(property) {
 	return null;
 }
 
-function collectObject(object, prefix, keys) {
+function collectObject(object, prefix, keys, values) {
 	for (const property of object.properties) {
 		if (!ts.isPropertyAssignment(property) && !ts.isShorthandPropertyAssignment(property)) {
 			continue;
@@ -138,14 +152,22 @@ function collectObject(object, prefix, keys) {
 		if (!name) continue;
 		const path = prefix ? `${prefix}.${name}` : name;
 		keys.add(path);
-		if (ts.isPropertyAssignment(property) && ts.isObjectLiteralExpression(property.initializer)) {
-			collectObject(property.initializer, path, keys);
+		if (ts.isPropertyAssignment(property)) {
+			if (ts.isObjectLiteralExpression(property.initializer)) {
+				collectObject(property.initializer, path, keys, values);
+			} else if (
+				ts.isStringLiteral(property.initializer) ||
+				ts.isNoSubstitutionTemplateLiteral(property.initializer)
+			) {
+				values.set(path, property.initializer.text);
+			}
 		}
 	}
 }
 
 function collectLocaleKeys(locale) {
 	const keys = new Set();
+	const values = new Map();
 	const dir = join(localesRoot, locale);
 	for (const file of readdirSync(dir).filter((name) => name.endsWith(".ts"))) {
 		const source = ts.createSourceFile(
@@ -158,27 +180,76 @@ function collectLocaleKeys(locale) {
 			if (!ts.isExportAssignment(statement)) continue;
 			const expression = statement.expression;
 			if (ts.isObjectLiteralExpression(expression)) {
-				collectObject(expression, file.slice(0, -3), keys);
+				collectObject(expression, file.slice(0, -3), keys, values);
 			}
 		}
 	}
-	return keys;
+	return { keys, values };
 }
 
-const missing = [];
-for (const locale of LOCALES) {
-	const keys = collectLocaleKeys(locale);
-	for (const required of FEATURE_KEYS) {
-		const [namespace, ...parts] = required.split(".");
-		const localKey = `${namespace}.${parts.join(".")}`;
-		if (!keys.has(localKey)) missing.push(`${locale}: ${required}`);
+export function validateFeatureInterpolations(locale, keys, values) {
+	const invalidInterpolations = [];
+	for (const [key, variables] of FEATURE_INTERPOLATIONS) {
+		if (!keys.has(key)) continue;
+		const value = values.get(key);
+		if (value === undefined) {
+			invalidInterpolations.push(
+				`${locale}: ${key} must be a string literal containing ${variables
+					.map((variable) => `{{${variable}}}`)
+					.join(", ")}`,
+			);
+			continue;
+		}
+		for (const variable of variables) {
+			if (!value.includes(`{{${variable}}}`)) {
+				invalidInterpolations.push(`${locale}: ${key} must include {{${variable}}}`);
+			}
+		}
+	}
+	return invalidInterpolations;
+}
+
+function main() {
+	const missing = [];
+	const invalidInterpolations = [];
+	for (const locale of LOCALES) {
+		const { keys, values } = collectLocaleKeys(locale);
+		for (const required of FEATURE_KEYS) {
+			const [namespace, ...parts] = required.split(".");
+			const localKey = `${namespace}.${parts.join(".")}`;
+			if (!keys.has(localKey)) missing.push(`${locale}: ${required}`);
+		}
+		invalidInterpolations.push(...validateFeatureInterpolations(locale, keys, values));
+	}
+
+	if (missing.length > 0) {
+		console.error(`Missing ${missing.length} required translation key(s):`);
+		for (const item of missing) console.error(`- ${item}`);
+		process.exit(1);
+	}
+
+	if (invalidInterpolations.length > 0) {
+		console.error(
+			`Invalid interpolation in ${invalidInterpolations.length} translation value(s):`,
+		);
+		for (const item of invalidInterpolations) console.error(`- ${item}`);
+		process.exit(1);
+	}
+
+	console.log(`i18n parity OK: ${LOCALES.length} locales, ${FEATURE_KEYS.length} feature keys`);
+}
+
+export function isDirectExecution(entryPath = process.argv[1]) {
+	if (!entryPath) return false;
+	try {
+		return realpathSync(entryPath) === realpathSync(fileURLToPath(import.meta.url));
+	} catch (error) {
+		throw new Error(`Unable to resolve i18n checker entry path: ${entryPath}`, {
+			cause: error,
+		});
 	}
 }
 
-if (missing.length > 0) {
-	console.error(`Missing ${missing.length} required translation key(s):`);
-	for (const item of missing) console.error(`- ${item}`);
-	process.exit(1);
+if (isDirectExecution()) {
+	main();
 }
-
-console.log(`i18n parity OK: ${LOCALES.length} locales, ${FEATURE_KEYS.length} feature keys`);

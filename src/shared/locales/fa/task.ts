@@ -7,6 +7,7 @@ export default {
 	stopped: "متوقف شد",
 	"new-task": "وظیفهٔ جدید",
 	"new-bt-task": "وظیفهٔ بیت‌تورنت جدید",
+	"unknown-task-type": "نوع وظیفه پشتیبانی نمی‌شود",
 	"open-file": "بازکردن پروندهٔ تورنت...",
 	"uri-task": "آدرس اینترنتی",
 	"torrent-task": "تورنت",

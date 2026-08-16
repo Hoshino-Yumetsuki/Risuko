@@ -12,10 +12,7 @@ use tokio_util::sync::CancellationToken;
 
 use super::types::GnutellaError;
 
-/// Download a single file from a Gnutella servent over HTTP/1.1 by URN.
-/// Issues `GET <n2r_path>?<urn> HTTP/1.1` with `X-Gnutella-Content-URN` and
-/// streams the body to `out_path`. The `completed` counter is updated as
-/// bytes arrive; cancellation aborts the read loop
+/// Download a single file from a Gnutella servent over HTTP/1.1 by URN. Issues `GET <n2r_path>?<urn> HTTP/1.1` with `X-Gnutella-Content-URN` and streams the body to `out_path`. The `completed` counter is updated as bytes arrive; cancellation aborts the read loop
 pub async fn fetch_by_urn(
     host: &str,
     port: u16,

@@ -103,6 +103,19 @@ export default {
 		"Avansat: setați chei arbitrare pentru opțiunile motorului ca obiect JSON. Modificările intră în vigoare după repornire.",
 	"engine-overrides-invalid":
 		"Suprascrierile motorului trebuie să fie un obiect JSON valid.",
+	"ed2k-kad": "eMule Kad",
+	"ed2k-enable-kad": "Activează descoperirea surselor prin Kad",
+	"ed2k-enable-kad-tips":
+		"Descoperă surse ED2K prin rețeaua eMule Kad (necesită repornirea motorului)",
+	"ed2k-kad-port": "Port UDP Kad",
+	"ed2k-kad-port-tips":
+		"Portul UDP utilizat pentru descoperirea prin Kad. Valorile valide sunt 1-65535 (necesită repornirea motorului)",
+	"ed2k-kad-port-invalid":
+		"Portul UDP Kad trebuie să fie un număr întreg între 1 și 65535",
+	"engine-overrides-reserved-keys":
+		"Chei rezervate ignorate în suprascrierile motorului: {{keys}}",
+	"engine-overrides-too-large":
+		"Suprascrierile motorului sunt prea mari: cel mult 64 de chei, 64 de caractere per cheie și 2048 de caractere per valoare.",
 	"external-engine-enable": "Folosește motor extern",
 	"external-engine-enable-tips":
 		"Când este activată, Risuko nu va porni automat motorul încorporat.",

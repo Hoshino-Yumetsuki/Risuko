@@ -41,7 +41,6 @@ export default {
 		"This download is a binary file and can't be previewed inline.",
 	"open-externally": "Open in default app",
 	"items-per-page": "{{count}} items/page",
-	// v2: rules dialog
 	"rule-tab-general": "General",
 	"rule-tab-filters": "Filters",
 	"rule-tab-series": "Series & Episodes",
@@ -82,7 +81,6 @@ export default {
 	"rule-placeholder-quality": "1080p, x265, WEB-DL, ...",
 	"rule-placeholder-filename-template":
 		"{series} S{season:02}E{episode:02} [{quality}].{ext}",
-	// v2: reader UX
 	"density-compact": "Compact",
 	"density-comfortable": "Comfortable",
 	"reader-split": "Split view",

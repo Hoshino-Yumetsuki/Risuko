@@ -30,8 +30,11 @@ const defaultTime = () => {
 	return d;
 };
 
-const commit = (d: Date) =>
-	emit("update:modelValue", Math.floor(d.getTime() / 1000));
+const commit = (d: Date) => {
+	let seconds = Math.floor(d.getTime() / 1000);
+	if (!props.allowPast) seconds = Math.max(seconds, Math.floor(Date.now() / 1000));
+	emit("update:modelValue", seconds);
+};
 
 const selected = computed<Date | null>(() =>
 	props.modelValue ? new Date(props.modelValue * 1000) : null,
@@ -97,9 +100,7 @@ const isPM = computed(() => currentHours() >= 12);
 watch(open, (isOpen) => {
 	if (!isOpen) return;
 	if (!props.modelValue) {
-		const d = defaultTime();
-		commit(d);
-		viewDate.value = startOfMonth(d);
+		viewDate.value = startOfMonth(defaultTime());
 	}
 });
 

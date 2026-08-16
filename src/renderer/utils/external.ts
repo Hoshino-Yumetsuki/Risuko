@@ -87,9 +87,6 @@ export async function openExternalUrl(value: unknown): Promise<boolean> {
 	try {
 		await invoke("plugin:shell|open", { path: url });
 	} catch {
-		// Browser fallback keeps the action usable in web preview/dev builds.
-		// `openExternalUrl` is also used by store/toast code that can be
-		// exercised during SSR or unit tests, where `window` does not exist.
 		const browser = (
 			globalThis as typeof globalThis & {
 				window?: {

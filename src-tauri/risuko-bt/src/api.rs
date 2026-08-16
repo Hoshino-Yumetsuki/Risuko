@@ -1,6 +1,4 @@
-//! Public API types mirroring the librqbit surface that `engine::torrent.rs`
-//! consumes. These re-export / wrap types from submodules so the rest of the
-//! engine can use one import path
+//! Public API types mirroring the librqbit surface; re-export / wrap submodule types so the engine uses one import path
 
 use super::core::Id20;
 

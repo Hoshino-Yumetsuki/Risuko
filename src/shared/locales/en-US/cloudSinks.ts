@@ -15,7 +15,6 @@ export default {
 	labelPlaceholder: "e.g. Home NAS",
 	protocol: "Protocol",
 
-	// WebDAV
 	endpoint: "Endpoint URL",
 	basePath: "Base path",
 	basePathHint: "Optional. Files are stored under this path on the server.",
@@ -27,7 +26,6 @@ export default {
 	allowInsecureHint:
 		"Skip TLS certificate validation. Only enable for trusted private servers.",
 
-	// S3
 	s3Endpoint: "Endpoint",
 	s3EndpointPlaceholder: "https://s3.amazonaws.com or http://minio:9000",
 	s3Region: "Region",
@@ -41,7 +39,6 @@ export default {
 	s3PathStyleHint:
 		"Use bucket-in-path URLs (required for MinIO and most self-hosted S3).",
 
-	// SFTP
 	host: "Host",
 	port: "Port",
 	privateKey: "Private key (PEM)",
@@ -49,7 +46,6 @@ export default {
 	sftpBasePath: "Base path",
 	sftpBasePathPlaceholder: "/home/user/uploads",
 
-	// FTP
 	ftpSecure: "FTPS (TLS)",
 	ftpSecureHint: "Negotiate explicit TLS (FTPS) on the control channel.",
 	postAction: "After Upload",
@@ -91,7 +87,6 @@ export default {
 	save: "Save",
 	close: "Close",
 
-	// Rules
 	rules: "Routing Rules",
 	rulesHint:
 		"Match completed downloads against rules in order; the first hit picks the destination sink. Without rules every task uses the default sink.",

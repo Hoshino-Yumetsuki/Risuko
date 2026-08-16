@@ -7,6 +7,7 @@ export default {
 	stopped: "一時停止中",
 	"new-task": "新規タスク",
 	"new-bt-task": "新規torrentタスク",
+	"unknown-task-type": "サポートされていないタスク形式です",
 	"open-file": "torrentファイルを開く...",
 	"uri-task": "URLタスク",
 	"torrent-task": "torrentタスク",

@@ -51,14 +51,9 @@ fn read_script_config(state: &AppState) -> Result<ScriptConfig, String> {
     })
 }
 
-/// Tokenize an args template by whitespace (no shell interpretation), then
-/// substitute `{path}`, `{hash}`, `{status}` placeholders.
-///
-/// Note: whitespace tokenization collapses consecutive spaces and does not
-/// preserve empty arguments
+/// Tokenize an args template by whitespace (no shell interpretation), then substitute `{path}`, `{hash}`, `{status}` placeholders. Note: whitespace tokenization collapses consecutive spaces and does not preserve empty arguments
 fn replace_placeholders(token: &str, path: &str, hash: &str, status: &str) -> String {
-    // Substitute {path} last so placeholder-looking text inside the path
-    // literal is never re-expanded
+    // Substitute {path} last so placeholder-looking text inside the path literal is never re-expanded
     token
         .replace("{hash}", hash)
         .replace("{status}", status)
@@ -147,9 +142,7 @@ async fn execute(
     }
 }
 
-/// Per-task overrides for the completion script. Any field set takes
-/// precedence over the saved global preference. `enabled = Some(false)`
-/// fully disables the script for that task even when globally enabled
+/// Per-task overrides for the completion script. Any field set takes precedence over the saved global preference. `enabled = Some(false)` fully disables the script for that task even when globally enabled
 #[derive(Default, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CompletionScriptOverrides {
@@ -173,8 +166,7 @@ fn merge_with_overrides(
         let trimmed = command.trim().to_string();
         if !trimmed.is_empty() {
             cfg.command = trimmed;
-            // A per-task command implies opt-in even if global was disabled,
-            // unless the override explicitly set enabled=false above
+            // A per-task command implies opt-in even if global was disabled, unless the override explicitly set enabled=false above
             if o.enabled.is_none() {
                 cfg.enabled = true;
             }
@@ -189,8 +181,7 @@ fn merge_with_overrides(
     cfg
 }
 
-/// Fire-and-forget invocation from the renderer when a download finishes
-/// Reads the saved script config; no-op when disabled or unconfigured
+/// Fire-and-forget invocation from the renderer when a download finishes Reads the saved script config; no-op when disabled or unconfigured
 #[tauri::command]
 pub async fn run_completion_script(
     handle: AppHandle,
@@ -241,8 +232,7 @@ pub async fn run_completion_script(
     Ok(())
 }
 
-/// Synchronous test invocation used by the Preference UI to validate the
-/// configured script without waiting for an actual download to complete
+/// Synchronous test invocation used by the Preference UI to validate the configured script without waiting for an actual download to complete
 #[tauri::command]
 pub async fn test_completion_script(
     handle: AppHandle,

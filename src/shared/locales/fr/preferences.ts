@@ -109,6 +109,19 @@ export default {
 		"Avancé : définissez des clés d'options du moteur arbitraires sous forme d'objet JSON. Les changements prennent effet après redémarrage.",
 	"engine-overrides-invalid":
 		"Les surcharges du moteur doivent être un objet JSON valide.",
+	"ed2k-kad": "eMule Kad",
+	"ed2k-enable-kad": "Activer la découverte de sources via Kad",
+	"ed2k-enable-kad-tips":
+		"Découvrir des sources ED2K via le réseau eMule Kad (nécessite un redémarrage du moteur)",
+	"ed2k-kad-port": "Port UDP de Kad",
+	"ed2k-kad-port-tips":
+		"Port UDP utilisé pour la découverte via Kad. Les valeurs valides vont de 1 à 65535 (nécessite un redémarrage du moteur)",
+	"ed2k-kad-port-invalid":
+		"Le port UDP de Kad doit être un entier compris entre 1 et 65535",
+	"engine-overrides-reserved-keys":
+		"Clés réservées de surcharge du moteur ignorées : {{keys}}",
+	"engine-overrides-too-large":
+		"Les surcharges du moteur sont trop volumineuses : au maximum 64 clés, 64 caractères par clé et 2048 caractères par valeur.",
 	"external-engine-enable": "Utiliser un moteur externe",
 	"external-engine-enable-tips":
 		"Lorsqu'il est activé, Risuko ne démarrera pas automatiquement le moteur intégré.",

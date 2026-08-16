@@ -710,6 +710,82 @@ const parseExtList = (text) => [
 	),
 ];
 
+const BASIC_BOOLEAN_KEYS = [
+	"openAtLogin",
+	"keepWindowState",
+	"resumeAllWhenAppLaunched",
+	"purgeRecordOnStart",
+	"btSaveMetadata",
+	"btForceEncryption",
+	"clipboardWatch",
+	"keepSeeding",
+	"autoRetry",
+	"autoDetectLowSpeedTasks",
+	"newTaskShowDownloading",
+	"preventSleepWhileDownloading",
+	"shutdownWhenComplete",
+	"taskNotification",
+	"noConfirmBeforeDeleteTask",
+	"useRemoteFileTime",
+	"autoFileRenaming",
+];
+
+const normalizeBasicConfig = (data) => {
+	for (const key of BASIC_BOOLEAN_KEYS) {
+		if (key in data) {
+			data[key] = !!data[key];
+		}
+	}
+
+	if (data.btTracker) {
+		data.btTracker = reduceTrackerString(convertLineToComma(data.btTracker));
+	}
+
+	if ("clipboardWatchExtensions" in data) {
+		data.clipboardWatchExtensions = parseExtList(data.clipboardWatchExtensions);
+	}
+
+	if (data.rpcListenPort === "") {
+		data.rpcListenPort = ENGINE_RPC_PORT;
+	}
+
+	if ("autoRetryInterval" in data) {
+		data.autoRetryInterval = normalizePositiveInt(
+			data.autoRetryInterval,
+			5,
+			1,
+			300,
+		);
+	}
+
+	if ("lowSpeedThreshold" in data) {
+		data.lowSpeedThreshold = normalizePositiveInt(
+			data.lowSpeedThreshold,
+			20,
+			1,
+			10240,
+		);
+	}
+
+	if ("autoRetryStrategy" in data) {
+		data.autoRetryStrategy =
+			data.autoRetryStrategy === RETRY_STRATEGY_EXPONENTIAL
+				? RETRY_STRATEGY_EXPONENTIAL
+				: RETRY_STRATEGY_STATIC;
+	}
+
+	if ("workerMaxRetries" in data) {
+		data.workerMaxRetries = normalizePositiveInt(
+			data.workerMaxRetries,
+			5,
+			1,
+			20,
+		);
+	}
+
+	return data;
+};
+
 const initForm = (config) => {
 	const {
 		autoDetectLowSpeedTasks,
@@ -1004,83 +1080,9 @@ export default {
 		},
 		submitForm(_formName) {
 			const data = {
-				...diffConfig(this.formOriginal, this.form),
+				...normalizeBasicConfig(diffConfig(this.formOriginal, this.form)),
 				...changedConfig.advanced,
 			};
-			const booleanKeys = [
-				"openAtLogin",
-				"keepWindowState",
-				"resumeAllWhenAppLaunched",
-				"purgeRecordOnStart",
-				"btSaveMetadata",
-				"btForceEncryption",
-				"clipboardWatch",
-				"keepSeeding",
-				"autoRetry",
-				"autoDetectLowSpeedTasks",
-				"newTaskShowDownloading",
-				"preventSleepWhileDownloading",
-				"shutdownWhenComplete",
-				"taskNotification",
-				"noConfirmBeforeDeleteTask",
-				"useRemoteFileTime",
-				"autoFileRenaming",
-			];
-			for (const key of booleanKeys) {
-				if (key in data) {
-					data[key] = !!this.form[key];
-				}
-			}
-
-			const { btTracker, rpcListenPort } = data;
-
-			if (btTracker) {
-				data.btTracker = reduceTrackerString(convertLineToComma(btTracker));
-			}
-
-			if ("clipboardWatchExtensions" in data) {
-				data.clipboardWatchExtensions = parseExtList(
-					this.form.clipboardWatchExtensions,
-				);
-			}
-
-			if (rpcListenPort === "") {
-				data.rpcListenPort = ENGINE_RPC_PORT;
-			}
-
-			if ("autoRetryInterval" in data) {
-				data.autoRetryInterval = normalizePositiveInt(
-					this.form.autoRetryInterval,
-					5,
-					1,
-					300,
-				);
-			}
-
-			if ("lowSpeedThreshold" in data) {
-				data.lowSpeedThreshold = normalizePositiveInt(
-					this.form.lowSpeedThreshold,
-					20,
-					1,
-					10240,
-				);
-			}
-
-			if ("autoRetryStrategy" in data) {
-				data.autoRetryStrategy =
-					this.form.autoRetryStrategy === RETRY_STRATEGY_EXPONENTIAL
-						? RETRY_STRATEGY_EXPONENTIAL
-						: RETRY_STRATEGY_STATIC;
-			}
-
-			if ("workerMaxRetries" in data) {
-				data.workerMaxRetries = normalizePositiveInt(
-					this.form.workerMaxRetries,
-					5,
-					1,
-					20,
-				);
-			}
 
 			logger.log("[Risuko] preference changed data:", data);
 
@@ -1108,7 +1110,9 @@ export default {
 		},
 	},
 	async beforeRouteLeave(to, _from) {
-		changedConfig.basic = diffConfig(this.formOriginal, this.form);
+		changedConfig.basic = normalizeBasicConfig(
+			diffConfig(this.formOriginal, this.form),
+		);
 		if (to.path === "/preference/advanced") {
 			return true;
 		}

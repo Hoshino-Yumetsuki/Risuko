@@ -143,7 +143,11 @@ impl DownloadStatsManager {
             let mut data: DownloadStatsStore = serde_json::from_value(data_val)
                 .map_err(|e| format!("Failed to parse stats data: {e}"))?;
             data.version = STATS_VERSION;
-            let mut store = self.store.blocking_lock();
+            // Uncontended at single-threaded startup before the Arc is shared; try_lock avoids blocking_lock() panicking on a Tokio worker thread
+            let mut store = self
+                .store
+                .try_lock()
+                .map_err(|_| "stats store busy during load".to_string())?;
             *store = data;
         }
         Ok(())
@@ -175,11 +179,9 @@ impl DownloadStatsManager {
                     kind: kind.clone(),
                 });
 
-            let received = if task.completed_length >= baseline.completed_length {
-                task.completed_length - baseline.completed_length
-            } else {
-                0
-            };
+            let received = task
+                .completed_length
+                .saturating_sub(baseline.completed_length);
             baseline.completed_length = task.completed_length;
             baseline.kind = kind.clone();
 
@@ -243,7 +245,11 @@ impl DownloadStatsManager {
     }
 
     pub fn clear_sync(&self) -> Result<(), String> {
-        let mut store = self.store.blocking_lock();
+        // See load(): startup, uncontended lock; try_lock avoids the blocking_lock() panic risk inside a Tokio runtime
+        let mut store = self
+            .store
+            .try_lock()
+            .map_err(|_| "stats store busy during clear".to_string())?;
         *store = DownloadStatsStore::default();
         let data =
             serde_json::to_value(&*store).map_err(|e| format!("Serialize stats failed: {e}"))?;
@@ -337,8 +343,7 @@ fn merge_store(store: &mut DownloadStatsStore, incoming: DownloadStatsStore) {
             .or_insert(baseline);
     }
 
-    // ponytail: no per-device bucket ids; max keeps full-snapshot sync idempotent.
-    // Add bucket ids if cross-device additive merge matters.
+    // ponytail: no per-device bucket ids; max keeps full-snapshot sync idempotent; add bucket ids if cross-device additive merge matters
     for (month, protocols) in incoming.monthly {
         let target = store.monthly.entry(month).or_default();
         for (protocol, bytes) in protocols {
@@ -390,11 +395,7 @@ fn prune_speed(store: &mut DownloadStatsStore, current_minute: i64) {
 }
 
 fn avg(sum: u64, samples: u64) -> u64 {
-    if samples == 0 {
-        0
-    } else {
-        sum / samples
-    }
+    sum.checked_div(samples).unwrap_or(0)
 }
 
 fn normalize_kind(kind: &str) -> String {

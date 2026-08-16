@@ -42,8 +42,6 @@ export interface RssItem {
 	download_path?: string;
 	parsed_meta?: ParsedMeta | null;
 	matched_rule_id?: string | null;
-	/** Inline media URLs scraped from the entry body (img/video/audio/source)
-	 * plus extra enclosure links beyond the primary `enclosure_url` */
 	media_urls?: string[];
 }
 

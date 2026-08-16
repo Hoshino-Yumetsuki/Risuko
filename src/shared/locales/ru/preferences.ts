@@ -102,6 +102,19 @@ export default {
 	"engine-overrides-tips":
 		"Advanced: set arbitrary engine option keys as a JSON object. Changes take effect after restart.",
 	"engine-overrides-invalid": "Engine Overrides must be a valid JSON object.",
+	"ed2k-kad": "eMule Kad",
+	"ed2k-enable-kad": "Включить поиск источников через Kad",
+	"ed2k-enable-kad-tips":
+		"Поиск источников ED2K через сеть eMule Kad (требуется перезапуск движка)",
+	"ed2k-kad-port": "UDP-порт Kad",
+	"ed2k-kad-port-tips":
+		"UDP-порт для поиска источников через Kad. Допустимые значения: 1-65535 (требуется перезапуск движка)",
+	"ed2k-kad-port-invalid":
+		"UDP-порт Kad должен быть целым числом от 1 до 65535",
+	"engine-overrides-reserved-keys":
+		"Проигнорированы зарезервированные ключи переопределения движка: {{keys}}",
+	"engine-overrides-too-large":
+		"Переопределения движка слишком велики: не более 64 ключей, 64 символов на ключ и 2048 символов на значение.",
 	"external-engine-enable": "Use External Engine",
 	"external-engine-enable-tips":
 		"When enabled, Risuko will not auto-start the embedded engine.",

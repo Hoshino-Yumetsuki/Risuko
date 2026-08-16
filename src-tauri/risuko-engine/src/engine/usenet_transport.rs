@@ -423,8 +423,7 @@ impl NntpConnection {
         Ok(line)
     }
 
-    /// Read at most `MAX_LINE` bytes without allowing an unterminated line to
-    /// grow an unbounded temporary buffer.
+    /// Read at most `MAX_LINE` bytes without letting an unterminated line grow an unbounded temporary buffer
     async fn read_line_into(&mut self, line: &mut Vec<u8>) -> Result<(), NntpError> {
         loop {
             let available = timeout(IO_TIMEOUT, self.reader.fill_buf())

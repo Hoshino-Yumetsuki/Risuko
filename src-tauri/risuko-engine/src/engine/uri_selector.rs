@@ -1,9 +1,4 @@
-//! Mirror (URI) selection for HTTP/FTP downloads with multiple sources
-//!
-//! The engine forwards a `Vec<String>` of URIs to a download. After each
-//! piece-worker error or whole-task hard failure, the worker asks a selector
-//! for the *next* URI to try. Selectors track per-host EMA speed and
-//! consecutive failure count so a flaky mirror doesn't keep getting picked
+//! Mirror (URI) selection for multi-source HTTP/FTP downloads: after each piece-worker error or hard failure the worker asks a selector for the next URI, tracking per-host EMA speed and consecutive failures so a flaky mirror isn't repeatedly picked
 
 use std::collections::HashMap;
 use std::time::Instant;
@@ -47,8 +42,7 @@ pub struct ServerStats {
 impl ServerStats {
     pub fn record_failure(&mut self, host: &str) {
         let entry = self.by_host.entry(host.to_string()).or_default();
-        // Reset the counter when the last failure aged out of the window so a
-        // mirror that recovers isn't punished forever for an old outage
+        // Reset the counter when the last failure aged out of the window so a recovered mirror isn't punished forever for an old outage
         let now = Instant::now();
         if entry
             .last_fail
@@ -66,8 +60,7 @@ impl ServerStats {
         entry.last_fail = None;
         if secs > 0.001 {
             let bps = bytes as f64 / secs;
-            // EMA with 0.3 smoothing — aggressive enough to react to a mirror
-            // becoming slow without overweighting a single noisy sample
+            // EMA with 0.3 smoothing: reacts to a mirror going slow without overweighting a single noisy sample
             entry.ema_bps = if entry.ema_bps == 0.0 {
                 bps
             } else {
@@ -77,10 +70,7 @@ impl ServerStats {
     }
 
     pub fn is_blacklisted(&self, host: &str) -> bool {
-        // A host is only blacklisted while its failure count is above the
-        // threshold *and* the most recent failure is still within the
-        // observation window. Otherwise a single bad streak would block a
-        // mirror forever even after it recovers
+        // Blacklisted only while fail count exceeds the threshold AND the most recent failure is still within the window, else one bad streak would block a mirror forever after recovery
         self.by_host.get(host).is_some_and(|s| {
             if s.fail_count < MAX_CONSECUTIVE_FAILS {
                 return false;
@@ -97,9 +87,7 @@ impl ServerStats {
     }
 }
 
-/// Decide which URI from `uris` to try next given the current strategy and
-/// per-host stats. Returns `None` only when *all* URIs are blacklisted —
-/// callers should treat that as terminal
+/// Decide which URI from `uris` to try next given strategy and per-host stats; `None` (terminal) only when all URIs are blacklisted
 pub fn pick(
     strategy: Strategy,
     uris: &[String],
@@ -115,12 +103,7 @@ pub fn pick(
             .and_then(|u| u.host_str().map(str::to_string))
     };
 
-    // `Inorder` semantically means "try strictly in the user-specified order"
-    // and must not silently drop hosts that other strategies would skip,
-    // otherwise it collapses into `Feedback`. Blacklist filtering only runs
-    // for non-`Inorder` strategies; the `failed_in_this_attempt` filter still
-    // applies everywhere because it represents URIs the *current* attempt has
-    // already exhausted (any strategy must move past those)
+    // `Inorder` means "try strictly in user-specified order" and must not drop hosts other strategies skip, else it collapses into `Feedback`; blacklist filtering runs only for non-`Inorder`, while `failed_in_this_attempt` filters everywhere since those URIs the current attempt already exhausted
     let candidates: Vec<usize> = (0..uris.len())
         .filter(|i| !failed_in_this_attempt.contains(i))
         .filter(|i| {
@@ -141,12 +124,7 @@ pub fn pick(
     match strategy {
         Strategy::Inorder | Strategy::Feedback => Some(candidates[0]),
         Strategy::Adaptive => {
-            // Weighted by EMA. Mirrors with no recorded speed yet get a
-            // baseline strictly below the slowest known mirror so cold
-            // mirrors are still considered (non-zero weight) but never tie
-            // with — and therefore can't outrank by iteration order — a
-            // mirror that already has measured throughput. A 0.0 baseline
-            // would silently skip them whenever any other mirror has stats
+            // Weighted by EMA; mirrors with no recorded speed get a baseline strictly below the slowest known one so cold mirrors stay considered (non-zero weight) yet never tie with or outrank a measured mirror, whereas a 0.0 baseline would silently skip them
             let known: Vec<f64> = candidates
                 .iter()
                 .filter_map(|&i| host_of(&uris[i]).and_then(|h| stats.get(&h).map(|s| s.ema_bps)))
@@ -173,9 +151,7 @@ pub fn pick(
             if total <= 0.0 {
                 return Some(candidates[0]);
             }
-            // Trivial deterministic round-robin via host hash of `Instant::now`
-            // would re-seed `rand` per call; keep it simple and pick the
-            // highest-weighted (still respects EMA, just no random draw)
+            // Deterministic round-robin via host hash of `Instant::now` would re-seed `rand` per call; keep it simple and pick the highest-weighted (still respects EMA, no random draw)
             let (best_pos, _) = weights
                 .iter()
                 .enumerate()
@@ -191,8 +167,7 @@ pub fn strategy_from_options(options: &Map<String, Value>) -> Strategy {
     Strategy::from_option(options.get("uri-selector"))
 }
 
-/// Extract the host (lowercased) from a URI for stat keying. Returns the raw
-/// URI when parsing fails so failures still get attributed
+/// Extract the lowercased host from a URI for stat keying; returns the raw URI when parsing fails so failures still get attributed
 pub fn host_of(uri: &str) -> String {
     Url::parse(uri)
         .ok()
@@ -230,9 +205,7 @@ mod tests {
 
     #[test]
     fn inorder_ignores_blacklist_but_honors_failed_in_attempt() {
-        // `Inorder` must hand back the first URI even when its host is
-        // blacklisted (otherwise it would behave identically to `Feedback`)
-        // `failed_in_this_attempt` is still respected so retries advance
+        // `Inorder` must return the first URI even when its host is blacklisted (else it behaves like `Feedback`), while `failed_in_this_attempt` is still respected so retries advance
         let uris = vec!["http://a.test/x".into(), "http://b.test/x".into()];
         let mut stats = ServerStats::default();
         for _ in 0..MAX_CONSECUTIVE_FAILS {

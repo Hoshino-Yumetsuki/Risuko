@@ -7,6 +7,7 @@ export default {
 	stopped: "หยุดแล้ว",
 	"new-task": "งานใหม่",
 	"new-bt-task": "งาน BT ใหม่",
+	"unknown-task-type": "ไม่รองรับประเภทงานนี้",
 	"open-file": "เปิดไฟล์ทอร์เรนต์...",
 	"uri-task": "URL",
 	"torrent-task": "ทอร์เรนต์",

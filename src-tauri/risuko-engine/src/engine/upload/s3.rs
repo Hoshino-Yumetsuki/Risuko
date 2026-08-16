@@ -1,11 +1,4 @@
-//! S3 (and S3-compatible) upload sink — works with AWS S3, MinIO,
-//! Backblaze B2, Cloudflare R2, Wasabi, Garage, etc
-//!
-//! Uses SigV4 single-PUT with `UNSIGNED-PAYLOAD` so we can stream the file
-//! body without a pre-pass to compute its SHA-256. Files larger than
-//! [`SINGLE_PUT_MAX`] are split into a 3-step multipart upload (Initiate
-//! / UploadPart × N / Complete) which raises the per-object cap to 5 TiB
-//! at the cost of one extra round-trip and an XML completion document
+//! S3 (and S3-compatible) upload sink for AWS S3, MinIO, Backblaze B2, Cloudflare R2, Wasabi, Garage, etc; uses SigV4 single-PUT with `UNSIGNED-PAYLOAD` to stream the body without a SHA-256 pre-pass, while files over [`SINGLE_PUT_MAX`] use a 3-step multipart upload (Initiate / UploadPart × N / Complete) raising the per-object cap to 5 TiB
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -24,13 +17,10 @@ type HmacSha256 = Hmac<Sha256>;
 
 const UNSIGNED: &str = "UNSIGNED-PAYLOAD";
 
-/// S3 single-PUT object size limit (per AWS API contract). Files above this
-/// threshold are uploaded via the multipart pipeline
+/// S3 single-PUT object size limit (per AWS API contract). Files above this threshold are uploaded via the multipart pipeline
 const SINGLE_PUT_MAX: u64 = 5 * 1024 * 1024 * 1024;
 
-/// Default per-part size for multipart uploads. 64 MiB keeps the part count
-/// under the 10 000-part limit for files up to ~640 GiB; larger files get
-/// a scaled-up part size in [`choose_part_size`]
+/// Default per-part size for multipart uploads. 64 MiB keeps the part count under the 10 000-part limit for files up to ~640 GiB; larger files get a scaled-up part size in [`choose_part_size`]
 const DEFAULT_PART_SIZE: u64 = 64 * 1024 * 1024;
 
 /// AWS-imposed minimum part size (except for the trailing part)
@@ -39,17 +29,14 @@ const MIN_PART_SIZE: u64 = 5 * 1024 * 1024;
 /// AWS-imposed maximum number of parts per multipart upload
 const MAX_PARTS: u64 = 10_000;
 
-/// Number of multipart parts uploaded concurrently
-///
-/// Small fixed fan-out improves high-latency uploads without flooding the client pool
+/// Number of multipart parts uploaded concurrently Small fixed fan-out improves high-latency uploads without flooding the client pool
 const MULTIPART_CONCURRENCY: usize = 4;
 
 pub struct S3Sink {
     cfg: S3Config,
     client: Client,
     base_url: Url,
-    /// Resolved host header used in canonical request — always
-    /// `host[:port]` of the endpoint, never the bucket-prefixed form
+    /// Resolved host header used in canonical request — always `host[:port]` of the endpoint, never the bucket-prefixed form
     host_header: String,
 }
 
@@ -99,8 +86,7 @@ impl S3Sink {
         })
     }
 
-    /// Build the object key from the prefix + remote-relative path
-    /// Both segments are joined with `/` and any leading `/` is stripped
+    /// Build the object key from the prefix + remote-relative path Both segments are joined with `/` and any leading `/` is stripped
     fn object_key(&self, remote_relative: &str) -> String {
         let pre = self.cfg.prefix.trim_matches('/');
         let rel = remote_relative.trim_start_matches('/');
@@ -111,9 +97,7 @@ impl S3Sink {
         }
     }
 
-    /// Build the absolute URL for an object. Path-style:
-    /// `{endpoint}/{bucket}/{key}`. Virtual-host style:
-    /// `{scheme}://{bucket}.{host}/{key}`
+    /// Build the absolute URL for an object. Path-style: `{endpoint}/{bucket}/{key}`. Virtual-host style: `{scheme}://{bucket}.{host}/{key}`
     fn object_url(&self, key: &str) -> Result<Url, String> {
         let encoded = uri_encode(key, false);
         if self.cfg.force_path_style {
@@ -136,10 +120,7 @@ impl S3Sink {
                 Some(p) => format!(":{p}"),
                 None => String::new(),
             };
-            // Preserve any subpath baked into the configured endpoint
-            // (e.g. an S3-compatible service mounted behind a reverse-proxy
-            // prefix). Naively dropping it would point requests at the
-            // wrong path on the upstream
+            // Preserve any subpath baked into the configured endpoint (e.g. an S3-compatible service mounted behind a reverse-proxy prefix). Naively dropping it would point requests at the wrong path on the upstream
             let base_path = self.base_url.path().trim_end_matches('/');
             let s = format!(
                 "{scheme}://{}.{host}{port_part}{base_path}/{encoded}",
@@ -149,9 +130,7 @@ impl S3Sink {
         }
     }
 
-    /// Canonical host header for the request. For virtual-host style this
-    /// becomes `{bucket}.{host[:port]}` so the signature matches what the
-    /// server sees in its `Host` header
+    /// Canonical host header for the request. For virtual-host style this becomes `{bucket}.{host[:port]}` so the signature matches what the server sees in its `Host` header
     fn canonical_host(&self) -> String {
         if self.cfg.force_path_style {
             self.host_header.clone()
@@ -160,15 +139,12 @@ impl S3Sink {
         }
     }
 
-    /// Compute SigV4 signature for a PUT with unsigned payload
-    /// Returns the full `Authorization` header value
+    /// Compute SigV4 signature for a PUT with unsigned payload Returns the full `Authorization` header value
     fn sign_put(&self, url: &Url, amz_date: &str, datestamp: &str) -> String {
         self.sign_request("PUT", url, "", UNSIGNED, amz_date, datestamp)
     }
 
-    /// Generic SigV4 v4 signer. `canonical_query` must already be sorted and
-    /// URI-encoded per AWS rules. `payload_hash` is either `UNSIGNED-PAYLOAD`
-    /// or the lowercase hex SHA256 of the body
+    /// Generic SigV4 v4 signer. `canonical_query` must already be sorted and URI-encoded per AWS rules. `payload_hash` is either `UNSIGNED-PAYLOAD` or the lowercase hex SHA256 of the body
     fn sign_request(
         &self,
         method: &str,
@@ -208,16 +184,7 @@ impl S3Sink {
         )
     }
 
-    /// Multipart upload for files > [`SINGLE_PUT_MAX`]
-    ///
-    /// Pipeline: `POST ?uploads=` (Initiate) -> N x `PUT ?partNumber&uploadId`
-    /// (UploadPart) -> `POST ?uploadId` (Complete). On any failure or cancel
-    /// we best-effort `DELETE ?uploadId` to release the staged parts —
-    /// without that the bucket would silently accumulate orphan multipart
-    /// state that the user pays for
-    ///
-    /// Parts are uploaded with bounded concurrency ([`MULTIPART_CONCURRENCY`]);
-    /// progress uses a shared atomic so out-of-order parts still report a monotonic total
+    /// Multipart upload for files > [`SINGLE_PUT_MAX`] Pipeline: `POST ?uploads=` (Initiate) -> N x `PUT ?partNumber&uploadId` (UploadPart) -> `POST ?uploadId` (Complete). On any failure or cancel we best-effort `DELETE ?uploadId` to release the staged parts — without that the bucket would silently accumulate orphan multipart state that the user pays for Parts are uploaded with bounded concurrency ([`MULTIPART_CONCURRENCY`]); progress uses a shared atomic so out-of-order parts still report a monotonic total
     async fn upload_multipart(
         &self,
         file: &UploadFile,
@@ -475,9 +442,7 @@ impl UploadSink for S3Sink {
             return Err("cancelled".into());
         }
 
-        // Single PUT tops out at 5 GiB per the S3 API contract — anything
-        // larger uses the multipart path which itself caps at ~48.8 TiB
-        // (10,000 parts × 5 GiB max per part)
+        // Single PUT tops out at 5 GiB per the S3 API contract — anything larger uses the multipart path which itself caps at ~48.8 TiB (10,000 parts × 5 GiB max per part)
         if file.size > SINGLE_PUT_MAX {
             return self.upload_multipart(file, ctl).await;
         }
@@ -490,8 +455,7 @@ impl UploadSink for S3Sink {
         let datestamp = now.1;
 
         let auth = self.sign_put(&url, &amz_date, &datestamp);
-        // Wrap the file stream so each yielded chunk reports progress back
-        // through `ctl` and observes cancellation mid-stream
+        // Wrap the file stream so each yielded chunk reports progress back through `ctl` and observes cancellation mid-stream
         let total = file.size;
         let progress = ctl.clone();
         let body = risuko_http::file_stream_body_with_progress(
@@ -523,15 +487,13 @@ impl UploadSink for S3Sink {
             return Err(format!("S3 PUT {url} returned {status}: {body}"));
         }
 
-        // Final pin so the UI sees 100% even if the last chunk's report was
-        // raced by the response arriving
+        // Final pin so the UI sees 100% even if the last chunk's report was raced by the response arriving
         ctl.report(file.size, file.size);
         Ok(url.to_string())
     }
 
     async fn test(&self) -> Result<(), String> {
-        // HEAD on the bucket root (path-style: /bucket; vhost: /)
-        // 200/403 means reachable; 404 means missing
+        // HEAD on the bucket root (path-style: /bucket; vhost: /) 200/403 means reachable; 404 means missing
         let url = if self.cfg.force_path_style {
             let mut u = self.base_url.clone();
             let path = format!(
@@ -562,14 +524,7 @@ impl UploadSink for S3Sink {
             .map_err(|e| format!("HEAD bucket: {e}"))?;
 
         let status = resp.status();
-        // 200 = bucket reachable + ListBucket permission. 403 = bucket
-        // exists and our credentials are recognised but lack ListBucket;
-        // AWS HeadBucket returns *no body* for 403, so we cannot inspect an
-        // error code here — treat 403 as a successful reachability check so
-        // upload-only keys (the common case for app-managed buckets) pass.
-        // Authentication failures surface as 400 ("InvalidAccessKeyId",
-        // "SignatureDoesNotMatch") rather than 403, so accepting 403 here
-        // does not mask credential errors
+        // 200 = bucket reachable + ListBucket permission. 403 = bucket exists and our credentials are recognised but lack ListBucket; AWS HeadBucket returns *no body* for 403, so we cannot inspect an error code here — treat 403 as a successful reachability check so upload-only keys (the common case for app-managed buckets) pass. Authentication failures surface as 400 ("InvalidAccessKeyId", "SignatureDoesNotMatch") rather than 403, so accepting 403 here does not mask credential errors
         if status.is_success() || status.as_u16() == 403 {
             return Ok(());
         }
@@ -593,8 +548,7 @@ fn derive_signing_key(secret: &str, datestamp: &str, region: &str, service: &str
     hmac_sha256(&k_service, b"aws4_request")
 }
 
-/// AWS-flavoured URI encoding. `encode_slash=false` keeps `/` as-is (path
-/// segments). Per SigV4 spec
+/// AWS-flavoured URI encoding. `encode_slash=false` keeps `/` as-is (path segments). Per SigV4 spec
 fn uri_encode(s: &str, encode_slash: bool) -> String {
     let mut out = String::with_capacity(s.len());
     for &b in s.as_bytes() {
@@ -635,8 +589,7 @@ fn chrono_now_utc() -> (String, String) {
     (amz, day)
 }
 
-/// Convert UNIX epoch seconds (UTC) to (year, month, day, hour, min, sec)
-/// Algorithm from Howard Hinnant's `civil_from_days`
+/// Convert UNIX epoch seconds (UTC) to (year, month, day, hour, min, sec) Algorithm from Howard Hinnant's `civil_from_days`
 fn epoch_to_ymdhms(secs: u64) -> (i64, u8, u8, u8, u8, u8) {
     let days = (secs / 86400) as i64;
     let rem = secs % 86400;
@@ -659,9 +612,7 @@ fn epoch_to_ymdhms(secs: u64) -> (i64, u8, u8, u8, u8, u8) {
 
 // -- multipart helpers --
 
-/// Pick a part size that keeps the part count under [`MAX_PARTS`]
-/// Defaults to [`DEFAULT_PART_SIZE`]; doubles until the limit is satisfied
-/// Always >= [`MIN_PART_SIZE`]
+/// Pick a part size that keeps the part count under [`MAX_PARTS`] Defaults to [`DEFAULT_PART_SIZE`]; doubles until the limit is satisfied Always >= [`MIN_PART_SIZE`]
 fn choose_part_size(file_size: u64) -> u64 {
     let mut size = DEFAULT_PART_SIZE;
     while file_size.div_ceil(size) > MAX_PARTS {
@@ -670,23 +621,19 @@ fn choose_part_size(file_size: u64) -> u64 {
     size.max(MIN_PART_SIZE)
 }
 
-/// Extract the `<UploadId>` element value from an `InitiateMultipartUpload`
-/// response. AWS and all S3-compatible servers wrap it in plain XML so a
-/// substring match is safe and avoids pulling in a full XML parser
+/// Extract the `<UploadId>` element value from an `InitiateMultipartUpload` response. AWS and all S3-compatible servers wrap it in plain XML so a substring match is safe and avoids pulling in a full XML parser
 fn parse_upload_id(xml: &str) -> Option<String> {
     let start = xml.find("<UploadId>")? + "<UploadId>".len();
     let end = xml[start..].find("</UploadId>")?;
     Some(xml[start..start + end].to_string())
 }
 
-/// Build the `<CompleteMultipartUpload>` request body. Parts must be in
-/// ascending part-number order
+/// Build the `<CompleteMultipartUpload>` request body. Parts must be in ascending part-number order
 fn build_complete_xml(parts: &[(u32, String)]) -> String {
     let mut s = String::with_capacity(64 + parts.len() * 96);
     s.push_str("<CompleteMultipartUpload>");
     for (n, etag) in parts {
-        // ETag in the response already includes surrounding quotes; the
-        // S3 spec requires those quotes to be present here too
+        // ETag in the response already includes surrounding quotes; the S3 spec requires those quotes to be present here too
         s.push_str("<Part><PartNumber>");
         s.push_str(&n.to_string());
         s.push_str("</PartNumber><ETag>");
@@ -874,8 +821,7 @@ mod tests {
 
     #[test]
     fn canonical_uri_re_encodes() {
-        // Already-encoded input should round-trip through decode + re-encode
-        // and produce the same canonical form
+        // Already-encoded input should round-trip through decode + re-encode and produce the same canonical form
         assert_eq!(canonical_uri("/a/b%20c"), "/a/b%20c");
         assert_eq!(canonical_uri("/a/b c"), "/a/b%20c");
     }

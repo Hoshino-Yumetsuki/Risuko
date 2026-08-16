@@ -11,8 +11,7 @@ use tokio_util::io::{ReaderStream, StreamReader};
 use crate::body::RespBody;
 use crate::error::Error;
 
-/// Wrap a hyper body so the indicated content encoding is decoded. Returns the
-/// input body unchanged for unknown encodings
+/// Wrap a hyper body so the indicated content encoding is decoded, returning the input body unchanged for unknown encodings
 pub(crate) fn maybe_decompress(body: RespBody, encoding: Option<&str>) -> RespBody {
     let enc = encoding.map(|s| s.trim().to_ascii_lowercase());
     let mapped = body
@@ -21,11 +20,7 @@ pub(crate) fn maybe_decompress(body: RespBody, encoding: Option<&str>) -> RespBo
     match enc.as_deref() {
         Some("gzip" | "x-gzip") => wrap(GzipDecoder::new(StreamReader::new(mapped))),
         Some("br") => wrap(BrotliDecoder::new(StreamReader::new(mapped))),
-        // RFC 7230 §4.2.2 defines `deflate` as zlib-framed (RFC 1950)
-        // wrapping raw DEFLATE (RFC 1951). Many servers historically sent
-        // raw deflate too, so callers seeing decode failures from
-        // non-compliant servers can disable auto-deflate. Treat the
-        // commonly-seen `x-deflate` alias the same
+        // RFC 7230 §4.2.2 zlib-framed (RFC 1950) DEFLATE (RFC 1951); many servers sent raw deflate historically, and the commonly-seen `x-deflate` alias is treated the same
         Some("deflate" | "x-deflate") => wrap(ZlibDecoder::new(StreamReader::new(mapped))),
         _ => StreamBody::new(
             mapped

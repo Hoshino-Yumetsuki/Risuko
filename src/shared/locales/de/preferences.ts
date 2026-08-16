@@ -106,6 +106,19 @@ export default {
 		"Erweitert: Beliebige Engine-Optionsschlüssel als JSON-Objekt setzen. Änderungen werden nach einem Neustart wirksam.",
 	"engine-overrides-invalid":
 		"Engine-Überschreibungen müssen ein gültiges JSON-Objekt sein.",
+	"ed2k-kad": "eMule Kad",
+	"ed2k-enable-kad": "Quellensuche über Kad aktivieren",
+	"ed2k-enable-kad-tips":
+		"ED2K-Quellen über das eMule Kad-Netzwerk finden (Engine-Neustart erforderlich)",
+	"ed2k-kad-port": "Kad-UDP-Port",
+	"ed2k-kad-port-tips":
+		"UDP-Port für die Suche über Kad. Gültige Werte liegen zwischen 1 und 65535 (Engine-Neustart erforderlich)",
+	"ed2k-kad-port-invalid":
+		"Der Kad-UDP-Port muss eine Ganzzahl zwischen 1 und 65535 sein",
+	"engine-overrides-reserved-keys":
+		"Reservierte Schlüssel für Engine-Überschreibungen wurden ignoriert: {{keys}}",
+	"engine-overrides-too-large":
+		"Die Engine-Überschreibungen sind zu groß: höchstens 64 Schlüssel, 64 Zeichen pro Schlüssel und 2048 Zeichen pro Wert.",
 	"external-engine-enable": "Externe Engine verwenden",
 	"external-engine-enable-tips":
 		"Wenn aktiviert, startet Risuko die eingebettete Engine nicht automatisch.",

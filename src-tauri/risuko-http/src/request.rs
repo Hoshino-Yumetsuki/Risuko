@@ -49,9 +49,7 @@ impl RequestBuilder {
     }
 
     pub fn headers(mut self, headers: HeaderMap) -> Self {
-        // `insert` would collapse multi-valued headers (e.g. `Accept`,
-        // `Set-Cookie`) by replacing previous values. Append each entry so
-        // every value from the incoming map is preserved
+        // `insert` would collapse multi-valued headers (e.g. `Accept`, `Set-Cookie`) by replacing previous values. Append each entry so every value from the incoming map is preserved
         for (k, v) in headers.iter() {
             self.headers.append(k.clone(), v.clone());
         }
@@ -68,10 +66,7 @@ impl RequestBuilder {
         self
     }
 
-    /// Attach a streaming body (already constructed via
-    /// `file_stream_body_with_progress`, `ReqBody::from_stream`, etc.). The
-    /// factory closure inside `body` is re-invoked on every redirect/retry,
-    /// so callers must ensure the underlying source can be re-opened
+    /// Attach a streaming body (already constructed via `file_stream_body_with_progress`, `ReqBody::from_stream`, etc.). The factory closure inside `body` is re-invoked on every redirect/retry, so callers must ensure the underlying source can be re-opened
     pub fn stream_body(mut self, body: ReqBody) -> Self {
         self.body = body;
         self
@@ -86,8 +81,7 @@ impl RequestBuilder {
                     HeaderValue::from_static("application/json"),
                 );
             }
-            // Serialization failures are encode-side bugs in the caller's
-            // payload, not response decoding problems
+            // Serialization failures are encode-side bugs in the caller's payload, not response decoding problems
             Err(e) => self.url = Err(Error::Encode(e.to_string())),
         }
         self
@@ -121,8 +115,7 @@ impl RequestBuilder {
                     url.set_query(Some(&merged));
                 }
                 Err(e) => {
-                    // Surface encoding failures so the caller doesn't end up
-                    // sending the request without the parameters they asked for
+                    // Surface encoding failures so the caller doesn't end up sending the request without the parameters they asked for
                     self.url = Err(Error::Encode(e.to_string()));
                 }
             }

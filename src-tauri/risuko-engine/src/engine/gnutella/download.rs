@@ -1,7 +1,4 @@
-//! Gnutella download orchestration
-//!
-//! Strategy: For a content-direct URI (`gnutella://host:port/uri-res/N2R?...`)
-//! we connect directly to the named peer over HTTP/1.1 and fetch by URN
+//! Gnutella download orchestration Strategy: For a content-direct URI (`gnutella://host:port/uri-res/N2R?...`) we connect directly to the named peer over HTTP/1.1 and fetch by URN
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
@@ -13,10 +10,7 @@ use super::peer::fetch_by_urn;
 use super::types::{is_gnutella_uri, parse_gnutella_uri, GnutellaError};
 use crate::engine::options::EngineOptions;
 
-/// Run a single Gnutella download to completion. Connects directly to the
-/// peer in the URI and fetches by URN over HTTP/1.1. Returns the absolute
-/// output path on success or a string describing the failure
-/// (`"cancelled"` when aborted)
+/// Run a single Gnutella download to completion. Connects directly to the peer in the URI and fetches by URN over HTTP/1.1. Returns the absolute output path on success or a string describing the failure (`"cancelled"` when aborted)
 pub async fn run_gnutella_download(
     uri: &str,
     dir: &str,

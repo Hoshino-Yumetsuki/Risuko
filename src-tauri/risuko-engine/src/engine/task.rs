@@ -105,6 +105,17 @@ pub struct UsenetRepairFailure {
     pub partials_retained: bool,
 }
 
+/// Live Kad source-discovery state for an ED2K task; diagnostic metadata only, not affecting download completion semantics
+#[derive(Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Ed2kKadTaskStatus {
+    pub state: String,
+    pub queried_nodes: u32,
+    pub discovered_sources: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DownloadFile {
@@ -163,16 +174,18 @@ pub struct DownloadTask {
     pub options: Map<String, Value>,
     #[serde(default)]
     pub tag: Option<String>,
-    /// Non-secret NZB manifest metadata and provider profile reference.
+    /// Non-secret NZB manifest metadata and provider profile reference
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub usenet: Option<UsenetTaskData>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub usenet_stage: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub usenet_warning: Option<String>,
-    /// Non-secret details for an insufficient PAR2 recovery set.
+    /// Non-secret details for an insufficient PAR2 recovery set
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub usenet_repair_failure: Option<UsenetRepairFailure>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ed2k_kad: Option<Ed2kKadTaskStatus>,
     // BitTorrent
     pub info_hash: Option<String>,
     #[serde(default)]
@@ -227,8 +240,7 @@ impl DownloadTask {
                     status: "waiting".to_string(),
                 })
                 .collect();
-            // Derive initial path from output name or first URI
-            // Strip .part suffix from display path so the UI shows the final name
+            // Derive initial path from output name or first URI, stripping any .part suffix so the UI shows the final name
             let display_out = out.strip_suffix(".part").unwrap_or(&out);
             let initial_path = if !display_out.is_empty() {
                 format!("{}/{}", dir, display_out)
@@ -523,9 +535,7 @@ impl DownloadTask {
         }
     }
 
-    /// Generic constructor for the legacy P2P / IPC protocols (ADC, Gnutella,
-    /// G2, giFT). All share the same shape: a single URI, an inferred output
-    /// filename, and no protocol-specific top-level fields beyond the URI
+    /// Generic constructor for the legacy P2P/IPC protocols (ADC, Gnutella, G2, giFT), which share one shape: a single URI, an inferred output filename, and no protocol-specific top-level fields beyond the URI
     pub fn new_simple_protocol(
         gid: String,
         kind: TaskKind,
@@ -604,10 +614,7 @@ impl DownloadTask {
             "status".into(),
             Value::String(self.status.as_str().to_string()),
         );
-        // Lowercase task kind (http/ftp/torrent/ed2k/m3u8/media/adc/gnutella/g2/gift).
-        // Surfaces the protocol family so the frontend's policy decisions (e.g.
-        // skipping peer-swarm tasks from low-speed pause/resume recovery) don't
-        // infer it from optional sentinel fields
+        // Lowercase task kind (http/ftp/torrent/ed2k/m3u8/media/adc/gnutella/g2/gift), surfacing the protocol family so the frontend's policy decisions (e.g. skipping peer-swarm tasks from low-speed pause/resume recovery) don't infer it from optional sentinel fields
         if let Ok(Value::String(kind)) = serde_json::to_value(self.kind) {
             m.insert("kind".into(), Value::String(kind));
         }
@@ -690,8 +697,7 @@ impl DownloadTask {
                 bt.insert("comment".into(), Value::String(c.clone()));
             }
             if let Some(ts) = self.bt_creation_date {
-                // Frontend formats with `localeDateTimeFormat`, which expects
-                // a unix epoch in seconds; pass as JSON number for clarity
+                // Frontend formats with `localeDateTimeFormat`, which expects a unix epoch in seconds; pass as JSON number for clarity
                 bt.insert("creationDate".into(), Value::from(ts));
             }
             if !self.bt_announce_list.is_empty() {
@@ -736,6 +742,12 @@ impl DownloadTask {
                 "numPeers".into(),
                 Value::String(self.connections.to_string()),
             );
+            if let Some(status) = &self.ed2k_kad {
+                m.insert(
+                    "ed2kKad".into(),
+                    serde_json::to_value(status).unwrap_or_default(),
+                );
+            }
         }
 
         // m3u8 fields
@@ -755,26 +767,23 @@ impl DownloadTask {
                     );
                 }
             }
-            if (keys.is_empty() || keys.iter().any(|key| key == "usenetStage"))
-                && self.usenet_stage.is_some()
-            {
-                let stage = self.usenet_stage.as_ref().expect("checked above");
-                m.insert("usenetStage".into(), Value::String(stage.clone()));
+            if keys.is_empty() || keys.iter().any(|key| key == "usenetStage") {
+                if let Some(ref stage) = self.usenet_stage {
+                    m.insert("usenetStage".into(), Value::String(stage.clone()));
+                }
             }
-            if (keys.is_empty() || keys.iter().any(|key| key == "usenetWarning"))
-                && self.usenet_warning.is_some()
-            {
-                let warning = self.usenet_warning.as_ref().expect("checked above");
-                m.insert("usenetWarning".into(), Value::String(warning.clone()));
+            if keys.is_empty() || keys.iter().any(|key| key == "usenetWarning") {
+                if let Some(ref warning) = self.usenet_warning {
+                    m.insert("usenetWarning".into(), Value::String(warning.clone()));
+                }
             }
-            if (keys.is_empty() || keys.iter().any(|key| key == "usenetRepairFailure"))
-                && self.usenet_repair_failure.is_some()
-            {
-                let repair_failure = self.usenet_repair_failure.as_ref().expect("checked above");
-                m.insert(
-                    "usenetRepairFailure".into(),
-                    serde_json::to_value(repair_failure).unwrap_or_default(),
-                );
+            if keys.is_empty() || keys.iter().any(|key| key == "usenetRepairFailure") {
+                if let Some(ref repair_failure) = self.usenet_repair_failure {
+                    m.insert(
+                        "usenetRepairFailure".into(),
+                        serde_json::to_value(repair_failure).unwrap_or_default(),
+                    );
+                }
             }
         }
 
@@ -1250,6 +1259,38 @@ mod tests {
         let status = task.to_rpc_status(&[]);
         let obj = status.as_object().unwrap();
         assert!(obj.contains_key("ed2kLink"));
+    }
+
+    #[test]
+    fn rpc_status_ed2k_includes_kad_status_and_filtered_status() {
+        let mut task = DownloadTask::new_ed2k(
+            "egid".into(),
+            "ed2k://|file|test|100|hash|/".into(),
+            "test".into(),
+            100,
+            "/dl".into(),
+            None,
+            Map::new(),
+        );
+        task.ed2k_kad = Some(Ed2kKadTaskStatus {
+            state: "searching".into(),
+            queried_nodes: 3,
+            discovered_sources: 7,
+            error: None,
+        });
+
+        let full = task.to_rpc_status(&[]);
+        assert_eq!(
+            full.get("ed2kKad"),
+            Some(&json!({
+                "state": "searching",
+                "queriedNodes": 3,
+                "discoveredSources": 7,
+            }))
+        );
+
+        let filtered = task.to_rpc_status(&["ed2kKad".into()]);
+        assert_eq!(filtered.get("ed2kKad"), full.get("ed2kKad"));
     }
 
     // -- new_media --

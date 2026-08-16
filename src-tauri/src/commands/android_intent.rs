@@ -1,22 +1,4 @@
 //! Android `Intent` helpers for opening files and folders
-//!
-//! `tauri-plugin-shell::open` only constructs `Intent(ACTION_VIEW, uri)`
-//! without an explicit MIME type or any extras. On Android, that is
-//! enough on a real device with a file manager (Files by Google,
-//! Material Files, etc.) preinstalled — the system narrows candidates
-//! by querying the documents provider's MIME and dispatches to the
-//! right viewer. But on the AOSP emulator or stripped-down Android
-//! builds, the Messages app's `mimeType="*/*"` filter wins because no
-//! other app advertises a more specific match
-//!
-//! File opens are delegated to `MainActivity.openFile`, which builds and
-//! starts the Android `Intent` on the UI thread with detailed logcat output.
-//!
-//! ## JNI bootstrap
-//!
-//! Tauri 2 mobile does not initialize `ndk-context` on this path
-//! We capture the `JavaVM` in `JNI_OnLoad`, keep it in a `OnceLock`, then attach threads as needed
-//! When Rust needs a context, we resolve the current `Application` through `ActivityThread`
 
 #![cfg(target_os = "android")]
 

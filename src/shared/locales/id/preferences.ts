@@ -103,6 +103,19 @@ export default {
 		"Lanjutan: atur kunci opsi mesin apa pun sebagai objek JSON. Perubahan berlaku setelah mulai ulang.",
 	"engine-overrides-invalid":
 		"Override mesin harus berupa objek JSON yang valid.",
+	"ed2k-kad": "eMule Kad",
+	"ed2k-enable-kad": "Aktifkan penemuan sumber melalui Kad",
+	"ed2k-enable-kad-tips":
+		"Temukan sumber ED2K melalui jaringan eMule Kad (memerlukan mulai ulang mesin)",
+	"ed2k-kad-port": "Port UDP Kad",
+	"ed2k-kad-port-tips":
+		"Port UDP yang digunakan untuk penemuan melalui Kad. Nilai yang valid adalah 1-65535 (memerlukan mulai ulang mesin)",
+	"ed2k-kad-port-invalid":
+		"Port UDP Kad harus berupa bilangan bulat dari 1 hingga 65535",
+	"engine-overrides-reserved-keys":
+		"Kunci override mesin yang dicadangkan diabaikan: {{keys}}",
+	"engine-overrides-too-large":
+		"Override mesin terlalu besar: maksimal 64 kunci, 64 karakter per kunci, dan 2048 karakter per nilai.",
 	"external-engine-enable": "Gunakan mesin eksternal",
 	"external-engine-enable-tips":
 		"Saat diaktifkan, Risuko tidak akan memulai mesin bawaan secara otomatis.",

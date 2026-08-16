@@ -130,7 +130,7 @@ if (full) {
 	if (!skipGradle) queueGradleArtifacts();
 	if (withAndroidRust) queueCrossTargets();
 	else {
-		// Desktop preset still drops non-Android cross targets.
+		// Desktop preset still drops non-Android cross targets
 		queue(join(TARGET, "x86_64-pc-windows-msvc"), "target/x86_64-pc-windows-msvc");
 		queue(join(TARGET, "x86_64-unknown-linux-gnu"), "target/x86_64-unknown-linux-gnu");
 	}

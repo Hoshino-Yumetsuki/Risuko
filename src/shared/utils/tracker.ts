@@ -87,9 +87,6 @@ export const fetchBtTrackerFromSource = async (
 		return inFlight;
 	}
 
-	// Axios's config.proxy is Node.js only. Resolve every proxy decision before
-	// starting the tolerant request fan-out so an invalid active proxy is
-	// surfaced to the caller instead of being mistaken for an empty source list.
 	const requestPromise = (async () => {
 		const requestUrls = source.map((url) => appendCacheBust(url, now));
 		if (fetchSource) {

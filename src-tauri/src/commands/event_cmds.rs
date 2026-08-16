@@ -185,8 +185,7 @@ fn apply_download_inhibit(downloading: bool) {
     SLEEP_INHIBIT_ACTIVE.store(downloading, std::sync::atomic::Ordering::Relaxed);
 }
 
-/// Whether sleep is currently inhibited. Set by `apply_download_inhibit` on
-/// every platform; read by health checks via `sleep_inhibit_active()`
+/// Whether sleep is currently inhibited. Set by `apply_download_inhibit` on every platform; read by health checks via `sleep_inhibit_active()`
 static SLEEP_INHIBIT_ACTIVE: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
@@ -203,8 +202,7 @@ fn add_recent_document(path: &str) -> Result<(), String> {
 
     #[cfg(target_os = "macos")]
     {
-        // No stable Rust std API exists for app-scoped recent-docs registration on macOS
-        // Keep this a no-op for now to avoid opening files as a side effect
+        // No stable Rust std API exists for app-scoped recent-docs registration on macOS Keep this a no-op for now to avoid opening files as a side effect
         let _ = path;
     }
 

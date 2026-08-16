@@ -178,7 +178,7 @@ fn is_reserved_windows_name(part: &str) -> bool {
         .split('.')
         .next()
         .unwrap_or(part)
-        .trim_end_matches(|character| character == ' ' || character == '.')
+        .trim_end_matches([' ', '.'])
         .to_ascii_uppercase();
     matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
         || ((stem.starts_with("COM") || stem.starts_with("LPT"))
@@ -207,9 +207,7 @@ pub fn check_limits(
         return Err(ArchiveSafetyError::CompressionRatio);
     }
     if compressed_bytes > 0 {
-        let max_expanded = compressed_bytes
-            .checked_mul(limits.max_compression_ratio)
-            .unwrap_or(u64::MAX);
+        let max_expanded = compressed_bytes.saturating_mul(limits.max_compression_ratio);
         if usage.expanded_bytes > max_expanded {
             return Err(ArchiveSafetyError::CompressionRatio);
         }

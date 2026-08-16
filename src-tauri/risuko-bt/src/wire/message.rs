@@ -1,12 +1,8 @@
-//! Peer wire messages (BEP-3 & BEP-10 extension container).
-//!
-//! Frame format: `<len: u32 BE><msg_id: u8?><payload>`. A length of 0 is a
-//! keep-alive (no id, no payload)
+//! Peer wire messages (BEP-3 & BEP-10 extension container); frame `<len: u32 BE><msg_id: u8?><payload>` where length 0 is a keep-alive (no id, no payload)
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 
-/// Practical upper bound for a single peer message. BEP-3 chunks are 16 KiB;
-/// ut_metadata pieces are also 16 KiB. We allow a generous headroom
+/// Practical upper bound for a single peer message; BEP-3 chunks and ut_metadata pieces are 16 KiB, we allow generous headroom
 pub const MAX_MESSAGE_BYTES: usize = 2 * 1024 * 1024;
 
 pub mod id {
@@ -23,7 +19,7 @@ pub mod id {
     pub const HAVE_ALL: u8 = 0x0E;
     pub const HAVE_NONE: u8 = 0x0F;
     pub const REJECT_REQUEST: u8 = 0x10;
-    /// BEP-10 extension protocol container.
+    /// BEP-10 extension protocol container
     pub const EXTENDED: u8 = 20;
     /// BEP 52: request a Merkle layer slice for a given pieces-root
     pub const HASH_REQUEST: u8 = 21;
@@ -81,9 +77,7 @@ pub enum Message {
         ext_id: u8,
         payload: Bytes,
     },
-    /// BEP 52: request `length` hashes at `base_layer` of the file's Merkle
-    /// tree, starting at `index`, plus `proof_layers` levels of sibling
-    /// hashes for verification
+    /// BEP 52: request `length` hashes at `base_layer` of the file's Merkle tree from `index`, plus `proof_layers` levels of sibling hashes for verification
     HashRequest {
         pieces_root: [u8; 32],
         base_layer: u32,
@@ -91,8 +85,7 @@ pub enum Message {
         length: u32,
         proof_layers: u32,
     },
-    /// BEP 52 response. `hashes` carries `length` requested hashes followed
-    /// by `proof_layers` sibling hashes (SHA-256, 32 bytes each)
+    /// BEP 52 response; `hashes` carries `length` requested hashes followed by `proof_layers` sibling hashes (SHA-256, 32 bytes each)
     Hashes {
         pieces_root: [u8; 32],
         base_layer: u32,
@@ -109,8 +102,7 @@ pub enum Message {
         length: u32,
         proof_layers: u32,
     },
-    /// Fallback for message ids we don't recognise — we keep the raw payload
-    /// so that future decode upgrades don't need protocol changes.
+    /// Fallback for message ids we don't recognise — keep the raw payload so future decode upgrades don't need protocol changes
     Unknown {
         id: u8,
         payload: Bytes,
@@ -120,11 +112,10 @@ pub enum Message {
 pub struct MessageEncoder;
 
 impl MessageEncoder {
-    /// Encode a message to bytes ready to write on the wire (length prefix
-    /// included).
+    /// Encode a message to bytes ready to write on the wire (length prefix included)
     pub fn encode(msg: &Message) -> Bytes {
         let mut buf = BytesMut::with_capacity(64);
-        // Reserve 4 bytes for the length prefix; fill after we know body size.
+        // Reserve 4 bytes for the length prefix; fill after we know body size
         buf.put_u32(0);
         match msg {
             Message::KeepAlive => {}
@@ -242,13 +233,12 @@ impl MessageEncoder {
     }
 }
 
-/// Stateful decoder that consumes bytes from a `BytesMut` buffer.
+/// Stateful decoder that consumes bytes from a `BytesMut` buffer
 #[derive(Default)]
 pub struct MessageDecoder;
 
 impl MessageDecoder {
-    /// Try to decode a single message from the buffer. Returns `Ok(None)`
-    /// when more bytes are needed.
+    /// Try to decode a single message from the buffer; returns `Ok(None)` when more bytes are needed
     pub fn try_decode(buf: &mut BytesMut) -> Result<Option<Message>, MessageError> {
         if buf.len() < 4 {
             return Ok(None);
@@ -623,8 +613,7 @@ mod tests {
 
     #[test]
     fn hashes_rejects_truncated_payload() {
-        // Encode a Hashes with length=2/proof_layers=3 (=> 5*32 hash bytes)
-        // then strip a hash to force a length mismatch on decode
+        // Encode a Hashes with length=2/proof_layers=3 (=> 5*32 hash bytes) then strip a hash to force a length mismatch on decode
         let mut hashes = Vec::with_capacity(5 * 32);
         for i in 0..5 {
             hashes.extend_from_slice(&[i as u8; 32]);

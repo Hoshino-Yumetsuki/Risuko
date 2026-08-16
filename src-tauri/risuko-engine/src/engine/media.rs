@@ -71,8 +71,7 @@ pub fn is_media_uri(uri: &str) -> bool {
         Err(_) => return false,
     };
 
-    // Only http(s) URLs are candidates; other schemes belong to dedicated
-    // protocol handlers (magnet, ed2k, ftp, ...)
+    // Only http(s) URLs are candidates; other schemes belong to dedicated protocol handlers (magnet, ed2k, ftp, ...)
     match parsed.scheme() {
         "http" | "https" => {}
         _ => return false,
@@ -116,8 +115,7 @@ pub async fn check_yt_dlp_available() -> Result<(), String> {
     }
 }
 
-/// Probe for an ffmpeg binary on PATH, returning its path if usable. The
-/// result is cached for the process lifetime
+/// Probe for an ffmpeg binary on PATH, returning its path if usable; the result is cached for the process lifetime
 pub async fn find_ffmpeg() -> Option<PathBuf> {
     FFMPEG_PATH
         .get_or_init(|| async {
@@ -176,6 +174,7 @@ fn apply_yt_dlp_network_options(
         let bypassed = risuko_http::Url::parse(target_url)
             .ok()
             .is_some_and(|target| matcher.matches_url(&target));
+        // Validate the proxy URL like the native downloader, then drop the client — yt-dlp gets the raw URL via --proxy, so this call only rejects a malformed proxy up front
         risuko_http::Proxy::all(proxy_url).map_err(|e| format!("Invalid configured proxy: {e}"))?;
         if !bypassed {
             cmd.arg("--proxy").arg(proxy_url);

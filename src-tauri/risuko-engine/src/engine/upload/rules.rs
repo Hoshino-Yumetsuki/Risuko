@@ -1,9 +1,4 @@
-//! Rule data model + matching logic
-//!
-//! Precedence at the call site (in `manager.rs`):
-//!   1. Per-task explicit `upload_sink_id` override (not applied here)
-//!   2. First matching rule (this module)
-//!   3. Global default sink id
+//! Rule data model + matching logic; call-site precedence (in `manager.rs`): 1. per-task explicit `upload_sink_id` override (not applied here), 2. first matching rule (this module), 3. global default sink id
 
 use std::path::Path;
 
@@ -12,8 +7,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct RuleMatch {
-    /// File-category names (matching the existing `file-category-dirs` keys:
-    /// "music", "video", "image", "document", "compressed", "program")
+    /// File-category names (matching the existing `file-category-dirs` keys: "music", "video", "image", "document", "compressed", "program")
     #[serde(default)]
     pub categories: Vec<String>,
     /// Lowercase file extensions without leading dot (e.g. "mp4", "iso")
@@ -25,8 +19,7 @@ pub struct RuleMatch {
     /// Inclusive upper bound on file size in bytes
     #[serde(default)]
     pub max_size: Option<u64>,
-    /// Restrict to specific `TaskKind` debug-string values: "Http", "Torrent",
-    /// "M3u8", "Ftp", "Ed2k". Empty = match any
+    /// Restrict to specific `TaskKind` debug-string values: "Http", "Torrent", "M3u8", "Ftp", "Ed2k"; empty = match any
     #[serde(default)]
     pub task_kinds: Vec<String>,
 }
@@ -36,8 +29,7 @@ pub struct RuleMatch {
 pub struct UploadRule {
     pub id: String,
     pub label: String,
-    /// Sink id this rule routes to. Must reference an existing sink — the
-    /// manager skips rules whose sink id is unknown
+    /// Sink id this rule routes to; must reference an existing sink — the manager skips rules whose sink id is unknown
     pub sink_id: String,
     #[serde(default)]
     pub r#match: RuleMatch,

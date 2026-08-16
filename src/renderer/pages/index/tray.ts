@@ -18,8 +18,6 @@ import "@/styles/flyout.css";
 
 const POLL_INTERVAL = 1000;
 
-// window stays mounted between shows, so CSS mount animations only run once;
-// element.animate replays the popover-in motion on every open
 function playEntrance() {
 	if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
 		return;

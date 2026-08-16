@@ -25,7 +25,6 @@ export interface BatchQueueItem {
 	kind: BatchItemKind;
 	label: string;
 
-	// torrent only
 	path?: string;
 	displayName?: string;
 	resolveState: BatchItemResolveState;
@@ -34,16 +33,11 @@ export interface BatchQueueItem {
 	fileCount?: number;
 	totalLength?: number;
 
-	// uri / magnet
 	uri?: string;
 	magnetFiles?: BatchItemFileSummary[];
 
-	// uri only: extra mirror URLs (same file, different servers) submitted
-	// alongside `uri` as one task's mirror array for parallel multi-source download
 	mirrors?: string[];
 
-	// media (yt-dlp): set when the host is in the media allowlist or the user
-	// forces yt-dlp. `mediaFormatId` is the chosen yt-dlp format selector
 	isMedia?: boolean;
 	forceYtdlp?: boolean;
 	mediaFormatId?: string;
@@ -52,11 +46,9 @@ export interface BatchQueueItem {
 	mediaInfoError?: string;
 	mediaTitle?: string;
 
-	// shared
 	selectFile: string;
 	out?: string;
 
-	// submission
 	status: BatchItemStatus;
 	gid?: string;
 	error?: string;

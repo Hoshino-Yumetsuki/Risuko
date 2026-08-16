@@ -64,17 +64,12 @@ export const useUploadSinkStore = defineStore("uploadSink", {
 		async addSink(record: Parameters<typeof api.addUploadSink>[0]) {
 			const created = await api.addUploadSink(record);
 			this.sinks.push(created);
-			// First sink: keep frontend and engine in sync by writing the new
-			// default through the API. Skipping the round-trip here would leave
-			// the engine without a default the moment the renderer is reloaded
 			if (!this.defaultSinkId) {
 				try {
 					await api.setDefaultUploadSink(created.id);
 					this.defaultSinkId = created.id;
 				} catch (err) {
 					logger.warn("uploadSink: failed to persist default sink", err);
-					// Reconcile against the backend so a failed write doesn't
-					// leave the UI showing a default that was never persisted
 					await this._resyncFromBackend();
 				}
 			}
@@ -94,9 +89,6 @@ export const useUploadSinkStore = defineStore("uploadSink", {
 			this.sinks = this.sinks.filter((s) => s.id !== id);
 			this.rules = this.rules.filter((r) => r.sinkId !== id);
 			if (this.defaultSinkId === id) {
-				// Mirror the engine’s own fallback (first remaining sink, or
-				// null) by going through the API so a renderer reload doesn’t
-				// expose a stale default pointing at a deleted sink
 				const nextId = this.sinks[0]?.id ?? null;
 				try {
 					await api.setDefaultUploadSink(nextId);
@@ -106,16 +98,11 @@ export const useUploadSinkStore = defineStore("uploadSink", {
 						"uploadSink: failed to update default sink after remove",
 						err,
 					);
-					// Don't leave defaultSinkId pointing at the deleted sink:
-					// re-read both lists from the backend so the UI reflects
-					// reality (engine already cleared the default on remove)
 					await this._resyncFromBackend();
 				}
 			}
 		},
 
-		/// Re-read sinks + default from the engine. Used as a recovery path
-		/// when an optimistic local mutation diverges from the backend
 		async _resyncFromBackend() {
 			try {
 				const [sinks, def] = await Promise.all([
@@ -158,8 +145,6 @@ export const useUploadSinkStore = defineStore("uploadSink", {
 		},
 
 		async refreshJobs() {
-			// Guard against overlapping refreshes — if a previous request
-			// hasn't returned yet, skip this tick rather than queuing another
 			if (this._isRefreshing) {
 				return;
 			}
@@ -220,9 +205,6 @@ export const useUploadSinkStore = defineStore("uploadSink", {
 					}
 				}
 				this._eventUnlisteners.push(...pendingUnlisteners);
-				// Active uploads need byte-level progress; events only fire on
-				// state transitions, so poll while at least one job is in
-				// flight. Cheap, bounded, and stops automatically
 				if (this._listenerSetupToken === setupToken && !this._pollTimer) {
 					this._pollTimer = setInterval(() => {
 						if (this.hasActiveJobs) {

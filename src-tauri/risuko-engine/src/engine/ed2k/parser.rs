@@ -5,10 +5,7 @@ pub fn is_ed2k_uri(uri: &str) -> bool {
     uri.trim().to_lowercase().starts_with("ed2k://")
 }
 
-/// Parse an ed2k file link URI into structured data
-///
-/// Supports format: `ed2k://|file|<name>|<size>|<hash>|/`
-/// With optional: `|h=<AICH>|` and `|sources,<ip>:<port>[,<ip>:<port>...]|`
+/// Parse `ed2k://|file|<name>|<size>|<hash>|/` (optional `|h=<AICH>|`, `|sources,<ip>:<port>[,...]|`) into structured data
 pub fn parse_ed2k_link(uri: &str) -> Result<Ed2kFileLink, String> {
     let trimmed = uri.trim();
     if !trimmed.to_lowercase().starts_with("ed2k://|file|") {

@@ -15,7 +15,7 @@ pub(crate) fn now_ms() -> u64 {
         .as_millis() as u64
 }
 
-/// If `dir/name` already exists, return `dir/stem.1.ext`, `dir/stem.2.ext`, etc.
+/// If `dir/name` already exists, return `dir/stem.1.ext`, `dir/stem.2.ext`, etc
 pub(crate) fn dedup_path(dir: &std::path::Path, name: &str) -> std::path::PathBuf {
     let candidate = dir.join(name);
     if !candidate.exists() {

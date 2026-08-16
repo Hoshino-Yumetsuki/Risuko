@@ -46,7 +46,6 @@
           />
         </div>
         <div v-else-if="showMediaPicker" class="flex flex-col gap-3">
-          <!-- yt-dlp toggle -->
           <div
             v-if="!item.isMedia"
             class="flex items-center justify-between rounded-md border border-border/60 px-3 py-2"
@@ -64,7 +63,6 @@
             />
           </div>
 
-          <!-- Format picker -->
           <div class="rounded-md border border-border/60 px-3 py-2.5">
             <div class="flex items-center gap-2">
               <Video :size="13" class="shrink-0 text-muted-foreground" />
@@ -163,7 +161,6 @@
               </Button>
             </div>
           </div>
-          <!-- Let users force any plain URL through yt-dlp. -->
           <div
             v-if="canOfferYtdlp"
             class="mt-3 flex items-center justify-between rounded-md border border-border/60 px-3 py-2"
@@ -286,8 +283,6 @@ export default {
 			}
 			return !this.mirrors.some((m) => m.trim().toLowerCase() === lower);
 		},
-		// Show the full picker for allowlisted media hosts or any URL the user
-		// has explicitly forced through yt-dlp
 		showMediaPicker(): boolean {
 			return (
 				this.item.kind === "uri" &&
@@ -295,15 +290,12 @@ export default {
 				!!(this.item.isMedia || this.item.forceYtdlp)
 			);
 		},
-		// Offer the "download with yt-dlp" toggle on plain http(s) URLs that
-		// aren't already recognised as media
 		canOfferYtdlp(): boolean {
 			if (this.item.kind !== "uri" || !this.item.uri || this.item.isMedia) {
 				return false;
 			}
 			return /^https?:\/\//i.test(this.item.uri.trim());
 		},
-		// Formats can be fetched once the item is treated as media
 		canFetchFormats(): boolean {
 			return !!(this.item.isMedia || this.item.forceYtdlp);
 		},
@@ -366,7 +358,6 @@ export default {
 		onToggleForce(value: boolean) {
 			this.$emit("update:media", this.item.id, {
 				forceYtdlp: value,
-				// Clear all stale media metadata when toggling off
 				...(value
 					? {}
 					: {
@@ -379,7 +370,6 @@ export default {
 			});
 		},
 		onSelectFormat(value: string) {
-			// Map sentinel back to empty string for Auto selection
 			const formatId = value === "__auto__" ? "" : value;
 			this.$emit("update:media", this.item.id, {
 				mediaFormatId: formatId,

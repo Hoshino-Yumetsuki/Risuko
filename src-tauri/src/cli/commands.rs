@@ -24,8 +24,7 @@ fn resolve_rpc_host() -> String {
     read_options_from_config().rpc_host()
 }
 
-/// Read rpc-secret from the config files, returning None if empty or absent
-/// user.json takes precedence over system.json
+/// Read rpc-secret from the config files, returning None if empty or absent user.json takes precedence over system.json
 fn read_secret_from_config() -> Option<String> {
     let secret = read_options_from_config().rpc_secret();
     if secret.is_empty() {
@@ -88,11 +87,7 @@ async fn do_download(
     if let Some(ref proxy) = args.proxy {
         options.insert("all-proxy".into(), json!(proxy));
     }
-    // DoH is process-wide (engine global resolver), not per-task, so push it
-    // through changeGlobalOption before adding the task rather than into the
-    // per-task options map. Save the previous DoH settings and restore them
-    // after the download (success or failure) so a CLI run doesn't permanently
-    // alter a shared running engine's DNS
+    // DoH is process-wide (engine global resolver), not per-task, so push it through changeGlobalOption before adding the task rather than into the per-task options map. Save the previous DoH settings and restore them after the download (success or failure) so a CLI run doesn't permanently alter a shared running engine's DNS
     let mut previous_doh: Option<serde_json::Map<String, Value>> = None;
     let mut doh_global = serde_json::Map::new();
     if let Some(ref doh_url) = args.doh_url {
@@ -102,8 +97,7 @@ async fn do_download(
     if let Some(ref doh_bootstrap) = args.doh_bootstrap {
         doh_global.insert("doh-bootstrap".into(), json!(doh_bootstrap));
     } else if args.doh_url.is_some() {
-        // Explicitly clear bootstrap when a new URL is provided without one,
-        // so stale bootstrap IPs from a previous config don't persist
+        // Explicitly clear bootstrap when a new URL is provided without one, so stale bootstrap IPs from a previous config don't persist
         doh_global.insert("doh-bootstrap".into(), json!(""));
     }
     if !doh_global.is_empty() {
@@ -125,6 +119,10 @@ async fn do_download(
                 if let Some(val) = opts.get(key) {
                     saved.insert(key.to_string(), val.clone());
                 }
+            }
+            // If the engine had no prior doh-enable, this run enabled DoH; the saved map alone wouldn't turn it back off, so explicitly disable
+            if !saved.contains_key("doh-enable") {
+                saved.insert("doh-enable".into(), json!(false));
             }
             previous_doh = Some(saved);
         }
@@ -384,9 +382,10 @@ fn print_task_table(tasks: &[Value]) {
             "-".into()
         };
 
+        let gid_short: String = gid.chars().take(10).collect();
         println!(
             "{:<12} {:<10} {:<30} {:>9} {:>12} {:>10}",
-            &gid[..gid.len().min(10)],
+            gid_short,
             status,
             display_name,
             pct,
@@ -431,8 +430,7 @@ pub async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
     let engine = headless::start_headless_engine(args.rpc_port).await?;
     eprintln!("Risuko engine running. Press Ctrl+C to stop.");
 
-    // Shut down on Ctrl+C or RPC shutdown
-    // The `shutdown_requested()` borrow ends with `select!`, so `engine.shutdown()` can consume `engine`
+    // Shut down on Ctrl+C or RPC shutdown The `shutdown_requested()` borrow ends with `select!`, so `engine.shutdown()` can consume `engine`
     tokio::select! {
         res = tokio::signal::ctrl_c() => { res?; }
         _ = engine.shutdown_requested() => {
@@ -444,20 +442,54 @@ pub async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// Extract browser cookies for `--url` from `--browser` and emit them as JSON
-/// (to `--out` if given, else stdout).
-///
-/// Worker side of the Windows UAC-elevation flow: when a Chrome profile uses
-/// app-bound (v20) encryption, the GUI relaunches itself elevated as
-/// `risuko extract-cookies --browser .. --url .. --out <tmp>` so the keys can
-/// be decrypted as administrator, then reads the JSON back. Runs entirely in
-/// `main`'s CLI branch and exits before Tauri/single-instance initializes
+/// Extract browser cookies for `--url` from `--browser` and emit them as JSON (to `--out` if given, else stdout). Worker side of the Windows UAC-elevation flow: when a Chrome profile uses app-bound (v20) encryption, the GUI relaunches itself elevated as `risuko extract-cookies --browser .. --url .. --out <tmp>` so the keys can be decrypted as administrator, then reads the JSON back. Runs entirely in `main`'s CLI branch and exits before Tauri/single-instance initializes
 pub async fn extract_cookies(args: ExtractCookiesArgs) -> Result<(), Box<dyn std::error::Error>> {
     let host_cookies = risuko_cookies::cookies_for_url(&args.browser, &args.url).await?;
     let json = serde_json::to_string(&host_cookies)?;
     match args.out {
-        Some(path) => std::fs::write(&path, json)?,
+        Some(path) => write_secret_file(path.as_ref(), json.as_bytes())?,
         None => println!("{json}"),
     }
     Ok(())
+}
+
+/// Write the decrypted cookie payload to `path`. On Unix the file is created with 0600 permissions so the plaintext secrets are not briefly readable by other users on shared systems. Callers are responsible for deleting the file
+fn write_secret_file(path: &std::path::Path, data: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+    }
+    let mut file = opts.open(path)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+    }
+    file.write_all(data)
+}
+
+#[cfg(all(test, unix))]
+mod secret_file_tests {
+    use super::write_secret_file;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn existing_secret_output_is_made_private_before_reuse() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cookies.json");
+        std::fs::write(&path, b"old").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        write_secret_file(&path, b"secret").unwrap();
+
+        assert_eq!(std::fs::read(&path).unwrap(), b"secret");
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+    }
 }

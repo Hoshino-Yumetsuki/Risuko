@@ -99,6 +99,8 @@ const systemKeys = [
 	"doh-url",
 	"doh-bootstrap",
 	"doh-fallback",
+	"ed2k-enable-kad",
+	"ed2k-kad-port",
 	"ed2k-port",
 	"ed2k-server",
 	"adc-hub",
@@ -145,9 +147,10 @@ const systemKeys = [
 	"user-agent",
 ];
 
-// keys that require engine restart (cannot be changed at runtime)
 const startupOnlyKeys = [
 	"dht-listen-port",
+	"ed2k-enable-kad",
+	"ed2k-kad-port",
 	"ed2k-port",
 	"listen-port",
 	"rpc-listen-port",

@@ -153,7 +153,6 @@ export const buildOption = (type: string, form: TaskForm) => {
 		result.header = header;
 	}
 
-	// FTP / SFTP credentials
 	const {
 		ftpUser,
 		ftpPasswd,
@@ -167,7 +166,6 @@ export const buildOption = (type: string, form: TaskForm) => {
 	if (!isEmpty(ftpPasswd)) {
 		result["ftp-passwd"] = ftpPasswd;
 	}
-	// Inline key content takes precedence over file path
 	const effectiveKey = !isEmpty(sftpPrivateKeyContent)
 		? sftpPrivateKeyContent
 		: sftpPrivateKey;
@@ -178,10 +176,6 @@ export const buildOption = (type: string, form: TaskForm) => {
 		result["sftp-private-key-passphrase"] = sftpKeyPassphrase;
 	}
 
-	// Per-task completion-script overrides, stored under risuko-prefixed option
-	// keys. The engine preserves unknown options; the renderer reads them back at
-	// completion to pass to the script runner. `override = true` opts in;
-	// otherwise the global preference is used
 	if (form.completionScriptOverride) {
 		const command = `${form.completionScriptCommand || ""}`.trim();
 		if (!isEmpty(command)) {
@@ -212,15 +206,12 @@ export const buildUriPayload = async (form: TaskForm) => {
 	const curlHeaders = buildHeadersFromCurl(uriList);
 	uriList = buildUrisFromCurl(uriList);
 	const formOuts = buildOuts(uriList, out);
-	// Per-line `Rename:` directives win over the form-level out; otherwise
-	// fall back to the form-level value (with index-rule expansion)
 	const outs = uriList.map(
 		(_, i) => parsedLines[i]?.rename || formOuts[i] || "",
 	);
 
 	const resolvedForm: TaskForm = buildDefaultOptionsFromCurl(form, curlHeaders);
 
-	// Routing (category dirs + custom rules) is now resolved backend-side
 	const options = buildOption(ADD_TASK_TYPE.URI, resolvedForm);
 	const result = {
 		uris: uriList,

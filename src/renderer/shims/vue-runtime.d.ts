@@ -6,7 +6,6 @@ declare module "@vue/runtime-core" {
 		$store: any;
 		$router: any;
 		$route: any;
-		$http: any;
 		$msg: any;
 		$native: any;
 		$t: (key: string, value?: any) => any;

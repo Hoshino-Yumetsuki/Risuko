@@ -17,7 +17,7 @@ class BootstrapProvider : ContentProvider() {
         try {
             WebViewUpgradeBootstrap.run(ctx)
         } catch (t: Throwable) {
-            // Never let a startup hook crash the host app.
+            // Never let a startup hook crash the host app
             Log.e(LOG_TAG, "WebView upgrade bootstrap threw", t)
         }
         return true

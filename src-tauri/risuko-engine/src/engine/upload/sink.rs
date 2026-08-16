@@ -1,9 +1,4 @@
-//! `UploadSink` trait - protocol-specific upload backend interface
-//!
-//! Each protocol (WebDAV, S3, SFTP, FTP) implements this trait once. The
-//! manager owns boxed instances and hands jobs to them. Adding a new protocol
-//! is a matter of dropping in a new file under `engine/upload/<proto>.rs`,
-//! implementing the trait, and wiring it in `manager::build_sink_runtime`
+//! `UploadSink` trait - protocol-specific upload backend interface; each protocol (WebDAV, S3, SFTP, FTP) implements it once, the manager owns boxed instances, and adding a protocol means a new file under `engine/upload/<proto>.rs` wired in `manager::build_sink_runtime`
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -18,9 +13,7 @@ use tokio_util::sync::CancellationToken;
 pub struct UploadFile {
     /// Absolute path to the source file on disk
     pub local_path: PathBuf,
-    /// Path component to use under the sink's configured base — relative,
-    /// uses `/` separators, never starts with `/`. The sink is responsible
-    /// for creating any necessary parent directories
+    /// Path component to use under the sink's configured base — relative, uses `/` separators, never starts with `/`; the sink creates any necessary parent directories
     pub remote_relative: String,
     /// Size in bytes
     pub size: u64,
@@ -46,9 +39,7 @@ impl UploadControl {
     }
 }
 
-/// Per-sink protocol-specific configuration. Stored verbatim in user config
-///
-/// Discriminated by `kind` for serde compatibility with the TS-side type
+/// Per-sink protocol-specific configuration, stored verbatim in user config; discriminated by `kind` for serde compatibility with the TS-side type
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum SinkConfig {
@@ -69,8 +60,7 @@ pub struct WebdavConfig {
     /// Optional basic-auth username
     #[serde(default)]
     pub username: String,
-    /// Optional basic-auth password. Not persisted to disk — the frontend
-    /// must re-supply on engine restart
+    /// Optional basic-auth password; not persisted to disk — the frontend must re-supply on engine restart
     #[serde(default, skip_serializing)]
     pub password: String,
     /// Skip TLS verification (self-signed homelab servers)
@@ -78,13 +68,11 @@ pub struct WebdavConfig {
     pub insecure: bool,
 }
 
-/// S3-compatible object storage. Works with AWS S3, MinIO, Backblaze B2 (S3
-/// API), Cloudflare R2, Wasabi, Garage, etc. Uses SigV4 single-PUT
+/// S3-compatible object storage; works with AWS S3, MinIO, Backblaze B2 (S3 API), Cloudflare R2, Wasabi, Garage, etc., using SigV4 single-PUT
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct S3Config {
-    /// Endpoint URL — e.g. `https://s3.amazonaws.com` or
-    /// `http://minio.local:9000`. Trailing slash is tolerated
+    /// Endpoint URL — e.g. `https://s3.amazonaws.com` or `http://minio.local:9000`; trailing slash is tolerated
     pub endpoint: String,
     /// Region — used for SigV4 signing scope
     #[serde(default)]
@@ -93,15 +81,13 @@ pub struct S3Config {
     pub bucket: String,
     /// Access key ID
     pub access_key_id: String,
-    /// Secret access key. Not persisted to disk — the frontend must
-    /// re-supply on engine restart
+    /// Secret access key; not persisted to disk — the frontend must re-supply on engine restart
     #[serde(default, skip_serializing)]
     pub secret_access_key: String,
     /// Optional key prefix prepended to every object key
     #[serde(default)]
     pub prefix: String,
-    /// Use bucket-in-path URLs (`/{bucket}/{key}`) instead of virtual-host
-    /// style (`{bucket}.host/{key}`). Required for MinIO and most self-hosted
+    /// Use bucket-in-path URLs (`/{bucket}/{key}`) instead of virtual-host style (`{bucket}.host/{key}`); required for MinIO and most self-hosted
     #[serde(default)]
     pub force_path_style: bool,
 }
@@ -113,8 +99,7 @@ pub struct SftpConfig {
     #[serde(default = "default_sftp_port")]
     pub port: u16,
     pub username: String,
-    /// Password auth. Used if non-empty; otherwise tries the private key.
-    /// Not persisted to disk — the frontend must re-supply on engine restart
+    /// Password auth, used if non-empty (otherwise tries the private key); not persisted to disk — the frontend must re-supply on engine restart
     #[serde(default, skip_serializing)]
     pub password: String,
     /// PEM-encoded OpenSSH or PKCS#1 private key. Not persisted to disk
@@ -167,8 +152,7 @@ pub enum PostUploadAction {
     Move,
 }
 
-/// Persisted sink record — what the user added in Preferences. Holds the
-/// runtime config plus identity / display metadata
+/// Persisted sink record — what the user added in Preferences; holds the runtime config plus identity / display metadata
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UploadSinkRecord {
@@ -185,15 +169,10 @@ pub struct UploadSinkRecord {
     pub last_used_at: Option<u64>,
 }
 
-/// Per-sink protocol implementation. Implementations should be cheap to
-/// construct (configs are passed by value) — the manager builds an instance
-/// for the duration of a single job
+/// Per-sink protocol implementation; implementations should be cheap to construct (configs are passed by value) — the manager builds an instance for the duration of a single job
 #[async_trait]
 pub trait UploadSink: Send + Sync {
-    /// Upload `file` to the sink's destination, reporting progress and
-    /// honouring cancellation. Returns the canonical remote URL on success
-    /// (best-effort — empty string is acceptable when the sink can't construct
-    /// one, e.g. SFTP without a public URL)
+    /// Upload `file` to the sink's destination, reporting progress and honouring cancellation; returns the canonical remote URL on success (best-effort — empty string is acceptable when the sink can't construct one, e.g. SFTP without a public URL)
     async fn upload(&self, file: &UploadFile, ctl: &UploadControl) -> Result<String, String>;
 
     /// Test connectivity / authentication. Should be a quick round-trip

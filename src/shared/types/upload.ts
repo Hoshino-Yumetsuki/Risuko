@@ -1,6 +1,3 @@
-// Cloud upload sink types
-// Ref: `risuko-engine/src/engine/upload/{sink,rules,manager}.rs`
-
 export type UploadProtocol = "webdav" | "s3" | "sftp" | "ftp";
 
 interface WebdavConfig {
@@ -16,8 +13,6 @@ interface S3Config {
 	region: string;
 	bucket: string;
 	accessKeyId: string;
-	// Backend strips this on read (see `skip_serializing` on `S3Config` in
-	// risuko-engine), so list responses round-trip the field as undefined
 	secretAccessKey?: string;
 	prefix?: string;
 	forcePathStyle?: boolean;

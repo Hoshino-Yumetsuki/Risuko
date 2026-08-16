@@ -1,9 +1,4 @@
-//! BEP-10 extension protocol: handshake dict + ut_metadata (BEP-9) and
-//! ut_pex (BEP-11) payloads
-//!
-//! On the wire an extended message is framed as a normal `Message::Extended`
-//! with `ext_id == 0` identifying the extended-handshake; higher ids map to
-//! per-peer extension message types negotiated via the handshake's `m` dict
+//! BEP-10 extension protocol: handshake dict + ut_metadata (BEP-9) and ut_pex (BEP-11) payloads; framed as `Message::Extended` where `ext_id == 0` is the extended-handshake and higher ids map to types negotiated via the handshake's `m` dict
 
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
@@ -30,9 +25,7 @@ pub mod ut_metadata_type {
     pub const REJECT: i64 = 2;
 }
 
-/// ut_holepunch (BEP-55) message types. Unlike ut_metadata/ut_pex these are a
-/// fixed binary layout, NOT bencoded: `msg_type(1) addr_type(1) ip(4|16)
-/// port(2) [err_code(4) for Error]`
+/// ut_holepunch (BEP-55) message types; fixed binary layout (NOT bencoded): `msg_type(1) addr_type(1) ip(4|16) port(2) [err_code(4) for Error]`
 pub mod holepunch_type {
     /// Initiator -> relay: "help me reach this endpoint"
     pub const RENDEZVOUS: u8 = 0;
@@ -64,8 +57,7 @@ pub struct ExtHandshake {
 }
 
 impl ExtHandshake {
-    /// Build our outgoing extended handshake. Caller supplies the message ids
-    /// we want peers to use when sending us the respective extension
+    /// Build our outgoing extended handshake; caller supplies the message ids peers should use to send us each extension
     pub fn new_outgoing(ut_metadata_id: u8, ut_pex_id: u8, metadata_size: Option<u64>) -> Self {
         let mut supported = HashMap::new();
         supported.insert(EXT_NAME_UT_METADATA.to_vec(), ut_metadata_id);
@@ -83,8 +75,7 @@ impl ExtHandshake {
         }
     }
 
-    /// Set `yourip` to the peer's address (compact-encoded on the wire). Builder
-    /// helper used by the connection layer per dial / accept
+    /// Set `yourip` to the peer's address (compact-encoded on the wire); builder helper used by the connection layer per dial / accept
     pub fn with_yourip(mut self, ip: IpAddr) -> Self {
         self.yourip = Some(ip);
         self
@@ -103,9 +94,7 @@ impl ExtHandshake {
             .map(|(k, v)| (k.clone(), Value::Int(*v as i64)))
             .collect();
         m_entries.sort_by(|a, b| a.0.cmp(&b.0));
-        // Bencode dictionaries must be lexicographically sorted by key. The keys we
-        // emit are `m`, `metadata_size`, `v`, `yourip`—all distinct and already in
-        // sorted order, so we just push in that fixed sequence
+        // Bencode dicts must be lexicographically sorted by key; `m`, `metadata_size`, `v`, `yourip` are distinct and pushed in that fixed sorted order
         let mut dict = vec![(b"m".to_vec(), Value::Dict(m_entries))];
         if let Some(sz) = self.metadata_size {
             dict.push((b"metadata_size".to_vec(), Value::Int(sz as i64)));
@@ -131,8 +120,7 @@ impl ExtHandshake {
             if let Some(m_dict) = m.as_dict() {
                 for (k, v) in m_dict {
                     if let Some(id) = v.as_int() {
-                        // Extension ID 0 is reserved for the BEP-10 handshake itself
-                        // and must not appear in the `m` dict.
+                        // Extension ID 0 is reserved for the BEP-10 handshake itself and must not appear in the `m` dict
                         if (1..=255).contains(&id) {
                             supported.insert(k.clone(), id as u8);
                         }
@@ -212,8 +200,7 @@ pub fn ut_metadata_data(piece: i64, total_size: i64, block: &[u8]) -> Bytes {
     Bytes::from(out)
 }
 
-/// Build a `ut_metadata` reject response (sent for out-of-range pieces or
-/// when we cannot serve the request)
+/// Build a `ut_metadata` reject response (out-of-range pieces or when we cannot serve the request)
 pub fn ut_metadata_reject(piece: i64) -> Bytes {
     let dict = Value::Dict(vec![
         (b"msg_type".to_vec(), Value::Int(ut_metadata_type::REJECT)),
@@ -222,8 +209,7 @@ pub fn ut_metadata_reject(piece: i64) -> Bytes {
     Bytes::from(encode_to_vec(&dict))
 }
 
-/// Parse a `ut_metadata` message, returning the parsed header and any trailing
-/// data block (for DATA messages)
+/// Parse a `ut_metadata` message, returning the parsed header and any trailing data block (for DATA messages)
 pub struct UtMetadataMsg {
     pub msg_type: i64,
     pub piece: i64,
@@ -232,8 +218,7 @@ pub struct UtMetadataMsg {
 }
 
 pub fn parse_ut_metadata(payload: Bytes) -> Option<UtMetadataMsg> {
-    // ut_metadata messages carry a bencoded dict followed by the raw data for
-    // DATA messages. We need to know how many bytes the dict consumed
+    // ut_metadata carries a bencoded dict followed by raw data for DATA messages; we need how many bytes the dict consumed
     let mut p = decode_external(&payload, EXTENSION_DECODE_LIMITS).ok()?;
     let block = payload.slice(p.span.end..);
     let dict = match &mut p.value {
@@ -260,8 +245,7 @@ pub fn parse_ut_metadata(payload: Bytes) -> Option<UtMetadataMsg> {
     })
 }
 
-/// Decode a compact ut_pex payload. Returns (ipv4 peers, ipv6 peers). Each
-/// peer is a (IP, port) pair. Only IPv4 is currently wired up to the session
+/// Decode a compact ut_pex payload, returning (ipv4 peers, ipv6 peers) where each peer is an (IP, port) pair
 pub fn parse_ut_pex(
     payload: &[u8],
 ) -> Option<(Vec<std::net::SocketAddr>, Vec<std::net::SocketAddr>)> {
@@ -344,8 +328,7 @@ pub struct HolepunchMsg {
     pub err_code: u32,
 }
 
-/// Encode a BEP-55 ut_holepunch message. `err_code` is only emitted for
-/// `holepunch_type::ERROR`
+/// Encode a BEP-55 ut_holepunch message; `err_code` is only emitted for `holepunch_type::ERROR`
 pub fn build_holepunch(msg_type: u8, addr: SocketAddr, err_code: u32) -> Bytes {
     let mut buf = Vec::with_capacity(24);
     buf.push(msg_type);
@@ -366,8 +349,7 @@ pub fn build_holepunch(msg_type: u8, addr: SocketAddr, err_code: u32) -> Bytes {
     Bytes::from(buf)
 }
 
-/// Decode a BEP-55 ut_holepunch message. Returns `None` on a malformed/short
-/// payload or an unknown address family
+/// Decode a BEP-55 ut_holepunch message; `None` on a malformed/short payload or an unknown address family
 pub fn parse_holepunch(payload: &[u8]) -> Option<HolepunchMsg> {
     if payload.len() < 2 {
         return None;

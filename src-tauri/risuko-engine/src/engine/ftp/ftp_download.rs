@@ -16,9 +16,7 @@ use crate::engine::speed_limiter::{SpeedEma, SpeedLimiter};
 const PART_SUFFIX: &str = ".part";
 const BUF_SIZE: usize = 64 * 1024;
 
-/// Macro to perform the FTP/FTPS download loop on a connected + logged-in stream
-/// Avoids duplicating the loop logic for `AsyncFtpStream` vs `AsyncRustlsFtpStream`
-/// since `into_secure` changes the concrete stream type
+/// Macro running the FTP/FTPS download loop on a connected+logged-in stream, avoiding duplication across `AsyncFtpStream` vs `AsyncRustlsFtpStream` (whose concrete type differs after `into_secure`)
 macro_rules! ftp_transfer {
     ($ftp:expr, $parsed:expr, $part_path:expr, $file_size:expr,
      $total:expr, $completed:expr, $speed:expr,
@@ -46,8 +44,7 @@ macro_rules! ftp_transfer {
         } else {
             $file_size
         };
-        // If .part already matches the remote size, skip transfer and let finalization rename it
-        // Oversized .part files are stale and get recreated in the resume branch below
+        // If .part already matches the remote size, skip transfer and let finalization rename it; oversized .part files are stale and get recreated in the resume branch below
         if existing_size > 0 && effective_size > 0 && existing_size == effective_size {
             $completed.store(existing_size, Ordering::Relaxed);
             tracing::info!("FTP .part already complete ({existing_size} bytes), skipping transfer");
@@ -216,8 +213,7 @@ pub async fn run_ftp_ftps_download(
     let file_size = total.load(Ordering::Relaxed);
 
     if parsed.protocol == FtpProtocol::Ftps {
-        // Match aria2's `--check-certificate=true` default
-        // Only accept self-signed or invalid certs when `check-certificate=false`
+        // Match aria2's `--check-certificate=true` default; only accept self-signed or invalid certs when `check-certificate=false`
         let verify_cert = option_bool(options, "check-certificate", true);
         if !verify_cert {
             tracing::warn!(
@@ -325,9 +321,7 @@ pub(super) fn option_str(options: &Map<String, Value>, key: &str) -> Option<Stri
         .map(|s| s.to_string())
 }
 
-/// Read a boolean option from JSON bools or common string forms
-///
-/// Returns `default` when absent or unrecognized
+/// Read a boolean option from JSON bools or common string forms; returns `default` when absent or unrecognized
 pub(super) fn option_bool(options: &Map<String, Value>, key: &str, default: bool) -> bool {
     match options.get(key) {
         Some(Value::Bool(b)) => *b,

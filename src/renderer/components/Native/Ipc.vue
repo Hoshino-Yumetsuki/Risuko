@@ -36,7 +36,6 @@ export default {
 				}
 			});
 
-			// Clipboard Watcher
 			const unlistenClip = await listen("clipboard-download", (event) => {
 				const uri = event.payload as string;
 				if (uri) {

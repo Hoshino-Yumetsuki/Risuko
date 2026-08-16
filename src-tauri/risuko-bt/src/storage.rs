@@ -1,12 +1,4 @@
-//! Storage backend: maps piece/byte offsets to underlying files, with
-//! async read/write primitives
-//!
-//! [`FilesystemStorage`] uses positional `pread` / `pwrite` syscalls via
-//! `spawn_blocking`, so concurrent reads and writes to non-overlapping
-//! regions of the same file need no internal lock. This matters for
-//! multi-peer throughput: a per-file `Mutex<File>` would serialize all
-//! chunk writes through a single async mutex, capping single-file torrents
-//! at one peer at a time
+//! Storage backend: maps piece/byte offsets to underlying files with async read/write primitives; [`FilesystemStorage`] uses positional `pread`/`pwrite` via `spawn_blocking`, so non-overlapping reads/writes to one file need no internal lock (a per-file `Mutex<File>` would serialize chunk writes and cap single-file torrents at one peer)
 
 use std::io;
 use std::path::Path;
@@ -32,10 +24,7 @@ pub enum StorageError {
 /// Filesystem backed storage using the torrent's file layout
 pub struct FilesystemStorage {
     layout: FileSet,
-    /// Open handles per file, lazily opened on first access. `Arc<std::fs::File>`
-    /// is safely shareable because we only ever use positional I/O
-    /// (`FileExt::read_at` / `write_at` on Unix, `FileExt::seek_read` /
-    /// `seek_write` on Windows), which do not touch the shared file cursor
+    /// Open handles per file, lazily opened on first access; `Arc<std::fs::File>` is safely shareable because we only use positional I/O (`read_at`/`write_at` on Unix, `seek_read`/`seek_write` on Windows), which do not touch the shared file cursor
     handles: Mutex<Vec<Option<Arc<std::fs::File>>>>,
 }
 
@@ -161,9 +150,7 @@ impl FilesystemStorage {
 
     /// Allocate all files (sparse) on disk if they don't yet exist
     pub async fn preallocate(&self) -> Result<(), StorageError> {
-        // Open each file just long enough to preallocate, then drop the
-        // handle. Caching handles here would defeat lazy opening and can
-        // exhaust the process open-file limit on torrents with many files
+        // Open each file just long enough to preallocate, then drop the handle; caching handles here would defeat lazy opening and can exhaust the process open-file limit on torrents with many files
         for f in self.layout.files().iter() {
             let path = f.path.clone();
             let target_len = f.length;
@@ -177,12 +164,7 @@ impl FilesystemStorage {
                     .write(true)
                     .truncate(false)
                     .open(&path)?;
-                // Sparse allocation: setting length writes no data but reserves
-                // the file size in directory metadata. Modern filesystems
-                // (APFS, ext4, NTFS) support sparse files; set_len avoids
-                // upfront I/O while still surfacing ENOSPC on subsequent writes.
-                // Truncate oversized files too so stale tail bytes from a
-                // previous larger allocation don't survive a "complete" download
+                // Sparse allocation via set_len reserves size in directory metadata without writing data (APFS/ext4/NTFS support sparse files), avoiding upfront I/O while still surfacing ENOSPC on later writes; truncating oversized files too so stale tail bytes from a previous larger allocation don't survive a "complete" download
                 let current = file.metadata()?.len();
                 if current != target_len {
                     file.set_len(target_len)?;
@@ -197,8 +179,7 @@ impl FilesystemStorage {
 
     /// Write `buf` starting at absolute torrent offset `offset`
     pub async fn write_at(&self, offset: u64, buf: &[u8]) -> Result<(), StorageError> {
-        // Generic path: copies into a Bytes once. Hot piece writes use the
-        // zero-copy `write_at_owned` instead
+        // Generic path: copies into a Bytes once; hot piece writes use the zero-copy `write_at_owned` instead
         self.write_at_owned(offset, bytes::Bytes::copy_from_slice(buf))
             .await
     }
@@ -213,8 +194,7 @@ impl FilesystemStorage {
             return Err(StorageError::OutOfRange { offset, total });
         }
 
-        // Start all span reads first, then copy each owned buffer into place
-        // `buf` cannot cross spawned tasks, so handles carry cursor and length
+        // Start all span reads first, then copy each owned buffer into place; `buf` cannot cross spawned tasks, so handles carry cursor and length
         let spans: Vec<_> = self.layout.spans_for(offset, buf.len() as u64).collect();
         let mut tasks = Vec::with_capacity(spans.len());
         let mut cursor = 0usize;
@@ -252,9 +232,7 @@ impl FilesystemStorage {
     }
 }
 
-/// Positional write-all, retrying short writes until `buf` is drained
-/// Uses `pwrite` on Unix / `seek_write` on Windows so concurrent callers
-/// don't fight over a shared file cursor
+/// Positional write-all, retrying short writes until `buf` is drained; uses `pwrite` on Unix / `seek_write` on Windows so concurrent callers don't fight over a shared file cursor
 fn pwrite_all(file: &std::fs::File, mut offset: u64, mut buf: &[u8]) -> io::Result<()> {
     while !buf.is_empty() {
         #[cfg(unix)]

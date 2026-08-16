@@ -1,4 +1,3 @@
-// biome-ignore-all lint/suspicious/noConsole: this is a logger utility
 const isDev = process.env.NODE_ENV !== "production";
 
 let nativeLog: ((level: string, message: string) => void) | undefined;
@@ -15,9 +14,7 @@ async function toNativeLog(level: string, args: unknown[]) {
 				.map((a) => (typeof a === "string" ? a : JSON.stringify(a)))
 				.join(" "),
 		);
-	} catch {
-		// ignore
-	}
+	} catch {}
 }
 
 function log(

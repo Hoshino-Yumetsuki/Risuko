@@ -330,6 +330,14 @@ export default {
 	"ed2k-server": "eDonkey Servers",
 	"ed2k-server-input-tips": "eDonkey servers, one per line (ip:port)",
 	"ed2k-server-tips": "Default servers will be used if empty",
+	"ed2k-kad": "eMule Kad",
+	"ed2k-enable-kad": "Enable Kad source discovery",
+	"ed2k-enable-kad-tips":
+		"Discover ED2K sources through the eMule Kad network (requires engine restart)",
+	"ed2k-kad-port": "Kad UDP Port",
+	"ed2k-kad-port-tips":
+		"UDP port used for Kad discovery. Valid values are 1-65535 (requires engine restart)",
+	"ed2k-kad-port-invalid": "Kad UDP port must be an integer from 1 to 65535",
 	"ftp-sftp-settings": "FTP / SFTP",
 	"ftp-sftp-settings-tips":
 		"Default credentials for FTP, FTPS and SFTP downloads",
@@ -371,7 +379,9 @@ export default {
 		"Advanced: set arbitrary engine option keys as a JSON object. Changes take effect after restart.",
 	"engine-overrides-invalid": "Engine Overrides must be a valid JSON object.",
 	"engine-overrides-reserved-keys":
-		"Ignored reserved engine override keys: {keys}",
+		"Ignored reserved engine override keys: {{keys}}",
+	"engine-overrides-too-large":
+		"Engine Overrides is too large: at most 64 keys, 64 characters per key, and 2048 characters per value.",
 	"external-engine-enable": "Use External Engine",
 	"external-engine-enable-tips":
 		"When enabled, Risuko will not auto-start the embedded engine.",

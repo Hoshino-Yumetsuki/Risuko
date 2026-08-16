@@ -23,8 +23,7 @@ impl ServerEntry {
     }
 }
 
-/// Build from user-configured server strings (format: "ip:port")
-/// Falls back to well-known public ed2k servers if the list is empty
+/// Build from user-configured "ip:port" strings, falling back to well-known public ed2k servers if the list is empty
 pub fn server_list(entries: &[String]) -> Vec<ServerEntry> {
     let servers: Vec<ServerEntry> = entries
         .iter()

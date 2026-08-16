@@ -1,16 +1,7 @@
-//! Test for the new HTTP feature stack:
-//! - multi-URI mirror failover (`uri_selector` strategies)
-//! - Range probe + multi-piece worker pool
+//! Test for the new HTTP feature stack: - multi-URI mirror failover (`uri_selector` strategies) - Range probe + multi-piece worker pool
 
 #![allow(clippy::type_complexity)]
-//! - Whole-file SHA-256 verification
-//! - Cookie jar (Netscape format on disk -> loaded via `load-cookies`)
-//! - File pre-allocation (`file-allocation = falloc`)
-//!
-//! Spins up two tiny hyper servers on ephemeral ports: a "broken" one that
-//! 503s every request, and a "good" one that serves a fixed payload with
-//! correct Range support. The selector should mark the broken host as
-//! failed and succeed on the good mirror
+//! - Whole-file SHA-256 verification - Cookie jar (Netscape format on disk -> loaded via `load-cookies`) - File pre-allocation (`file-allocation = falloc`) Spins up two tiny hyper servers on ephemeral ports: a "broken" one that 503s every request, and a "good" one that serves a fixed payload with correct Range support. The selector should mark the broken host as failed and succeed on the good mirror
 
 use std::convert::Infallible;
 use std::io::Write;
@@ -33,9 +24,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio_util::sync::CancellationToken;
 
-// Four full pieces plus a short tail, so the test hits piece-boundary edges
-// (last piece short, multiple worker hand-offs). Derived from `PIECE_SIZE` so
-// a change to piece granularity keeps the test meaningful
+// Four full pieces plus a short tail, so the test hits piece-boundary edges (last piece short, multiple worker hand-offs). Derived from `PIECE_SIZE` so a change to piece granularity keeps the test meaningful
 const PAYLOAD_LEN: usize = (PIECE_SIZE as usize) * 4 + 17;
 
 fn make_payload() -> Vec<u8> {
@@ -52,34 +41,45 @@ fn payload_sha256_hex(p: &[u8]) -> String {
     hex::encode(h.finalize())
 }
 
+/// Parse a `bytes=start-end` Range header against `payload` and return the clamped `(start, end, slice)` for a 206 response. Returns `None` when the header is absent/malformed or the range is unsatisfiable (e.g. `start` beyond the payload, or an empty payload), so callers can fall back to a non-range response instead of panicking on an out-of-bounds slice
+fn parse_range(payload: &[u8], req: &Request<Incoming>) -> Option<(u64, u64, Vec<u8>)> {
+    if payload.is_empty() {
+        return None;
+    }
+    let last = payload.len() as u64 - 1;
+    let range = req.headers().get(hyper::header::RANGE)?;
+    let s = range.to_str().ok()?;
+    let rest = s.strip_prefix("bytes=")?;
+    let mut parts = rest.split('-');
+    let start: u64 = parts.next().unwrap_or("0").parse().unwrap_or(0);
+    let end_str = parts.next().unwrap_or("");
+    let end: u64 = if end_str.is_empty() {
+        last
+    } else {
+        end_str.parse().unwrap_or(last)
+    };
+    let end = end.min(last);
+    if start > end {
+        return None;
+    }
+    let slice = payload[start as usize..=end as usize].to_vec();
+    Some((start, end, slice))
+}
+
 async fn handle_good(
     req: Request<Incoming>,
     payload: Arc<Vec<u8>>,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
     let len = payload.len() as u64;
-    if let Some(range) = req.headers().get(hyper::header::RANGE) {
-        if let Ok(s) = range.to_str() {
-            if let Some(rest) = s.strip_prefix("bytes=") {
-                let mut parts = rest.split('-');
-                let start: u64 = parts.next().unwrap_or("0").parse().unwrap_or(0);
-                let end_str = parts.next().unwrap_or("");
-                let end: u64 = if end_str.is_empty() {
-                    len - 1
-                } else {
-                    end_str.parse().unwrap_or(len - 1)
-                };
-                let end = end.min(len - 1);
-                let slice = payload[start as usize..=end as usize].to_vec();
-                return Ok(Response::builder()
-                    .status(StatusCode::PARTIAL_CONTENT)
-                    .header("Accept-Ranges", "bytes")
-                    .header("Content-Length", slice.len().to_string())
-                    .header("Content-Range", format!("bytes {start}-{end}/{len}"))
-                    .header("ETag", "\"v1\"")
-                    .body(Full::new(Bytes::from(slice)))
-                    .unwrap());
-            }
-        }
+    if let Some((start, end, slice)) = parse_range(&payload, &req) {
+        return Ok(Response::builder()
+            .status(StatusCode::PARTIAL_CONTENT)
+            .header("Accept-Ranges", "bytes")
+            .header("Content-Length", slice.len().to_string())
+            .header("Content-Range", format!("bytes {start}-{end}/{len}"))
+            .header("ETag", "\"v1\"")
+            .body(Full::new(Bytes::from(slice)))
+            .unwrap());
     }
     Ok(Response::builder()
         .status(StatusCode::OK)
@@ -273,8 +273,7 @@ async fn checksum_mismatch_deletes_file() {
 
 #[tokio::test]
 async fn cookie_jar_loaded_from_netscape_file() {
-    // Jar mechanism in isolation — full request integration is covered by the
-    // other tests. Guards the load-cookies path
+    // Jar mechanism in isolation — full request integration is covered by the other tests. Guards the load-cookies path
     let tmp = tempfile::tempdir().unwrap();
     let cookies_path = tmp.path().join("cookies.txt");
     let mut f = std::fs::File::create(&cookies_path).unwrap();
@@ -285,8 +284,7 @@ async fn cookie_jar_loaded_from_netscape_file() {
     .unwrap();
     drop(f);
 
-    // Verify the engine builder accepts the option without panicking;
-    // jar parsing itself is covered by the unit test in risuko-http
+    // Verify the engine builder accepts the option without panicking; jar parsing itself is covered by the unit test in risuko-http
     let opts = options_with(vec![(
         "load-cookies",
         json!(cookies_path.to_string_lossy()),
@@ -328,32 +326,18 @@ impl CountingState {
 fn range_response(st: &CountingState, req: &Request<Incoming>) -> Response<Full<Bytes>> {
     let len = st.payload.len() as u64;
     let reported_total = st.override_total.unwrap_or(len);
-    if let Some(range) = req.headers().get(hyper::header::RANGE) {
-        if let Ok(s) = range.to_str() {
-            if let Some(rest) = s.strip_prefix("bytes=") {
-                let mut parts = rest.split('-');
-                let start: u64 = parts.next().unwrap_or("0").parse().unwrap_or(0);
-                let end_str = parts.next().unwrap_or("");
-                let end: u64 = if end_str.is_empty() {
-                    len - 1
-                } else {
-                    end_str.parse().unwrap_or(len - 1)
-                };
-                let end = end.min(len - 1);
-                let slice = st.payload[start as usize..=end as usize].to_vec();
-                return Response::builder()
-                    .status(StatusCode::PARTIAL_CONTENT)
-                    .header("Accept-Ranges", "bytes")
-                    .header("Content-Length", slice.len().to_string())
-                    .header(
-                        "Content-Range",
-                        format!("bytes {start}-{end}/{reported_total}"),
-                    )
-                    .header("ETag", "\"v1\"")
-                    .body(Full::new(Bytes::from(slice)))
-                    .unwrap();
-            }
-        }
+    if let Some((start, end, slice)) = parse_range(&st.payload, req) {
+        return Response::builder()
+            .status(StatusCode::PARTIAL_CONTENT)
+            .header("Accept-Ranges", "bytes")
+            .header("Content-Length", slice.len().to_string())
+            .header(
+                "Content-Range",
+                format!("bytes {start}-{end}/{reported_total}"),
+            )
+            .header("ETag", "\"v1\"")
+            .body(Full::new(Bytes::from(slice)))
+            .unwrap();
     }
     Response::builder()
         .status(StatusCode::OK)
@@ -461,8 +445,7 @@ async fn concurrent_multi_source_distributes_pieces() {
         expected,
         "content must be correct"
     );
-    // Both mirrors actually served data — pieces pulled in parallel, not
-    // failover (which would leave the 2nd mirror idle)
+    // Both mirrors actually served data — pieces pulled in parallel, not failover (which would leave the 2nd mirror idle)
     assert!(a.hits() > 0, "mirror A should have served pieces");
     assert!(
         b.hits() > 0,
@@ -516,8 +499,7 @@ async fn size_mismatch_mirror_is_dropped() {
     let expected = payload_sha256_hex(&payload);
     // index 0 (probe/primary) is healthy and defines the canonical length
     let good = CountingState::healthy(payload.clone(), 10);
-    // index 1 reports a bogus Content-Range total — a different file. It must
-    // be detected and dropped without corrupting the output
+    // index 1 reports a bogus Content-Range total — a different file. It must be detected and dropped without corrupting the output
     let bad = Arc::new(CountingState {
         payload: payload.clone(),
         range_hits: AtomicU64::new(0),
@@ -549,8 +531,7 @@ async fn size_mismatch_mirror_is_dropped() {
         expected,
         "output must be byte-correct (bad mirror's data never written)"
     );
-    // Proves the bad mirror was actually contacted (concurrent path), then
-    // dropped — not merely ignored because failover never reached it
+    // Proves the bad mirror was actually contacted (concurrent path), then dropped — not merely ignored because failover never reached it
     assert!(
         bad.hits() > 0,
         "bad mirror should have been contacted and rejected via the size guard"
@@ -564,29 +545,15 @@ async fn handle_with_disposition(
 ) -> Result<Response<Full<Bytes>>, Infallible> {
     let len = payload.len() as u64;
     let cd = format!("attachment; filename=\"{filename}\"");
-    if let Some(range) = req.headers().get(hyper::header::RANGE) {
-        if let Ok(s) = range.to_str() {
-            if let Some(rest) = s.strip_prefix("bytes=") {
-                let mut parts = rest.split('-');
-                let start: u64 = parts.next().unwrap_or("0").parse().unwrap_or(0);
-                let end_str = parts.next().unwrap_or("");
-                let end: u64 = if end_str.is_empty() {
-                    len - 1
-                } else {
-                    end_str.parse().unwrap_or(len - 1)
-                };
-                let end = end.min(len - 1);
-                let slice = payload[start as usize..=end as usize].to_vec();
-                return Ok(Response::builder()
-                    .status(StatusCode::PARTIAL_CONTENT)
-                    .header("Accept-Ranges", "bytes")
-                    .header("Content-Length", slice.len().to_string())
-                    .header("Content-Range", format!("bytes {start}-{end}/{len}"))
-                    .header("Content-Disposition", cd)
-                    .body(Full::new(Bytes::from(slice)))
-                    .unwrap());
-            }
-        }
+    if let Some((start, end, slice)) = parse_range(&payload, &req) {
+        return Ok(Response::builder()
+            .status(StatusCode::PARTIAL_CONTENT)
+            .header("Accept-Ranges", "bytes")
+            .header("Content-Length", slice.len().to_string())
+            .header("Content-Range", format!("bytes {start}-{end}/{len}"))
+            .header("Content-Disposition", cd)
+            .body(Full::new(Bytes::from(slice)))
+            .unwrap());
     }
     Ok(Response::builder()
         .status(StatusCode::OK)
@@ -637,8 +604,7 @@ async fn adopts_filename_from_content_disposition() {
     let (total, completed, speed, conns, ct, gl, tl, cc) = dummy_state();
     let adopted = std::sync::Arc::new(parking_lot::Mutex::new(None));
 
-    // out is empty so the engine starts from URL inference ("download"),
-    // the placeholder we want overridden by Content-Disposition
+    // out is empty so the engine starts from URL inference ("download"), the placeholder we want overridden by Content-Disposition
     let result = run_http_download_multi(
         &uris,
         &dir,
@@ -675,8 +641,7 @@ async fn adopts_filename_from_content_disposition() {
 
 #[tokio::test]
 async fn keeps_user_supplied_filename_over_content_disposition() {
-    // When the user explicitly typed an output name, the server's
-    // Content-Disposition must not stomp it
+    // When the user explicitly typed an output name, the server's Content-Disposition must not stomp it
     let payload = Arc::new(make_payload());
     let addr = spawn_disposition_server(payload.clone(), "ServerSays.jar").await;
     tokio::task::yield_now().await;
@@ -726,9 +691,7 @@ async fn handle_chunked_disposition(
     payload: Arc<Vec<u8>>,
     filename: &'static str,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
-    // Simulates an app server like Spigot: serves the file with a
-    // Content-Disposition filename but no Accept-Ranges and no
-    // Content-Length, forcing the engine into the streaming path
+    // Simulates an app server like Spigot: serves the file with a Content-Disposition filename but no Accept-Ranges and no Content-Length, forcing the engine into the streaming path
     let cd = format!("attachment; filename=\"{filename}\"");
     Ok(Response::builder()
         .status(StatusCode::OK)
@@ -769,9 +732,7 @@ async fn spawn_chunked_disposition_server(
 
 #[tokio::test]
 async fn adopts_filename_when_server_doesnt_support_ranges() {
-    // Spigot's case: server returns the file body with
-    // Content-Disposition but no range support. The engine should still
-    // pick up the filename rather than discarding it
+    // Spigot's case: server returns the file body with Content-Disposition but no range support. The engine should still pick up the filename rather than discarding it
     let payload = Arc::new(make_payload());
     let addr = spawn_chunked_disposition_server(payload.clone(), "StoragePeek.jar").await;
     tokio::task::yield_now().await;
@@ -817,43 +778,25 @@ async fn adopts_filename_when_server_doesnt_support_ranges() {
     );
 }
 
-// A small, deterministic payload below the multi-chunk threshold so the
-// engine falls back to the single-connection path
+// A small, deterministic payload below the multi-chunk threshold so the engine falls back to the single-connection path
 fn small_payload(n: usize) -> Vec<u8> {
     (0..n).map(|i| (i % 251) as u8).collect()
 }
 
-/// Quark-style signed-URL CDN: serves Range requests (206) but rejects a
-/// plain full GET with `412 Precondition Failed`. The Range probe succeeds,
-/// so the small-file single-connection fallback must reuse the Range request
-/// shape rather than issuing a plain GET
+/// Quark-style signed-URL CDN: serves Range requests (206) but rejects a plain full GET with `412 Precondition Failed`. The Range probe succeeds, so the small-file single-connection fallback must reuse the Range request shape rather than issuing a plain GET
 async fn handle_quark(
     req: Request<Incoming>,
     payload: Arc<Vec<u8>>,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
     let len = payload.len() as u64;
-    if let Some(range) = req.headers().get(hyper::header::RANGE) {
-        if let Ok(s) = range.to_str() {
-            if let Some(rest) = s.strip_prefix("bytes=") {
-                let mut parts = rest.split('-');
-                let start: u64 = parts.next().unwrap_or("0").parse().unwrap_or(0);
-                let end_str = parts.next().unwrap_or("");
-                let end: u64 = if end_str.is_empty() {
-                    len - 1
-                } else {
-                    end_str.parse().unwrap_or(len - 1)
-                };
-                let end = end.min(len - 1);
-                let slice = payload[start as usize..=end as usize].to_vec();
-                return Ok(Response::builder()
-                    .status(StatusCode::PARTIAL_CONTENT)
-                    .header("Accept-Ranges", "bytes")
-                    .header("Content-Length", slice.len().to_string())
-                    .header("Content-Range", format!("bytes {start}-{end}/{len}"))
-                    .body(Full::new(Bytes::from(slice)))
-                    .unwrap());
-            }
-        }
+    if let Some((start, end, slice)) = parse_range(&payload, &req) {
+        return Ok(Response::builder()
+            .status(StatusCode::PARTIAL_CONTENT)
+            .header("Accept-Ranges", "bytes")
+            .header("Content-Length", slice.len().to_string())
+            .header("Content-Range", format!("bytes {start}-{end}/{len}"))
+            .body(Full::new(Bytes::from(slice)))
+            .unwrap());
     }
     Ok(Response::builder()
         .status(StatusCode::PRECONDITION_FAILED)
@@ -887,9 +830,7 @@ async fn spawn_quark_server(payload: Arc<Vec<u8>>) -> SocketAddr {
 
 #[tokio::test]
 async fn small_file_reuses_probe_range_shape_on_412_cdn() {
-    // Regression for the Quark `412` failure: probe (Range) succeeds, but the
-    // single-connection fallback used to issue a plain full GET, which the CDN
-    // rejected with 412. The fallback must now reuse the Range request shape
+    // Regression for the Quark `412` failure: probe (Range) succeeds, but the single-connection fallback used to issue a plain full GET, which the CDN rejected with 412. The fallback must now reuse the Range request shape
     let payload = Arc::new(small_payload(5000));
     let addr = spawn_quark_server(payload.clone()).await;
     tokio::task::yield_now().await;
@@ -897,8 +838,7 @@ async fn small_file_reuses_probe_range_shape_on_412_cdn() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path().to_string_lossy().to_string();
     let uris = vec![format!("http://{addr}/file.bin")];
-    // split=4 (from options_with) with min-split-size=1M => 5000 bytes is
-    // "too small for multi-chunk", forcing the single-connection path
+    // split=4 (from options_with) with min-split-size=1M => 5000 bytes is "too small for multi-chunk", forcing the single-connection path
     let options = options_with(vec![]);
     let (total, completed, speed, conns, ct, gl, tl, cc) = dummy_state();
 
@@ -924,10 +864,7 @@ async fn small_file_reuses_probe_range_shape_on_412_cdn() {
     assert_eq!(got, *payload, "downloaded content must match payload");
 }
 
-/// Flaky raw-TCP server: the first response claims the full `Content-Length`
-/// but sends only half the body before closing the socket, simulating an
-/// `ECONNRESET` mid-stream. Subsequent requests honor `Range` and serve the
-/// remainder, letting the single-connection auto-retry resume in place
+/// Flaky raw-TCP server: the first response claims the full `Content-Length` but sends only half the body before closing the socket, simulating an `ECONNRESET` mid-stream. Subsequent requests honor `Range` and serve the remainder, letting the single-connection auto-retry resume in place
 async fn spawn_flaky_server(payload: Arc<Vec<u8>>) -> SocketAddr {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -965,8 +902,7 @@ async fn spawn_flaky_server(payload: Arc<Vec<u8>>) -> SocketAddr {
                 let len = payload.len();
                 let n = attempt.fetch_add(1, Ordering::SeqCst);
                 if n == 0 {
-                    // First attempt: promise the full body, deliver half, then
-                    // drop the connection to trigger a body-read error
+                    // First attempt: promise the full body, deliver half, then drop the connection to trigger a body-read error
                     let head = format!(
                         "HTTP/1.1 200 OK\r\nContent-Length: {len}\r\nAccept-Ranges: bytes\r\n\r\n"
                     );
@@ -1012,8 +948,7 @@ async fn spawn_flaky_server(payload: Arc<Vec<u8>>) -> SocketAddr {
     addr
 }
 
-/// Server that ignores `Range` entirely and always replies `200 OK` with the
-/// full body — the behavior of many naive app servers
+/// Server that ignores `Range` entirely and always replies `200 OK` with the full body — the behavior of many naive app servers
 async fn handle_range_ignoring(
     _req: Request<Incoming>,
     payload: Arc<Vec<u8>>,
@@ -1051,10 +986,7 @@ async fn spawn_range_ignoring_server(payload: Arc<Vec<u8>>) -> SocketAddr {
 
 #[tokio::test]
 async fn restarts_from_scratch_when_server_ignores_range_resume() {
-    // Regression: with a stale `.part` on disk the engine sends
-    // `Range: bytes=N-`. A server that ignores Range replies 200 with the
-    // FULL body; writing that at offset N would duplicate the first N bytes
-    // and corrupt the file. The engine must detect the 200 and restart from 0
+    // Regression: with a stale `.part` on disk the engine sends `Range: bytes=N-`. A server that ignores Range replies 200 with the FULL body; writing that at offset N would duplicate the first N bytes and corrupt the file. The engine must detect the 200 and restart from 0
     let payload = Arc::new(small_payload(4000));
     let addr = spawn_range_ignoring_server(payload.clone()).await;
     tokio::task::yield_now().await;
@@ -1094,17 +1026,14 @@ async fn restarts_from_scratch_when_server_ignores_range_resume() {
 
 #[tokio::test]
 async fn single_connection_auto_retries_and_resumes_on_reset() {
-    // Regression for "requires manual resume": a single-connection download
-    // that hits a mid-stream connection reset must auto-retry and resume in
-    // place instead of dropping the task to Error
+    // Regression for "requires manual resume": a single-connection download that hits a mid-stream connection reset must auto-retry and resume in place instead of dropping the task to Error
     let payload = Arc::new(small_payload(4000));
     let addr = spawn_flaky_server(payload.clone()).await;
     tokio::task::yield_now().await;
 
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path().to_string_lossy().to_string();
-    // split=1 + a URL path that differs from `out` skips the Range probe, so
-    // the first request the server sees is the download itself
+    // split=1 + a URL path that differs from `out` skips the Range probe, so the first request the server sees is the download itself
     let uris = vec![format!("http://{addr}/stream")];
     let options = options_with(vec![("split", json!("1"))]);
     let (total, completed, speed, conns, ct, gl, tl, cc) = dummy_state();
@@ -1129,4 +1058,136 @@ async fn single_connection_auto_retries_and_resumes_on_reset() {
 
     let got = std::fs::read(&result).unwrap();
     assert_eq!(got, *payload, "resumed content must match payload");
+}
+
+async fn spawn_partial_range_server(payload: Arc<Vec<u8>>) -> (SocketAddr, Arc<AtomicU32>) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let partials = Arc::new(AtomicU32::new(0));
+    tokio::spawn({
+        let partials = partials.clone();
+        async move {
+            loop {
+                let (mut stream, _) = match listener.accept().await {
+                    Ok(pair) => pair,
+                    Err(_) => return,
+                };
+                let payload = payload.clone();
+                let partials = partials.clone();
+                tokio::spawn(async move {
+                    let mut request = Vec::new();
+                    let mut buffer = [0u8; 1024];
+                    loop {
+                        match stream.read(&mut buffer).await {
+                            Ok(0) => return,
+                            Ok(count) => {
+                                request.extend_from_slice(&buffer[..count]);
+                                if request.windows(4).any(|window| window == b"\r\n\r\n") {
+                                    break;
+                                }
+                            }
+                            Err(_) => return,
+                        }
+                    }
+
+                    let request = String::from_utf8_lossy(&request).to_ascii_lowercase();
+                    let Some(range) = request.lines().find_map(|line| {
+                        let value = line.strip_prefix("range: bytes=")?;
+                        let (start, end) = value.split_once('-')?;
+                        let start = start.trim().parse::<usize>().ok()?;
+                        let end = if end.trim().is_empty() {
+                            payload.len().saturating_sub(1)
+                        } else {
+                            end.trim().parse::<usize>().ok()?
+                        };
+                        Some((start, end))
+                    }) else {
+                        let _ = stream.write_all(b"HTTP/1.1 400 Bad Request\r\n\r\n").await;
+                        return;
+                    };
+                    if range.0 >= payload.len() || range.1 < range.0 {
+                        let _ = stream
+                            .write_all(b"HTTP/1.1 416 Range Not Satisfiable\r\n\r\n")
+                            .await;
+                        return;
+                    }
+
+                    let end = range.1.min(payload.len() - 1);
+                    let requested = end - range.0 + 1;
+                    let body_len = requested.min(1024);
+                    if body_len < requested {
+                        partials.fetch_add(1, Ordering::SeqCst);
+                    }
+                    let head = format!(
+                        "HTTP/1.1 206 Partial Content\r\nContent-Length: {requested}\r\nContent-Range: bytes {}-{end}/{}\r\nAccept-Ranges: bytes\r\nETag: \"v1\"\r\n\r\n",
+                        range.0,
+                        payload.len()
+                    );
+                    let _ = stream.write_all(head.as_bytes()).await;
+                    let _ = stream
+                        .write_all(&payload[range.0..range.0 + body_len])
+                        .await;
+                    let _ = stream.flush().await;
+                });
+            }
+        }
+    });
+    (addr, partials)
+}
+
+#[tokio::test]
+async fn partial_range_server_rejects_a_reversed_range() {
+    let payload = Arc::new(small_payload(1024));
+    let (addr, _) = spawn_partial_range_server(payload).await;
+    let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+    stream
+        .write_all(b"GET /partial HTTP/1.1\r\nHost: localhost\r\nRange: bytes=500-100\r\n\r\n")
+        .await
+        .unwrap();
+
+    let mut response = Vec::new();
+    stream.read_to_end(&mut response).await.unwrap();
+
+    assert!(response.starts_with(b"HTTP/1.1 416 Range Not Satisfiable"));
+}
+
+#[tokio::test]
+async fn multi_chunk_partial_errors_keep_progressing_mirror_alive() {
+    let payload = Arc::new(small_payload(16 * 1024));
+    let (addr, partials) = spawn_partial_range_server(payload.clone()).await;
+    tokio::task::yield_now().await;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().to_string_lossy().to_string();
+    let uris = vec![format!("http://{addr}/partial")];
+    let options = options_with(vec![
+        ("split", json!("2")),
+        ("min-split-size", json!(1)),
+        ("max-worker-retries", json!(1)),
+    ]);
+    let (total, completed, speed, conns, ct, gl, tl, cc) = dummy_state();
+
+    let result = run_http_download_multi(
+        &uris,
+        &dir,
+        "partial.bin",
+        &options,
+        total,
+        completed,
+        speed,
+        conns,
+        ct,
+        gl,
+        tl,
+        cc,
+        std::sync::Arc::new(parking_lot::Mutex::new(None)),
+    )
+    .await
+    .expect("partial progress must reset both retry and mirror failure budgets");
+
+    assert!(
+        partials.load(Ordering::SeqCst) >= 3,
+        "the server must exercise repeated partial stream errors"
+    );
+    assert_eq!(std::fs::read(result).unwrap(), *payload);
 }

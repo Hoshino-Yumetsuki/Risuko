@@ -21,8 +21,7 @@ impl Ed2kPacket {
 
     /// Encode this packet into bytes for sending over the wire
     pub fn encode(&self) -> Vec<u8> {
-        // Format: [protocol:1][length:4(LE)][opcode:1][payload:N]
-        // length = 1 (opcode) + payload.len()
+        // Format: [protocol:1][length:4(LE)][opcode:1][payload:N]; length = 1 (opcode) + payload.len()
         let data_len = 1 + self.payload.len();
         let mut buf = Vec::with_capacity(5 + data_len);
         buf.push(self.protocol);
@@ -70,21 +69,26 @@ impl Ed2kPacket {
 
 // -- Packet builders --
 
-/// Build a Hello Server packet (opcode 0x01)
-/// Contains: client_hash(16) + client_id(4) + port(2) + meta_tags
-pub fn build_hello_server(client_hash: &[u8; 16], client_port: u16) -> Ed2kPacket {
+/// Build a Hello Server packet (opcode 0x01): client_hash(16) + client_id(4) + port(2) + meta_tags
+pub fn build_hello_server(
+    client_hash: &[u8; 16],
+    client_port: u16,
+    kad_udp_port: Option<u16>,
+) -> Ed2kPacket {
     let mut payload = Vec::with_capacity(64);
     payload.extend_from_slice(client_hash);
     payload.extend_from_slice(&0u32.to_le_bytes()); // client_id = 0 (connecting)
     payload.extend_from_slice(&client_port.to_le_bytes());
 
     // Meta tags: name, version, port
-    let tags = vec![
+    let mut tags = vec![
         MetaTag::string(TAG_NAME, "Risuko"),
         MetaTag::u32(TAG_VERSION, 0x3c), // version 60
         MetaTag::u32(TAG_PORT, client_port as u32),
-        MetaTag::u32(TAG_EMULE_UDP_PORT, (client_port as u32) + 4),
     ];
+    if let Some(port) = kad_udp_port {
+        tags.push(MetaTag::u32(TAG_EMULE_UDP_PORT, port as u32));
+    }
 
     let tag_count = tags.len() as u32;
     payload.extend_from_slice(&tag_count.to_le_bytes());
@@ -354,4 +358,33 @@ pub fn build_request_parts(file_hash: &[u8; 16], ranges: &[(u32, u32)]) -> Ed2kP
     }
 
     Ed2kPacket::new(PROTO_EDONKEY, OP_REQUEST_PARTS, payload)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn server_hello_advertises_kad_udp_port_only_when_kad_is_running() {
+        let without_kad = build_hello_server(&[0; 16], 4662, None);
+        let with_kad = build_hello_server(&[0; 16], 4662, Some(4672));
+        let kad_tag = [0x03, 0x01, 0x00, TAG_EMULE_UDP_PORT, 0x40, 0x12, 0x00, 0x00];
+
+        assert_eq!(
+            u32::from_le_bytes(without_kad.payload[22..26].try_into().unwrap()),
+            3
+        );
+        assert_eq!(
+            u32::from_le_bytes(with_kad.payload[22..26].try_into().unwrap()),
+            4
+        );
+        assert!(!without_kad
+            .payload
+            .windows(kad_tag.len())
+            .any(|window| window == kad_tag));
+        assert!(with_kad
+            .payload
+            .windows(kad_tag.len())
+            .any(|window| window == kad_tag));
+    }
 }

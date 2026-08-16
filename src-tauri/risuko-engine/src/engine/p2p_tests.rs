@@ -1,15 +1,4 @@
-//! Integration-style unit tests for the surviving P2P protocols (ADC,
-//! Gnutella, G2, giFT). All fixtures are static URIs and synthetic byte
-//! buffers — there are no live test endpoints for any of these networks
-//! online. The closest things to "test links" are:
-//!   * ADC/DC: hub directories at <https://www.te-home.net/?do=hublist>
-//!     (live hubs, no static download URIs published)
-//!   * Gnutella: GWebCache directories at <http://cache.trillinux.org/>
-//!     (peer bootstrap caches, no static file URIs)
-//!   * G2: piggybacks on Gnutella infrastructure via Shareaza
-//!   * giFT: requires a locally-running giftd, no public IPC endpoint
-//!
-//! So we exercise URI parsers and pure helpers
+//! Integration-style unit tests for the surviving P2P protocols (ADC, Gnutella, G2, giFT); fixtures are static URIs and synthetic byte buffers since none of these networks publish live static download endpoints, so we exercise only the URI parsers and pure helpers
 
 use crate::engine::adc::{is_adc_uri, parse_adc_hub_uri, parse_dchub_file_uri, types::HubDialect};
 use crate::engine::g2::{is_g2_uri, parse_g2_uri};

@@ -71,15 +71,16 @@ const addTask = (
 	getAppStore().showAddTaskDialog(type);
 };
 
-const addTaskSilent = async (type) => {
+const addTaskSilent = async (type: string) => {
 	try {
 		await addTaskByType(type);
 	} catch (err) {
-		toast.error(i18n.t(err.message));
+		const message = err instanceof Error ? err.message : String(err);
+		toast.error(i18n.t(message));
 	}
 };
 
-const addTaskByType = async (type) => {
+const addTaskByType = async (type: string) => {
 	const form = initTaskForm({
 		app: getAppStore().$state,
 		preference: getPreferenceStore().$state,
@@ -93,7 +94,8 @@ const addTaskByType = async (type) => {
 		payload = buildTorrentPayload(form);
 		return getTaskStore().addTorrent(payload);
 	} else {
-		logger.error("addTask fail", form);
+		logger.error("addTask fail", type, form);
+		throw new Error("task.unknown-task-type");
 	}
 };
 
@@ -196,7 +198,6 @@ commands.register("application:update-theme", updateTheme);
 commands.register("application:update-locale", updateLocale);
 commands.register("application:update-tray-focused", updateTrayFocused);
 
-// Handle quit confirmation from Tauri (Cmd+Q, tray quit).
 import("@tauri-apps/api/event").then(({ listen }) => {
 	listen("confirm-quit", async () => {
 		const numActive = getAppStore().stat?.numActive ?? 0;
@@ -214,9 +215,7 @@ import("@tauri-apps/api/event").then(({ listen }) => {
 		});
 
 		if (confirmed) {
-			invoke("quit_app").catch(() => {
-				/* noop */
-			});
+			invoke("quit_app").catch(() => {});
 		}
 	});
 });

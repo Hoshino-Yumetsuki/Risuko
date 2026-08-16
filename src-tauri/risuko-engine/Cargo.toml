@@ -28,7 +28,6 @@ dirs = "6"
 sha1 = "0.11"
 sha2 = "0.11"
 md-5 = "0.11"
-digest = "0.11"
 hmac = "0.13"
 risuko-bt = { workspace = true }
 axum = { version = "0.8", features = ["ws"] }
@@ -65,6 +64,9 @@ nix = { version = "0.31", features = ["fs"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Threading"] }
 
 [dev-dependencies]
 hyper = { version = "1", features = ["server", "http1"] }

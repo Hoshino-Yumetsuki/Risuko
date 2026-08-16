@@ -29,6 +29,7 @@ pub struct ServerConnection {
     addr: SocketAddrV4,
     client_hash: [u8; 16],
     client_port: u16,
+    kad_udp_port: Option<u16>,
     tx: Option<mpsc::Sender<Ed2kPacket>>,
 }
 
@@ -45,17 +46,22 @@ impl ServerConnection {
         ServerPacketError::Parse(msg)
     }
 
-    pub fn new(addr: SocketAddrV4, client_hash: [u8; 16], client_port: u16) -> Self {
+    pub fn new(
+        addr: SocketAddrV4,
+        client_hash: [u8; 16],
+        client_port: u16,
+        kad_udp_port: Option<u16>,
+    ) -> Self {
         Self {
             addr,
             client_hash,
             client_port,
+            kad_udp_port,
             tx: None,
         }
     }
 
-    /// Connect and run the server communication loop
-    /// Returns a channel to receive events and a sender to queue outgoing packets
+    /// Connect and run the server loop, returning an event receiver and a sender to queue outgoing packets
     pub async fn connect(
         &mut self,
     ) -> Result<(mpsc::Receiver<ServerEvent>, mpsc::Sender<Ed2kPacket>), String> {
@@ -66,7 +72,7 @@ impl ServerConnection {
         let (read_half, mut write_half) = stream.into_split();
 
         // Send hello
-        let hello = build_hello_server(&self.client_hash, self.client_port);
+        let hello = build_hello_server(&self.client_hash, self.client_port, self.kad_udp_port);
         write_half
             .write_all(&hello.encode())
             .await

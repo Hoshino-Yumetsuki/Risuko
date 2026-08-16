@@ -1,6 +1,4 @@
-//! Tauri commands exposing the OS-keychain credential vault to the renderer
-//! Mirrors the shape of `upload_cmds` so the frontend wrapper layer stays
-//! consistent
+//! Tauri commands exposing the OS-keychain credential vault to the renderer Mirrors the shape of `upload_cmds` so the frontend wrapper layer stays consistent
 
 use serde::Serialize;
 use serde_json::Value;

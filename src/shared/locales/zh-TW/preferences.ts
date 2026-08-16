@@ -117,7 +117,7 @@ export default {
 	"font-size-extra-large": "特大",
 	"font-size-extra-large-short": "特大",
 	"auto-hide-window": "自動隱藏視窗",
-	"run-mode": "運作模式", //macOS only feature
+	"run-mode": "運作模式",
 	"run-mode-standard": "標準應用程式",
 	"run-mode-tray": "托盤應用程式",
 	"run-mode-hide-tray": "隱藏托盤應用程式",
@@ -216,6 +216,16 @@ export default {
 	"engine-overrides-tips":
 		"進階功能：用 JSON 物件設定任意引擎選項鍵，儲存後重啟生效。",
 	"engine-overrides-invalid": "引擎覆寫設定必須是合法的 JSON 物件。",
+	"ed2k-kad": "eMule Kad",
+	"ed2k-enable-kad": "啟用 Kad 來源探索",
+	"ed2k-enable-kad-tips": "透過 eMule Kad 網路探索 ED2K 來源（需重啟引擎）",
+	"ed2k-kad-port": "Kad UDP 連接埠",
+	"ed2k-kad-port-tips":
+		"用於 Kad 探索的 UDP 連接埠，有效值為 1-65535（需重啟引擎）",
+	"ed2k-kad-port-invalid": "Kad UDP 連接埠必須是 1 到 65535 之間的整數",
+	"engine-overrides-reserved-keys": "已忽略的保留引擎覆寫鍵：{{keys}}",
+	"engine-overrides-too-large":
+		"引擎覆寫設定過大：最多 64 個鍵、每個鍵 64 個字元、每個值 2048 個字元。",
 	"external-engine-enable": "使用外部引擎",
 	"external-engine-enable-tips": "啟用後，Risuko 將不會自動啟動內建引擎。",
 	"external-engine-ip": "外部引擎 IP",

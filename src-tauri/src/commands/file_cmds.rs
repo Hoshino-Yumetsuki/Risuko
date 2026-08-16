@@ -100,12 +100,7 @@ fn ensure_torrent_extension(path: &Path) -> Result<(), String> {
 pub fn reveal_in_folder(handle: AppHandle, path: String) -> Result<(), String> {
     #[cfg(target_os = "android")]
     {
-        // Hand the raw path to Kotlin. `MainActivity.revealFolder` builds the
-        // SAF document URI on the UI thread, tries several intent shapes
-        // (chooser/no-chooser × dirmime/no-mime), and returns the first that
-        // resolves — it can call `queryIntentActivities` to skip hopeless
-        // attempts and catch `ActivityNotFoundException`, both awkward through
-        // raw JNI from a Tauri worker thread
+        // Hand the raw path to Kotlin. `MainActivity.revealFolder` builds the SAF document URI on the UI thread, tries several intent shapes (chooser/no-chooser × dirmime/no-mime), and returns the first that resolves — it can call `queryIntentActivities` to skip hopeless attempts and catch `ActivityNotFoundException`, both awkward through raw JNI from a Tauri worker thread
         let _ = handle;
         return crate::commands::android_intent::reveal_folder(&path);
     }
@@ -144,15 +139,10 @@ pub fn reveal_in_folder(handle: AppHandle, path: String) -> Result<(), String> {
             let normalized_path = path.replace('/', "\\");
 
             if is_dir {
-                // Use ShellExecute via `open` to avoid explorer.exe quirks
-                // (e.g. non-zero exit codes, race conditions when an Explorer
-                // window is already focused on the same directory)
+                // Use ShellExecute via `open` to avoid explorer.exe quirks (e.g. non-zero exit codes, race conditions when an Explorer window is already focused on the same directory)
                 open::that(&normalized_path).map_err(|e| e.to_string())?;
             } else {
-                // explorer.exe parses its command line manually and expects the
-                // form: /select,"<path>". Rust's standard argument escaping
-                // mangles the embedded quotes, so use raw_arg to pass the
-                // command line through verbatim
+                // explorer.exe parses its command line manually and expects the form: /select,"<path>". Rust's standard argument escaping mangles the embedded quotes, so use raw_arg to pass the command line through verbatim
                 let raw = format!("/select,\"{}\"", normalized_path);
                 std::process::Command::new("explorer")
                     .raw_arg(raw)
@@ -209,8 +199,7 @@ pub fn stage_android_share_paths(paths: Vec<String>) -> Result<Vec<String>, Stri
 pub fn open_path(handle: AppHandle, path: String) -> Result<(), String> {
     #[cfg(target_os = "android")]
     {
-        // URI in, intent out
-        // For real file paths, guess the MIME type first so Android shows useful viewers
+        // URI in, intent out For real file paths, guess the MIME type first so Android shows useful viewers
         let _ = handle;
         let mime = guess_android_mime(&path);
         return crate::commands::android_intent::open_file(&path, &mime);
@@ -222,8 +211,7 @@ pub fn open_path(handle: AppHandle, path: String) -> Result<(), String> {
     }
 }
 
-/// Map a filename extension to a MIME type Android understands
-/// Fall back to `*/*` so unknown files still get a chooser
+/// Map a filename extension to a MIME type Android understands Fall back to `*/*` so unknown files still get a chooser
 #[cfg(target_os = "android")]
 fn guess_android_mime(path: &str) -> String {
     let ext = std::path::Path::new(path)
@@ -1030,8 +1018,7 @@ fn resolve_task_candidate_dirs(task: &Value) -> Vec<String> {
 }
 
 fn trash_generated_torrent_sidecars_in_dir(dir: &Path, normalized_info_hash: Option<&str>) -> u32 {
-    // Without a target info-hash we cannot tell this task's generated sidecar
-    // apart from unrelated .torrent files, so match nothing
+    // Without a target info-hash we cannot tell this task's generated sidecar apart from unrelated .torrent files, so match nothing
     let Some(hash) = normalized_info_hash else {
         return 0;
     };
@@ -1070,7 +1057,7 @@ fn trash_generated_torrent_sidecars_in_dir(dir: &Path, normalized_info_hash: Opt
 }
 
 #[tauri::command]
-pub fn cleanup_generated_torrent_sidecars_for_task(task: Value) -> Result<u32, String> {
+pub async fn cleanup_generated_torrent_sidecars_for_task(task: Value) -> Result<u32, String> {
     const RETRY_DELAYS_MS: [u64; 3] = [0, 250, 500];
 
     let dirs = resolve_task_candidate_dirs(&task);
@@ -1083,7 +1070,7 @@ pub fn cleanup_generated_torrent_sidecars_for_task(task: Value) -> Result<u32, S
 
     for delay_ms in RETRY_DELAYS_MS {
         if delay_ms > 0 {
-            std::thread::sleep(Duration::from_millis(delay_ms));
+            tokio::time::sleep(Duration::from_millis(delay_ms)).await;
         }
 
         let mut deleted = 0u32;
@@ -1101,6 +1088,11 @@ pub fn cleanup_generated_torrent_sidecars_for_task(task: Value) -> Result<u32, S
         }
 
         total_deleted = total_deleted.saturating_add(deleted);
+
+        // The retries exist to catch a sidecar the engine writes slightly after task removal; once we've deleted one there's nothing left to wait for, so stop early instead of re-scanning and sleeping needlessly
+        if deleted > 0 {
+            break;
+        }
     }
 
     Ok(total_deleted)
@@ -1271,8 +1263,7 @@ mod tests {
 
     #[test]
     fn decode_strict_rejects_invalid_utf8() {
-        // %FF%FE is not valid UTF-8 -> strict decode yields "" (old
-        // urlencoding::decode(..).unwrap_or_default() behaviour)
+        // %FF%FE is not valid UTF-8 -> strict decode yields "" (old urlencoding::decode(..).unwrap_or_default() behaviour)
         assert_eq!(percent_decode_strict("%FF%FE"), "");
         assert_eq!(percent_decode_strict("%E4%B8%AD"), "中");
     }

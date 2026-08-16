@@ -99,6 +99,19 @@ export default {
 		"高度な設定: 任意のエンジンオプションキーを JSON オブジェクトで指定します。変更は再起動後に反映されます。",
 	"engine-overrides-invalid":
 		"エンジン上書き設定は有効な JSON オブジェクトである必要があります。",
+	"ed2k-kad": "eMule Kad",
+	"ed2k-enable-kad": "Kad によるソース検出を有効にする",
+	"ed2k-enable-kad-tips":
+		"eMule Kad ネットワークを介して ED2K ソースを検出します（エンジンの再起動が必要です）",
+	"ed2k-kad-port": "Kad UDP ポート",
+	"ed2k-kad-port-tips":
+		"Kad のソース検出に使用する UDP ポート。有効な値は 1-65535 です（エンジンの再起動が必要です）",
+	"ed2k-kad-port-invalid":
+		"Kad UDP ポートは 1 から 65535 までの整数である必要があります",
+	"engine-overrides-reserved-keys":
+		"次の予約済みエンジン上書きキーは無視されました: {{keys}}",
+	"engine-overrides-too-large":
+		"エンジン上書き設定が大きすぎます。キーは最大 64 個、キーあたり 64 文字、値あたり 2048 文字です。",
 	"external-engine-enable": "外部エンジンを使用",
 	"external-engine-enable-tips":
 		"有効にすると、Risuko は内蔵エンジンを自動起動しません。",

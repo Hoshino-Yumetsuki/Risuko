@@ -472,12 +472,12 @@ export default {
 				});
 				this.imported = imported;
 				const appStore = useAppStore();
-				appStore.markCloudflareRetried(this.gid, imported.cookieNames || []);
 				await api.retryWithCookies({
 					gid: this.gid,
 					cookie: imported.cookieHeader,
 					userAgent: imported.userAgent || ua,
 				});
+				appStore.markCloudflareRetried(this.gid, imported.cookieNames || []);
 				toast.success(
 					this.$t("task.task-cookie-import-success", {
 						count: imported.count,

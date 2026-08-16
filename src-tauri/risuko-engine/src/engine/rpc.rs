@@ -7,7 +7,6 @@ use axum::Router;
 use base64::Engine as _;
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use std::net::SocketAddr;
 use std::sync::Arc;
 use tower_http::cors::{Any, CorsLayer};
 
@@ -39,6 +38,8 @@ struct RpcState {
     events: EventBroadcaster,
     secret: String,
     session_id: String,
+    /// Configured bind host, lets a Host header matching an explicitly-configured hostname through the DNS-rebinding guard
+    bind_host: String,
     rpc_shutdown_tx: tokio::sync::mpsc::Sender<()>,
 }
 
@@ -71,6 +72,7 @@ impl RpcServer {
             events: self.events.clone(),
             secret: self.secret.clone(),
             session_id: self.session_id.clone(),
+            bind_host: self.host.clone(),
             rpc_shutdown_tx: self.rpc_shutdown_tx.clone(),
         };
 
@@ -85,15 +87,24 @@ impl RpcServer {
                 "/jsonrpc",
                 post(handle_http_post).get(handle_http_get_or_ws),
             )
+            .layer(axum::middleware::from_fn_with_state(
+                state.clone(),
+                dns_rebind_guard,
+            ))
             .layer(cors)
             .with_state(state);
 
-        let addr: SocketAddr = format!("{}:{}", self.host, self.port)
-            .parse()
-            .map_err(|e| format!("Invalid RPC address {}:{}: {}", self.host, self.port, e))?;
-        let listener = tokio::net::TcpListener::bind(addr)
+        let listener = tokio::net::TcpListener::bind((self.host.as_str(), self.port))
             .await
-            .map_err(|e| format!("Failed to bind RPC port {}: {}", self.port, e))?;
+            .map_err(|e| {
+                format!(
+                    "Failed to resolve or bind RPC address {}:{}: {e}",
+                    self.host, self.port
+                )
+            })?;
+        let addr = listener
+            .local_addr()
+            .map_err(|e| format!("Failed to inspect bound RPC address: {e}"))?;
 
         let (tx, rx) = tokio::sync::oneshot::channel::<()>();
         self.shutdown_tx = Some(tx);
@@ -117,6 +128,51 @@ impl RpcServer {
             let _ = tx.send(());
         }
     }
+}
+
+/// Reject requests whose `Host` header points at an arbitrary DNS name: the server binds local/LAN, but a browser page on an attacker origin can reach it via DNS rebinding while still sending the real `Host`, so allowing only loopback names, IP literals, and the configured bind host defeats rebinding without breaking normal access
+async fn dns_rebind_guard(
+    State(state): State<RpcState>,
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
+    if let Some(raw) = req
+        .headers()
+        .get(header::HOST)
+        .and_then(|v| v.to_str().ok())
+    {
+        if !host_header_allowed(raw, &state.bind_host) {
+            tracing::warn!("Rejected RPC request with disallowed Host header: {raw:?}");
+            return (StatusCode::FORBIDDEN, "Forbidden: invalid Host header").into_response();
+        }
+    }
+    next.run(req).await
+}
+
+/// True when `host_header` (possibly `name:port`) is safe to serve — loopback names, IP literals (v4/v6), or the configured bind host; anything resolving to a real DNS name is rejected to block rebinding
+fn host_header_allowed(host_header: &str, bind_host: &str) -> bool {
+    let hostname = host_hostname(host_header);
+    if hostname.is_empty() || hostname.eq_ignore_ascii_case("localhost") {
+        return true;
+    }
+    // Bare IP literals (v4/v6) can't be spoofed via DNS rebinding
+    if hostname.parse::<std::net::IpAddr>().is_ok() {
+        return true;
+    }
+    // Allow an explicitly configured hostname bind (e.g. rpc-host set to a name)
+    let bind_hostname = host_hostname(bind_host);
+    !bind_hostname.is_empty() && hostname.eq_ignore_ascii_case(bind_hostname)
+}
+
+/// Extract the hostname portion of a `Host` header, stripping an optional port and IPv6 brackets
+fn host_hostname(host_header: &str) -> &str {
+    let h = host_header.trim();
+    if let Some(rest) = h.strip_prefix('[') {
+        // [::1]:6800 -> ::1
+        return rest.split(']').next().unwrap_or("");
+    }
+    // name:port -> name (IPv4/hostname; bracketed IPv6 handled above)
+    h.rsplit_once(':').map(|(name, _)| name).unwrap_or(h)
 }
 
 // HTTP POST handler
@@ -204,13 +260,7 @@ async fn handle_get_query(state: RpcState, params: HashMap<String, String>) -> R
     let callback = params.get("jsoncallback").cloned();
 
     let rpc_params = if let Some(encoded) = params.get("params") {
-        match base64::engine::general_purpose::STANDARD.decode(encoded) {
-            Ok(bytes) => match String::from_utf8(bytes) {
-                Ok(s) => serde_json::from_str::<Value>(&s).unwrap_or(Value::Array(Vec::new())),
-                Err(_) => Value::Array(Vec::new()),
-            },
-            Err(_) => Value::Array(Vec::new()),
-        }
+        decode_get_params(encoded)
     } else {
         Value::Array(Vec::new())
     };
@@ -249,6 +299,21 @@ async fn handle_get_query(state: RpcState, params: HashMap<String, String>) -> R
     };
 
     maybe_jsonp(response, callback)
+}
+
+/// Decode the base64 `params` GET argument into JSON; aria2 uses standard base64 but URL contexts often yield the URL-safe alphabet, so try standard then URL-safe, falling back to an empty array on any failure (aria2 semantics)
+fn decode_get_params(encoded: &str) -> Value {
+    use base64::engine::general_purpose::{STANDARD, URL_SAFE};
+    let bytes = STANDARD
+        .decode(encoded)
+        .or_else(|_| URL_SAFE.decode(encoded));
+    match bytes {
+        Ok(bytes) => match String::from_utf8(bytes) {
+            Ok(s) => serde_json::from_str::<Value>(&s).unwrap_or(Value::Array(Vec::new())),
+            Err(_) => Value::Array(Vec::new()),
+        },
+        Err(_) => Value::Array(Vec::new()),
+    }
 }
 
 fn json_rpc_response(body: Value) -> Response {
@@ -340,7 +405,10 @@ async fn handle_ws_connection(state: RpcState, mut socket: WebSocket) {
                             break;
                         }
                     }
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                        // Client fell behind the broadcast buffer and missed `n` events; keep the socket open but surface the drop
+                        tracing::warn!("WebSocket client lagged, dropped {n} event(s)");
+                    }
                     Err(_) => break,
                 }
             }
@@ -348,8 +416,7 @@ async fn handle_ws_connection(state: RpcState, mut socket: WebSocket) {
     }
 }
 
-/// Process a single JSON-RPC request object
-/// Returns `None` for notifications (requests without `id`)
+/// Process a single JSON-RPC request object, returning `None` for notifications (requests without `id`)
 async fn process_single_request(state: &RpcState, request: Value) -> Option<Value> {
     let id = request.get("id").cloned();
 
@@ -381,8 +448,7 @@ async fn process_single_request(state: &RpcState, request: Value) -> Option<Valu
         _ => vec![params],
     };
 
-    // aria2 special-case: system.multicall does not require outer auth
-    // Each nested call is authenticated independently
+    // aria2 special-case: system.multicall skips outer auth; each nested call is authenticated independently
     let (authed_params, auth_ok) = if method == "system.multicall" {
         (params_vec, true)
     } else {
@@ -439,9 +505,7 @@ fn check_auth(secret: &str, mut params: Vec<Value>) -> (Vec<Value>, bool) {
     (params, false)
 }
 
-/// Constant-time comparison for RPC tokens
-///
-/// Hashes both sides to fixed-size digests, then fold-XORs to avoid early exit
+/// Constant-time RPC token comparison: hashes both sides to fixed-size digests, then fold-XORs to avoid early exit
 fn secret_eq(provided: &str, secret: &str) -> bool {
     use sha2::{Digest, Sha256};
     let a = Sha256::digest(provided.as_bytes());
@@ -462,18 +526,9 @@ fn normalize_method(method: &str) -> String {
     }
 }
 
-/// Extract the nested multicall list from either the standard `[[calls]]`
-/// shape or the legacy `["token:...", [calls]]` shape
-///
-/// This helper only returns the inner call array. It does not validate or use
-/// the outer `"token:..."` value for authentication; outer auth is
-/// intentionally ignored for `system.multicall`, and each nested call is
-/// authenticated independently. Malformed shapes return an empty `Vec`, so the
-/// `starts_with("token:")` check here is shape detection, not auth logic
+/// Extract the nested multicall list from either the standard `[[calls]]` or legacy `["token:...", [calls]]` shape; returns only the inner call array and ignores the outer `"token:..."` (each nested call is authed independently, so the `starts_with("token:")` check is shape detection, not auth), with malformed shapes yielding an empty `Vec`
 fn extract_multicall_methods(params: &[Value]) -> Vec<Value> {
-    // Accept both formats:
-    // 1) standard aria2: [ [ { methodName, params } ] ]
-    // 2) backward-compatible legacy: [ "token:...", [ { methodName, params } ] ]
+    // Accept both: standard aria2 `[ [ { methodName, params } ] ]` and legacy `[ "token:...", [ { methodName, params } ] ]`
     params
         .first()
         .and_then(|v| v.as_array())
@@ -713,14 +768,22 @@ fn dispatch_method<'a>(
 
             "risuko.tellWaiting" => {
                 let offset = params.first().and_then(|v| v.as_i64()).unwrap_or(0);
-                let num = params.get(1).and_then(|v| v.as_u64()).unwrap_or(5000) as usize;
+                let num = params
+                    .get(1)
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(5000)
+                    .min(usize::MAX as u64) as usize;
                 let keys = get_keys(&params, 2);
                 Ok(state.manager.tell_waiting(offset, num, &keys).await)
             }
 
             "risuko.tellStopped" => {
                 let offset = params.first().and_then(|v| v.as_i64()).unwrap_or(0);
-                let num = params.get(1).and_then(|v| v.as_u64()).unwrap_or(5000) as usize;
+                let num = params
+                    .get(1)
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(5000)
+                    .min(usize::MAX as u64) as usize;
                 let keys = get_keys(&params, 2);
                 Ok(state.manager.tell_stopped(offset, num, &keys).await)
             }
@@ -797,13 +860,23 @@ fn dispatch_method<'a>(
             "risuko.getSessionInfo" => Ok(json!({ "sessionId": state.session_id })),
 
             "risuko.shutdown" => {
-                state.manager.save_session().await.ok();
-                let _ = state.rpc_shutdown_tx.send(()).await;
+                if let Err(e) = state.manager.save_session().await {
+                    tracing::error!("save_session failed during shutdown: {e}");
+                }
+                state
+                    .rpc_shutdown_tx
+                    .send(())
+                    .await
+                    .map_err(|_| RpcError::from("Failed to signal shutdown".to_string()))?;
                 Ok(Value::String("OK".into()))
             }
 
             "risuko.forceShutdown" => {
-                let _ = state.rpc_shutdown_tx.send(()).await;
+                state
+                    .rpc_shutdown_tx
+                    .send(())
+                    .await
+                    .map_err(|_| RpcError::from("Failed to signal shutdown".to_string()))?;
                 Ok(Value::String("OK".into()))
             }
 
@@ -1073,6 +1146,7 @@ mod tests {
                 events,
                 secret: secret.to_string(),
                 session_id: "test-session".to_string(),
+                bind_host: "127.0.0.1".to_string(),
                 rpc_shutdown_tx,
             },
             config_dir,
@@ -1080,6 +1154,55 @@ mod tests {
     }
 
     // -- check_auth --
+
+    // -- host_header_allowed (DNS-rebind guard) --
+
+    #[test]
+    fn host_guard_allows_loopback_and_ips() {
+        assert!(host_header_allowed("localhost:6800", "127.0.0.1"));
+        assert!(host_header_allowed("localhost", "127.0.0.1"));
+        assert!(host_header_allowed("127.0.0.1:6800", "127.0.0.1"));
+        assert!(host_header_allowed("127.0.0.1", "127.0.0.1"));
+        assert!(host_header_allowed("[::1]:6800", "127.0.0.1"));
+        assert!(host_header_allowed("192.168.1.5:6800", "0.0.0.0"));
+        // Empty/malformed host is permitted (some clients omit it)
+        assert!(host_header_allowed("", "127.0.0.1"));
+    }
+
+    #[test]
+    fn host_guard_rejects_dns_rebind_names() {
+        assert!(!host_header_allowed("evil.com", "127.0.0.1"));
+        assert!(!host_header_allowed("evil.com:6800", "127.0.0.1"));
+        assert!(!host_header_allowed("attacker.example.org", "0.0.0.0"));
+    }
+
+    #[test]
+    fn host_guard_allows_configured_hostname() {
+        assert!(host_header_allowed("my-nas.local:6800", "my-nas.local"));
+        assert!(host_header_allowed("MY-NAS.LOCAL", "my-nas.local"));
+        assert!(!host_header_allowed("other.local", "my-nas.local"));
+    }
+
+    // -- decode_get_params (base64 GET params) --
+
+    #[test]
+    fn decode_get_params_standard_and_url_safe() {
+        use base64::engine::general_purpose::{STANDARD, URL_SAFE};
+        // A payload whose base64 differs between standard and url-safe alphabets
+        let json = r#"["token:a+b/c==",{"k":">>>"}]"#;
+        let expected: Value = serde_json::from_str(json).unwrap();
+
+        let std_enc = STANDARD.encode(json.as_bytes());
+        assert_eq!(decode_get_params(&std_enc), expected);
+
+        let url_enc = URL_SAFE.encode(json.as_bytes());
+        assert_eq!(decode_get_params(&url_enc), expected);
+    }
+
+    #[test]
+    fn decode_get_params_invalid_falls_back_to_empty_array() {
+        assert_eq!(decode_get_params("!!!not-base64!!!"), Value::Array(vec![]));
+    }
 
     #[test]
     fn auth_empty_secret_always_ok() {

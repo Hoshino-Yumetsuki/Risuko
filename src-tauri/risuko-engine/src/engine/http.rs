@@ -22,6 +22,8 @@ const CHUNK_MAX_RETRIES: u32 = 5;
 pub const PIECE_SIZE: u64 = 1024 * 1024;
 const META_VERSION: u32 = 2;
 const META_SAVE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2);
+const PARTIAL_ERROR_BACKOFF_STEP: std::time::Duration = std::time::Duration::from_millis(50);
+const PARTIAL_ERROR_BACKOFF_MAX: std::time::Duration = std::time::Duration::from_millis(250);
 const STALE_PART_REMOVED: &str = "stale partial file removed";
 use super::CHUNK_META_SUFFIX;
 
@@ -51,19 +53,27 @@ struct PieceProgress {
     c: u32,
 }
 
-/// Resume metadata for a multi-piece download. JSON sidecar next to the
-/// `.part` file. Versioned: incompatible versions are discarded and the
-/// download restarts from scratch (the file is still pre-allocated, so the
-/// kernel page cache may have warm data, but we re-issue every Range)
+/// Resume metadata for a multi-piece download: a JSON sidecar next to the `.part` file; versioned so incompatible versions are discarded and the download restarts from scratch (the file stays pre-allocated but every Range is re-issued)
 #[derive(serde::Serialize, serde::Deserialize)]
 struct ChunkMeta {
     version: u32,
     content_length: u64,
     piece_size: u32,
     etag: Option<String>,
-    /// Sparse list of pieces with progress. A piece is fully done when
-    /// `c == piece_length`. Pieces not listed start fresh at 0
+    /// Sparse list of pieces with progress; a piece is fully done when `c == piece_length` and pieces not listed start fresh at 0
     pieces: Vec<PieceProgress>,
+}
+
+fn etags_strongly_equal(a: &str, b: &str) -> bool {
+    fn is_strong(tag: &str) -> bool {
+        let bytes = tag.as_bytes();
+        bytes.len() >= 2
+            && bytes.first() == Some(&b'"')
+            && bytes.last() == Some(&b'"')
+            && !tag.starts_with("W/")
+    }
+
+    is_strong(a) && is_strong(b) && a == b
 }
 
 fn chunk_meta_path(part_path: &Path) -> PathBuf {
@@ -129,21 +139,13 @@ fn load_piece_meta(
         }
     }
 
-    // Saved ETag without a current probe ETag means we can't verify integrity
-    if meta.etag.is_some() && etag.is_none() {
-        let _ = fs::remove_file(&path);
-        return None;
-    }
-    if let (Some(saved), Some(current)) = (&meta.etag, etag) {
-        if saved != current {
-            let _ = fs::remove_file(&path);
-            return None;
-        }
-    }
-    // No freshness validator on either side: trusting the partial would let
-    // a server that silently changed the resource produce a corrupt final
-    // file. Reject resume and start over
-    if meta.etag.is_none() && etag.is_none() {
+    // A byte-for-byte resume is safe only when both requests carry the same
+    // strong validator. Weak or missing ETags cannot be used with If-Match and
+    // do not guarantee that byte ranges are from the same representation.
+    if !matches!(
+        (&meta.etag, etag),
+        (Some(saved), Some(current)) if etags_strongly_equal(saved, current)
+    ) {
         let _ = fs::remove_file(&path);
         return None;
     }
@@ -155,16 +157,7 @@ fn delete_chunk_meta(part_path: &Path) {
     let _ = fs::remove_file(chunk_meta_path(part_path));
 }
 
-// === Piece queue: shared work pool for the worker tasks ===
-//
-// Each piece is at most PIECE_SIZE bytes. Workers atomically claim a free
-// piece (CAS state 0 -> 1), download it, then mark it done (state -> 2) or
-// release it back to the pool on transient error (state -> 0, completed
-// bytes preserved so the next claimant resumes mid-piece)
-//
-// Work stealing for free: fast workers pull more pieces, slow ones pull
-// fewer. No explicit "steal from peer X" call because nothing is owned
-// long-term
+// === Piece queue: shared work pool for the worker tasks === Each piece is at most PIECE_SIZE bytes; workers atomically claim a free piece (CAS 0 -> 1), download it, then mark done (-> 2) or release it (-> 0, completed bytes preserved so the next claimant resumes mid-piece). Work stealing comes for free — fast workers pull more, slow ones fewer, and nothing is owned long-term
 
 /// Free / in-flight / done state encoded in a single byte for cheap CAS
 const PIECE_FREE: u8 = 0;
@@ -176,9 +169,7 @@ struct Piece {
     offset: u64,
     /// Piece length in bytes (last piece may be < PIECE_SIZE)
     length: u32,
-    /// Bytes confirmed flushed to disk so far. Monotonically increasing
-    /// because positioned writes are issued in order from the writer task.
-    /// Wrapped in Arc so the writer task can hold a clone independently
+    /// Bytes confirmed flushed to disk so far, monotonically increasing because positioned writes are issued in order from the writer task; wrapped in Arc so the writer task can hold a clone independently
     completed: Arc<AtomicU32>,
     /// Lifecycle state — see PIECE_* constants
     state: AtomicU8,
@@ -211,8 +202,7 @@ impl PieceQueue {
         }
     }
 
-    /// Try to claim the next free piece, scanning circularly from the hint
-    /// Returns the piece index, or None if the queue is exhausted
+    /// Try to claim the next free piece, scanning circularly from the hint Returns the piece index, or None if the queue is exhausted
     fn claim_next(&self) -> Option<usize> {
         let n = self.pieces.len();
         if n == 0 {
@@ -239,8 +229,7 @@ impl PieceQueue {
         None
     }
 
-    /// Return a piece to the pool with its `completed` count preserved so the
-    /// next claimant resumes mid-piece via a smaller Range request
+    /// Return a piece to the pool with its `completed` count preserved so the next claimant resumes mid-piece via a smaller Range request
     fn release(&self, idx: usize) {
         self.pieces[idx].state.store(PIECE_FREE, Ordering::Release);
         // Bias the hint backwards so this piece gets retried sooner
@@ -254,10 +243,7 @@ impl PieceQueue {
         self.pieces[idx].state.store(PIECE_DONE, Ordering::Release);
     }
 
-    /// True when every piece is in the DONE state. Used to decide whether
-    /// worker errors should be treated as fatal: a stranded retry-exhausted
-    /// worker is recoverable as long as another worker eventually finished
-    /// the piece
+    /// True when every piece is in the DONE state; used to decide whether worker errors are fatal, since a stranded retry-exhausted worker is recoverable as long as another worker eventually finished the piece
     fn is_finished(&self) -> bool {
         self.pieces
             .iter()
@@ -267,15 +253,12 @@ impl PieceQueue {
 
 /// aria2 default: 60s connect timeout when not configured
 const DEFAULT_CONNECT_TIMEOUT_SECS: u64 = 60;
-/// Default maximum idle time between chunks of an NZB response body.
+/// Default maximum idle time between chunks of an NZB response body
 const DEFAULT_NZB_BODY_TIMEOUT_SECS: u64 = 30;
-/// aria2 default for `--lowest-speed-limit-timeout`: 30s of below-threshold
-/// transfer before the worker is considered stalled
+/// aria2 default for `--lowest-speed-limit-timeout`: 30s of below-threshold transfer before the worker is considered stalled
 const DEFAULT_LOWEST_SPEED_TIMEOUT_SECS: u64 = 30;
 
-/// Configuration + signal for the stalled-transfer watchdog. `lowest_speed`
-/// of 0 disables the watchdog entirely (matches aria2's default behavior of
-/// never enforcing a floor)
+/// Configuration + signal for the stalled-transfer watchdog; `lowest_speed` of 0 disables it entirely (matches aria2's default of never enforcing a floor)
 #[derive(Clone)]
 struct StallWatchdog {
     lowest_speed: u64,
@@ -312,10 +295,7 @@ fn parse_duration_secs_option(v: Option<&Value>, default: u64) -> std::time::Dur
     std::time::Duration::from_secs(secs)
 }
 
-/// Pull `checksum` from the options map and parse it. Empty string / missing
-/// key disables verification (returns `Ok(None)`); a non-empty but malformed
-/// value is rejected so users see the typo immediately rather than after a
-/// long download
+/// Pull `checksum` from the options map and parse it; empty string / missing key disables verification (`Ok(None)`), while a non-empty but malformed value is rejected so users see the typo immediately rather than after a long download
 fn parse_whole_checksum_option(
     options: &Map<String, Value>,
 ) -> Result<Option<super::hasher::WholeChecksum>, String> {
@@ -334,9 +314,7 @@ fn parse_piece_checksums_option(
     }
 }
 
-/// Hash `path` from disk in 1 MiB blocks and verify against `expected`.
-/// Runs on the blocking pool so the async runtime stays responsive even on
-/// multi-GB files
+/// Hash `path` from disk in 1 MiB blocks and verify against `expected`, running on the blocking pool so the async runtime stays responsive even on multi-GB files
 async fn verify_whole_file(
     path: &Path,
     expected: &super::hasher::WholeChecksum,
@@ -373,10 +351,7 @@ async fn verify_whole_file(
     .map_err(|e| format!("verify task panicked: {e}"))?
 }
 
-/// Verify each piece against `expected`. The piece layout must match
-/// `PIECE_SIZE` (the engine's fixed multi-piece chunk size); aria2-style
-/// per-piece lengths aren't carried in the option, so we fail loudly if the
-/// hash count doesn't line up with `(content_length / PIECE_SIZE).ceil()`
+/// Verify each piece against `expected`; the piece layout must match `PIECE_SIZE` (the engine's fixed multi-piece chunk size), and since aria2-style per-piece lengths aren't carried in the option we fail loudly if the hash count doesn't line up with `(content_length / PIECE_SIZE).ceil()`
 async fn verify_piece_checksums(
     path: &Path,
     content_length: u64,
@@ -398,8 +373,7 @@ async fn verify_piece_checksums(
         let piece_size = PIECE_SIZE as usize;
         let mut buf = vec![0u8; piece_size];
         for (i, want) in expected.hexes.iter().enumerate() {
-            // Last piece may be short; read exactly the remaining bytes so we
-            // don't hash any pre-allocated zero padding
+            // Last piece may be short; read exactly the remaining bytes so we don't hash any pre-allocated zero padding
             let offset = i as u64 * PIECE_SIZE;
             let remaining = content_length.saturating_sub(offset) as usize;
             let take = remaining.min(piece_size);
@@ -424,8 +398,7 @@ async fn verify_piece_checksums(
     .map_err(|e| format!("verify task panicked: {e}"))?
 }
 
-/// Run the optional piece + whole-file integrity checks on the finished
-/// output, deleting it on mismatch so a retry can't resume corrupted bytes
+/// Run the optional piece + whole-file integrity checks on the finished output, deleting it on mismatch so a retry can't resume corrupted bytes
 async fn verify_output(
     path: &Path,
     content_length: u64,
@@ -491,9 +464,7 @@ pub async fn fetch_for_metalink_probe(
         .map_err(|_| "metalink probe timed out".to_string())?
 }
 
-/// Fetch an NZB URL using the same HTTP client and request headers as a
-/// regular HTTP task. The response is consumed incrementally so chunked
-/// responses cannot bypass the payload cap.
+/// Fetch an NZB URL using the same HTTP client and request headers as a regular HTTP task; the response is consumed incrementally so chunked responses cannot bypass the payload cap
 pub async fn fetch_for_nzb(uri: &str, options: &Map<String, Value>) -> Result<Vec<u8>, String> {
     const CAP: u64 = 16 * 1024 * 1024;
     let client = build_client(options, true, load_cookie_jar(options))?;
@@ -534,12 +505,7 @@ pub async fn fetch_for_nzb(uri: &str, options: &Map<String, Value>) -> Result<Ve
     Ok(bytes)
 }
 
-/// Build a HTTP Client with common settings applied from options
-///
-/// `decompress` is off for range requests, which must receive raw bytes at
-/// exact file offsets. `cookie_jar` is shared with the range-request client
-/// so both clients see the same cookie store; passing `None` disables the
-/// cookie provider for this client
+/// Build a HTTP Client with common settings applied from options; `decompress` is off for range requests, which must receive raw bytes at exact file offsets, and `cookie_jar` is shared with the range-request client so both see the same cookie store (passing `None` disables the cookie provider for this client)
 fn build_client(
     options: &Map<String, Value>,
     decompress: bool,
@@ -557,13 +523,9 @@ fn build_client(
         .user_agent(ua)
         .redirect(risuko_http::redirect::Policy::limited(10))
         .connect_timeout(connect_timeout)
-        // Per-request `timeout` option is intentionally NOT applied here:
-        // chunked / long-streaming downloads must not be cut off by a wall
-        // clock. Stalled-transfer detection is handled separately by the
-        // `lowest-speed-limit` watchdog in `run_speed_tracker`
+        // Per-request `timeout` option is intentionally NOT applied here: chunked / long-streaming downloads must not be cut off by a wall clock, and stalled-transfer detection is handled separately by the `lowest-speed-limit` watchdog in `run_speed_tracker`
         .tcp_nodelay(true)
-        // Long-lived chunk connections benefit from generous keepalive, and
-        // a large idle pool keeps every chunk worker on its own TCP stream
+        // Long-lived chunk connections benefit from generous keepalive, and a large idle pool keeps every chunk worker on its own TCP stream
         .tcp_keepalive(std::time::Duration::from_secs(60))
         .pool_idle_timeout(std::time::Duration::from_secs(90))
         .pool_max_idle_per_host(64);
@@ -604,10 +566,7 @@ fn build_client(
         .map_err(|e| format!("Failed to build HTTP client: {e}"))
 }
 
-/// Parse the `load-cookies` file (Netscape format) once and return a shared
-/// `Jar`. Returns `None` when the option is unset/blank, the file is missing,
-/// or parsing fails — all of those conditions are non-fatal and logged here
-/// so the call sites stay simple
+/// Parse the `load-cookies` file (Netscape format) once and return a shared `Jar`; returns `None` when the option is unset/blank, the file is missing, or parsing fails — all non-fatal conditions logged here so the call sites stay simple
 fn load_cookie_jar(options: &Map<String, Value>) -> Option<std::sync::Arc<risuko_http::Jar>> {
     let cookies_path = options
         .get("load-cookies")
@@ -637,8 +596,7 @@ fn load_cookie_jar(options: &Map<String, Value>) -> Option<std::sync::Arc<risuko
 fn build_headers(options: &Map<String, Value>) -> HeaderMap {
     let mut headers = HeaderMap::new();
 
-    // `header` arrives as an aria2 array of strings, or a newline-joined
-    // string. Accept both — string-only silently dropped headers (#106)
+    // `header` arrives as an aria2 array of strings or a newline-joined string; accept both — string-only previously dropped headers silently (#106)
     if let Some(header_val) = options.get("header") {
         let lines: Vec<&str> = if let Some(s) = header_val.as_str() {
             s.split('\n').collect()
@@ -697,11 +655,7 @@ fn build_headers(options: &Map<String, Value>) -> HeaderMap {
     headers
 }
 
-/// Inject `Authorization: Basic` from a `.netrc` lookup if the URI doesn't
-/// already carry credentials and the user hasn't disabled netrc via the
-/// `no-netrc` option. Honors `netrc-path` for an override location, and
-/// silently no-ops if the file is missing or unreadable. Existing
-/// Authorization headers (set via `header` option) are never overwritten
+/// Inject `Authorization: Basic` from a `.netrc` lookup when the URI doesn't already carry credentials and the user hasn't disabled netrc via `no-netrc`; honors `netrc-path` for an override location, silently no-ops if the file is missing or unreadable, and never overwrites an existing Authorization header (set via the `header` option)
 fn apply_netrc_auth(headers: &mut HeaderMap, uri: &str, options: &Map<String, Value>) {
     if headers.contains_key(risuko_http::header::AUTHORIZATION) {
         return;
@@ -771,11 +725,7 @@ fn build_mirror_headers(
         .collect()
 }
 
-/// Multi-URI entry point. Iterates `uris` according to the configured
-/// selector strategy. A non-cancellation error from one URI bumps that
-/// host's fail count and triggers a try with the next viable URI; the loop
-/// terminates on success, on cancellation, or when the selector runs out of
-/// candidates
+/// Multi-URI entry point that iterates `uris` per the configured selector strategy; a non-cancellation error from one URI bumps that host's fail count and triggers a try with the next viable URI, and the loop terminates on success, on cancellation, or when the selector runs out of candidates
 #[allow(clippy::too_many_arguments)]
 pub async fn run_http_download_multi(
     uris: &[String],
@@ -859,9 +809,7 @@ pub async fn run_http_download_multi(
                 stats.record_failure(&super::uri_selector::host_of(uri));
                 tracing::warn!("Mirror {} failed: {e}", super::uri_selector::host_of(uri));
                 last_err = Some(e);
-                // Reset counters before the next mirror so progress accounting
-                // doesn't double-count partial bytes. Clear `total` so a failed
-                // mirror's content-length can't leak into an unknown-length mirror
+                // Reset counters before the next mirror so progress accounting doesn't double-count partial bytes; clear `total` too so a failed mirror's content-length can't leak into an unknown-length mirror
                 completed.store(0, Ordering::Relaxed);
                 total.store(0, Ordering::Relaxed);
                 speed.store(0, Ordering::Relaxed);
@@ -904,11 +852,7 @@ async fn run_single_uri_download(
     // Sanitize: strip path separators and traversal components
     filename = sanitize_filename(&filename);
 
-    // Detect a URL-derived filename. The Tauri layer pre-fills task.out
-    // from the URL path, falling back to "download" / "download-<hash>"
-    // for opaque URLs (e.g. /resources/foo/download?version=N). Treat
-    // any of those as URL-derived so the engine can replace them when
-    // the server suggests a real name via Content-Disposition
+    // Detect a URL-derived filename. The Tauri layer pre-fills task.out from the URL path, falling back to "download" / "download-<hash>" for opaque URLs (e.g. /resources/foo/download?version=N). Treat any of those as URL-derived so the engine can replace them when the server suggests a real name via Content-Disposition
     let url_inferred = sanitize_filename(&infer_filename_from_uri(uri));
     let url_inferred_part = format!("{url_inferred}{PART_SUFFIX}");
     let filename_was_url_derived = out_was_empty
@@ -953,15 +897,12 @@ async fn run_single_uri_download(
         .unwrap_or(split);
     let mirror_strategy = super::uri_selector::strategy_from_options(options);
 
-    // aria2-compatible `min-split-size` (bytes, with K/M suffixes accepted).
-    // Default 1 MiB — smaller files use a single connection
+    // aria2-compatible `min-split-size` (bytes, with K/M suffixes accepted); defaults to 1 MiB so smaller files use a single connection
     let min_split_size = parse_size_option(options.get("min-split-size"))
         .unwrap_or(DEFAULT_MIN_SPLIT_SIZE)
         .max(1);
 
-    // Build a single shared cookie jar so both the decompressing client and
-    // the range-request client see the same cookies (load-cookies file is
-    // parsed exactly once here)
+    // Build a single shared cookie jar so both the decompressing client and the range-request client see the same cookies (the load-cookies file is parsed exactly once here)
     let cookie_jar = load_cookie_jar(options);
     let client = build_client(options, true, cookie_jar.clone())?;
     let range_client = if split > 1 {
@@ -984,9 +925,7 @@ async fn run_single_uri_download(
         }
     };
 
-    // Optional integrity checks. Bad input is rejected up-front so a typo
-    // doesn't silently disable verification: the user immediately sees the
-    // error instead of a "downloaded but unverified" success
+    // Optional integrity checks; bad input is rejected up-front so a typo doesn't silently disable verification, letting the user see the error immediately instead of a "downloaded but unverified" success
     let whole_checksum = parse_whole_checksum_option(options)?;
     let piece_checksums = parse_piece_checksums_option(options)?;
 
@@ -995,19 +934,14 @@ async fn run_single_uri_download(
         .and_then(|v| v.as_bool().or_else(|| v.as_str().map(|s| s == "true")))
         .unwrap_or(false);
 
-    // aria2-compatible `auto-file-renaming`: on (default) a name collision
-    // finalizes as "stem.N.ext"; off overwrites the existing file
+    // aria2-compatible `auto-file-renaming`: on (default) a name collision finalizes as "stem.N.ext", off overwrites the existing file
     let auto_rename = options
         .get("auto-file-renaming")
         .and_then(|v| v.as_bool().or_else(|| v.as_str().map(|s| s == "true")))
         .unwrap_or(true);
 
-    // Check for existing partial download
-    let existing_size = if part_path.exists() {
-        fs::metadata(&part_path).map(|m| m.len()).unwrap_or(0)
-    } else {
-        0
-    };
+    // Check for an existing partial download; a single metadata() covers both the "missing file" and "present file" cases (Err -> 0), avoiding a redundant exists() stat and its TOCTOU window
+    let existing_size = fs::metadata(&part_path).map(|m| m.len()).unwrap_or(0);
 
     let mut last_modified_header: Option<String> = None;
 
@@ -1126,15 +1060,18 @@ async fn run_single_uri_download(
                 tracing::info!("File too small for multi-chunk, using single connection");
             }
             None => {
-                tracing::info!("Server does not support ranges, using single connection");
+                if has_cf_clearance {
+                    tracing::info!(
+                        "Range probe skipped (cf_clearance present), using single connection"
+                    );
+                } else {
+                    tracing::info!("Server does not support ranges, using single connection");
+                }
             }
         }
     }
 
-    // Single-connection download (fallback, resume, FTP, or small files)
-    // If falling through from a failed multi-chunk probe and a pre-allocated .part exists,
-    // its size doesn't reflect actual download progress — remove it to avoid a 416.
-    // Only remove when chunk metadata confirms this is a multi-chunk artifact
+    // Single-connection download (fallback, resume, FTP, or small files) If falling through from a failed multi-chunk probe and a pre-allocated .part exists, its size doesn't reflect actual download progress — remove it to avoid a 416. Only remove when chunk metadata confirms this is a multi-chunk artifact
     if chunk_meta_path(&part_path).exists() && existing_size > 0 {
         tracing::info!("Removing pre-allocated .part before single-connection fallback");
         let _ = fs::remove_file(&part_path);
@@ -1142,11 +1079,7 @@ async fn run_single_uri_download(
     }
     connections.store(1, Ordering::Relaxed);
 
-    // When a probe confirmed Range support but the file was too small for the
-    // multi-chunk path, reuse the probe's request shape for the single
-    // connection: the range client (HTTP/1.1, identity encoding) plus an
-    // explicit `Range: bytes=0-`. Some signed-URL CDNs (e.g. Quark) accept the
-    // Range probe but reject a plain full GET with 412 Precondition Failed
+    // When a probe confirmed Range support but the file was too small for the multi-chunk path, reuse the probe's request shape for the single connection: the range client (HTTP/1.1, identity encoding) plus an explicit `Range: bytes=0-`. Some signed-URL CDNs (e.g. Quark) accept the Range probe but reject a plain full GET with 412 Precondition Failed
     let probe_confirmed_range = is_http
         && split > 1
         && probe_for_name
@@ -1159,12 +1092,7 @@ async fn run_single_uri_download(
         &client
     };
 
-    // Single-connection downloads auto-retry transient network failures
-    // (connection reset, body-read errors, timeouts), resuming in place from
-    // the partial `.part`. This mirrors the per-piece retry budget of the
-    // multi-chunk path so a flaky link doesn't drop the whole task to Error
-    // and force a manual resume. Hard HTTP errors (4xx/5xx), cancellation, and
-    // stall trips are NOT retried here — they're handled a level up
+    // Single-connection downloads auto-retry transient network failures (connection reset, body-read errors, timeouts), resuming in place from the partial `.part`. This mirrors the per-piece retry budget of the multi-chunk path so a flaky link doesn't drop the whole task to Error and force a manual resume. Hard HTTP errors (4xx/5xx), cancellation, and stall trips are NOT retried here — they're handled a level up
     let mut single_attempt: u32 = 0;
     let result = loop {
         let attempt = run_single_download(
@@ -1207,8 +1135,7 @@ async fn run_single_uri_download(
         }
     };
 
-    // If a stale .part was removed, retry once from scratch by re-entering
-    // the full pipeline (probe, multi-chunk, verify) with fresh counters
+    // If a stale .part was removed, retry once from scratch by re-entering the full pipeline (probe, multi-chunk, verify) with fresh counters
     if let Err(ref e) = result {
         if e.contains(STALE_PART_REMOVED) && !is_stale_retry {
             tracing::info!("Retrying download after stale .part removal");
@@ -1247,10 +1174,7 @@ async fn run_single_uri_download(
                     apply_remote_file_time(&path, lm_str);
                 }
             }
-            // Integrity for the single-connection path. Use the finished
-            // file's own size as content_length so the last (short) piece is
-            // hashed correctly. Mirrors the multi-chunk path so enforcement
-            // is consistent across all download paths
+            // Integrity for the single-connection path. Use the finished file's own size as content_length so the last (short) piece is hashed correctly. Mirrors the multi-chunk path so enforcement is consistent across all download paths
             let content_length = if piece_checksums.is_some() {
                 match fs::metadata(&path) {
                     Ok(meta) => meta.len(),
@@ -1274,30 +1198,17 @@ struct ProbeResult {
     content_length: u64,
     etag: Option<String>,
     last_modified: Option<String>,
-    /// Filename advertised by `Content-Disposition: attachment; filename=...`
-    /// when present. Overrides URL-path inference for opaque endpoints
-    /// like `download?version=N`
+    /// Filename advertised by `Content-Disposition: attachment; filename=...` when present. Overrides URL-path inference for opaque endpoints like `download?version=N`
     suggested_filename: Option<String>,
     content_type: Option<String>,
-    /// True when the response confirms range support (206 with valid
-    /// Content-Range, or 200 + Accept-Ranges + Content-Length). When
-    /// false the caller must fall back to a single-connection stream;
-    /// the other fields can still carry useful headers
+    /// True when the response confirms range support (206 with valid Content-Range, or 200 + Accept-Ranges + Content-Length). When false the caller must fall back to a single-connection stream; the other fields can still carry useful headers
     range_supported: bool,
 }
 
-/// Marker prefix used in error strings for Cloudflare-blocked downloads.
-/// `manager.rs::classify_error` reads this and maps it to
-/// `ErrorCode::CLOUDFLARE_CHALLENGE` (315)
+/// Marker prefix used in error strings for Cloudflare-blocked downloads. `manager.rs::classify_error` reads this and maps it to `ErrorCode::CLOUDFLARE_CHALLENGE` (315)
 pub const CLOUDFLARE_MARKER: &str = "[cloudflare-challenge]";
 
-/// Returns true when the response looks like a Cloudflare bot-protection
-/// challenge: a 4xx/5xx status from CF's edge carrying either a `cf-ray`
-/// header, `server: cloudflare`, or `cf-mitigated: challenge`
-///
-/// Header-only on purpose. Modern CF challenges always set these
-/// headers, and reading the body would force buffering before downstream
-/// code runs. Skipping the body keeps the streaming path simple
+/// Returns true when the response looks like a Cloudflare bot-protection challenge: a 4xx/5xx status from CF's edge carrying either a `cf-ray` header, `server: cloudflare`, or `cf-mitigated: challenge` Header-only on purpose. Modern CF challenges always set these headers, and reading the body would force buffering before downstream code runs. Skipping the body keeps the streaming path simple
 fn looks_like_cloudflare_block(headers: &HeaderMap, status: u16) -> bool {
     if !matches!(status, 403 | 429 | 503) {
         return false;
@@ -1309,7 +1220,7 @@ fn looks_like_cloudflare_block(headers: &HeaderMap, status: u16) -> bool {
             .map(|s| s.to_ascii_lowercase())
     };
 
-    if header_str("cf-ray").is_some() {
+    if headers.get("cf-ray").is_some() {
         return true;
     }
     if let Some(server) = header_str("server") {
@@ -1433,8 +1344,7 @@ fn log_cloudflare_diagnostic(
     );
 }
 
-/// Build a cloudflare-marker error message the classifier maps to
-/// `CLOUDFLARE_CHALLENGE` and the renderer can scan for the host
+/// Build a cloudflare-marker error message the classifier maps to `CLOUDFLARE_CHALLENGE` and the renderer can scan for the host
 fn cloudflare_error(uri: &str, status: u16) -> String {
     let host = url::Url::parse(uri)
         .ok()
@@ -1443,9 +1353,7 @@ fn cloudflare_error(uri: &str, status: u16) -> String {
     format!("{CLOUDFLARE_MARKER} host={host} status={status}")
 }
 
-/// Drain a small response body so reqwest can reuse the connection
-///
-/// Bounded for early-return paths such as Cloudflare challenges
+/// Drain a small response body so reqwest can reuse the connection Bounded for early-return paths such as Cloudflare challenges
 async fn drain_response_body(resp: risuko_http::Response) {
     use futures_util::StreamExt;
     const MAX_DRAIN_BYTES: usize = 64 * 1024;
@@ -1464,9 +1372,7 @@ async fn drain_response_body(resp: risuko_http::Response) {
     }
 }
 
-/// Probe whether the server supports Range requests. Returns the
-/// response headers we care about regardless of range support; check
-/// `range_supported` on the result before slicing
+/// Probe whether the server supports Range requests. Returns the response headers we care about regardless of range support; check `range_supported` on the result before slicing
 async fn probe_range_support(
     client: &Client,
     uri: &str,
@@ -1512,9 +1418,7 @@ async fn probe_range_support(
     let suggested_filename = filename_from_content_disposition(resp.headers());
     let content_type = content_type_from_headers(resp.headers());
 
-    // The fallback we hand back whenever range support isn't confirmed.
-    // Carries the filename / ETag / last-modified info so the streaming
-    // path can still adopt them
+    // The fallback we hand back whenever range support isn't confirmed. Carries the filename / ETag / last-modified info so the streaming path can still adopt them
     let no_range = ProbeResult {
         content_length: 0,
         etag: etag.clone(),
@@ -1524,13 +1428,7 @@ async fn probe_range_support(
         range_supported: false,
     };
 
-    // Compatibility short-circuits: a compressed body or chunked
-    // transfer-encoding (no length) blocks parallel range workers from
-    // slicing the file safely. Range offsets refer to *encoded* bytes
-    // when Content-Encoding is present, but workers see decoded bytes;
-    // the two address spaces don't line up. Chunked also leaves the
-    // total size unknown up front. Drop to the streaming path in either
-    // case but keep the filename info we already pulled
+    // Compatibility short-circuits: a compressed body or chunked transfer-encoding (no length) blocks parallel range workers from slicing the file safely. Range offsets refer to *encoded* bytes when Content-Encoding is present, but workers see decoded bytes; the two address spaces don't line up. Chunked also leaves the total size unknown up front. Drop to the streaming path in either case but keep the filename info we already pulled
     let content_encoding = resp
         .headers()
         .get(CONTENT_ENCODING)
@@ -1578,9 +1476,7 @@ async fn probe_range_support(
         return Ok(no_range);
     }
 
-    // Anything else (including a 200 to a concrete Range request) is not a
-    // byte-range response. Keep filename/type metadata, but stay out of
-    // multi-chunk mode
+    // Anything else (including a 200 to a concrete Range request) is not a byte-range response. Keep filename/type metadata, but stay out of multi-chunk mode
     Ok(no_range)
 }
 
@@ -1670,8 +1566,7 @@ impl MirrorPool {
                     )
                 })
                 .unwrap_or(&chosen),
-            // Round-robin: always hand the next connection to the least-loaded
-            // mirror. This is what makes the default behavior truly concurrent
+            // Round-robin: always hand the next connection to the least-loaded mirror. This is what makes the default behavior truly concurrent
             super::uri_selector::Strategy::Feedback => *eligible
                 .iter()
                 .min_by_key(|&&i| (active_of(i), i))
@@ -1696,13 +1591,7 @@ impl MirrorPool {
     }
 }
 
-/// Multi-chunk parallel download using a piece queue + worker pool.
-///
-/// The file is divided into PIECE_SIZE-byte pieces. `split` workers share
-/// one queue: each pulls the next free piece, downloads it, then pulls the
-/// next. Fast workers naturally pull more pieces (work stealing for free).
-/// Resume preserves per-piece byte progress so a SIGKILL never loses more
-/// than the in-flight bytes of one piece per worker
+/// Multi-chunk parallel download using a piece queue + worker pool. The file is divided into PIECE_SIZE-byte pieces. `split` workers share one queue: each pulls the next free piece, downloads it, then pulls the next. Fast workers naturally pull more pieces (work stealing for free). Resume preserves per-piece byte progress so a SIGKILL never loses more than the in-flight bytes of one piece per worker
 async fn run_multi_chunk(
     client: &Client,
     uris: &[String],
@@ -1738,8 +1627,7 @@ async fn run_multi_chunk(
         content_length
     );
 
-    // Restore piece progress from sidecar BEFORE pre-allocating so the
-    // file-size check inside load_piece_meta is meaningful
+    // Restore piece progress from sidecar BEFORE pre-allocating so the file-size check inside load_piece_meta is meaningful
     if let Some(meta) = load_piece_meta(part_path, content_length, &expected_etag) {
         let mut total_resumed: u64 = 0;
         for pp in &meta.pieces {
@@ -1756,14 +1644,7 @@ async fn run_multi_chunk(
         tracing::info!("Resuming multi-piece download: {total_resumed}/{content_length} bytes");
     }
 
-    // Pre-allocate and open the output file as a single shared std::fs::File.
-    // All writers issue positioned writes (pwrite/seek_write) concurrently —
-    // no global mutex, no shared file cursor.
-    //
-    // The allocation strategy is configurable via `file-allocation`
-    // (`falloc` | `trunc` | `none`). `falloc` reserves real disk blocks via
-    // platform-specific syscalls; on filesystems that don't support it we
-    // silently degrade to `trunc` (`set_len`)
+    // Pre-allocate and open the output file as a single shared std::fs::File. All writers issue positioned writes (pwrite/seek_write) concurrently — no global mutex, no shared file cursor. The allocation strategy is configurable via `file-allocation` (`falloc` | `trunc` | `none`). `falloc` reserves real disk blocks via platform-specific syscalls; on filesystems that don't support it we silently degrade to `trunc` (`set_len`)
     let file = {
         let f = fs::OpenOptions::new()
             .create(true)
@@ -1793,8 +1674,7 @@ async fn run_multi_chunk(
         .await;
     });
 
-    // Periodic sidecar save: snapshot piece progress every META_SAVE_INTERVAL
-    // so a SIGKILL never loses more than that interval of in-flight bytes
+    // Periodic sidecar save: snapshot piece progress every META_SAVE_INTERVAL so a SIGKILL never loses more than that interval of in-flight bytes
     let save_part = part_path.to_path_buf();
     let save_queue = Arc::clone(&queue);
     let save_etag = expected_etag.clone();
@@ -1881,16 +1761,11 @@ async fn run_multi_chunk(
 
     speed_task.abort();
     save_task.abort();
-    // Drain the save task: abort cancels at the next await, but a save
-    // iteration mid-flight can still complete its synchronous fs::write.
-    // Awaiting here guarantees no save lands on disk after we proceed to
-    // delete_chunk_meta below
+    // Drain the save task: abort cancels at the next await, but a save iteration mid-flight can still complete its synchronous fs::write. Awaiting here guarantees no save lands on disk after we proceed to delete_chunk_meta below
     let _ = save_task.await;
     speed.store(0, Ordering::Relaxed);
 
-    // Stall watchdog tripped — surface a distinct, retryable error rather
-    // than letting the generic "cancelled" classification swallow it. The
-    // sidecar still holds piece progress so a retry resumes in place
+    // Stall watchdog tripped — surface a distinct, retryable error rather than letting the generic "cancelled" classification swallow it. The sidecar still holds piece progress so a retry resumes in place
     if stall.flag.load(Ordering::Acquire) {
         save_piece_meta(part_path, &queue, content_length, &expected_etag);
         return Err(format!(
@@ -1907,10 +1782,7 @@ async fn run_multi_chunk(
         if errors.iter().all(|e| e.contains("cancelled")) {
             return Err("Download cancelled".to_string());
         }
-        // Worker errors are only fatal if the queue itself did not finish.
-        // A worker that exhausted its retry budget on one piece may have
-        // returned Err while another worker later picked the piece up and
-        // completed it. In that case the download is actually done
+        // Worker errors are only fatal if the queue itself did not finish. A worker that exhausted its retry budget on one piece may have returned Err while another worker later picked the piece up and completed it. In that case the download is actually done
         if !queue.is_finished() {
             let real_errors: Vec<&String> =
                 errors.iter().filter(|e| !e.contains("cancelled")).collect();
@@ -1924,10 +1796,7 @@ async fn run_multi_chunk(
         }
     }
 
-    // Ensure all positioned writes are durable before deleting the resume
-    // sidecar or renaming. If sync_file fails (ENOSPC, EIO, …) the .part
-    // file may be incomplete on disk — abort without finalizing so the
-    // sidecar survives and the next attempt can resume
+    // Ensure all positioned writes are durable before deleting the resume sidecar or renaming. If sync_file fails (ENOSPC, EIO, …) the .part file may be incomplete on disk — abort without finalizing so the sidecar survives and the next attempt can resume
     if let Err(e) = sync_file(&file).await {
         return Err(format!("fsync before rename failed: {e}"));
     }
@@ -1936,9 +1805,30 @@ async fn run_multi_chunk(
     finalize_download(part_path, filename, dir_path, auto_rename)
 }
 
-/// Worker loop: claim a piece, pick a mirror, download it, mark it done; repeat.
-/// Returns Ok(()) when the queue is exhausted (this worker is finished),
-/// or Err on cancellation or after exceeding retry budget on one piece
+fn charge_retry_if_no_progress(retry_count: &mut u32, downloaded: u64) -> bool {
+    if downloaded > 0 {
+        *retry_count = 0;
+        false
+    } else {
+        *retry_count = retry_count.saturating_add(1);
+        true
+    }
+}
+
+fn partial_error_backoff(error_streak: u32) -> std::time::Duration {
+    PARTIAL_ERROR_BACKOFF_STEP
+        .saturating_mul(error_streak.max(1))
+        .min(PARTIAL_ERROR_BACKOFF_MAX)
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum PieceDownloadError {
+    Cancelled,
+    Source(String),
+    Storage(String),
+}
+
+/// Worker loop: claim a piece, pick a mirror, download it, mark it done; repeat. Returns Ok(()) when the queue is exhausted (this worker is finished), or Err on cancellation or after exceeding retry budget on one piece
 #[allow(clippy::too_many_arguments)]
 async fn piece_worker(
     worker_id: usize,
@@ -1956,7 +1846,12 @@ async fn piece_worker(
     worker_completed: Option<Arc<AtomicU64>>,
     max_retries: u32,
 ) -> Result<(), String> {
+    // Track consecutive zero-progress failures across piece claims. Work
+    // stealing may hand this worker a different piece after each failure, so
+    // resetting merely because the index changed would make the retry bound
+    // ineffective. Any successful progress resets the budget below.
     let mut retry_count: u32 = 0;
+    let mut source_error_streak: u32 = 0;
     loop {
         if cancel_token.is_cancelled() {
             return Err("Download cancelled".to_string());
@@ -2001,7 +1896,16 @@ async fn piece_worker(
             }
         };
         let uri = pool.uris[mirror_idx].clone();
-        let headers = mirror_headers.get(mirror_idx).unwrap_or(&mirror_headers[0]);
+        let headers = match mirror_headers
+            .get(mirror_idx)
+            .or_else(|| mirror_headers.first())
+        {
+            Some(h) => h,
+            None => {
+                queue.release(idx);
+                return Err(format!("Worker {worker_id}: no mirror headers available"));
+            }
+        };
         let started = std::time::Instant::now();
 
         let outcome = download_piece_stream(
@@ -2028,20 +1932,20 @@ async fn piece_worker(
 
         match outcome {
             Ok(()) => {
+                source_error_streak = 0;
                 if now_completed >= piece_length {
                     pool.record_success(&mirror_key, downloaded, started.elapsed().as_secs_f64());
                     queue.complete(idx);
                     retry_count = 0;
                 } else if now_completed > already {
-                    // Early EOF made progress; return the piece with progress intact
-                    // Keep retry budget because per-piece resume moves toward piece_length
+                    // Early EOF made progress; return the piece with progress intact and reset the retry budget because per-piece resume moves toward piece_length
                     pool.record_success(&mirror_key, downloaded, started.elapsed().as_secs_f64());
                     queue.release(idx);
                     retry_count = 0;
                 } else {
                     // Early EOF with zero progress counts against retry budget to avoid worker spin
                     queue.release(idx);
-                    retry_count += 1;
+                    charge_retry_if_no_progress(&mut retry_count, downloaded);
                     if retry_count > max_retries {
                         return Err(format!(
                             "Worker {worker_id} failed after {max_retries} retries on \
@@ -2055,23 +1959,43 @@ async fn piece_worker(
                     tokio::time::sleep(std::time::Duration::from_secs(retry_count as u64)).await;
                 }
             }
-            Err(e) if e.contains("cancelled") => {
+            Err(PieceDownloadError::Cancelled) => {
                 queue.release(idx);
-                return Err(e);
+                return Err("Download cancelled".to_string());
             }
-            Err(e) => {
-                pool.record_failure(&mirror_key);
+            Err(PieceDownloadError::Storage(error)) => {
                 queue.release(idx);
-                retry_count += 1;
+                return Err(format!(
+                    "Worker {worker_id} local storage failure on piece {idx}: {error}"
+                ));
+            }
+            Err(PieceDownloadError::Source(error)) => {
+                queue.release(idx);
+                source_error_streak = source_error_streak.saturating_add(1);
+                if !charge_retry_if_no_progress(&mut retry_count, downloaded) {
+                    // A stream error after bytes were flushed still advanced
+                    // the piece. Treat that attempt as mirror progress so a
+                    // flaky but productive source is not blacklisted.
+                    pool.record_success(&mirror_key, downloaded, started.elapsed().as_secs_f64());
+                    let backoff = partial_error_backoff(source_error_streak);
+                    tracing::warn!(
+                        "Worker {worker_id} piece {idx} on {mirror_key} failed after writing \
+                         {downloaded} bytes: {error}; retry budget reset, retrying in {}ms",
+                        backoff.as_millis()
+                    );
+                    tokio::time::sleep(backoff).await;
+                    continue;
+                }
+                pool.record_failure(&mirror_key);
                 if retry_count > max_retries {
                     return Err(format!(
                         "Worker {worker_id} failed after {max_retries} retries on \
-                         piece {idx}: {e}"
+                         piece {idx}: {error}"
                     ));
                 }
                 tracing::warn!(
                     "Worker {worker_id} piece {idx} on {mirror_key} attempt \
-                     {retry_count}/{max_retries}: {e}, will retry"
+                     {retry_count}/{max_retries}: {error}, will retry"
                 );
                 tokio::time::sleep(std::time::Duration::from_secs(retry_count as u64)).await;
             }
@@ -2079,9 +2003,7 @@ async fn piece_worker(
     }
 }
 
-/// Stream a single piece (or its remaining tail). Always returns the number
-/// of bytes flushed to disk, even on error, so the caller can accurately
-/// track resume progress via the per-piece atomic counter
+/// Stream a single piece (or its remaining tail). Always returns the number of bytes flushed to disk, even on error, so the caller can accurately track resume progress via the per-piece atomic counter
 #[allow(clippy::too_many_arguments)]
 async fn download_piece_stream(
     client: &Client,
@@ -2097,13 +2019,19 @@ async fn download_piece_stream(
     worker_completed: Option<&Arc<AtomicU64>>,
     piece_completed: &Arc<AtomicU32>,
     expected_total: Option<u64>,
-) -> Result<(), String> {
+) -> Result<(), PieceDownloadError> {
     let mut req = client
         .get(uri)
         .headers(headers.clone())
         .header(RANGE, range.to_range_header_value());
 
-    if let Some(etag) = expected_etag {
+    let strong_expected_etag = expected_etag.filter(|etag| {
+        // Comparing a tag to itself is a compact validity check for the strong
+        // ETag syntax accepted by `etags_strongly_equal`.
+        etags_strongly_equal(etag, etag)
+    });
+
+    if let Some(etag) = strong_expected_etag {
         if let Ok(v) = HeaderValue::from_str(etag) {
             req = req.header(IF_MATCH, v);
         }
@@ -2112,7 +2040,7 @@ async fn download_piece_stream(
     let resp = req
         .send()
         .await
-        .map_err(|e| format!("HTTP request failed: {e}"))?;
+        .map_err(|e| PieceDownloadError::Source(format!("HTTP request failed: {e}")))?;
 
     let status = resp.status().as_u16();
 
@@ -2120,14 +2048,22 @@ async fn download_piece_stream(
         log_cloudflare_diagnostic(client, headers, resp.headers(), uri);
         let err = cloudflare_error(uri, status);
         drain_response_body(resp).await;
-        return Err(err);
+        return Err(PieceDownloadError::Source(err));
     }
 
-    if let Some(expected) = expected_etag {
-        if let Some(actual) = resp.headers().get(ETAG).and_then(|v| v.to_str().ok()) {
-            if actual != expected {
-                return Err("Server file changed (ETag mismatch), aborting download".to_string());
-            }
+    if let Some(expected) = strong_expected_etag {
+        let mismatch = resp
+            .headers()
+            .get(ETAG)
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|actual| !etags_strongly_equal(actual, expected));
+        if mismatch {
+            // Do not wait for a potentially stalled response body before the
+            // worker can fail over or observe cancellation.
+            drop(resp);
+            return Err(PieceDownloadError::Source(
+                "Server file changed (ETag mismatch), aborting download".to_string(),
+            ));
         }
     }
 
@@ -2189,13 +2125,13 @@ async fn download_piece_stream(
             "Piece request got HTTP {status} for range {}",
             range.to_range_header_value()
         );
-        return Err(format!("HTTP error: {status}"));
+        return Err(PieceDownloadError::Source(format!("HTTP error: {status}")));
     }
 
     if status != 206 {
-        return Err(format!(
+        return Err(PieceDownloadError::Source(format!(
             "Expected 206 Partial Content with matching Content-Range, got {status}"
-        ));
+        )));
     }
     if let Some(cr) = resp
         .headers()
@@ -2206,11 +2142,11 @@ async fn download_piece_stream(
             if let Some(dash) = cr[space + 1..].find('-') {
                 if let Ok(range_start) = cr[space + 1..space + 1 + dash].parse::<u64>() {
                     if range_start != range.start {
-                        return Err(format!(
+                        return Err(PieceDownloadError::Source(format!(
                             "Expected 206 Partial Content with matching Content-Range: \
                              requested start {} but got {range_start}",
                             range.start
-                        ));
+                        )));
                     }
                 }
             }
@@ -2221,25 +2157,25 @@ async fn download_piece_stream(
                 if tail != "*" {
                     if let Ok(got_total) = tail.parse::<u64>() {
                         if got_total != want_total {
-                            return Err(format!(
+                            return Err(PieceDownloadError::Source(format!(
                                 "mirror size mismatch: expected total {want_total} but got \
                                  {got_total} (serving a different file)"
-                            ));
+                            )));
                         }
                     }
                 }
             }
         }
     } else {
-        return Err("Expected 206 Partial Content with matching Content-Range, \
+        return Err(PieceDownloadError::Source(
+            "Expected 206 Partial Content with matching Content-Range, \
              but Content-Range header is missing"
-            .to_string());
+                .to_string(),
+        ));
     }
 
     let mut stream = resp.bytes_stream();
-    // Cap writes at the requested range length. A misbehaving server that
-    // returns more bytes than asked must NOT pwrite past the piece into the
-    // next piece's region in the pre-allocated file
+    // Cap writes at the requested range length. A misbehaving server that returns more bytes than asked must NOT pwrite past the piece into the next piece's region in the pre-allocated file
     let max_bytes = range.end - range.start + 1;
     let writer = ChunkWriter::spawn(
         Arc::clone(file),
@@ -2254,7 +2190,7 @@ async fn download_piece_stream(
         tokio::select! {
             _ = cancel_token.cancelled() => {
                 let _ = writer.finish().await;
-                return Err("Download cancelled".to_string());
+                return Err(PieceDownloadError::Cancelled);
             }
             chunk = stream.next() => {
                 match chunk {
@@ -2264,16 +2200,20 @@ async fn download_piece_stream(
                         task_limiter.acquire(len).await;
 
                         if !writer.send(bytes).await {
-                            let _ = writer.finish().await;
-                            return Err("Writer task closed unexpectedly".to_string());
+                            return match finish_piece_writer(writer).await {
+                                Ok(_) => Err(PieceDownloadError::Storage(
+                                    "Writer task closed unexpectedly".to_string(),
+                                )),
+                                Err(error) => Err(error),
+                            };
                         }
                     }
                     Some(Err(e)) => {
-                        let _ = writer.finish().await;
-                        return Err(format!("Stream error: {e}"));
+                        finish_piece_writer(writer).await?;
+                        return Err(PieceDownloadError::Source(format!("Stream error: {e}")));
                     }
                     None => {
-                        writer.finish().await?;
+                        finish_piece_writer(writer).await?;
                         return Ok(());
                     }
                 }
@@ -2282,8 +2222,7 @@ async fn download_piece_stream(
     }
 }
 
-/// Parse a JSON value as a byte-size: integer bytes, or a string with optional
-/// `K`/`M`/`G` suffix (case-insensitive). Returns `None` for missing/invalid
+/// Parse a JSON value as a byte-size: integer bytes, or a string with optional `K`/`M`/`G` suffix (case-insensitive). Returns `None` for missing/invalid
 fn parse_size_option(value: Option<&Value>) -> Option<u64> {
     let v = value?;
     if let Some(n) = v.as_u64() {
@@ -2302,9 +2241,7 @@ fn parse_size_option(value: Option<&Value>) -> Option<u64> {
     num.trim().parse::<u64>().ok()?.checked_mul(mult)
 }
 
-/// Cross-platform positioned write: writes the entire buffer at the given
-/// offset without touching the shared file cursor. Safe to call concurrently
-/// from multiple threads on the same `File` handle
+/// Cross-platform positioned write: writes the entire buffer at the given offset without touching the shared file cursor. Safe to call concurrently from multiple threads on the same `File` handle
 #[cfg(unix)]
 fn pwrite_all(file: &std::fs::File, offset: u64, buf: &[u8]) -> std::io::Result<()> {
     use std::os::unix::fs::FileExt;
@@ -2337,20 +2274,14 @@ async fn sync_file(file: &Arc<std::fs::File>) -> Result<(), String> {
         .map_err(|e| format!("Sync failed: {e}"))
 }
 
-/// Dedicated chunk writer: a single `spawn_blocking` thread per piece that
-/// pulls `Bytes` from an MPSC channel and `pwrite`s them sequentially to the
-/// pre-allocated file. No userspace memcpy (Bytes flows straight from HTTP
-/// client to pwrite), no per-flush spawn_blocking churn
+/// Dedicated chunk writer: a single `spawn_blocking` thread per piece that pulls `Bytes` from an MPSC channel and `pwrite`s them sequentially to the pre-allocated file. No userspace memcpy (Bytes flows straight from HTTP client to pwrite), no per-flush spawn_blocking churn
 struct ChunkWriter {
     tx: tokio::sync::mpsc::Sender<Bytes>,
     join: tokio::task::JoinHandle<Result<u64, String>>,
 }
 
 impl ChunkWriter {
-    /// `max_bytes` caps the total bytes this writer will pwrite. Excess input
-    /// is silently dropped so a misbehaving server returning more data than
-    /// the requested Range can never overwrite adjacent pieces in the
-    /// pre-allocated file. `None` means unlimited (single-connection path)
+    /// `max_bytes` caps the total bytes this writer will pwrite. Excess input is silently dropped so a misbehaving server returning more data than the requested Range can never overwrite adjacent pieces in the pre-allocated file. `None` means unlimited (single-connection path)
     fn spawn(
         file: Arc<std::fs::File>,
         start_offset: u64,
@@ -2359,9 +2290,7 @@ impl ChunkWriter {
         worker_completed: Option<Arc<AtomicU64>>,
         piece_completed: Option<Arc<AtomicU32>>,
     ) -> Self {
-        // Bounded channel = backpressure. Cap ~4 MiB worth of in-flight Bytes
-        // (16 messages * typical 16-256 KiB each) so we never balloon RAM if
-        // the disk is briefly slower than the network
+        // Bounded channel = backpressure. Cap ~4 MiB worth of in-flight Bytes (16 messages * typical 16-256 KiB each) so we never balloon RAM if the disk is briefly slower than the network
         let (tx, mut rx) = tokio::sync::mpsc::channel::<Bytes>(16);
         let join = tokio::task::spawn_blocking(move || {
             let mut offset = start_offset;
@@ -2407,8 +2336,7 @@ impl ChunkWriter {
         self.tx.send(bytes).await.is_ok()
     }
 
-    /// Close the input side and await the writer thread. Returns total bytes
-    /// successfully written or the writer's first error
+    /// Close the input side and await the writer thread. Returns total bytes successfully written or the writer's first error
     async fn finish(self) -> Result<u64, String> {
         drop(self.tx);
         match self.join.await {
@@ -2418,13 +2346,11 @@ impl ChunkWriter {
     }
 }
 
-/// Classify a single-connection download error as transient (worth an
-/// in-place resume retry) vs terminal. Terminal cases: cancellation, the
-/// stale-`.part` signal (handled separately by the caller), a hard HTTP
-/// status (4xx/5xx — mirror failover handles those a level up), a Cloudflare
-/// challenge, integrity failures, and stall-watchdog trips. Everything else —
-/// connection resets, body-read errors, timeouts, transient DNS/connect
-/// hiccups — is treated as transient and retried with resume
+async fn finish_piece_writer(writer: ChunkWriter) -> Result<u64, PieceDownloadError> {
+    writer.finish().await.map_err(PieceDownloadError::Storage)
+}
+
+/// Classify a single-connection download error as transient (worth an in-place resume retry) vs terminal. Terminal cases: cancellation, the stale-`.part` signal (handled separately by the caller), a hard HTTP status (4xx/5xx — mirror failover handles those a level up), a Cloudflare challenge, integrity failures, and stall-watchdog trips. Everything else — connection resets, body-read errors, timeouts, transient DNS/connect hiccups — is treated as transient and retried with resume
 fn is_transient_single_error(e: &str) -> bool {
     if e.contains("cancelled")
         || e.contains(STALE_PART_REMOVED)
@@ -2449,8 +2375,7 @@ fn is_transient_single_error(e: &str) -> bool {
         || e.contains("connection")
 }
 
-/// Single-connection download
-/// Returns (final_path, last_modified_header_value)
+/// Single-connection download Returns (final_path, last_modified_header_value)
 async fn run_single_download(
     client: &Client,
     uri: &str,
@@ -2481,9 +2406,7 @@ async fn run_single_download(
     if existing_size > 0 {
         req = req.header(RANGE, format!("bytes={existing_size}-"));
     } else if force_range {
-        // Mirror the successful Range probe's request shape. Some signed-URL
-        // CDNs (e.g. Quark) reject a plain full GET with 412 Precondition
-        // Failed but serve the identical URL when a Range request is issued
+        // Mirror the successful Range probe's request shape. Some signed-URL CDNs (e.g. Quark) reject a plain full GET with 412 Precondition Failed but serve the identical URL when a Range request is issued
         req = req
             .header(RANGE, "bytes=0-")
             .header(ACCEPT_ENCODING, "identity");
@@ -2591,8 +2514,7 @@ async fn run_single_download(
         }
     }
 
-    // Open file as a sync handle for positioned writes. We start writing at
-    // `write_offset` to resume in place \u2014 no append mode, no shared cursor
+    // Open file as a sync handle for positioned writes. We start writing at `write_offset` to resume in place \u2014 no append mode, no shared cursor
     let file = {
         let f = fs::OpenOptions::new()
             .create(true)
@@ -2625,10 +2547,7 @@ async fn run_single_download(
     });
 
     let mut stream = resp.bytes_stream();
-    // Single-connection path also uses the dedicated writer thread:
-    // zero-copy Bytes -> pwrite, no userspace memcpy. No max_bytes cap here
-    // — the file isn't pre-allocated, so trailing extra bytes are appended
-    // rather than corrupting other regions
+    // Single-connection path also uses the dedicated writer thread: zero-copy Bytes -> pwrite, no userspace memcpy. No max_bytes cap here — the file isn't pre-allocated, so trailing extra bytes are appended rather than corrupting other regions
     let writer = ChunkWriter::spawn(
         Arc::clone(&file),
         write_offset,
@@ -2692,12 +2611,7 @@ async fn run_single_download(
     Ok((final_path, resp_last_modified))
 }
 
-/// Speed tracker that samples completed bytes every 250ms using EMA. Also
-/// implements aria2's `--lowest-speed-limit` watchdog: when the EMA stays
-/// below `stall.lowest_speed` (bytes/s) for at least `stall.timeout` seconds,
-/// `stall.flag` is raised and `cancel_token` is cancelled so workers exit
-/// Both the multi-piece and single-connection paths inspect `stall.flag`
-/// after their workers complete to surface the stall as a distinct error
+/// Speed tracker that samples completed bytes every 250ms using EMA. Also implements aria2's `--lowest-speed-limit` watchdog: when the EMA stays below `stall.lowest_speed` (bytes/s) for at least `stall.timeout` seconds, `stall.flag` is raised and `cancel_token` is cancelled so workers exit Both the multi-piece and single-connection paths inspect `stall.flag` after their workers complete to surface the stall as a distinct error
 async fn run_speed_tracker(
     completed: Arc<AtomicU64>,
     speed: Arc<AtomicU64>,
@@ -2711,12 +2625,7 @@ async fn run_speed_tracker(
     let mut ema = SpeedEma::new();
     let mut interval = tokio::time::interval(std::time::Duration::from_millis(250));
 
-    // Watchdog state. `below_since` records when the EMA first dropped below
-    // the threshold. Once `total` is known we arm immediately so the user-
-    // configured budget kicks in. For chunked / unknown-length responses
-    // (`total == 0`) we wait `unknown_len_grace` after start before arming so
-    // that pre-flight time (setup, probe, first byte) doesn't count against
-    // the budget but truly stalled streams still get killed
+    // Watchdog state. `below_since` records when the EMA first dropped below the threshold. Once `total` is known we arm immediately so the user- configured budget kicks in. For chunked / unknown-length responses (`total == 0`) we wait `unknown_len_grace` after start before arming so that pre-flight time (setup, probe, first byte) doesn't count against the budget but truly stalled streams still get killed
     let mut below_since: Option<tokio::time::Instant> = None;
     let watchdog_active = stall.lowest_speed > 0;
     let unknown_len_grace = stall.timeout;
@@ -2767,10 +2676,7 @@ async fn run_speed_tracker(
     speed.store(0, Ordering::Relaxed);
 }
 
-/// Rename the .part file to the final filename. With `auto_rename` (the
-/// aria2 `auto-file-renaming` default) a finished file already holding
-/// that name is never clobbered — the new file gets "stem.N.ext" instead;
-/// with it off the existing file is overwritten
+/// Rename the .part file to the final filename. With `auto_rename` (the aria2 `auto-file-renaming` default) a finished file already holding that name is never clobbered — the new file gets "stem.N.ext" instead; with it off the existing file is overwritten
 fn finalize_download(
     part_path: &Path,
     filename: &str,
@@ -2796,8 +2702,7 @@ fn finalize_download(
     Ok(final_path)
 }
 
-/// Apply the remote server's Last-Modified time to the downloaded file.
-/// `last_modified_str` is the raw HTTP Last-Modified header value (RFC 2822 / RFC 7231)
+/// Apply the remote server's Last-Modified time to the downloaded file. `last_modified_str` is the raw HTTP Last-Modified header value (RFC 2822 / RFC 7231)
 fn apply_remote_file_time(path: &Path, last_modified_str: &str) {
     if let Some(time) = parse_http_date(last_modified_str) {
         if let Err(e) = set_file_mtime(path, time) {
@@ -2813,7 +2718,7 @@ fn apply_remote_file_time(path: &Path, last_modified_str: &str) {
     }
 }
 
-/// Parse an HTTP date string (all three RFC 7231 formats) into a `SystemTime`.
+/// Parse an HTTP date string (all three RFC 7231 formats) into a `SystemTime`
 fn parse_http_date(s: &str) -> Option<std::time::SystemTime> {
     httpdate::parse_http_date(s.trim()).ok()
 }
@@ -2821,8 +2726,7 @@ fn parse_http_date(s: &str) -> Option<std::time::SystemTime> {
 fn set_file_mtime(path: &Path, time: std::time::SystemTime) -> std::io::Result<()> {
     let times = fs::FileTimes::new().set_modified(time);
 
-    // Preserve platform-specific handle access while delegating the timestamp
-    // update itself to Rust's standard library.
+    // Preserve platform-specific handle access while delegating the timestamp update itself to Rust's standard library
     #[cfg(windows)]
     let file = {
         use std::os::windows::fs::OpenOptionsExt;
@@ -2840,8 +2744,7 @@ fn set_file_mtime(path: &Path, time: std::time::SystemTime) -> std::io::Result<(
     file.set_times(times)
 }
 
-/// Sanitize a filename to prevent path traversal attacks.
-/// Strips directory components, `..`, and path separators
+/// Sanitize a filename to prevent path traversal attacks. Strips directory components, `..`, and path separators
 fn sanitize_filename(name: &str) -> String {
     let base = Path::new(name)
         .file_name()
@@ -2854,17 +2757,7 @@ fn sanitize_filename(name: &str) -> String {
     }
 }
 
-/// Decide whether to switch from the URL-inferred filename to one the
-/// server suggests via `Content-Disposition`. Skips the swap when the
-/// suggested name is unsafe, identical to what we already have, when
-/// an existing .part on disk would have to be moved (resume safety),
-/// or when adopting it would trample another `.part` already in
-/// progress on disk under the same name. We deliberately do *not*
-/// block adoption when a finalized file with the target name already
-/// exists — `finalize_download` dedups to "stem.N.ext" at rename time,
-/// and rejecting adoption here would silently leave the file under the
-/// placeholder name even for legitimate re-downloads.
-/// Returns the new (filename, part_path) pair when adoption fires
+/// Decide whether to switch from the URL-inferred filename to one the server suggests via `Content-Disposition`. Skips the swap when the suggested name is unsafe, identical to what we already have, when an existing .part on disk would have to be moved (resume safety), or when adopting it would trample another `.part` already in progress on disk under the same name. We deliberately do *not* block adoption when a finalized file with the target name already exists — `finalize_download` dedups to "stem.N.ext" at rename time, and rejecting adoption here would silently leave the file under the placeholder name even for legitimate re-downloads. Returns the new (filename, part_path) pair when adoption fires
 fn adopt_suggested_filename(
     suggested: &str,
     current_filename: &str,
@@ -2895,9 +2788,7 @@ fn adopt_suggested_filename(
     } else {
         dir_path.join(format!("{candidate}{PART_SUFFIX}"))
     };
-    // Don't trample another download that's already mid-flight under
-    // the suggested filename. A `.part` with bytes belongs to a
-    // different task; leaving it alone preserves their work
+    // Don't trample another download that's already mid-flight under the suggested filename. A `.part` with bytes belongs to a different task; leaving it alone preserves their work
     let new_part_has_bytes = new_part != current_part_path
         && new_part.exists()
         && fs::metadata(&new_part)
@@ -2971,8 +2862,7 @@ fn content_type_from_headers(headers: &HeaderMap) -> Option<String> {
     }
 }
 
-/// `content_type` is already normalized (lowercased, params stripped) by
-/// `content_type_from_headers` at every call site
+/// `content_type` is already normalized (lowercased, params stripped) by `content_type_from_headers` at every call site
 fn extension_from_content_type(content_type: &str) -> Option<&'static str> {
     match content_type {
         "image/png" => Some("png"),
@@ -3020,10 +2910,7 @@ pub fn infer_filename_from_uri(uri: &str) -> String {
     }
 }
 
-/// Recognize the placeholder names emitted by the Tauri layer for
-/// opaque URLs: bare `download` (legacy) and `download-<hexhash>` (new,
-/// per-URL unique). These shouldn't be treated as user-chosen filenames
-/// when deciding whether to adopt a Content-Disposition suggestion
+/// Recognize the placeholder names emitted by the Tauri layer for opaque URLs: bare `download` (legacy) and `download-<hexhash>` (new, per-URL unique). These shouldn't be treated as user-chosen filenames when deciding whether to adopt a Content-Disposition suggestion
 fn is_placeholder_download_name(name: &str) -> bool {
     if name == "download" {
         return true;
@@ -3034,12 +2921,7 @@ fn is_placeholder_download_name(name: &str) -> bool {
     !rest.is_empty() && rest.chars().all(|c| c.is_ascii_hexdigit())
 }
 
-/// Parse `Content-Disposition` for a filename. Recognizes:
-/// - `attachment; filename="StoragePeek.jar"` (RFC 6266 quoted-string)
-/// - `attachment; filename=StoragePeek.jar` (unquoted token)
-/// - `attachment; filename*=UTF-8''Storage%20Peek.jar` (RFC 5987 ext-value)
-///
-/// Returns `None` when no usable filename is present
+/// Parse `Content-Disposition` for a filename. Recognizes: - `attachment; filename="StoragePeek.jar"` (RFC 6266 quoted-string) - `attachment; filename=StoragePeek.jar` (unquoted token) - `attachment; filename*=UTF-8''Storage%20Peek.jar` (RFC 5987 ext-value) Returns `None` when no usable filename is present
 pub fn filename_from_content_disposition(headers: &HeaderMap) -> Option<String> {
     let raw_bytes = headers.get("content-disposition")?.as_bytes();
     let raw = String::from_utf8_lossy(raw_bytes);
@@ -3054,13 +2936,12 @@ pub fn filename_from_content_disposition(headers: &HeaderMap) -> Option<String> 
             .strip_prefix("filename*=")
             .or_else(|| part.strip_prefix("FILENAME*="))
         {
-            // Format: charset'lang'percent-encoded
-            // Find the second quote-mark
-            if let Some(second_tick) = rest[rest.find('\'').map(|i| i + 1).unwrap_or(0)..]
-                .find('\'')
-                .map(|i| i + rest.find('\'').map(|j| j + 1).unwrap_or(0))
+            // Format: charset'lang'percent-encoded — split on the two single-quotes to isolate the encoded name. A malformed value missing a quote yields None and is silently skipped (the plain `filename=` fallback still applies)
+            if let Some(encoded) = rest
+                .split_once('\'')
+                .and_then(|(_charset, remainder)| remainder.split_once('\''))
+                .map(|(_lang, encoded)| encoded)
             {
-                let encoded = &rest[second_tick + 1..];
                 star_value = Some(url_decode(encoded.trim_matches('"')));
             }
         } else if let Some(rest) = part
@@ -3245,9 +3126,7 @@ mod tests {
 
     #[test]
     fn filename_from_rfc5987_utf8_multibyte() {
-        // `中.txt` in UTF-8 = E4 B8 AD 2E 74 78 74. The previous
-        // byte-by-byte cast produced mojibake; verify the bytes-then-UTF8
-        // path renders the original Unicode codepoint
+        // `中.txt` in UTF-8 = E4 B8 AD 2E 74 78 74. The previous byte-by-byte cast produced mojibake; verify the bytes-then-UTF8 path renders the original Unicode codepoint
         let headers = h(&[(
             "content-disposition",
             "attachment; filename*=UTF-8''%E4%B8%AD.txt",
@@ -3264,8 +3143,7 @@ mod tests {
             "content-disposition",
             "attachment; filename=\"../../etc/passwd\"",
         )]);
-        // sanitize_filename collapses path components — exact result depends
-        // on the helper, but must not contain a slash
+        // sanitize_filename collapses path components — exact result depends on the helper, but must not contain a slash
         let got = filename_from_content_disposition(&headers).unwrap();
         assert!(!got.contains('/'));
         assert!(!got.contains('\\'));
@@ -3395,6 +3273,63 @@ mod tests {
     }
 
     #[test]
+    fn partial_error_progress_resets_retry_budget() {
+        let mut retry_count = 3;
+
+        assert!(!charge_retry_if_no_progress(&mut retry_count, 1));
+        assert_eq!(retry_count, 0);
+        assert!(charge_retry_if_no_progress(&mut retry_count, 0));
+        assert_eq!(retry_count, 1);
+    }
+
+    #[test]
+    fn productive_source_errors_use_a_bounded_backoff() {
+        assert_eq!(
+            partial_error_backoff(1),
+            std::time::Duration::from_millis(50)
+        );
+        assert_eq!(
+            partial_error_backoff(3),
+            std::time::Duration::from_millis(150)
+        );
+        assert_eq!(partial_error_backoff(u32::MAX), PARTIAL_ERROR_BACKOFF_MAX);
+    }
+
+    #[tokio::test]
+    async fn piece_writer_failures_are_classified_as_storage_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("read-only.bin");
+        std::fs::write(&path, b"existing").unwrap();
+        let file = Arc::new(std::fs::File::open(path).unwrap());
+        let completed = Arc::new(AtomicU64::new(0));
+        let piece_completed = Arc::new(AtomicU32::new(0));
+        let writer = ChunkWriter::spawn(
+            file,
+            0,
+            Some(1),
+            Arc::clone(&completed),
+            None,
+            Some(Arc::clone(&piece_completed)),
+        );
+        let _ = writer.send(Bytes::from_static(b"x")).await;
+
+        let error = finish_piece_writer(writer).await.unwrap_err();
+
+        assert!(matches!(error, PieceDownloadError::Storage(_)));
+        assert_eq!(completed.load(Ordering::Relaxed), 0);
+        assert_eq!(piece_completed.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn byte_range_resume_requires_matching_strong_etags() {
+        assert!(etags_strongly_equal("\"abc\"", "\"abc\""));
+        assert!(!etags_strongly_equal("\"abc\"", "\"xyz\""));
+        assert!(!etags_strongly_equal("W/\"abc\"", "\"abc\""));
+        assert!(!etags_strongly_equal("W/\"abc\"", "W/\"abc\""));
+        assert!(!etags_strongly_equal("abc", "abc"));
+    }
+
+    #[test]
     fn piece_meta_round_trip_is_sparse() {
         let dir = std::env::temp_dir().join(format!("risuko_piecemeta_{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
@@ -3428,6 +3363,17 @@ mod tests {
         let other = Some("\"xyz\"".to_string());
         assert!(load_piece_meta(&part, PIECE_SIZE * 3, &other).is_none());
 
+        // A weak validator must never restore byte-range progress, even when
+        // its opaque value matches the previously saved strong validator.
+        save_piece_meta(&part, &q, PIECE_SIZE * 3, &etag);
+        let weak = Some("W/\"abc\"".to_string());
+        assert!(load_piece_meta(&part, PIECE_SIZE * 3, &weak).is_none());
+
+        // Likewise, a sidecar created without a validator cannot later be
+        // trusted merely because the current probe happens to return one.
+        save_piece_meta(&part, &q, PIECE_SIZE * 3, &None);
+        assert!(load_piece_meta(&part, PIECE_SIZE * 3, &etag).is_none());
+
         // Cleanup
         delete_chunk_meta(&part);
         let _ = std::fs::remove_dir_all(&dir);
@@ -3435,12 +3381,7 @@ mod tests {
 
     #[test]
     fn adopt_suggested_filename_proceeds_when_finalized_target_exists() {
-        // A finalized file with the same name as the CD suggestion is
-        // NOT a blocker — finalize_download dedups at rename time, and
-        // refusing here would just trap legitimate re-downloads under
-        // the placeholder name (regression: re-fetch of `StoragePeek.jar`
-        // ended up named `download-<hash>` because a prior copy lived
-        // in the directory)
+        // A finalized file with the same name as the CD suggestion is NOT a blocker — finalize_download dedups at rename time, and refusing here would just trap legitimate re-downloads under the placeholder name (regression: re-fetch of `StoragePeek.jar` ended up named `download-<hash>` because a prior copy lived in the directory)
         let dir = tempfile::tempdir().unwrap();
         let dir_path = dir.path();
         let current_part = dir_path.join("download.part");
@@ -3471,8 +3412,7 @@ mod tests {
 
     #[test]
     fn finalize_download_dedups_when_target_exists() {
-        // Duplicate name must not clobber the finished file — aria2's
-        // auto-file-renaming default picks "stem.N.ext" instead
+        // Duplicate name must not clobber the finished file — aria2's auto-file-renaming default picks "stem.N.ext" instead
         let dir = tempfile::tempdir().unwrap();
         let dir_path = dir.path();
         std::fs::write(dir_path.join("Report.pdf"), b"original").unwrap();

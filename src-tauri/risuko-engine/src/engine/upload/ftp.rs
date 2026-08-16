@@ -9,6 +9,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use super::sink::{FtpConfig, UploadControl, UploadFile, UploadSink};
 
 const COPY_BUF: usize = 64 * 1024;
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
 
 pub struct FtpSink {
     cfg: FtpConfig,
@@ -165,10 +166,13 @@ impl UploadSink for FtpSink {
 
         if self.cfg.secure {
             let connector = self.tls_connector();
-            let mut ftp =
-                AsyncRustlsFtpStream::connect_secure_implicit(&addr, connector, &self.cfg.host)
-                    .await
-                    .map_err(|e| format!("FTPS connect failed: {e}"))?;
+            let mut ftp = tokio::time::timeout(
+                CONNECT_TIMEOUT,
+                AsyncRustlsFtpStream::connect_secure_implicit(&addr, connector, &self.cfg.host),
+            )
+            .await
+            .map_err(|_| "FTPS connect timed out".to_string())?
+            .map_err(|e| format!("FTPS connect failed: {e}"))?;
             ftp.login(&user, &pass)
                 .await
                 .map_err(|e| format!("FTP login failed: {e}"))?;
@@ -179,8 +183,9 @@ impl UploadSink for FtpSink {
             copy_to!(ftp, local, remote, size, ctl);
             let _ = ftp.quit().await;
         } else {
-            let mut ftp = AsyncFtpStream::connect(&addr)
+            let mut ftp = tokio::time::timeout(CONNECT_TIMEOUT, AsyncFtpStream::connect(&addr))
                 .await
+                .map_err(|_| "FTP connect timed out".to_string())?
                 .map_err(|e| format!("FTP connect failed: {e}"))?;
             ftp.login(&user, &pass)
                 .await

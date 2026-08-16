@@ -1,26 +1,11 @@
-//! Per-piece availability tracking (rarest-first selection)
-//!
-//! Keeps, for each piece, a count of how many connected peers advertise it
-//! and whether we already own it locally. `choose_piece` returns the rarest
-//! piece not yet owned that at least one peer has
-//!
-//! Pieces have three logical states:
-//! - **LOCAL**: verified and stored on disk (`have_local`)
-//! - **IN-FLIGHT**: all chunks requested but not yet verified (`in_flight`)
-//! - **REQUESTABLE**: neither local nor fully in-flight
-//!
-//! `choose_requestable_piece` only returns REQUESTABLE pieces, so different
-//! peers get different work. `choose_piece` (used for interest checks) ignores
-//! the in-flight flag
+//! Per-piece availability tracking (rarest-first selection): for each piece keeps how many connected peers advertise it and whether we own it locally, where pieces are LOCAL (verified on disk), IN-FLIGHT (all chunks requested but unverified) or REQUESTABLE (neither); `choose_requestable_piece` returns only REQUESTABLE pieces so peers get different work, while `choose_piece` (interest checks) ignores the in-flight flag
 
 use super::super::core::lengths::{Lengths, ValidPieceIndex};
 
 pub struct PieceTracker {
     lengths: Lengths,
     have_local: Vec<bool>,
-    /// Pieces where all chunks have been requested but the piece hasn't been
-    /// hash-verified yet. Cleared on verify success, verify failure, or when
-    /// a peer owning chunks disconnects
+    /// Pieces where all chunks are requested but not yet hash-verified; cleared on verify success/failure or when a peer owning chunks disconnects
     in_flight: Vec<bool>,
     /// How many peers advertise each piece
     availability: Vec<u32>,
@@ -61,14 +46,12 @@ impl PieceTracker {
         self.have_local[idx.get_usize()]
     }
 
-    /// Mark a piece as fully in-flight (all chunks requested, awaiting hash
-    /// verification). `choose_requestable_piece` will skip it
+    /// Mark a piece as fully in-flight (all chunks requested, awaiting hash verification); `choose_requestable_piece` will skip it
     pub fn mark_in_flight(&mut self, idx: ValidPieceIndex) {
         self.in_flight[idx.get_usize()] = true;
     }
 
-    /// Clear the in-flight flag so the piece can be re-requested (e.g. after
-    /// hash failure or peer disconnect freeing chunks)
+    /// Clear the in-flight flag so the piece can be re-requested (e.g. after hash failure or peer disconnect freeing chunks)
     pub fn clear_in_flight(&mut self, idx: ValidPieceIndex) {
         self.in_flight[idx.get_usize()] = false;
     }
@@ -163,20 +146,12 @@ impl PieceTracker {
         self.have_local.iter().all(|b| *b)
     }
 
-    /// Pick the rarest piece the peer has that we don't, breaking ties with
-    /// the lowest index. Returns None if the peer has nothing useful
-    ///
-    /// Used for interest checks — does NOT skip in-flight pieces
-    ///
-    /// `peer_bitfield` is indexed like `bitfield()`: MSB-first within bytes
+    /// Pick the rarest piece the peer has that we don't, breaking ties with the lowest index; returns None if nothing useful; used for interest checks (does NOT skip in-flight pieces); `peer_bitfield` is indexed like `bitfield()`: MSB-first within bytes
     pub fn choose_piece(&mut self, peer_bitfield: &[u8]) -> Option<ValidPieceIndex> {
         self.choose_impl(peer_bitfield, false, 0, None)
     }
 
-    /// Like [`choose_piece`] but skips pieces whose index is in `exclude`,
-    /// and uses `hint` to break ties among equally-rare pieces (so different
-    /// peers spread across the candidate bucket instead of all picking the
-    /// same stalled piece first in endgame)
+    /// Like [`choose_piece`] but skips pieces whose index is in `exclude` and uses `hint` to break ties among equally-rare pieces, so peers spread across the candidate bucket instead of all picking the same stalled piece first in endgame
     pub fn choose_piece_excluding(
         &mut self,
         peer_bitfield: &[u8],
@@ -186,9 +161,7 @@ impl PieceTracker {
         self.choose_impl(peer_bitfield, false, hint, Some(exclude))
     }
 
-    /// Return requestable pieces in rarest-first order from one bitfield scan
-    ///
-    /// `hint` rotates equal-availability buckets to spread first choice
+    /// Return requestable pieces in rarest-first order from one bitfield scan; `hint` rotates equal-availability buckets to spread first choice
     pub fn choose_requestable_pieces(
         &mut self,
         peer_bitfield: &[u8],
@@ -363,7 +336,7 @@ mod tests {
         assert_eq!(tracker.availability[1], 1);
         assert_eq!(tracker.availability[8], 0);
 
-        // Repeating the same replacement remains one peer of availability.
+        // Repeating the same replacement remains one peer of availability
         tracker.replace_peer_bitfield(&mut peer, &[0b0100_0000]);
         assert_eq!(tracker.availability[1], 1);
     }

@@ -82,8 +82,7 @@ impl FromStr for Id20 {
     }
 }
 
-/// Decode RFC 4648 base32 (uppercase, optional padding). Returns None on
-/// invalid input. Used for BTIH magnet links where the hash may be base32
+/// Decode RFC 4648 base32 (uppercase, optional padding); None on invalid input; used for base32 BTIH magnet links
 fn base32_decode_upper(input: &[u8]) -> Option<Vec<u8>> {
     const ALPHA: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
     let input: Vec<u8> = input
@@ -117,8 +116,7 @@ pub fn sha1(data: &[u8]) -> Id20 {
     Id20(out.into())
 }
 
-/// Id32 — 32-byte id used for BEP 52 (BitTorrent v2) info-hashes,
-/// per-file Merkle roots and SHA-256 piece-layer hashes
+/// Id32 — 32-byte id used for BEP 52 (BitTorrent v2) info-hashes, per-file Merkle roots and SHA-256 piece-layer hashes
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Id32(pub [u8; 32]);
 
@@ -140,10 +138,7 @@ impl Id32 {
         hex::encode(self.0)
     }
 
-    /// Truncate to the leading 20 bytes for use in legacy 20-byte fields
-    /// (BEP-3 handshake info-hash, MSE/PE SKEY, tracker `info_hash`,
-    /// v1-DHT `get_peers`). Per BEP 52, pure-v2 clients send the leading
-    /// 20 bytes of the SHA-256 info-hash in those fields
+    /// Leading 20 bytes for legacy 20-byte fields (BEP-3 handshake, MSE SKEY, tracker `info_hash`, v1-DHT); per BEP 52 pure-v2 clients send the truncated SHA-256 info-hash
     pub fn truncate_to_id20(&self) -> Id20 {
         let mut out = [0u8; 20];
         out.copy_from_slice(&self.0[..20]);

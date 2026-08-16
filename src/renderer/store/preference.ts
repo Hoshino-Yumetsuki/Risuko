@@ -28,8 +28,6 @@ import api from "@/api";
 import { useSyncStore } from "@/store/sync";
 import { useTaskStore } from "@/store/task";
 
-// pre-config builds kept these in localStorage, migrated into the
-// synced config on first fetch (migrateLocalUiPreferences)
 const LEGACY_LOCAL_KEYS = {
 	engineMode: "risuko.engine-mode",
 	taskListStyle: "risuko.task-list-style",
@@ -59,8 +57,6 @@ export const usePreferenceStore = defineStore("preference", {
 				const config = await api.fetchPreference();
 				this.updatePreference(config);
 				this.migrateLocalUiPreferences();
-				// Probe the vault before returning so callers awaiting fetchPreference
-				// observe the correct vaultEnabled state on the very next save
 				await this.fetchVaultStatus();
 				return config;
 			} catch (err: unknown) {
@@ -76,7 +72,6 @@ export const usePreferenceStore = defineStore("preference", {
 				return Promise.resolve();
 			}
 
-			// Update local sync timestamps for affected categories
 			if (!options?.skipSync) {
 				const timestamps = {
 					...this.config.cloudSyncCategoryTimestamps,
@@ -94,12 +89,9 @@ export const usePreferenceStore = defineStore("preference", {
 				}
 			}
 
-			// Round-trip through kebab→camelCase to normalize key names
-			// (e.g. form uses m3u8OutputFormat, but lodash camelCase produces m3U8OutputFormat)
 			const normalized = changeKeysToCamelCase(changeKeysToKebabCase(config));
 			this.updatePreference(normalized);
 
-			// Trigger cloud sync push if auto-sync is enabled
 			if (!options?.skipSync) {
 				try {
 					useSyncStore().syncOnChange(config);
@@ -108,10 +100,7 @@ export const usePreferenceStore = defineStore("preference", {
 				}
 			}
 
-			const saved = Promise.resolve(api.savePreference(config));
-			// saving limits pushes them straight to the engine (system keys),
-			// re-apply mode so MAX stays unlimited and the values keep for
-			// the next LIMIT toggle
+			const saved = api.savePreference(config);
 			if (
 				"maxOverallDownloadLimit" in normalized ||
 				"maxOverallUploadLimit" in normalized
@@ -205,11 +194,6 @@ export const usePreferenceStore = defineStore("preference", {
 				this.vaultEnabled = false;
 			}
 		},
-		/**
-		 * Split a credential into (metadata, secrets). Used when persisting:
-		 * metadata is stored inline in `user.json`, secrets go to the OS
-		 * keychain when the vault is available
-		 */
 		_splitCredentialSecrets(credential: SavedCredential): {
 			meta: SavedCredential;
 			secrets: Record<string, string>;
@@ -230,16 +214,11 @@ export const usePreferenceStore = defineStore("preference", {
 			let toStore: SavedCredential = credential;
 
 			if (this.vaultEnabled) {
-				// derive `wasVaulted` from the persisted record, not the incoming
-				// credential — a fresh SavedCredential may lack the `vaulted` flag
-				// (e.g. sink-form sync paths), so trusting it would drop the
-				// OS-keychain entry on every metadata-only save
 				const persisted = savedCredentials.find(
 					(c: SavedCredential) => c.id === credential.id,
 				);
 				const wasVaulted = !!persisted?.vaulted;
 				const { meta, secrets } = this._splitCredentialSecrets(credential);
-				// Strip the transient flag before persistence
 				const explicitClear = !!meta.clearVault;
 				delete meta.clearVault;
 				try {
@@ -247,16 +226,11 @@ export const usePreferenceStore = defineStore("preference", {
 						await api.vaultPutCredential(credential.id, secrets);
 						meta.vaulted = true;
 					} else if (explicitClear) {
-						// User asked to wipe the keychain entry
 						await api.vaultRemoveCredential(credential.id);
 						meta.vaulted = false;
 					} else if (wasVaulted) {
-						// Metadata-only edit on a vaulted credential — leave
-						// the existing keychain entry alone
 						meta.vaulted = true;
 					} else {
-						// No prior vault entry and no secret material — nothing
-						// to do, just record the inline (empty) state
 						meta.vaulted = false;
 					}
 					toStore = meta;
@@ -265,18 +239,13 @@ export const usePreferenceStore = defineStore("preference", {
 						"[Risuko] vaultPutCredential failed, falling back to inline:",
 						(err as Error).message,
 					);
-					// best-effort cleanup of any stale vault entry so the inline
-					// fallback isn't shadowed by older keychain secrets on next load
 					try {
 						await api.vaultRemoveCredential(credential.id);
-					} catch {
-						// already logged above; nothing else we can do here
-					}
+					} catch {}
 					toStore = { ...credential, vaulted: false };
 					delete (toStore as SavedCredential).clearVault;
 				}
 			} else if (credential.clearVault) {
-				// Strip the transient flag even when the vault isn't in use
 				toStore = { ...credential };
 				delete (toStore as SavedCredential).clearVault;
 			}
@@ -314,11 +283,6 @@ export const usePreferenceStore = defineStore("preference", {
 			);
 			await this.save({ savedCredentials: updated });
 		},
-		/**
-		 * Lazily hydrate the secret fields of a vaulted credential from the
-		 * OS keychain. Returns a shallow copy with secrets populated; the
-		 * returned object is NOT cached in the store
-		 */
 		async loadCredentialSecrets(
 			credential: SavedCredential,
 		): Promise<SavedCredential> {
@@ -326,9 +290,6 @@ export const usePreferenceStore = defineStore("preference", {
 				return credential;
 			}
 			if (!this.vaultEnabled) {
-				// stored credential expects the OS keychain but the backend is
-				// unreachable this session; warn so blank form fields aren't a
-				// silent mystery mid-download
 				logger.warn(
 					`[Risuko] credential ${credential.id} is vaulted but the OS keychain is unavailable; secrets will not be applied.`,
 				);
@@ -463,7 +424,6 @@ export const usePreferenceStore = defineStore("preference", {
 		setSidebarCollapsed(collapsed: boolean) {
 			this.save({ sidebarCollapsed: !!collapsed }).catch(() => undefined);
 		},
-		// one-time migration of old localStorage UI prefs
 		migrateLocalUiPreferences() {
 			const patch: Partial<AppConfig> = {};
 			if (this.config.engineMode === undefined) {

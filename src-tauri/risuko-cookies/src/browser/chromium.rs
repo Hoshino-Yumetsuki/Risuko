@@ -129,8 +129,7 @@ impl BrowserConfig {
 }
 
 pub fn extract_cookies(config: &BrowserConfig, host: Option<&str>) -> Result<Vec<Cookie>> {
-    // Chromium browsers can have multiple profiles (Default, Profile 1, etc.)
-    // Read all of them and merge cookies — the active profile isn't always "Default"
+    // Chromium browsers can have multiple profiles (Default, Profile 1, etc.); read all of them and merge cookies since the active profile isn't always "Default"
     let mut all_dbs = Vec::new();
     for pattern in &config.cookie_paths {
         if let Ok(paths) = paths::find_matching(pattern) {
@@ -257,7 +256,8 @@ fn read_cookies_from_db(
                 if !raw.plaintext_value.is_empty() {
                     raw.plaintext_value
                 } else {
-                    String::from_utf8_lossy(&raw.raw_value).to_string()
+                    // No master key and no plaintext: the raw bytes are an encrypted blob, not a usable value, so skip rather than hand a corrupt cookie to callers
+                    continue;
                 }
             }
         } else {

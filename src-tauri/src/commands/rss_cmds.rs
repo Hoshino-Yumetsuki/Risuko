@@ -7,21 +7,14 @@ use crate::engine::rss::types::RssRule;
 use crate::engine::rss::RssManager;
 use crate::state::AppState;
 
-/// Strip the explicit `out` filename hint when fanning extra inline media URLs
-/// out as separate http tasks — otherwise every queued image would land at the
-/// same path and clobber each other. The `dir` and other routing options stay
+/// Strip the explicit `out` filename hint when fanning extra inline media URLs out as separate http tasks — otherwise every queued image would land at the same path and clobber each other. The `dir` and other routing options stay
 fn strip_explicit_filename(opts: &Map<String, Value>) -> Map<String, Value> {
     let mut cloned = opts.clone();
     cloned.remove("out");
     cloned
 }
 
-/// Write an Article-kind RSS item's body as a self-contained HTML file under
-/// `dir`, mark it downloaded, then queue every inline media URL (the primary
-/// enclosure plus scraped `media_urls`) as separate http tasks alongside it.
-/// Returns the saved file path and the list of fanned-out media gids.
-///
-/// Used by both the one-shot and tracked download paths so they stay in lockstep
+/// Write an Article-kind RSS item's body as a self-contained HTML file under `dir`, mark it downloaded, then queue every inline media URL (the primary enclosure plus scraped `media_urls`) as separate http tasks alongside it. Returns the saved file path and the list of fanned-out media gids. Used by both the one-shot and tracked download paths so they stay in lockstep
 async fn write_article_and_fan_media(
     mgr: &Arc<RssManager>,
     manager: &Arc<crate::engine::manager::TaskManager>,
@@ -145,8 +138,7 @@ pub async fn get_rss_rules(state: State<'_, AppState>) -> Result<Value, String> 
     serde_json::to_value(rules).map_err(|e| e.to_string())
 }
 
-/// Resolve the destination directory from per-task options, falling back to
-/// the engine's global default
+/// Resolve the destination directory from per-task options, falling back to the engine's global default
 async fn resolve_dir(
     opts: &Map<String, Value>,
     manager: &std::sync::Arc<crate::engine::manager::TaskManager>,
@@ -223,9 +215,7 @@ pub async fn read_rss_download(
         .map_err(|e| format!("Failed to read file: {}", e))
 }
 
-/// Start an RSS item download and monitor its status in a background task
-/// Returns immediately with the gid. Emits `rss:download-complete` or
-/// `rss:download-error` events when the download finishes
+/// Start an RSS item download and monitor its status in a background task Returns immediately with the gid. Emits `rss:download-complete` or `rss:download-error` events when the download finishes
 #[tauri::command]
 pub async fn download_rss_item_tracked(
     handle: AppHandle,
@@ -250,10 +240,7 @@ pub async fn download_rss_item_tracked(
     let kind = crate::engine::rss::classify_item_kind(&item);
 
     if kind == crate::engine::rss::ItemKind::Article {
-        // Article: write the HTML synchronously, queue inline media, fire the
-        // completion event immediately. There is no engine gid for the html
-        // file itself, but the inline media tasks behave like normal http
-        // downloads
+        // Article: write the HTML synchronously, queue inline media, fire the completion event immediately. There is no engine gid for the html file itself, but the inline media tasks behave like normal http downloads
         let (path_str, extra_gids) =
             write_article_and_fan_media(&mgr, &manager, &item, &feed_id, &item_id, &dir, &opts)
                 .await?;
@@ -343,8 +330,7 @@ pub async fn download_rss_item_tracked(
 
             match status {
                 "complete" => {
-                    // Prefer the pre-computed path from opts; when absent, derive
-                    // it from the completed task's file list reported by the engine
+                    // Prefer the pre-computed path from opts; when absent, derive it from the completed task's file list reported by the engine
                     let resolved_path = monitor_download_path.clone().or_else(|| {
                         status_val
                             .get("files")

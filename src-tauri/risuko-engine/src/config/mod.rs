@@ -4,7 +4,7 @@ use serde_json::{json, Map, Value};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::traits::ConfigDirProvider;
+use crate::traits::{cleanup_stale_atomic_write_files, write_file_atomically, ConfigDirProvider};
 
 pub struct ConfigManager {
     system_config: Map<String, Value>,
@@ -20,6 +20,7 @@ impl ConfigManager {
     /// Create a ConfigManager with an explicit config directory path
     pub fn with_dir(config_dir: PathBuf) -> Result<Self, Box<dyn std::error::Error>> {
         fs::create_dir_all(&config_dir)?;
+        cleanup_stale_atomic_write_files(&config_dir);
 
         let system_config =
             load_or_default(&config_dir.join("system.json"), defaults::system_defaults());
@@ -59,9 +60,13 @@ impl ConfigManager {
         let mut merged = self.system_config.clone();
         merged.extend(self.user_config.clone());
 
-        // Add runtime context
-        merged.insert("platform".into(), json!(std::env::consts::OS));
-        merged.insert("arch".into(), json!(std::env::consts::ARCH));
+        // Add runtime context without clobbering a user/system key of the same name (insert only when absent)
+        merged
+            .entry("platform".to_string())
+            .or_insert_with(|| json!(std::env::consts::OS));
+        merged
+            .entry("arch".to_string())
+            .or_insert_with(|| json!(std::env::consts::ARCH));
 
         Value::Object(merged)
     }
@@ -120,29 +125,51 @@ impl ConfigManager {
     fn save_system(&self) -> Result<(), String> {
         let path = self.config_dir.join("system.json");
         let data = serde_json::to_string_pretty(&self.system_config).map_err(|e| e.to_string())?;
-        fs::write(path, data).map_err(|e| e.to_string())?;
-        Ok(())
+        write_file_atomically(&path, data.as_bytes())
     }
 
     fn save_user(&self) -> Result<(), String> {
         let path = self.config_dir.join("user.json");
         let data = serde_json::to_string_pretty(&self.user_config).map_err(|e| e.to_string())?;
-        fs::write(path, data).map_err(|e| e.to_string())?;
-        Ok(())
+        write_file_atomically(&path, data.as_bytes())
     }
 }
 
 fn load_or_default(path: &Path, defaults: Map<String, Value>) -> Map<String, Value> {
-    if let Ok(data) = fs::read_to_string(path) {
-        if let Ok(Value::Object(mut map)) = serde_json::from_str(&data) {
-            // Fill in missing keys from defaults
-            for (k, v) in &defaults {
-                if !map.contains_key(k) {
-                    map.insert(k.clone(), v.clone());
+    match fs::read_to_string(path) {
+        Ok(data) => {
+            if let Ok(Value::Object(mut map)) = serde_json::from_str(&data) {
+                // Fill in missing keys from defaults
+                for (k, v) in &defaults {
+                    if !map.contains_key(k) {
+                        map.insert(k.clone(), v.clone());
+                    }
                 }
+                return map;
             }
-            return map;
+            // File exists but is corrupt/unparseable: back it up so the user's broken settings aren't silently overwritten, then fall back
+            let backup = path.with_extension("json.bak");
+            match fs::rename(path, &backup) {
+                Ok(()) => tracing::warn!(
+                    "Config file {} is corrupt; backed up to {} and using defaults",
+                    path.display(),
+                    backup.display()
+                ),
+                Err(err) => tracing::warn!(
+                    "Config file {} is corrupt and could not be backed up ({}); using defaults",
+                    path.display(),
+                    err
+                ),
+            }
         }
+        Err(err) if err.kind() != std::io::ErrorKind::NotFound => {
+            tracing::warn!(
+                "Failed to read config {}: {}; using defaults",
+                path.display(),
+                err
+            );
+        }
+        Err(_) => {}
     }
     defaults
 }

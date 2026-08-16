@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Test script for Risuko aria2-compatible JSON-RPC 2.0 endpoint
 # Usage: ./scripts/test-rpc.sh [secret]
-#   If your RPC secret is set, pass it as the first argument.
+#   If your RPC secret is set, pass it as the first argument
 
 set -euo pipefail
 

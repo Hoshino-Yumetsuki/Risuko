@@ -1,5 +1,4 @@
-//! Gnutella2 (G2) — Phase 4. Single-file module since the wire format is
-//! tightly scoped here. URI scheme: `g2://host:port/sha1/<base32>?xl=...&dn=...`
+//! Gnutella2 (G2) — Phase 4. Single-file module (wire format is tightly scoped here); URI scheme `g2://host:port/sha1/<base32>?xl=...&dn=...`
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
@@ -13,8 +12,7 @@ use crate::engine::gnutella::peer::fetch_by_urn;
 use crate::engine::gnutella::types::GnutellaError;
 use crate::engine::options::EngineOptions;
 
-/// Parsed `g2://` content URI carrying a SHA-1 URN, optional display name and
-/// file size hint
+/// Parsed `g2://` content URI carrying a SHA-1 URN, optional display name and file size hint
 pub struct G2Link {
     pub host: String,
     pub port: u16,
@@ -29,8 +27,7 @@ pub fn is_g2_uri(uri: &str) -> bool {
     lower.starts_with("g2://")
 }
 
-/// Parse a `g2://host[:port]/sha1/<base32>[?xl=&dn=&urn=]` URI
-/// Returns `None` for malformed input or non-G2 schemes
+/// Parse a `g2://host[:port]/sha1/<base32>[?xl=&dn=&urn=]` URI; returns `None` for malformed input or non-G2 schemes
 pub fn parse_g2_uri(uri: &str) -> Option<G2Link> {
     let s = uri.trim();
     let rest = s
@@ -93,10 +90,7 @@ fn url_decode(s: &str) -> String {
         .to_string()
 }
 
-/// Run a single G2 download to completion. Reuses the Gnutella HTTP
-/// `uri-res/N2R` fetch path since both networks serve content over the same
-/// peer-to-peer HTTP/1.1 endpoint. Returns the absolute output path on
-/// success or a typed `GnutellaError` describing the failure
+/// Run a single G2 download to completion, reusing the Gnutella HTTP `uri-res/N2R` fetch path since both networks serve content over the same peer-to-peer HTTP/1.1 endpoint; returns the output path on success or a typed `GnutellaError`
 pub async fn run_g2_download(
     uri: &str,
     dir: &str,
