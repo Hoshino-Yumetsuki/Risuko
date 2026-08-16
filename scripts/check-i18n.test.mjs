@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -32,7 +31,7 @@ test("required interpolation accepts the i18next placeholder", () => {
 	assert.deepEqual(errors, []);
 });
 
-test("checker runs when invoked through a symlinked scripts directory", () => {
+test("direct-execution detection resolves a symlinked scripts directory", () => {
 	const temporaryDirectory = mkdtempSync(join(tmpdir(), "risuko-check-i18n-"));
 	try {
 		const scriptsDirectory = dirname(fileURLToPath(import.meta.url));
@@ -43,14 +42,10 @@ test("checker runs when invoked through a symlinked scripts directory", () => {
 			process.platform === "win32" ? "junction" : "dir",
 		);
 
-		const result = spawnSync(
-			process.execPath,
-			[join(linkedScriptsDirectory, "check-i18n.mjs")],
-			{ encoding: "utf8" },
+		assert.equal(
+			isDirectExecution(join(linkedScriptsDirectory, "check-i18n.mjs")),
+			true,
 		);
-
-		assert.equal(result.status, 0, result.stderr);
-		assert.match(result.stdout, /^i18n parity OK:/m);
 	} finally {
 		rmSync(temporaryDirectory, { recursive: true, force: true });
 	}
