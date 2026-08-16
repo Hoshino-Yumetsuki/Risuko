@@ -22,6 +22,8 @@ const CHUNK_MAX_RETRIES: u32 = 5;
 pub const PIECE_SIZE: u64 = 1024 * 1024;
 const META_VERSION: u32 = 2;
 const META_SAVE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2);
+const PARTIAL_ERROR_BACKOFF_STEP: std::time::Duration = std::time::Duration::from_millis(50);
+const PARTIAL_ERROR_BACKOFF_MAX: std::time::Duration = std::time::Duration::from_millis(250);
 const STALE_PART_REMOVED: &str = "stale partial file removed";
 use super::CHUNK_META_SUFFIX;
 
@@ -1813,6 +1815,19 @@ fn charge_retry_if_no_progress(retry_count: &mut u32, downloaded: u64) -> bool {
     }
 }
 
+fn partial_error_backoff(error_streak: u32) -> std::time::Duration {
+    PARTIAL_ERROR_BACKOFF_STEP
+        .saturating_mul(error_streak.max(1))
+        .min(PARTIAL_ERROR_BACKOFF_MAX)
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum PieceDownloadError {
+    Cancelled,
+    Source(String),
+    Storage(String),
+}
+
 /// Worker loop: claim a piece, pick a mirror, download it, mark it done; repeat. Returns Ok(()) when the queue is exhausted (this worker is finished), or Err on cancellation or after exceeding retry budget on one piece
 #[allow(clippy::too_many_arguments)]
 async fn piece_worker(
@@ -1836,6 +1851,7 @@ async fn piece_worker(
     // resetting merely because the index changed would make the retry bound
     // ineffective. Any successful progress resets the budget below.
     let mut retry_count: u32 = 0;
+    let mut source_error_streak: u32 = 0;
     loop {
         if cancel_token.is_cancelled() {
             return Err("Download cancelled".to_string());
@@ -1916,6 +1932,7 @@ async fn piece_worker(
 
         match outcome {
             Ok(()) => {
+                source_error_streak = 0;
                 if now_completed >= piece_length {
                     pool.record_success(&mirror_key, downloaded, started.elapsed().as_secs_f64());
                     queue.complete(idx);
@@ -1942,33 +1959,43 @@ async fn piece_worker(
                     tokio::time::sleep(std::time::Duration::from_secs(retry_count as u64)).await;
                 }
             }
-            Err(e) if e.contains("cancelled") => {
+            Err(PieceDownloadError::Cancelled) => {
                 queue.release(idx);
-                return Err(e);
+                return Err("Download cancelled".to_string());
             }
-            Err(e) => {
+            Err(PieceDownloadError::Storage(error)) => {
                 queue.release(idx);
+                return Err(format!(
+                    "Worker {worker_id} local storage failure on piece {idx}: {error}"
+                ));
+            }
+            Err(PieceDownloadError::Source(error)) => {
+                queue.release(idx);
+                source_error_streak = source_error_streak.saturating_add(1);
                 if !charge_retry_if_no_progress(&mut retry_count, downloaded) {
                     // A stream error after bytes were flushed still advanced
                     // the piece. Treat that attempt as mirror progress so a
                     // flaky but productive source is not blacklisted.
                     pool.record_success(&mirror_key, downloaded, started.elapsed().as_secs_f64());
+                    let backoff = partial_error_backoff(source_error_streak);
                     tracing::warn!(
                         "Worker {worker_id} piece {idx} on {mirror_key} failed after writing \
-                         {downloaded} bytes: {e}; retry budget reset"
+                         {downloaded} bytes: {error}; retry budget reset, retrying in {}ms",
+                        backoff.as_millis()
                     );
+                    tokio::time::sleep(backoff).await;
                     continue;
                 }
                 pool.record_failure(&mirror_key);
                 if retry_count > max_retries {
                     return Err(format!(
                         "Worker {worker_id} failed after {max_retries} retries on \
-                         piece {idx}: {e}"
+                         piece {idx}: {error}"
                     ));
                 }
                 tracing::warn!(
                     "Worker {worker_id} piece {idx} on {mirror_key} attempt \
-                     {retry_count}/{max_retries}: {e}, will retry"
+                     {retry_count}/{max_retries}: {error}, will retry"
                 );
                 tokio::time::sleep(std::time::Duration::from_secs(retry_count as u64)).await;
             }
@@ -1992,7 +2019,7 @@ async fn download_piece_stream(
     worker_completed: Option<&Arc<AtomicU64>>,
     piece_completed: &Arc<AtomicU32>,
     expected_total: Option<u64>,
-) -> Result<(), String> {
+) -> Result<(), PieceDownloadError> {
     let mut req = client
         .get(uri)
         .headers(headers.clone())
@@ -2013,7 +2040,7 @@ async fn download_piece_stream(
     let resp = req
         .send()
         .await
-        .map_err(|e| format!("HTTP request failed: {e}"))?;
+        .map_err(|e| PieceDownloadError::Source(format!("HTTP request failed: {e}")))?;
 
     let status = resp.status().as_u16();
 
@@ -2021,7 +2048,7 @@ async fn download_piece_stream(
         log_cloudflare_diagnostic(client, headers, resp.headers(), uri);
         let err = cloudflare_error(uri, status);
         drain_response_body(resp).await;
-        return Err(err);
+        return Err(PieceDownloadError::Source(err));
     }
 
     if let Some(expected) = strong_expected_etag {
@@ -2034,7 +2061,9 @@ async fn download_piece_stream(
             // Do not wait for a potentially stalled response body before the
             // worker can fail over or observe cancellation.
             drop(resp);
-            return Err("Server file changed (ETag mismatch), aborting download".to_string());
+            return Err(PieceDownloadError::Source(
+                "Server file changed (ETag mismatch), aborting download".to_string(),
+            ));
         }
     }
 
@@ -2096,13 +2125,13 @@ async fn download_piece_stream(
             "Piece request got HTTP {status} for range {}",
             range.to_range_header_value()
         );
-        return Err(format!("HTTP error: {status}"));
+        return Err(PieceDownloadError::Source(format!("HTTP error: {status}")));
     }
 
     if status != 206 {
-        return Err(format!(
+        return Err(PieceDownloadError::Source(format!(
             "Expected 206 Partial Content with matching Content-Range, got {status}"
-        ));
+        )));
     }
     if let Some(cr) = resp
         .headers()
@@ -2113,11 +2142,11 @@ async fn download_piece_stream(
             if let Some(dash) = cr[space + 1..].find('-') {
                 if let Ok(range_start) = cr[space + 1..space + 1 + dash].parse::<u64>() {
                     if range_start != range.start {
-                        return Err(format!(
+                        return Err(PieceDownloadError::Source(format!(
                             "Expected 206 Partial Content with matching Content-Range: \
                              requested start {} but got {range_start}",
                             range.start
-                        ));
+                        )));
                     }
                 }
             }
@@ -2128,19 +2157,21 @@ async fn download_piece_stream(
                 if tail != "*" {
                     if let Ok(got_total) = tail.parse::<u64>() {
                         if got_total != want_total {
-                            return Err(format!(
+                            return Err(PieceDownloadError::Source(format!(
                                 "mirror size mismatch: expected total {want_total} but got \
                                  {got_total} (serving a different file)"
-                            ));
+                            )));
                         }
                     }
                 }
             }
         }
     } else {
-        return Err("Expected 206 Partial Content with matching Content-Range, \
+        return Err(PieceDownloadError::Source(
+            "Expected 206 Partial Content with matching Content-Range, \
              but Content-Range header is missing"
-            .to_string());
+                .to_string(),
+        ));
     }
 
     let mut stream = resp.bytes_stream();
@@ -2159,7 +2190,7 @@ async fn download_piece_stream(
         tokio::select! {
             _ = cancel_token.cancelled() => {
                 let _ = writer.finish().await;
-                return Err("Download cancelled".to_string());
+                return Err(PieceDownloadError::Cancelled);
             }
             chunk = stream.next() => {
                 match chunk {
@@ -2169,16 +2200,20 @@ async fn download_piece_stream(
                         task_limiter.acquire(len).await;
 
                         if !writer.send(bytes).await {
-                            let _ = writer.finish().await;
-                            return Err("Writer task closed unexpectedly".to_string());
+                            return match finish_piece_writer(writer).await {
+                                Ok(_) => Err(PieceDownloadError::Storage(
+                                    "Writer task closed unexpectedly".to_string(),
+                                )),
+                                Err(error) => Err(error),
+                            };
                         }
                     }
                     Some(Err(e)) => {
-                        let _ = writer.finish().await;
-                        return Err(format!("Stream error: {e}"));
+                        finish_piece_writer(writer).await?;
+                        return Err(PieceDownloadError::Source(format!("Stream error: {e}")));
                     }
                     None => {
-                        writer.finish().await?;
+                        finish_piece_writer(writer).await?;
                         return Ok(());
                     }
                 }
@@ -2309,6 +2344,10 @@ impl ChunkWriter {
             Err(e) => Err(format!("write task join error: {e}")),
         }
     }
+}
+
+async fn finish_piece_writer(writer: ChunkWriter) -> Result<u64, PieceDownloadError> {
+    writer.finish().await.map_err(PieceDownloadError::Storage)
 }
 
 /// Classify a single-connection download error as transient (worth an in-place resume retry) vs terminal. Terminal cases: cancellation, the stale-`.part` signal (handled separately by the caller), a hard HTTP status (4xx/5xx — mirror failover handles those a level up), a Cloudflare challenge, integrity failures, and stall-watchdog trips. Everything else — connection resets, body-read errors, timeouts, transient DNS/connect hiccups — is treated as transient and retried with resume
@@ -3241,6 +3280,44 @@ mod tests {
         assert_eq!(retry_count, 0);
         assert!(charge_retry_if_no_progress(&mut retry_count, 0));
         assert_eq!(retry_count, 1);
+    }
+
+    #[test]
+    fn productive_source_errors_use_a_bounded_backoff() {
+        assert_eq!(
+            partial_error_backoff(1),
+            std::time::Duration::from_millis(50)
+        );
+        assert_eq!(
+            partial_error_backoff(3),
+            std::time::Duration::from_millis(150)
+        );
+        assert_eq!(partial_error_backoff(u32::MAX), PARTIAL_ERROR_BACKOFF_MAX);
+    }
+
+    #[tokio::test]
+    async fn piece_writer_failures_are_classified_as_storage_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("read-only.bin");
+        std::fs::write(&path, b"existing").unwrap();
+        let file = Arc::new(std::fs::File::open(path).unwrap());
+        let completed = Arc::new(AtomicU64::new(0));
+        let piece_completed = Arc::new(AtomicU32::new(0));
+        let writer = ChunkWriter::spawn(
+            file,
+            0,
+            Some(1),
+            Arc::clone(&completed),
+            None,
+            Some(Arc::clone(&piece_completed)),
+        );
+        let _ = writer.send(Bytes::from_static(b"x")).await;
+
+        let error = finish_piece_writer(writer).await.unwrap_err();
+
+        assert!(matches!(error, PieceDownloadError::Storage(_)));
+        assert_eq!(completed.load(Ordering::Relaxed), 0);
+        assert_eq!(piece_completed.load(Ordering::Relaxed), 0);
     }
 
     #[test]

@@ -1105,7 +1105,7 @@ async fn spawn_partial_range_server(payload: Arc<Vec<u8>>) -> (SocketAddr, Arc<A
                         let _ = stream.write_all(b"HTTP/1.1 400 Bad Request\r\n\r\n").await;
                         return;
                     };
-                    if range.0 >= payload.len() {
+                    if range.0 >= payload.len() || range.1 < range.0 {
                         let _ = stream
                             .write_all(b"HTTP/1.1 416 Range Not Satisfiable\r\n\r\n")
                             .await;
@@ -1133,6 +1133,22 @@ async fn spawn_partial_range_server(payload: Arc<Vec<u8>>) -> (SocketAddr, Arc<A
         }
     });
     (addr, partials)
+}
+
+#[tokio::test]
+async fn partial_range_server_rejects_a_reversed_range() {
+    let payload = Arc::new(small_payload(1024));
+    let (addr, _) = spawn_partial_range_server(payload).await;
+    let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+    stream
+        .write_all(b"GET /partial HTTP/1.1\r\nHost: localhost\r\nRange: bytes=500-100\r\n\r\n")
+        .await
+        .unwrap();
+
+    let mut response = Vec::new();
+    stream.read_to_end(&mut response).await.unwrap();
+
+    assert!(response.starts_with(b"HTTP/1.1 416 Range Not Satisfiable"));
 }
 
 #[tokio::test]

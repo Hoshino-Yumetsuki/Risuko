@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Check if all required translation keys are present in the locales files
 
-import { readdirSync, readFileSync } from "node:fs";
+import { readdirSync, readFileSync, realpathSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
@@ -239,6 +239,17 @@ function main() {
 	console.log(`i18n parity OK: ${LOCALES.length} locales, ${FEATURE_KEYS.length} feature keys`);
 }
 
-if (resolve(process.argv[1] ?? "") === fileURLToPath(import.meta.url)) {
+export function isDirectExecution(entryPath = process.argv[1]) {
+	if (!entryPath) return false;
+	try {
+		return realpathSync(entryPath) === realpathSync(fileURLToPath(import.meta.url));
+	} catch (error) {
+		throw new Error(`Unable to resolve i18n checker entry path: ${entryPath}`, {
+			cause: error,
+		});
+	}
+}
+
+if (isDirectExecution()) {
 	main();
 }
