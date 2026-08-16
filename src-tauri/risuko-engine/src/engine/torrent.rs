@@ -684,6 +684,21 @@ fn thunder_ampersand_entity_len(value: &str) -> Option<usize> {
     is_ampersand.then_some(end + 1)
 }
 
+fn thunder_unknown_entity_len(value: &str) -> Option<usize> {
+    let end = value.find(';')?;
+    let nested_ampersand = value.get(1..end)?.find('&')?;
+    let name = value.get(1..nested_ampersand + 1)?;
+    if name.is_empty()
+        || !name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'#')
+    {
+        return None;
+    }
+
+    Some(end + 1)
+}
+
 fn decode_thunder_ampersands(value: &str) -> String {
     let mut result = String::with_capacity(value.len());
     let mut rest = value;
@@ -693,6 +708,9 @@ fn decode_thunder_ampersands(value: &str) -> String {
         let entity = &rest[start..];
         if let Some(entity_len) = thunder_ampersand_entity_len(entity) {
             result.push('&');
+            rest = &entity[entity_len..];
+        } else if let Some(entity_len) = thunder_unknown_entity_len(entity) {
+            result.push_str(&entity[..entity_len]);
             rest = &entity[entity_len..];
         } else {
             result.push('&');
@@ -988,6 +1006,14 @@ mod tests {
                 "magnet:?xt=urn:btih:cab507494d02ebb1178b38f2e9d7be299c86b862&tr=udp%3A%2F%2Ftracker.example%3A80%2Fannounce&dn=Example"
                     .to_string()
             )
+        );
+    }
+
+    #[test]
+    fn preserves_unknown_thunder_entity_with_nested_ampersand() {
+        assert_eq!(
+            decode_thunder_ampersands("x&foo&amp;bar;"),
+            "x&foo&amp;bar;"
         );
     }
 

@@ -30,7 +30,7 @@
             :placeholder="$t('task.uri-task-tips')"
             v-model="uriDraft"
             class="resize-none text-xs"
-            :disabled="submitting"
+            :disabled="submitting || uriPreparing"
             @paste="handleUriPaste"
             @keydown.enter.exact="handleUriEnter"
             @keydown.enter.meta.exact="handleUriSubmitShortcut"
@@ -52,7 +52,7 @@
               class="ml-1 rounded-md border border-border/60 px-2 py-0.5 text-[11px] hover:bg-muted"
               :title="$t('app.browse')"
               :aria-label="$t('app.browse')"
-              :disabled="submitting"
+              :disabled="submitting || uriPreparing"
               @click="browseTorrentFiles"
             >
               {{ $t('app.browse') }}
@@ -94,7 +94,7 @@
               >
                 <batch-item-card
                   :item="item"
-                  :disabled="submitting"
+                  :disabled="submitting || uriPreparing"
                   @remove="removeItem"
                   @update:select-file="updateSelection"
                   @update:media="updateMedia"
@@ -310,7 +310,7 @@
           <Motion :while-tap="reducedMotion ? undefined : { scale: 0.97 }" tag="div">
             <ui-button
               variant="primary"
-              :disabled="submitting || !canSubmit"
+              :disabled="submitting || uriPreparing || !canSubmit"
               @click="submitForm"
             >
               <Download :size="14" style="margin-right: 6px" />
@@ -319,7 +319,7 @@
           </Motion>
         </div>
       </DialogFooter>
-      <loading-overlay :show="submitting" :text="$t('task.loading-add-task')" />
+      <loading-overlay :show="submitting || uriPreparing" :text="$t('task.loading-add-task')" />
     </DialogContent>
   </Dialog>
 </template>
@@ -422,7 +422,10 @@ export default {
 		return {
 			form: {} as TaskForm,
 			uriDraft: "",
-			uriCommit: Promise.resolve(),
+			uriCommit: Promise.resolve() as Promise<void>,
+			uriGeneration: 0,
+			uriSessionActive: false,
+			uriPreparing: false,
 			submitting: false,
 			dragOver: false,
 			showAdvanced: false,
@@ -502,7 +505,10 @@ export default {
 	watch: {
 		visible(current) {
 			if (current) {
-				this.handleOpen();
+				void this.handleOpen();
+			} else {
+				this.invalidateUriCommitSession();
+				this.uriDraft = "";
 			}
 		},
 		queue: {
@@ -546,10 +552,11 @@ export default {
 			}
 		}
 		if (this.visible) {
-			this.handleOpen();
+			void this.handleOpen();
 		}
 	},
 	beforeUnmount() {
+		this.invalidateUriCommitSession();
 		const mq = this._reducedMotionMq;
 		const handler = this._reducedMotionHandler;
 		if (mq && handler) {
@@ -573,7 +580,33 @@ export default {
 		this._reducedMotionHandler = null;
 	},
 	methods: {
+		beginUriCommitSession() {
+			this.uriGeneration += 1;
+			this.uriSessionActive = true;
+			this.uriPreparing = false;
+			this.uriCommit = Promise.resolve();
+			return this.uriGeneration;
+		},
+		invalidateUriCommitSession() {
+			this.uriGeneration += 1;
+			this.uriSessionActive = false;
+			this.uriPreparing = false;
+			this.uriCommit = Promise.resolve();
+		},
+		isUriCommitCurrent(generation: number) {
+			return (
+				this.uriSessionActive &&
+				this.visible &&
+				this.uriGeneration === generation
+			);
+		},
+		restoreUriDraft(text: string) {
+		if (!(this.uriDraft || "").trim()) {
+			this.uriDraft = text;
+		}
+		},
 		async handleOpen() {
+			const generation = this.beginUriCommitSession();
 			this.showAdvanced = false;
 			this.form = initTaskForm({
 				app: useAppStore().$state,
@@ -596,14 +629,22 @@ export default {
 				this.uriDraft = seededUri;
 				useAppStore().updateAddTaskUrl("");
 				await this.commitUriDraft();
+				if (!this.isUriCommitCurrent(generation)) {
+					return;
+				}
+			}
+			if (!this.isUriCommitCurrent(generation)) {
+				return;
 			}
 			this.lastQueueLength = useAppStore().addTaskQueue.length;
 			this.openItemIds = useAppStore().addTaskQueue.map((it) => it.id);
 			if (!hasSeededUri && !(this.uriDraft || "").trim()) {
-				this.tryFillFromClipboard();
+				void this.tryFillFromClipboard(generation);
 			}
 			this.$nextTick(() => {
-				this.focusUriInput();
+				if (this.isUriCommitCurrent(generation)) {
+					this.focusUriInput();
+				}
 			});
 		},
 		readClipboardText(): Promise<string> {
@@ -615,7 +656,10 @@ export default {
 			}
 			return readText();
 		},
-		async tryFillFromClipboard() {
+		async tryFillFromClipboard(generation = this.uriGeneration) {
+			if (!this.isUriCommitCurrent(generation)) {
+				return;
+			}
 			let text = "";
 			let timeoutId: ReturnType<typeof setTimeout> | undefined;
 			try {
@@ -635,6 +679,9 @@ export default {
 				clearTimeout(timeoutId);
 			}
 			if (!text || text.length > 4096) {
+				return;
+			}
+			if (!this.isUriCommitCurrent(generation)) {
 				return;
 			}
 			const firstLine = text.split(/\r?\n/)[0]?.trim() || "";
@@ -662,12 +709,13 @@ export default {
 			if (this.submitting) {
 				return;
 			}
-			useAppStore().hideAddTaskDialog();
+			this.handleClose();
 		},
 		handleClose() {
 			if (this.submitting) {
 				return;
 			}
+			this.invalidateUriCommitSession();
 			const appStore = useAppStore();
 			appStore.hideAddTaskDialog();
 			appStore.updateAddTaskOptions({});
@@ -684,35 +732,79 @@ export default {
 		},
 		handleUriSubmitShortcut(ev: KeyboardEvent) {
 			ev.preventDefault();
-			if (this.submitting || !this.canSubmit) {
+			if (this.submitting || this.uriPreparing || !this.canSubmit) {
 				return;
 			}
 			this.submitForm();
 		},
 		commitUriDraft(): Promise<void> {
-			this.uriCommit = this.uriCommit.then(async () => {
-				const text = this.uriDraft || "";
-				const parsed = splitTaskLinksWithRenames(text);
-				if (parsed.length === 0) {
-					return;
-				}
-				this.uriDraft = "";
-				const decoded = await Promise.all(
-					parsed.map(async ({ uri, rename }) => ({
-						uri: await decodeThunderLink(uri),
-						rename,
-					})),
-				);
-				const items = decoded.map(({ uri, rename }) => {
-					const item = createUriBatchItem(uri);
-					if (rename) {
-						item.out = rename;
+			if (
+				!this.uriSessionActive ||
+				!this.visible ||
+				this.uriPreparing
+			) {
+				return this.uriCommit;
+			}
+			const text = this.uriDraft || "";
+			if (!text.trim()) {
+				return this.uriCommit;
+			}
+			const generation = this.uriGeneration;
+			this.uriDraft = "";
+			const commit = async () => {
+				let enqueued = false;
+				try {
+					if (!this.isUriCommitCurrent(generation)) {
+						return;
 					}
-					return item;
-				});
-				useAppStore().enqueueBatchItems(items);
-				this.notifyDetectedProtocols(decoded.map((item) => item.uri));
-			});
+					const parsed = splitTaskLinksWithRenames(text);
+					if (parsed.length === 0) {
+						return;
+					}
+					const decoded = await Promise.all(
+						parsed.map(async ({ uri, rename }) => ({
+							uri: await decodeThunderLink(uri),
+							rename,
+						})),
+					);
+					if (!this.isUriCommitCurrent(generation)) {
+						return;
+					}
+					const items = decoded.map(({ uri, rename }) => {
+						const item = createUriBatchItem(uri);
+						if (rename) {
+							item.out = rename;
+						}
+						return item;
+					});
+					useAppStore().enqueueBatchItems(items);
+					enqueued = true;
+					this.notifyDetectedProtocols(decoded.map((item) => item.uri));
+				} catch (error) {
+					if (
+						!enqueued &&
+						this.isUriCommitCurrent(generation)
+					) {
+						this.restoreUriDraft(text);
+					}
+					logger.warn("[Risuko] URI commit failed; continuing:", error);
+				}
+			};
+		const previous = this.uriCommit.catch((error: unknown) => {
+			logger.warn("[Risuko] URI commit chain recovered:", error);
+		});
+		this.uriCommit = previous
+			.then(commit)
+			.catch((error: unknown) => {
+				if (
+					this.isUriCommitCurrent(generation) &&
+					!(this.uriDraft || "").trim()
+				) {
+					this.restoreUriDraft(text);
+				}
+				logger.warn("[Risuko] URI commit failed; continuing:", error);
+			})
+			.catch(() => undefined);
 			return this.uriCommit;
 		},
 		notifyDetectedProtocols(links: string[]) {
@@ -899,17 +991,42 @@ export default {
 			return { ok, fail };
 		},
 		async submitForm() {
-			if (this.submitting) {
+			if (this.submitting || this.uriPreparing) {
 				return;
 			}
 			const appStore = useAppStore();
-			if ((this.uriDraft || "").trim()) {
-				await this.commitUriDraft();
+			const generation = this.uriGeneration;
+			if (!this.isUriCommitCurrent(generation)) {
+				return;
+			}
+			try {
+				if ((this.uriDraft || "").trim()) {
+					this.commitUriDraft();
+				}
+				this.uriPreparing = true;
+				do {
+					const pending = this.uriCommit;
+					await pending;
+					if (pending === this.uriCommit) {
+						break;
+					}
+				} while (this.isUriCommitCurrent(generation));
+			} catch (error) {
+				if (this.isUriCommitCurrent(generation)) {
+					this.uriPreparing = false;
+					logger.warn("[Risuko] URI preparation failed:", error);
+				}
+				return;
+			}
+			if (!this.isUriCommitCurrent(generation)) {
+				return;
 			}
 			const items = appStore.addTaskQueue;
 			if (items.length === 0) {
+				this.uriPreparing = false;
 				return;
 			}
+			this.uriPreparing = false;
 			this.submitting = true;
 
 			const torrentItems = items.filter(
