@@ -60,13 +60,14 @@ pub async fn run_adc_download(
         .p2p_proxy_connector()
         .map_err(|error| format!("ADC P2P proxy: {error}"))?;
     if proxy.proxy().is_some() {
-        timeout(
-            Duration::from_secs(15),
-            connect_hub_with_proxy(&hub, &proxy),
-        )
-        .await
-        .map_err(|_| "ADC hub connect timeout".to_string())?
-        .map_err(|error| error.to_string())?;
+        tokio::select! {
+            result = timeout(Duration::from_secs(15), connect_hub_with_proxy(&hub, &proxy)) => {
+                result
+                    .map_err(|_| "ADC hub connect timeout".to_string())?
+                    .map_err(|error| error.to_string())?;
+            }
+            _ = cancel_token.cancelled() => return Err("cancelled".into()),
+        }
     }
 
     // Passive-only mode: no listening socket, so peer negotiation (`$ConnectToMe` / ADC `CTM`) cannot complete; bail before hub I/O so the task fails fast instead of hanging

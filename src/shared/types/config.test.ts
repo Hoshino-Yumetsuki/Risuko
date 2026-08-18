@@ -201,6 +201,10 @@ test("normalizes bypass entries and redacts proxy credentials", () => {
 		redactProxyUrl("http://alice:s3cret@proxy.example:8080"),
 		"http://proxy.example:8080/",
 	);
+	assert.equal(
+		redactProxyUrl("alice:s3cret@proxy.example:8080"),
+		"<invalid proxy>",
+	);
 	const redacted = redactProxyConfig({
 		http: { server: "http://alice:s3cret@proxy.example:8080" },
 		p2p: {

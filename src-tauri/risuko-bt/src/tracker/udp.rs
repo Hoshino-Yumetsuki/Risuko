@@ -189,22 +189,8 @@ async fn announce_inner_socket(
     req: &AnnounceRequest,
     is_ipv6: bool,
 ) -> Result<AnnounceResponse, TrackerError> {
-    let txn = rand::rng().random::<u32>();
-    let mut body = [0u8; 98];
-    be::write_u64(&mut body[0..8], conn_id);
-    be::write_u32(&mut body[8..12], ACTION_ANNOUNCE);
-    be::write_u32(&mut body[12..16], txn);
-    body[16..36].copy_from_slice(req.info_hash.as_bytes());
-    body[36..56].copy_from_slice(req.peer_id.as_bytes());
-    be::write_u64(&mut body[56..64], req.downloaded);
-    be::write_u64(&mut body[64..72], req.left);
-    be::write_u64(&mut body[72..80], req.uploaded);
-    be::write_u32(&mut body[80..84], event_code(req));
-    be::write_u32(&mut body[84..88], 0);
-    be::write_u32(&mut body[88..92], rand::rng().random::<u32>());
-    be::write_u32(&mut body[92..96], req.num_want);
-    be::write_u16(&mut body[96..98], req.port);
-    let mut buf = vec![0u8; announce_response_buffer_len(true, req.num_want)];
+    let (body, txn) = build_announce_body(conn_id, req);
+    let mut buf = vec![0u8; MAX_UDP_PACKET];
     for attempt in 0..3u32 {
         sock.send_to_host(&body, host, port)
             .await
@@ -212,6 +198,9 @@ async fn announce_inner_socket(
         let wait = Duration::from_secs(5u64 << attempt);
         match timeout(wait, sock.recv_from_target(&mut buf)).await {
             Ok(Ok((n, from))) if n >= 8 => {
+                if n == buf.len() {
+                    tracing::warn!("UDP tracker announce response may be truncated");
+                }
                 let action = be::read_u32(&buf[0..4]);
                 let rtxn = be::read_u32(&buf[4..8]);
                 if action == ACTION_ERROR {
@@ -223,7 +212,7 @@ async fn announce_inner_socket(
                         risuko_http::ProxyDatagramSource::Ip(address)
                             if address.is_ipv6()
                     );
-                    return Ok(parse_announce_response(
+                    return Ok(parse_announce_response_with_inference(
                         &buf[..n],
                         is_ipv6 || source_is_ipv6,
                     ));
@@ -240,29 +229,18 @@ async fn announce_inner(
     conn_id: u64,
     req: &AnnounceRequest,
 ) -> Result<AnnounceResponse, TrackerError> {
-    let txn = rand::rng().random::<u32>();
-    let mut body = [0u8; 98];
-    be::write_u64(&mut body[0..8], conn_id);
-    be::write_u32(&mut body[8..12], ACTION_ANNOUNCE);
-    be::write_u32(&mut body[12..16], txn);
-    body[16..36].copy_from_slice(req.info_hash.as_bytes());
-    body[36..56].copy_from_slice(req.peer_id.as_bytes());
-    be::write_u64(&mut body[56..64], req.downloaded);
-    be::write_u64(&mut body[64..72], req.left);
-    be::write_u64(&mut body[72..80], req.uploaded);
-    be::write_u32(&mut body[80..84], event_code(req));
-    be::write_u32(&mut body[84..88], 0); // IP (default)
-    be::write_u32(&mut body[88..92], rand::rng().random::<u32>());
-    be::write_u32(&mut body[92..96], req.num_want);
-    be::write_u16(&mut body[96..98], req.port);
+    let (body, txn) = build_announce_body(conn_id, req);
 
     let is_ipv6 = sock.peer_addr().map(|a| a.is_ipv6()).unwrap_or(false);
-    let mut buf = vec![0u8; announce_response_buffer_len(is_ipv6, req.num_want)];
+    let mut buf = vec![0u8; MAX_UDP_PACKET];
     for attempt in 0..3u32 {
         sock.send(&body).await?;
         let wait = Duration::from_secs(5u64 << attempt);
         match timeout(wait, sock.recv(&mut buf)).await {
             Ok(Ok(n)) if n >= 8 => {
+                if n == buf.len() {
+                    tracing::warn!("UDP tracker announce response may be truncated");
+                }
                 let action = be::read_u32(&buf[0..4]);
                 let rtxn = be::read_u32(&buf[4..8]);
                 if action == ACTION_ERROR {
@@ -279,14 +257,47 @@ async fn announce_inner(
     Err(TrackerError::Timeout)
 }
 
+#[cfg(test)]
 fn announce_response_buffer_len(is_ipv6: bool, num_want: u32) -> usize {
     const HEADER: usize = 20;
-    const MIN_PACKET: usize = 2048;
-    const MAX_UDP_PACKET: usize = 65_536;
+    const MIN_BUFFER_LEN: usize = 2048;
     let stride: usize = if is_ipv6 { 18 } else { 6 };
     HEADER
         .saturating_add(stride.saturating_mul(num_want as usize))
-        .clamp(MIN_PACKET, MAX_UDP_PACKET)
+        .clamp(MIN_BUFFER_LEN, MAX_UDP_PACKET)
+}
+
+const MAX_UDP_PACKET: usize = 65_536;
+
+fn build_announce_body(conn_id: u64, req: &AnnounceRequest) -> ([u8; 98], u32) {
+    let txn = rand::rng().random::<u32>();
+    let mut body = [0u8; 98];
+    be::write_u64(&mut body[0..8], conn_id);
+    be::write_u32(&mut body[8..12], ACTION_ANNOUNCE);
+    be::write_u32(&mut body[12..16], txn);
+    body[16..36].copy_from_slice(req.info_hash.as_bytes());
+    body[36..56].copy_from_slice(req.peer_id.as_bytes());
+    be::write_u64(&mut body[56..64], req.downloaded);
+    be::write_u64(&mut body[64..72], req.left);
+    be::write_u64(&mut body[72..80], req.uploaded);
+    be::write_u32(&mut body[80..84], event_code(req));
+    be::write_u32(&mut body[84..88], 0);
+    be::write_u32(&mut body[88..92], rand::rng().random::<u32>());
+    be::write_u32(&mut body[92..96], req.num_want);
+    be::write_u16(&mut body[96..98], req.port);
+    (body, txn)
+}
+
+fn parse_announce_response_with_inference(buf: &[u8], preferred_ipv6: bool) -> AnnounceResponse {
+    let payload_len = buf.len().saturating_sub(20);
+    let is_ipv6 = if preferred_ipv6 {
+        true
+    } else if payload_len > 0 && payload_len % 18 == 0 {
+        true
+    } else {
+        false
+    };
+    parse_announce_response(buf, is_ipv6)
 }
 
 fn parse_announce_response(buf: &[u8], is_ipv6: bool) -> AnnounceResponse {

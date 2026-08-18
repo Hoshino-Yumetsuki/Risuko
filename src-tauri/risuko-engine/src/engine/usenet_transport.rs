@@ -184,7 +184,7 @@ impl NntpConnection {
                 )
                 .await
                 .map_err(|_| NntpError::Timeout)?
-                .map_err(|error| NntpError::Io(io::Error::other(error.to_string())))?,
+                .map_err(proxy_connection_error)?,
             )),
             None => BoxedStream(Box::new(
                 timeout(
@@ -233,7 +233,7 @@ impl NntpConnection {
                 )
                 .await
                 .map_err(|_| NntpError::Timeout)?
-                .map_err(|error| NntpError::Io(io::Error::other(error.to_string())))?,
+                .map_err(proxy_connection_error)?,
             )),
             None => BoxedStream(Box::new(
                 timeout(
@@ -487,6 +487,15 @@ impl NntpConnection {
                 return Ok(());
             }
         }
+    }
+}
+
+fn proxy_connection_error(error: risuko_http::Error) -> NntpError {
+    match error {
+        risuko_http::Error::ProxyAuthentication(message) => {
+            NntpError::AuthenticationFailed { code: 0, message }
+        }
+        error => NntpError::Io(io::Error::other(error.to_string())),
     }
 }
 

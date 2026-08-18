@@ -90,8 +90,9 @@ fn dht_targets_match(expected: &DhtTarget, actual: &DhtTarget) -> bool {
             DhtTarget::Host(expected_host, expected_port),
             DhtTarget::Host(actual_host, actual_port),
         ) => expected_port == actual_port && expected_host.eq_ignore_ascii_case(actual_host),
-        // A transaction-correlated response may legitimately return the
-        // resolved IP for a hostname-form request.
+        // Proxy readers may report the hostname-form source used in a SOCKS5
+        // domain request as an IP address. Direct requests are normalized to
+        // Addr before registration and therefore never use this fallback.
         (DhtTarget::Host(..), DhtTarget::Addr(..)) => true,
         _ => false,
     }
@@ -273,9 +274,10 @@ impl Dht {
             ));
         }
         if let Some(proxy) = &self.proxy_datagram {
-            return proxy.send_to(packet, target).await.map_err(|error| {
-                std::io::Error::new(std::io::ErrorKind::Other, error.to_string())
-            });
+            return proxy
+                .send_to(packet, target)
+                .await
+                .map_err(|error| std::io::Error::other(error.to_string()));
         }
         match target {
             SocketAddr::V4(_) => self.sock.send_to(packet, target).await,
@@ -305,9 +307,7 @@ impl Dht {
             return proxy
                 .send_to_host(packet, host, port)
                 .await
-                .map_err(|error| {
-                    std::io::Error::new(std::io::ErrorKind::Other, error.to_string())
-                });
+                .map_err(|error| std::io::Error::other(error.to_string()));
         }
 
         let targets = lookup_host((host, port)).await?;
@@ -384,36 +384,33 @@ impl Dht {
         proxy: Option<risuko_http::ProxyConnector>,
     ) -> Result<DhtRouteSwap, String> {
         let requested_proxy = proxy.is_some();
-        let (previous, previous_proxy_requested, previous_error, next) = {
-            let cell = shared_dht_cell();
-            let mut guard = cell.lock().await;
-            let previous = guard.dht.clone();
-            let previous_proxy_requested = guard.proxy_requested;
-            let previous_error = guard.last_error.clone();
-
+        let (previous, previous_proxy_requested, previous_error) = {
+            let mut guard = shared_dht_cell().lock().await;
+            let snapshot = (
+                guard.dht.clone(),
+                guard.proxy_requested,
+                guard.last_error.clone(),
+            );
             guard.proxy_requested = Some(requested_proxy);
             guard.last_error = None;
-
-            let next = match Dht::spawn_with_proxy(proxy).await {
-                Ok(dht) => {
-                    let warm = dht.clone();
-                    tokio::spawn(async move { warm.bootstrap().await });
-                    Some(dht)
-                }
-                Err(error) => {
-                    // Keep the last known-good runtime available.  Callers use
-                    // this preparation step before swapping task routes, so a
-                    // failed bind must never turn a working DHT into an
-                    // implicit direct/absent route.
-                    guard.dht = previous.clone();
-                    guard.proxy_requested = previous_proxy_requested.or(Some(requested_proxy));
-                    guard.last_error = Some(error.to_string());
-                    return Err(error.to_string());
-                }
-            };
-            guard.dht = next.clone();
-            (previous, previous_proxy_requested, previous_error, next)
+            snapshot
         };
+        let next = match Dht::spawn_with_proxy(proxy).await {
+            Ok(dht) => {
+                let warm = dht.clone();
+                tokio::spawn(async move { warm.bootstrap().await });
+                Some(dht)
+            }
+            Err(error) => {
+                let message = error.to_string();
+                let mut guard = shared_dht_cell().lock().await;
+                guard.dht = previous.clone();
+                guard.proxy_requested = previous_proxy_requested.or(Some(requested_proxy));
+                guard.last_error = Some(message.clone());
+                return Err(message);
+            }
+        };
+        shared_dht_cell().lock().await.dht = next.clone();
 
         if let Some(previous) = previous.as_ref() {
             // A route swap may take time to rebuild the surrounding runtime;
@@ -435,9 +432,8 @@ impl Dht {
         force: bool,
     ) -> Option<Arc<Dht>> {
         let requested_proxy = proxy.is_some();
-        let (previous, next) = {
-            let cell = shared_dht_cell();
-            let mut guard = cell.lock().await;
+        let (previous, previous_proxy_requested) = {
+            let mut guard = shared_dht_cell().lock().await;
             if !force && guard.proxy_requested == Some(requested_proxy) && guard.dht.is_some() {
                 return guard.dht.clone();
             }
@@ -448,34 +444,35 @@ impl Dht {
             {
                 return None;
             }
-
+            let previous = guard.dht.clone();
             let previous_proxy_requested = guard.proxy_requested;
             guard.last_error = None;
-            let previous = guard.dht.clone();
-            let next = match Dht::spawn_with_proxy(proxy).await {
-                Ok(dht) => {
-                    guard.proxy_requested = Some(requested_proxy);
-                    // Warm the routing table
-                    let warm = dht.clone();
-                    tokio::spawn(async move { warm.bootstrap().await });
-                    Some(dht)
-                }
-                Err(error) => {
-                    guard.dht = previous.clone();
-                    guard.proxy_requested = previous_proxy_requested.or(Some(requested_proxy));
-                    guard.last_error = Some(error.to_string());
-                    tracing::warn!(
-                        proxied = requested_proxy,
-                        "DHT runtime initialization failed: {error}"
-                    );
-                    None
-                }
-            };
-            if next.is_some() {
-                guard.dht = next.clone();
-            }
-            (previous, next)
+            (previous, previous_proxy_requested)
         };
+
+        let next = match Dht::spawn_with_proxy(proxy).await {
+            Ok(dht) => {
+                let warm = dht.clone();
+                tokio::spawn(async move { warm.bootstrap().await });
+                Some(dht)
+            }
+            Err(error) => {
+                let mut guard = shared_dht_cell().lock().await;
+                guard.dht = previous.clone();
+                guard.proxy_requested = previous_proxy_requested.or(Some(requested_proxy));
+                guard.last_error = Some(error.to_string());
+                tracing::warn!(
+                    proxied = requested_proxy,
+                    "DHT runtime initialization failed: {error}"
+                );
+                None
+            }
+        };
+        if next.is_some() {
+            let mut guard = shared_dht_cell().lock().await;
+            guard.proxy_requested = Some(requested_proxy);
+            guard.dht = next.clone();
+        }
 
         if next.is_some() {
             if let Some(previous) = previous {
@@ -740,6 +737,12 @@ impl Dht {
         target: DhtTarget,
         info_hash: Id20,
     ) -> Option<GetPeersReply> {
+        let target = match target {
+            DhtTarget::Host(host, port) if self.proxy_datagram.is_none() => {
+                DhtTarget::Addr(lookup_host((host.as_str(), port)).await.ok()?.next()?)
+            }
+            target => target,
+        };
         let (txn, rx, _guard) = self.register_transaction(target.clone());
         let packet = build_get_peers(txn, &self.our_id, &info_hash);
         // `_guard` removes `txn` from `pending`

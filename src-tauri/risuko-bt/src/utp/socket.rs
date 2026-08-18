@@ -88,6 +88,22 @@ impl UtpSocket {
     /// Replace the outbound route while preserving the local listener
     pub async fn reconfigure_proxy(&self, proxy: Option<ProxyConnector>) {
         let _reconfigure_guard = self.reconfigure_lock.lock().await;
+
+        // Drop every connection routed through the old proxy before replacing
+        // the router. Direct-route connections remain registered.
+        let old_keys = self
+            .proxy_registry
+            .lock()
+            .values()
+            .copied()
+            .collect::<Vec<_>>();
+        if !old_keys.is_empty() {
+            let mut registry = self.registry.lock();
+            for key in old_keys {
+                registry.remove(&key);
+            }
+            self.proxy_registry.lock().clear();
+        }
         if let Some(handle) = self.proxy_router_handle.lock().take() {
             handle.abort();
         }
@@ -353,7 +369,10 @@ async fn proxy_router(
         }
         let (n, src) = match datagram.recv_from_target(&mut buf[..MAX_DATAGRAM]).await {
             Ok(value) => value,
-            Err(_) => continue,
+            Err(error) => {
+                tracing::warn!("uTP proxy receive loop terminated: {error}");
+                return;
+            }
         };
         let Ok((header, payload)) = UtpHeader::decode(&buf[..n]) else {
             continue;

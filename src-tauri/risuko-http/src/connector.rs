@@ -70,10 +70,7 @@ impl fmt::Debug for ProxyConnector {
 }
 
 fn redacted_proxy_url(proxy: &Proxy) -> String {
-    let mut url = proxy.url().clone();
-    let _ = url.set_username("");
-    let _ = url.set_password(None);
-    url.to_string()
+    proxy.redacted_url()
 }
 
 impl ProxyConnector {
@@ -513,8 +510,7 @@ impl ProxyDatagram {
                     }
                     result
                 } else {
-                    let _ = error;
-                    Err(Error::Socks5Required)
+                    Err(Error::ProxyProtocol(error.clone()))
                 }
             }
         }
@@ -574,8 +570,7 @@ impl ProxyDatagram {
                 error,
             } => {
                 if !no_proxy.matches_host_port(&host, Some(port)) {
-                    let _ = error;
-                    return Err(Error::Socks5Required);
+                    return Err(Error::ProxyProtocol(error.clone()));
                 }
                 let target = resolve_first(connector, &host, port).await?;
                 let result = self

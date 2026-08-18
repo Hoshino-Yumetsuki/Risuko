@@ -358,11 +358,8 @@ pub struct Proxy {
 
 impl std::fmt::Debug for Proxy {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut url = self.url.clone();
-        let _ = url.set_username("");
-        let _ = url.set_password(None);
         f.debug_struct("Proxy")
-            .field("url", &url)
+            .field("url", &self.redacted_url())
             .field("scheme", &self.scheme)
             .field("no_proxy", &self.no_proxy)
             .finish()
@@ -376,6 +373,13 @@ pub(crate) enum ProxyScheme {
 }
 
 impl Proxy {
+    pub(crate) fn redacted_url(&self) -> String {
+        let mut url = self.url.clone();
+        let _ = url.set_username("");
+        let _ = url.set_password(None);
+        url.to_string()
+    }
+
     pub fn all<U: AsRef<str>>(url: U) -> Result<Self> {
         let url = Url::parse(url.as_ref()).map_err(|e| Error::Url(e.to_string()))?;
         let scheme = match url.scheme() {

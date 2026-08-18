@@ -352,7 +352,19 @@ impl ConfigManager {
         user: &Map<String, Value>,
     ) -> Result<(), String> {
         self.system_config = system.clone();
-        self.user_config = user.clone();
+        self.user_config = user
+            .iter()
+            .map(|(key, value)| {
+                (
+                    key.clone(),
+                    if key == "proxy" {
+                        normalize_proxy_config(value)
+                    } else {
+                        value.clone()
+                    },
+                )
+            })
+            .collect();
         self.save_system()?;
         self.save_user()
     }

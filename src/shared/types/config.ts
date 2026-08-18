@@ -689,6 +689,9 @@ export const redactProxyUrl = (value: string): string => {
 	}
 	try {
 		const url = new URL(trimmed);
+		if (!url.hostname) {
+			return "<invalid proxy>";
+		}
 		url.username = "";
 		url.password = "";
 		return url.toString();

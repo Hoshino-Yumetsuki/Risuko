@@ -457,9 +457,11 @@ pub async fn restart_engine(
 
 pub async fn reload_p2p_profile(config: &ConfigManager) -> Result<(), Box<dyn std::error::Error>> {
     if !should_start_embedded_engine(config) {
+        tracing::info!("Skipping P2P profile reload because the embedded engine is disabled");
         return Ok(());
     }
     let Some(manager) = get_manager().await else {
+        tracing::info!("Skipping P2P profile reload because the engine manager is unavailable");
         return Ok(());
     };
     let options = EngineOptions::from_config(config.get_system_config(), config.get_user_config());
