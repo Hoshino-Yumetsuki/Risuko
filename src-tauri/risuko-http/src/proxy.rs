@@ -83,11 +83,6 @@ impl NoProxy {
             return false;
         }
 
-        // Loopback and localhost are always direct
-        if is_localhost_or_loopback(&host) {
-            return true;
-        }
-
         let ip = host.parse::<IpAddr>().ok();
         self.entries.iter().any(|entry| match entry {
             NoProxyEntry::Any => true,
@@ -135,17 +130,6 @@ fn normalize_host(host: &str) -> String {
         .trim_start_matches('.')
         .trim_end_matches('.')
         .to_ascii_lowercase()
-}
-
-fn is_localhost_or_loopback(host: &str) -> bool {
-    if host == "localhost" || host.ends_with(".localhost") {
-        return true;
-    }
-    match host.parse::<IpAddr>() {
-        Ok(IpAddr::V4(addr)) => addr.is_loopback(),
-        Ok(IpAddr::V6(addr)) => addr.is_loopback(),
-        Err(_) => false,
-    }
 }
 
 fn parse_entry(raw: &str) -> Option<NoProxyEntry> {
@@ -199,6 +183,14 @@ fn parse_entry(raw: &str) -> Option<NoProxyEntry> {
 
     if let Ok(addr) = host_part.parse::<IpAddr>() {
         return Some(NoProxyEntry::Ip { addr, port });
+    }
+
+    if host_part.contains('.')
+        && host_part
+            .split('.')
+            .all(|label| !label.is_empty() && label.bytes().all(|byte| byte.is_ascii_digit()))
+    {
+        return None;
     }
 
     if normalized.contains(':') {
@@ -269,6 +261,9 @@ fn split_host_port(raw: &str) -> Option<(String, Option<u16>)> {
 }
 
 fn parse_port(text: &str) -> Option<u16> {
+    if text.is_empty() || !text.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
     let port = text.parse::<u16>().ok()?;
     (port > 0).then_some(port)
 }
@@ -354,11 +349,24 @@ fn format_ip_port(addr: IpAddr, port: Option<u16>) -> String {
     format_host_port(&host, port)
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Proxy {
     pub(crate) url: Url,
     pub(crate) scheme: ProxyScheme,
     pub(crate) no_proxy: Option<Arc<NoProxy>>,
+}
+
+impl std::fmt::Debug for Proxy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut url = self.url.clone();
+        let _ = url.set_username("");
+        let _ = url.set_password(None);
+        f.debug_struct("Proxy")
+            .field("url", &url)
+            .field("scheme", &self.scheme)
+            .field("no_proxy", &self.no_proxy)
+            .finish()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -452,7 +460,7 @@ mod tests {
     #[test]
     fn drops_invalid_entries() {
         let bypass = NoProxy::parse(
-            "bad host,*.example.com,[example.com],example.com:0,example.com:nope,10.0.0.0/33,2001:db8::/129",
+            "bad host,*.example.com,[example.com],example.com:0,example.com:nope,10.0.0.0/33,2001:db8::/129,001.002.003.004",
         );
         assert!(bypass.is_empty());
     }
@@ -474,6 +482,14 @@ mod tests {
     }
 
     #[test]
+    fn signed_port_is_rejected() {
+        let bypass = NoProxy::parse("example.com:+80,example.org:8080");
+        assert_eq!(bypass.normalized(), "example.org:8080");
+        assert!(!bypass.matches_host_port("example.com", Some(80)));
+        assert!(bypass.matches_host_port("example.org", Some(8080)));
+    }
+
+    #[test]
     fn ipv4_and_ipv6_and_cidr_match() {
         let bypass = NoProxy::parse("127.0.0.1,2001:db8::1,10.10.0.0/16,2001:db8:abcd::/48");
         assert!(bypass.matches_host_port("127.0.0.1", Some(1)));
@@ -492,10 +508,15 @@ mod tests {
     }
 
     #[test]
-    fn localhost_and_loopback_are_always_direct() {
+    fn localhost_and_loopback_require_explicit_bypass() {
         let bypass = NoProxy::default();
+        assert!(!bypass.matches_host_port("localhost", Some(1)));
+        assert!(!bypass.matches_host_port("api.localhost", Some(1)));
+        assert!(!bypass.matches_host_port("127.42.1.2", Some(1)));
+        assert!(!bypass.matches_host_port("::1", Some(1)));
+
+        let bypass = NoProxy::parse("localhost,127.0.0.0/8,::1");
         assert!(bypass.matches_host_port("localhost", Some(1)));
-        assert!(bypass.matches_host_port("api.localhost", Some(1)));
         assert!(bypass.matches_host_port("127.42.1.2", Some(1)));
         assert!(bypass.matches_host_port("::1", Some(1)));
     }
@@ -515,6 +536,14 @@ mod tests {
         );
         let socks = Proxy::all("socks5://proxy.example:1080").unwrap();
         assert!(socks.http_basic_authorization().is_none());
+    }
+
+    #[test]
+    fn proxy_debug_redacts_credentials() {
+        let proxy = Proxy::all("http://user:secret@proxy.example:8080").unwrap();
+        let debug = format!("{proxy:?}");
+        assert!(!debug.contains("secret"));
+        assert!(debug.contains("proxy.example"));
     }
 
     #[test]

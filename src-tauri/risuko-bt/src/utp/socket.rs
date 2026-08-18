@@ -7,33 +7,43 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use bytes::{Bytes, BytesMut};
-use parking_lot::Mutex;
+use parking_lot::{Mutex, RwLock};
 use rand::RngExt;
 use tokio::net::UdpSocket;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, Mutex as AsyncMutex};
+
+use risuko_http::{NoProxy, ProxyConnector, ProxyDatagram, ProxyDatagramSource};
 
 use super::packet::{PacketType, UtpHeader};
-use super::stream::{self, DriverConfig, Role, RoleKind, UtpStream};
+use super::stream::{self, DatagramTransport, DriverConfig, Role, RoleKind, UtpStream};
 
-/// Demux key: a connection is identified by (peer address, our receive id)
 pub(crate) type ConnKey = (SocketAddr, u16);
 
-/// Maps each live connection to the channel its driver reads packets from
 pub(crate) type ConnRegistry =
     Arc<Mutex<HashMap<ConnKey, mpsc::UnboundedSender<(UtpHeader, Bytes)>>>>;
+pub(crate) type ProxyConnRegistry = Arc<Mutex<HashMap<u16, ConnKey>>>;
 
-/// Largest UDP datagram we'll read (µTP payloads are MSS-sized; this leaves room for the header plus any extensions)
 const MAX_DATAGRAM: usize = 2048;
 const ROUTER_READ_SLAB: usize = MAX_DATAGRAM * 64;
 const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// A µTP endpoint sharing a single UDP socket across all its connections
 pub struct UtpSocket {
     udp: Arc<UdpSocket>,
     registry: ConnRegistry,
+    proxy_registry: ProxyConnRegistry,
     local_addr: SocketAddr,
     accept_rx: tokio::sync::Mutex<mpsc::UnboundedReceiver<UtpStream>>,
     router_handle: Mutex<Option<tokio::task::JoinHandle<()>>>,
+    proxy_router_handle: Mutex<Option<tokio::task::JoinHandle<()>>>,
+    outbound: RwLock<OutboundRoute>,
+    reconfigure_lock: AsyncMutex<()>,
+}
+
+#[derive(Clone)]
+enum OutboundRoute {
+    Direct,
+    Proxy(Arc<ProxyDatagram>),
+    Blocked { error: String, bypass: NoProxy },
 }
 
 impl UtpSocket {
@@ -43,21 +53,85 @@ impl UtpSocket {
         Ok(Self::from_udp(Arc::new(udp)))
     }
 
+    pub async fn bind_with_proxy(
+        addr: SocketAddr,
+        proxy: Option<ProxyConnector>,
+    ) -> io::Result<Arc<Self>> {
+        let udp = Arc::new(UdpSocket::bind(addr).await?);
+        let socket = Self::from_udp(udp);
+        socket.reconfigure_proxy(proxy).await;
+        Ok(socket)
+    }
+
     /// Build a µTP endpoint over an existing UDP socket (e.g. one shared with another protocol on the same port)
     pub fn from_udp(udp: Arc<UdpSocket>) -> Arc<Self> {
         let local_addr = udp
             .local_addr()
             .unwrap_or_else(|_| SocketAddr::from(([0, 0, 0, 0], 0)));
         let registry: ConnRegistry = Arc::new(Mutex::new(HashMap::new()));
+        let proxy_registry: ProxyConnRegistry = Arc::new(Mutex::new(HashMap::new()));
         let (accept_tx, accept_rx) = mpsc::unbounded_channel();
         let router_handle = tokio::spawn(router(udp.clone(), registry.clone(), accept_tx));
         Arc::new(Self {
             udp,
             registry,
+            proxy_registry,
             local_addr,
             accept_rx: tokio::sync::Mutex::new(accept_rx),
             router_handle: Mutex::new(Some(router_handle)),
+            proxy_router_handle: Mutex::new(None),
+            outbound: RwLock::new(OutboundRoute::Direct),
+            reconfigure_lock: AsyncMutex::new(()),
         })
+    }
+
+    /// Replace the outbound route while preserving the local listener
+    pub async fn reconfigure_proxy(&self, proxy: Option<ProxyConnector>) {
+        let _reconfigure_guard = self.reconfigure_lock.lock().await;
+        if let Some(handle) = self.proxy_router_handle.lock().take() {
+            handle.abort();
+        }
+
+        let route = match proxy {
+            None => {
+                *self.outbound.write() = OutboundRoute::Direct;
+                OutboundRoute::Direct
+            }
+            Some(connector) if connector.udp_proxy().is_none() => {
+                *self.outbound.write() = OutboundRoute::Direct;
+                OutboundRoute::Direct
+            }
+            Some(connector) => {
+                let bypass = connector.udp_no_proxy().unwrap_or_default();
+                *self.outbound.write() = OutboundRoute::Blocked {
+                    error: "P2P proxy UDP association is being established".into(),
+                    bypass: bypass.clone(),
+                };
+                let bind = if bypass.is_empty() {
+                    connector.bind_udp().await
+                } else {
+                    connector.bind_udp_with_bypass().await
+                };
+                match bind {
+                    Ok(datagram) => {
+                        let datagram = Arc::new(datagram);
+                        let router_datagram = datagram.clone();
+                        let registry = self.registry.clone();
+                        let proxy_registry = self.proxy_registry.clone();
+                        let handle = tokio::spawn(async move {
+                            proxy_router(router_datagram, registry, proxy_registry).await
+                        });
+                        *self.proxy_router_handle.lock() = Some(handle);
+                        OutboundRoute::Proxy(datagram)
+                    }
+                    Err(error) => OutboundRoute::Blocked {
+                        error: error.to_string(),
+                        bypass,
+                    },
+                }
+            }
+        };
+        *self.outbound.write() = route;
     }
 
     pub fn local_addr(&self) -> SocketAddr {
@@ -74,12 +148,17 @@ impl UtpSocket {
         remote: SocketAddr,
         timeout: Duration,
     ) -> io::Result<UtpStream> {
-        // Reserve a receive id that doesn't collide with an existing connection to this peer (and register the incoming channel)
+        let route = self.outbound.read().clone();
+        let uses_proxy = matches!(route, OutboundRoute::Proxy(_));
+
         let (key, inc_rx) = {
+            let mut proxy_registry = self.proxy_registry.lock();
             let mut reg = self.registry.lock();
             let mut id: u16 = rand::rng().random();
             let mut tries = 0;
-            while reg.contains_key(&(remote, id)) {
+            while reg.contains_key(&(remote, id))
+                || (uses_proxy && proxy_registry.contains_key(&id))
+            {
                 id = id.wrapping_add(1);
                 tries += 1;
                 if tries > 64 {
@@ -92,19 +171,37 @@ impl UtpSocket {
             let key = (remote, id);
             let (inc_tx, inc_rx) = mpsc::unbounded_channel();
             reg.insert(key, inc_tx);
+            if uses_proxy {
+                proxy_registry.insert(id, key);
+            }
             (key, inc_rx)
         };
         let recv_id = key.1;
         let send_id = recv_id.wrapping_add(1);
 
+        let transport = match route {
+            OutboundRoute::Direct => DatagramTransport::Direct(self.udp.clone()),
+            OutboundRoute::Proxy(proxy) => DatagramTransport::Proxy(proxy),
+            OutboundRoute::Blocked { error, bypass } => {
+                if bypass.matches_host_port(&remote.ip().to_string(), Some(remote.port())) {
+                    DatagramTransport::Direct(self.udp.clone())
+                } else {
+                    self.registry.lock().remove(&key);
+                    self.proxy_registry.lock().remove(&recv_id);
+                    return Err(io::Error::new(io::ErrorKind::Unsupported, error));
+                }
+            }
+        };
+
         let (done_tx, done_rx) = oneshot::channel();
         let shared = stream::new_shared(remote, send_id, RoleKind::Initiator);
         let cfg = DriverConfig {
-            udp: self.udp.clone(),
+            transport,
             remote,
             incoming: inc_rx,
             registry: self.registry.clone(),
             key,
+            proxy_registry: uses_proxy.then(|| self.proxy_registry.clone()),
         };
         let driver_shared = shared.clone();
         tokio::spawn(stream::drive(driver_shared, cfg, Role::Initiator(done_tx)));
@@ -124,6 +221,7 @@ impl UtpSocket {
                 }
                 shared.nudge.notify_one();
                 self.registry.lock().remove(&key);
+                self.proxy_registry.lock().remove(&recv_id);
                 Err(io::Error::new(
                     io::ErrorKind::TimedOut,
                     "utp connect timed out",
@@ -144,7 +242,11 @@ impl UtpSocket {
         if let Some(handle) = self.router_handle.lock().take() {
             handle.abort();
         }
+        if let Some(handle) = self.proxy_router_handle.lock().take() {
+            handle.abort();
+        }
         self.registry.lock().clear();
+        self.proxy_registry.lock().clear();
     }
 }
 
@@ -153,7 +255,11 @@ impl Drop for UtpSocket {
         if let Some(handle) = self.router_handle.get_mut().take() {
             handle.abort();
         }
+        if let Some(handle) = self.proxy_router_handle.get_mut().take() {
+            handle.abort();
+        }
         self.registry.lock().clear();
+        self.proxy_registry.lock().clear();
     }
 }
 
@@ -222,15 +328,64 @@ fn open_inbound(
     shared.state.lock().seed_responder(syn);
 
     let cfg = DriverConfig {
-        udp: udp.clone(),
+        transport: DatagramTransport::Direct(udp.clone()),
         remote: src,
         incoming: inc_rx,
         registry: registry.clone(),
         key,
+        proxy_registry: None,
     };
     tokio::spawn(stream::drive(shared.clone(), cfg, Role::Responder));
     // If nobody is accepting, the stream drops immediately and its driver tears the connection down cleanly
     let _ = accept_tx.send(UtpStream::new(shared));
+}
+
+async fn proxy_router(
+    datagram: Arc<ProxyDatagram>,
+    registry: ConnRegistry,
+    proxy_registry: ProxyConnRegistry,
+) {
+    let mut buf = BytesMut::with_capacity(ROUTER_READ_SLAB);
+    buf.resize(ROUTER_READ_SLAB, 0);
+    loop {
+        if buf.len() < MAX_DATAGRAM {
+            buf.resize(ROUTER_READ_SLAB, 0);
+        }
+        let (n, src) = match datagram.recv_from_target(&mut buf[..MAX_DATAGRAM]).await {
+            Ok(value) => value,
+            Err(_) => continue,
+        };
+        let Ok((header, payload)) = UtpHeader::decode(&buf[..n]) else {
+            continue;
+        };
+        let payload_offset = n - payload.len();
+        let payload = buf.split_to(n).freeze().slice(payload_offset..);
+        match src {
+            ProxyDatagramSource::Ip(src) => {
+                let key = (src, header.connection_id);
+                if let Some(tx) = registry.lock().get(&key) {
+                    let _ = tx.send((header, payload));
+                }
+            }
+            ProxyDatagramSource::Host(host, port) => {
+                let key = proxy_registry.lock().get(&header.connection_id).copied();
+                let Some(key) = key else {
+                    continue;
+                };
+                if key.0.port() != port
+                    || !risuko_http::datagram_source_matches(
+                        &ProxyDatagramSource::Host(host, port),
+                        key.0,
+                    )
+                {
+                    continue;
+                }
+                if let Some(tx) = registry.lock().get(&key) {
+                    let _ = tx.send((header, payload));
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]

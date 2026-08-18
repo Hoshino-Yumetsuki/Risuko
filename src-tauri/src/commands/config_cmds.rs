@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use futures_util::{stream, StreamExt};
-use serde_json::{Map, Value};
+use serde_json::{json, Map, Value};
 use tauri::{AppHandle, State};
 
 #[cfg(not(target_os = "android"))]
@@ -33,7 +33,7 @@ pub fn get_app_config(handle: AppHandle, state: State<'_, AppState>) -> Result<V
 }
 
 #[tauri::command]
-pub fn save_preference(
+pub async fn save_preference(
     handle: AppHandle,
     state: State<'_, AppState>,
     config: Value,
@@ -62,17 +62,24 @@ pub fn save_preference(
         }
     }
 
-    if let Some(proxy) = user.get_mut("proxy").and_then(Value::as_object_mut) {
-        let bypass = proxy
-            .get("bypass")
-            .and_then(Value::as_str)
-            .map(normalize_proxy_bypass)
-            .unwrap_or_default();
-        proxy.insert("bypass".into(), Value::String(bypass));
+    if let Some(proxy) = user.get("proxy").cloned() {
+        user.insert(
+            "proxy".into(),
+            risuko_engine::config::normalize_proxy_config(&proxy),
+        );
     }
 
-    let save_result = {
+    let (previous_system_config, previous_user_config) = {
+        let mgr = state.config.lock().map_err(|e| e.to_string())?;
+        (
+            mgr.get_system_config().clone(),
+            mgr.get_user_config().clone(),
+        )
+    };
+
+    let save_result: Result<(bool, std::path::PathBuf), String> = (|| {
         let mut mgr = state.config.lock().map_err(|e| e.to_string())?;
+        let previous_p2p = p2p_profile_value(mgr.get_system_config(), mgr.get_user_config());
 
         if let Some(system) = config.get("system").and_then(|v| v.as_object()) {
             let mut system = system.clone();
@@ -85,28 +92,209 @@ pub fn save_preference(
             mgr.set_user_config_map(&user)?;
         }
 
-        Ok(())
-    };
+        let p2p_profile_changed =
+            previous_p2p != p2p_profile_value(mgr.get_system_config(), mgr.get_user_config());
+        Ok((p2p_profile_changed, mgr.config_dir().to_path_buf()))
+    })();
 
-    if let Err(err) = save_result {
-        if let (Some(previous), Some(current)) = (previous_open_at_login, open_at_login) {
-            if previous != current {
-                if let Err(rollback_err) = apply_open_at_login(&handle, previous) {
-                    return Err(format!(
-                        "{}; also failed to restore open-at-login to {}: {}",
-                        err, previous, rollback_err
-                    ));
+    let (p2p_profile_changed, config_dir) = match save_result {
+        Ok(result) => result,
+        Err(err) => {
+            restore_runtime_options(
+                &previous_system_config,
+                &previous_user_config,
+                config.get("system").and_then(Value::as_object),
+            )
+            .await;
+            if let (Some(previous), Some(current)) = (previous_open_at_login, open_at_login) {
+                if previous != current {
+                    if let Err(rollback_err) = apply_open_at_login(&handle, previous) {
+                        return Err(format!(
+                            "{}; also failed to restore open-at-login to {}: {}",
+                            err, previous, rollback_err
+                        ));
+                    }
                 }
             }
+            return Err(err);
         }
-        return Err(err);
+    };
+
+    if p2p_profile_changed {
+        let reload_config = risuko_engine::config::ConfigManager::with_dir(config_dir)
+            .map_err(|error| error.to_string());
+        let reload_config = match reload_config {
+            Ok(config) => config,
+            Err(error_message) => {
+                let rollback_message = {
+                    let rollback = state
+                        .config
+                        .lock()
+                        .map_err(|lock_error| lock_error.to_string())
+                        .and_then(|mut mgr| {
+                            mgr.replace_config_maps(&previous_system_config, &previous_user_config)
+                        });
+                    rollback.err().map(|rollback_error| {
+                        format!("; also failed to restore persisted preferences: {rollback_error}")
+                    })
+                };
+                restore_runtime_options(
+                    &previous_system_config,
+                    &previous_user_config,
+                    config.get("system").and_then(Value::as_object),
+                )
+                .await;
+                return Err(format!(
+                    "{}{}",
+                    error_message,
+                    rollback_message.as_deref().unwrap_or_default()
+                ));
+            }
+        };
+        let reload_result = risuko_engine::engine::reload_p2p_profile(&reload_config)
+            .await
+            .map_err(|error| error.to_string());
+        if let Err(error) = reload_result {
+            let rollback = state
+                .config
+                .lock()
+                .map_err(|lock_error| lock_error.to_string())
+                .and_then(|mut mgr| {
+                    mgr.replace_config_maps(&previous_system_config, &previous_user_config)
+                });
+            let rollback_message = rollback.err().map(|rollback_error| {
+                format!("; also failed to restore persisted preferences: {rollback_error}")
+            });
+            restore_runtime_options(
+                &previous_system_config,
+                &previous_user_config,
+                config.get("system").and_then(Value::as_object),
+            )
+            .await;
+            if let (Some(previous), Some(current)) = (previous_open_at_login, open_at_login) {
+                if previous != current {
+                    if let Err(rollback_error) = apply_open_at_login(&handle, previous) {
+                        return Err(format!(
+                            "{error}{}; also failed to restore open-at-login: {rollback_error}",
+                            rollback_message.as_deref().unwrap_or_default()
+                        ));
+                    }
+                }
+            }
+            return Err(format!(
+                "{error}{}",
+                rollback_message.as_deref().unwrap_or_default()
+            ));
+        }
     }
 
     Ok(())
 }
 
+async fn restore_runtime_options(
+    previous_system: &Map<String, Value>,
+    previous_user: &Map<String, Value>,
+    changed_system: Option<&Map<String, Value>>,
+) {
+    let Some(manager) = risuko_engine::engine::get_manager().await else {
+        return;
+    };
+    manager
+        .change_global_option(runtime_options_to_restore(
+            previous_system,
+            previous_user,
+            changed_system,
+        ))
+        .await;
+}
+
+fn runtime_options_to_restore(
+    previous_system: &Map<String, Value>,
+    previous_user: &Map<String, Value>,
+    changed_system: Option<&Map<String, Value>>,
+) -> Map<String, Value> {
+    let restored =
+        risuko_engine::engine::options::EngineOptions::from_config(previous_system, previous_user);
+    let mut options = changed_system
+        .into_iter()
+        .flat_map(|system| system.keys())
+        .map(|key| {
+            (
+                key.clone(),
+                restored
+                    .global
+                    .get(key)
+                    .cloned()
+                    .unwrap_or_else(|| Value::String(String::new())),
+            )
+        })
+        .collect::<Map<_, _>>();
+    for key in [
+        "all-proxy",
+        "no-proxy",
+        "p2p-proxy",
+        "p2p-no-proxy",
+        "p2p-udp-proxy",
+        "p2p-udp-no-proxy",
+    ] {
+        options.insert(
+            key.to_string(),
+            restored
+                .global
+                .get(key)
+                .cloned()
+                .unwrap_or_else(|| Value::String(String::new())),
+        );
+    }
+    options
+}
+
+fn p2p_profile_value(system: &Map<String, Value>, user: &Map<String, Value>) -> Value {
+    let options = risuko_engine::engine::options::EngineOptions::from_config(system, user);
+    json!({
+        "server": options.get_str("p2p-proxy").unwrap_or("").trim(),
+        "bypass": options.get_str("p2p-no-proxy").unwrap_or(""),
+        "udp": {
+            "server": options.get_str("p2p-udp-proxy").unwrap_or("").trim(),
+            "bypass": options.get_str("p2p-udp-no-proxy").unwrap_or(""),
+        },
+    })
+}
+
 fn normalize_proxy_bypass(value: &str) -> String {
     NoProxy::parse(value).normalized().to_string()
+}
+
+fn normalized_proxy(value: Option<&Value>) -> Value {
+    risuko_engine::config::normalize_proxy_config(value.unwrap_or(&Value::Null))
+}
+
+fn proxy_profile<'a>(proxy: &'a Value, name: &str) -> Option<&'a Map<String, Value>> {
+    proxy.get(name).and_then(Value::as_object)
+}
+
+fn profile_enabled(profile: Option<&Map<String, Value>>) -> bool {
+    value_as_bool(profile.and_then(|p| p.get("enable")))
+        && profile
+            .and_then(|p| p.get("server"))
+            .and_then(Value::as_str)
+            .is_some_and(|server| !server.trim().is_empty())
+}
+
+fn profile_server(profile: Option<&Map<String, Value>>) -> String {
+    profile
+        .and_then(|p| p.get("server"))
+        .and_then(Value::as_str)
+        .map(|server| server.trim().to_string())
+        .unwrap_or_default()
+}
+
+fn profile_bypass(profile: Option<&Map<String, Value>>) -> String {
+    profile
+        .and_then(|p| p.get("bypass"))
+        .and_then(Value::as_str)
+        .map(normalize_proxy_bypass)
+        .unwrap_or_default()
 }
 
 fn value_as_bool(value: Option<&Value>) -> bool {
@@ -157,46 +345,129 @@ pub fn prepare_preference_patch(params: Value) -> Result<Value, String> {
         map.insert("remote-time".to_string(), Value::from(enabled));
     }
 
-    let Some(proxy_value) = map.get("proxy").and_then(|value| value.as_object()) else {
+    let Some(proxy_value) = map.get("proxy") else {
         return Ok(Value::Object(map));
     };
 
-    let mut proxy = proxy_value.clone();
-    let normalized_bypass = proxy
-        .get("bypass")
-        .and_then(|value| value.as_str())
-        .map(normalize_proxy_bypass)
-        .unwrap_or_default();
-    proxy.insert(
-        "bypass".to_string(),
-        Value::String(normalized_bypass.clone()),
-    );
-    map.insert("proxy".to_string(), Value::Object(proxy.clone()));
-
-    let proxy_enabled = value_as_bool(proxy.get("enable"));
-    let proxy_server = proxy
-        .get("server")
-        .and_then(|value| value.as_str())
-        .map(|value| value.trim().to_string())
-        .unwrap_or_default();
+    let http_profile_is_explicit =
+        risuko_engine::config::proxy_http_profile_is_explicit(proxy_value)
+            || proxy_value.get("http").is_some();
+    let p2p_profile_is_explicit = proxy_value.as_object().is_some_and(|root| {
+        root.contains_key("p2p")
+            && (root
+                .get("p2p-profile-explicit")
+                .is_some_and(|value| value_as_bool(Some(value)))
+                || risuko_engine::config::proxy_p2p_profile_is_explicit(proxy_value)
+                || (!root.contains_key("http")
+                    && !risuko_engine::config::proxy_has_legacy_fields(proxy_value)))
+    }) || [
+        "p2p-proxy",
+        "p2p-no-proxy",
+        "p2p-udp-proxy",
+        "p2p-udp-no-proxy",
+    ]
+    .iter()
+    .any(|key| map.contains_key(*key));
+    let proxy = normalized_proxy(Some(proxy_value));
+    map.insert("proxy".to_string(), proxy.clone());
+    let http = proxy_profile(&proxy, "http");
+    let p2p = proxy_profile(&proxy, "p2p");
     let use_download_proxy =
-        proxy_enabled && !proxy_server.is_empty() && contains_download_scope(proxy.get("scope"));
-
-    let no_proxy = if use_download_proxy {
-        normalized_bypass
+        profile_enabled(http) && contains_download_scope(http.and_then(|p| p.get("scope")));
+    let http_server = profile_server(http);
+    let http_bypass = profile_bypass(http);
+    let p2p_server = profile_server(p2p);
+    let p2p_bypass = profile_bypass(p2p);
+    let p2p_udp = p2p
+        .and_then(|profile| profile.get("udp"))
+        .and_then(Value::as_object);
+    let p2p_udp_override = p2p_udp
+        .and_then(|profile| profile.get("server"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .unwrap_or("");
+    let p2p_udp_server = if p2p_udp_override.is_empty() {
+        p2p_server.clone()
     } else {
-        String::new()
+        p2p_udp_override.to_string()
     };
+    let p2p_udp_bypass = if p2p_udp_override.is_empty() {
+        p2p_bypass.clone()
+    } else {
+        p2p_udp
+            .and_then(|profile| profile.get("bypass"))
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string()
+    };
+    let p2p_enabled = value_as_bool(p2p.and_then(|profile| profile.get("enable")))
+        && (!p2p_server.is_empty() || !p2p_udp_server.is_empty());
 
-    map.insert(
-        "all-proxy".to_string(),
-        Value::String(if use_download_proxy {
-            proxy_server
-        } else {
-            String::new()
-        }),
-    );
-    map.insert("no-proxy".to_string(), Value::String(no_proxy));
+    if profile_enabled(http) {
+        risuko_http::Proxy::all(&http_server).map_err(|e| format!("Invalid HTTP proxy: {e}"))?;
+    }
+    if p2p_enabled {
+        if !p2p_server.is_empty() {
+            risuko_http::Proxy::all(&p2p_server).map_err(|e| format!("Invalid P2P proxy: {e}"))?;
+        }
+        if !p2p_udp_server.is_empty() && p2p_udp_server != p2p_server {
+            risuko_http::Proxy::all(&p2p_udp_server)
+                .map_err(|e| format!("Invalid P2P UDP proxy: {e}"))?;
+        }
+    }
+
+    if use_download_proxy || http_profile_is_explicit {
+        map.insert(
+            "all-proxy".to_string(),
+            Value::String(if use_download_proxy {
+                http_server
+            } else {
+                String::new()
+            }),
+        );
+        map.insert(
+            "no-proxy".to_string(),
+            Value::String(if use_download_proxy {
+                http_bypass
+            } else {
+                String::new()
+            }),
+        );
+    }
+    if p2p_profile_is_explicit {
+        map.insert(
+            "p2p-proxy".to_string(),
+            Value::String(if p2p_enabled {
+                p2p_server
+            } else {
+                String::new()
+            }),
+        );
+        map.insert(
+            "p2p-no-proxy".to_string(),
+            Value::String(if p2p_enabled {
+                p2p_bypass
+            } else {
+                String::new()
+            }),
+        );
+        map.insert(
+            "p2p-udp-proxy".to_string(),
+            Value::String(if p2p_enabled {
+                p2p_udp_server
+            } else {
+                String::new()
+            }),
+        );
+        map.insert(
+            "p2p-udp-no-proxy".to_string(),
+            Value::String(if p2p_enabled {
+                p2p_udp_bypass
+            } else {
+                String::new()
+            }),
+        );
+    }
 
     Ok(Value::Object(map))
 }
@@ -372,14 +643,17 @@ fn configured_proxy_from_config(
     system: &Map<String, Value>,
     scope: &str,
 ) -> Result<Option<(String, NoProxy)>, String> {
-    let nested = user.get("proxy").and_then(Value::as_object);
-    let enabled = value_as_bool(nested.and_then(|proxy| proxy.get("enable")));
-    let server = nested
-        .and_then(|proxy| proxy.get("server"))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty());
-    let scope_selected = nested
+    let raw_proxy = user.get("proxy");
+    let http_profile_is_explicit =
+        raw_proxy.is_some_and(risuko_engine::config::proxy_http_profile_is_explicit);
+    let normalized = raw_proxy.map(|value| normalized_proxy(Some(value)));
+    let nested = normalized.as_ref().and_then(|value| value.as_object());
+    let http = nested
+        .and_then(|proxy| proxy.get("http"))
+        .and_then(Value::as_object);
+    let enabled = profile_enabled(http);
+    let server = profile_server(http);
+    let scope_selected = http
         .map(|proxy| match proxy.get("scope") {
             None => true,
             Some(value) => scope_contains(value, scope),
@@ -387,31 +661,30 @@ fn configured_proxy_from_config(
         .unwrap_or(false);
 
     let (server, bypass) = if enabled && scope_selected {
-        (
-            server,
-            nested
-                .and_then(|proxy| proxy.get("bypass"))
-                .and_then(Value::as_str),
-        )
-    } else if scope == "download" && nested.is_none() {
+        (Some(server), Some(profile_bypass(http)))
+    } else if scope == "download" && !http_profile_is_explicit {
         (
             system
                 .get("all-proxy")
                 .and_then(Value::as_str)
                 .map(str::trim)
-                .filter(|value| !value.is_empty()),
-            system.get("no-proxy").and_then(Value::as_str),
+                .filter(|value| !value.is_empty())
+                .map(str::to_string),
+            system
+                .get("no-proxy")
+                .and_then(Value::as_str)
+                .map(str::to_string),
         )
     } else {
         (None, None)
     };
 
-    let Some(server) = server else {
+    let Some(server) = server.filter(|value| !value.is_empty()) else {
         return Ok(None);
     };
-    let matcher = NoProxy::parse(bypass.unwrap_or_default());
+    let matcher = NoProxy::parse(bypass.as_deref().unwrap_or_default());
 
-    risuko_http::Proxy::all(server).map_err(|e| format!("Invalid configured proxy: {e}"))?;
+    risuko_http::Proxy::all(&server).map_err(|e| format!("Invalid configured proxy: {e}"))?;
     Ok(Some((server.to_string(), matcher)))
 }
 
@@ -545,6 +818,48 @@ mod tests {
         ]))));
     }
 
+    #[test]
+    fn serverless_p2p_profile_does_not_change_the_effective_route() {
+        let before = Map::new();
+        let after = serde_json::from_value::<Map<String, Value>>(json!({
+            "proxy": {
+                "p2p": {
+                    "enable": true,
+                    "server": "",
+                    "bypass": "localhost"
+                }
+            }
+        }))
+        .unwrap();
+
+        assert_eq!(
+            p2p_profile_value(&Map::new(), &before),
+            p2p_profile_value(&Map::new(), &after),
+        );
+    }
+
+    #[test]
+    fn runtime_restore_includes_changed_non_proxy_options() {
+        let previous_system = serde_json::from_value::<Map<String, Value>>(json!({
+            "connect-timeout": "30",
+            "all-proxy": "http://old.example:8080"
+        }))
+        .unwrap();
+        let changed_system = serde_json::from_value::<Map<String, Value>>(json!({
+            "connect-timeout": "5",
+            "all-proxy": "http://new.example:8080"
+        }))
+        .unwrap();
+
+        let restored =
+            runtime_options_to_restore(&previous_system, &Map::new(), Some(&changed_system));
+        assert_eq!(restored.get("connect-timeout"), Some(&json!("30")));
+        assert_eq!(
+            restored.get("all-proxy"),
+            Some(&json!("http://old.example:8080"))
+        );
+    }
+
     // -- prepare_preference_patch --
 
     #[test]
@@ -614,6 +929,40 @@ mod tests {
     }
 
     #[test]
+    fn prepare_explicit_empty_legacy_proxy_clears_all_proxy() {
+        let result = prepare_preference_patch(json!({
+            "proxy": {
+                "enable": false,
+                "server": "",
+                "bypass": "",
+                "scope": []
+            }
+        }))
+        .unwrap();
+        let map = result.as_object().unwrap();
+        assert_eq!(map.get("all-proxy"), Some(&json!("")));
+        assert_eq!(map.get("no-proxy"), Some(&json!("")));
+    }
+
+    #[test]
+    fn prepare_explicit_empty_nested_http_proxy_clears_all_proxy() {
+        let result = prepare_preference_patch(json!({
+            "proxy": {
+                "http": {
+                    "enable": false,
+                    "server": "",
+                    "bypass": "",
+                    "scope": []
+                }
+            }
+        }))
+        .unwrap();
+        let map = result.as_object().unwrap();
+        assert_eq!(map.get("all-proxy"), Some(&json!("")));
+        assert_eq!(map.get("no-proxy"), Some(&json!("")));
+    }
+
+    #[test]
     fn prepare_proxy_enabled_with_download_scope_sets_all_proxy() {
         let result = prepare_preference_patch(json!({
             "proxy": {
@@ -650,10 +999,12 @@ mod tests {
     fn prepare_proxy_enabled_without_download_scope_clears_all_proxy() {
         let result = prepare_preference_patch(json!({
             "proxy": {
-                "enable": true,
-                "server": "http://proxy.example.com:8080",
-                "scope": ["update"]
-                ,"bypass": "Example.com, example.com"
+                "http": {
+                    "enable": true,
+                    "server": "http://proxy.example.com:8080",
+                    "scope": ["update-app"],
+                    "bypass": "Example.com, example.com"
+                }
             }
         }))
         .unwrap();
@@ -661,22 +1012,137 @@ mod tests {
         assert_eq!(map.get("all-proxy"), Some(&json!("")));
         assert_eq!(map.get("no-proxy"), Some(&json!("")));
         assert_eq!(
-            map.get("proxy").and_then(|value| value.get("bypass")),
+            map.get("proxy")
+                .and_then(|value| value.get("http"))
+                .and_then(|value| value.get("bypass")),
             Some(&json!("example.com"))
         );
     }
 
     #[test]
-    fn prepare_proxy_missing_scope_treats_as_no_download() {
+    fn prepare_proxy_accepts_udp_only_p2p_profile() {
         let result = prepare_preference_patch(json!({
             "proxy": {
-                "enable": true,
-                "server": "http://proxy.example.com:8080"
+                "p2p": {
+                    "enable": true,
+                    "server": "",
+                    "udp": {
+                        "server": "socks5h://udp.example:1080",
+                        "bypass": "localhost"
+                    }
+                }
             }
         }))
         .unwrap();
         let map = result.as_object().unwrap();
-        assert_eq!(map.get("all-proxy"), Some(&json!("")));
+        assert_eq!(map.get("p2p-proxy"), Some(&json!("")));
+        assert_eq!(
+            map.get("p2p-udp-proxy"),
+            Some(&json!("socks5h://udp.example:1080"))
+        );
+        assert_eq!(map.get("p2p-udp-no-proxy"), Some(&json!("localhost")));
+    }
+
+    #[test]
+    fn prepare_proxy_validates_an_update_only_http_profile() {
+        let error = prepare_preference_patch(json!({
+            "proxy": {
+                "http": {
+                    "enable": true,
+                    "server": "https://proxy.example:443",
+                    "scope": ["update-app"]
+                }
+            }
+        }))
+        .unwrap_err();
+
+        assert!(error.contains("Invalid HTTP proxy"));
+    }
+
+    #[test]
+    fn prepare_proxy_missing_scope_defaults_to_all_http_scopes() {
+        let result = prepare_preference_patch(json!({
+            "proxy": {
+                "http": {
+                    "enable": true,
+                    "server": "http://proxy.example.com:8080"
+                }
+            }
+        }))
+        .unwrap();
+        let map = result.as_object().unwrap();
+        assert_eq!(
+            map.get("all-proxy"),
+            Some(&json!("http://proxy.example.com:8080"))
+        );
+    }
+
+    #[test]
+    fn prepare_http_only_proxy_patch_does_not_synthesize_p2p_routes() {
+        let result = prepare_preference_patch(json!({
+            "proxy": {
+                "http": {
+                    "enable": true,
+                    "server": "http://proxy.example.com:8080",
+                    "scope": ["update-app"]
+                }
+            }
+        }))
+        .unwrap();
+        let map = result.as_object().unwrap();
+        assert!(!map.contains_key("p2p-proxy"));
+        assert!(!map.contains_key("p2p-no-proxy"));
+        assert!(!map.contains_key("p2p-udp-proxy"));
+        assert!(!map.contains_key("p2p-udp-no-proxy"));
+    }
+
+    #[test]
+    fn prepare_p2p_only_disabled_patch_clears_p2p_routes() {
+        let result = prepare_preference_patch(json!({
+            "proxy": {
+                "p2p": {
+                    "enable": false,
+                    "server": "",
+                    "bypass": "",
+                    "udp": { "server": "", "bypass": "" }
+                }
+            }
+        }))
+        .unwrap();
+        let map = result.as_object().unwrap();
+        assert_eq!(map.get("p2p-proxy"), Some(&json!("")));
+        assert_eq!(map.get("p2p-no-proxy"), Some(&json!("")));
+        assert_eq!(map.get("p2p-udp-proxy"), Some(&json!("")));
+        assert_eq!(map.get("p2p-udp-no-proxy"), Some(&json!("")));
+    }
+
+    #[test]
+    fn prepare_marked_default_p2p_profile_clears_routes() {
+        let result = prepare_preference_patch(json!({
+            "proxy": {
+                "http": {
+                    "enable": false,
+                    "server": "",
+                    "bypass": "",
+                    "scope": ["download", "update-app", "update-trackers"]
+                },
+                "p2p": {
+                    "enable": false,
+                    "server": "",
+                    "bypass": "",
+                    "udp": { "server": "", "bypass": "" }
+                },
+                "p2p-profile-explicit": true
+            }
+        }))
+        .unwrap();
+        let map = result.as_object().unwrap();
+        assert_eq!(map.get("p2p-proxy"), Some(&json!("")));
+        assert!(!map
+            .get("proxy")
+            .and_then(|proxy| proxy.get("p2p"))
+            .and_then(|p2p| p2p.get("p2p-profile-explicit"))
+            .is_some());
     }
 
     #[test]
@@ -730,6 +1196,37 @@ mod tests {
         assert_eq!(
             resolve_proxy_from_config(&user, &system, "download", &target).unwrap(),
             None
+        );
+    }
+
+    #[test]
+    fn resolve_proxy_preserves_system_route_for_nested_disabled_profile() {
+        let user = serde_json::from_value::<Map<String, Value>>(json!({
+            "proxy": {
+                "http": {
+                    "enable": false,
+                    "server": "",
+                    "bypass": "",
+                    "scope": ["download", "update-app", "update-trackers"]
+                },
+                "p2p": {
+                    "enable": false,
+                    "server": "",
+                    "bypass": ""
+                }
+            }
+        }))
+        .unwrap();
+        let system = serde_json::from_value::<Map<String, Value>>(json!({
+            "all-proxy": "http://system.example:8080",
+            "no-proxy": "localhost"
+        }))
+        .unwrap();
+        let target = Url::parse("https://cdn.example.net/file").unwrap();
+
+        assert_eq!(
+            resolve_proxy_from_config(&user, &system, "download", &target).unwrap(),
+            Some("http://system.example:8080".to_string())
         );
     }
 

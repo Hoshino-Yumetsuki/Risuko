@@ -66,15 +66,14 @@ pub struct SpawnPeer {
     pub read_timeout: Duration,
     pub encryption: EncryptionPolicy,
     pub advertise_v2: bool,
-    /// Optional BEP-10 ext handshake builder invoked right after the BT handshake in the same task (no tokio hop, so callers can populate `yourip`); sent only when the remote advertises the BEP-10 reserved bit
     pub ext_handshake_builder: Option<ExtHandshakeBuilder>,
+    pub proxy: Option<risuko_http::ProxyConnector>,
 }
 
 #[derive(Clone)]
 pub struct KnownInfoHash {
     pub info_hash: Id20,
     pub advertise_v2: bool,
-    /// See `SpawnPeer::ext_handshake_builder` — same builder on the inbound accept path so seeders also get our extended handshake quickly (with `yourip` set)
     pub ext_handshake_builder: Option<ExtHandshakeBuilder>,
 }
 
@@ -90,10 +89,24 @@ impl From<Id20> for KnownInfoHash {
 
 /// Connect to a peer, perform the BEP-3 handshake, and split the socket into reader/writer tasks; returns (handle, event receiver)
 pub async fn connect(spawn: SpawnPeer) -> std::io::Result<(PeerHandle, mpsc::Receiver<PeerEvent>)> {
-    let stream = timeout(spawn.connect_timeout, TcpStream::connect(spawn.addr))
+    let stream = match &spawn.proxy {
+        Some(proxy) => timeout(
+            spawn.connect_timeout,
+            proxy.connect_tcp(&spawn.addr.ip().to_string(), spawn.addr.port()),
+        )
         .await
-        .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "connect timeout"))??;
-    let _ = stream.set_nodelay(true);
+        .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "connect timeout"))?
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?,
+        None => {
+            let stream = timeout(spawn.connect_timeout, TcpStream::connect(spawn.addr))
+                .await
+                .map_err(|_| {
+                    std::io::Error::new(std::io::ErrorKind::TimedOut, "connect timeout")
+                })??;
+            let _ = stream.set_nodelay(true);
+            risuko_http::BoxedIo::new(stream)
+        }
+    };
     drive_handshake(stream, spawn).await
 }
 
@@ -337,13 +350,13 @@ where
 }
 
 async fn drive_handshake(
-    stream: TcpStream,
+    stream: risuko_http::BoxedIo,
     spawn: SpawnPeer,
 ) -> std::io::Result<(PeerHandle, mpsc::Receiver<PeerEvent>)> {
     let addr = spawn.addr;
     match spawn.encryption {
         EncryptionPolicy::PlaintextOnly => {
-            let (reader, writer) = stream.into_split();
+            let (reader, writer) = tokio::io::split(stream);
             connect_plaintext(reader, writer, addr, &spawn).await
         }
         EncryptionPolicy::RequireEncryption => {
@@ -354,7 +367,7 @@ async fn drive_handshake(
                 })?
         }
         EncryptionPolicy::Prefer => {
-            let (reader, writer) = stream.into_split();
+            let (reader, writer) = tokio::io::split(stream);
             let plaintext = timeout(
                 spawn.connect_timeout,
                 connect_plaintext(reader, writer, addr, &spawn),
@@ -376,8 +389,19 @@ async fn drive_handshake(
             tracing::debug!("plaintext handshake to {addr} failed: {fallback_err}; trying mse");
             // Intentionally dial a fresh socket: the plaintext attempt already consumed (and likely corrupted, from the peer's view) the first connection, so the MSE retry cannot reuse it
             let mse = timeout(spawn.connect_timeout, async {
-                let stream = TcpStream::connect(spawn.addr).await?;
-                let _ = stream.set_nodelay(true);
+                let stream = match &spawn.proxy {
+                    Some(proxy) => proxy
+                        .connect_tcp(&spawn.addr.ip().to_string(), spawn.addr.port())
+                        .await
+                        .map_err(|e| {
+                            std::io::Error::new(std::io::ErrorKind::Other, e.to_string())
+                        })?,
+                    None => {
+                        let stream = TcpStream::connect(spawn.addr).await?;
+                        let _ = stream.set_nodelay(true);
+                        risuko_http::BoxedIo::new(stream)
+                    }
+                };
                 connect_mse(stream, addr, &spawn).await
             })
             .await
@@ -474,11 +498,11 @@ async fn read_until(
 
 /// Perform the BEP-8 MSE handshake as initiator (A), then send the BEP-3 handshake over the now-encrypted stream
 async fn connect_mse(
-    stream: TcpStream,
+    stream: risuko_http::BoxedIo,
     addr: SocketAddr,
     spawn: &SpawnPeer,
 ) -> std::io::Result<(PeerHandle, mpsc::Receiver<PeerEvent>)> {
-    let (mut read_h, mut write_h) = stream.into_split();
+    let (mut read_h, mut write_h) = tokio::io::split(stream);
     let hs_timeout = spawn.connect_timeout;
 
     // Step 1: A -> B: Ya || PadA (0..512 bytes)
@@ -1023,14 +1047,17 @@ fn finish_spawn(
 
 /// RC4-encrypting read half. Any residual bytes we already pulled from the socket while scanning the MSE handshake are replayed via the chained cursor prefix; they are *still encrypted* under the peer's key, so the same cipher applies to everything the chain yields
 struct Rc4ReadHalf {
-    inner: tokio::io::Chain<std::io::Cursor<Vec<u8>>, tokio::net::tcp::OwnedReadHalf>,
+    inner: tokio::io::Chain<std::io::Cursor<Vec<u8>>, Box<dyn AsyncRead + Unpin + Send>>,
     cipher: MseRc4,
 }
 
 impl Rc4ReadHalf {
-    fn new(inner: tokio::net::tcp::OwnedReadHalf, cipher: MseRc4, prefix: Vec<u8>) -> Self {
+    fn new<R>(inner: R, cipher: MseRc4, prefix: Vec<u8>) -> Self
+    where
+        R: AsyncRead + Unpin + Send + 'static,
+    {
         Self {
-            inner: std::io::Cursor::new(prefix).chain(inner),
+            inner: std::io::Cursor::new(prefix).chain(Box::new(inner)),
             cipher,
         }
     }
@@ -1060,16 +1087,19 @@ impl AsyncRead for Rc4ReadHalf {
 
 /// RC4-encrypting write half. Writes are buffered into a small scratch vector, encrypted, then written through. We keep scratch sized to each call to avoid a long-lived heap buffer
 struct Rc4WriteHalf {
-    inner: tokio::net::tcp::OwnedWriteHalf,
+    inner: Box<dyn AsyncWrite + Unpin + Send>,
     cipher: MseRc4,
     pending: Vec<u8>,
     pending_off: usize,
 }
 
 impl Rc4WriteHalf {
-    fn new(inner: tokio::net::tcp::OwnedWriteHalf, cipher: MseRc4) -> Self {
+    fn new<W>(inner: W, cipher: MseRc4) -> Self
+    where
+        W: AsyncWrite + Unpin + Send + 'static,
+    {
         Self {
-            inner,
+            inner: Box::new(inner),
             cipher,
             pending: Vec::new(),
             pending_off: 0,
@@ -1263,6 +1293,7 @@ mod tests {
             encryption: EncryptionPolicy::PlaintextOnly,
             advertise_v2: true,
             ext_handshake_builder: None,
+            proxy: None,
         })
         .await
         .unwrap();
@@ -1392,6 +1423,7 @@ mod tests {
             encryption: EncryptionPolicy::PlaintextOnly,
             advertise_v2: true,
             ext_handshake_builder: None,
+            proxy: None,
         })
         .await;
         assert!(res.is_err() || accept_fut.await.unwrap().is_err());
@@ -1427,6 +1459,7 @@ mod tests {
             encryption: EncryptionPolicy::RequireEncryption,
             advertise_v2: true,
             ext_handshake_builder: None,
+            proxy: None,
         })
         .await
         .unwrap();
@@ -1505,6 +1538,7 @@ mod tests {
                 encryption: EncryptionPolicy::RequireEncryption,
                 advertise_v2: true,
                 ext_handshake_builder: None,
+                proxy: None,
             },
             Some(client_utp),
         )
@@ -1576,6 +1610,7 @@ mod tests {
                     encryption: EncryptionPolicy::PlaintextOnly,
                     advertise_v2: false,
                     ext_handshake_builder: None,
+                    proxy: None,
                 },
             )
             .await
@@ -1642,6 +1677,7 @@ mod tests {
             encryption: EncryptionPolicy::PlaintextOnly,
             advertise_v2: false,
             ext_handshake_builder: None,
+            proxy: None,
         };
         let (_handle, mut rx) = tokio::time::timeout(
             Duration::from_secs(10),
@@ -1717,6 +1753,7 @@ mod tests {
                     encryption: EncryptionPolicy::PlaintextOnly,
                     advertise_v2: false,
                     ext_handshake_builder: None,
+                    proxy: None,
                 },
             )
             .await

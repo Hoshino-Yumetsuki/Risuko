@@ -76,6 +76,8 @@ const userKeys = [
 
 const systemKeys = [
 	"all-proxy",
+	"p2p-proxy",
+	"p2p-udp-proxy",
 	"auto-file-renaming",
 	"bt-enable-lpd",
 	"bt-exclude-tracker",
@@ -131,6 +133,8 @@ const systemKeys = [
 	"netrc-path",
 	"no-netrc",
 	"no-proxy",
+	"p2p-no-proxy",
+	"p2p-udp-no-proxy",
 	"out",
 	"referer",
 	"remote-time",

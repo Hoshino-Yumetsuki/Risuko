@@ -14,19 +14,15 @@ use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::UdpSocket;
 use tokio::sync::{mpsc, oneshot, Notify};
 
+use risuko_http::ProxyDatagram;
+
 use super::now_micros;
 use super::packet::{PacketType, UtpHeader};
-use super::socket::{ConnKey, ConnRegistry};
-
-/// Payload bytes per outgoing DATA packet; conservative to stay under common path MTUs (1500 - IP - UDP - µTP header) without PMTU discovery
+use super::socket::{ConnKey, ConnRegistry, ProxyConnRegistry};
 const MSS: usize = 1200;
-/// Cap on our reorder + ready buffers; also what we advertise as `wnd_size`
 const RECV_BUF_MAX: usize = 1024 * 1024;
-/// Cap on app bytes buffered for sending before `poll_write` backpressures
 const SEND_BUF_MAX: usize = 512 * 1024;
-/// LEDBAT target queuing delay (100 ms, per BEP-29)
 const TARGET_MICROS: f64 = 100_000.0;
-/// LEDBAT window-gain factor
 const CWND_GAIN: f64 = 1.0;
 const MIN_CWND: usize = 2 * MSS;
 const MAX_CWND: usize = 2 * 1024 * 1024;
@@ -34,9 +30,7 @@ const INITIAL_CWND: usize = 3 * MSS;
 const MIN_RTO: Duration = Duration::from_millis(500);
 const MAX_RTO: Duration = Duration::from_secs(10);
 const INITIAL_RTO: Duration = Duration::from_secs(1);
-/// Give up retransmitting after this many tries and reset the connection
 const MAX_RETRANSMITS: u32 = 8;
-/// Tear the driver down if nothing happens for this long after close
 const LINGER_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// `a` is strictly after `b` in 16-bit sequence space (within half the ring)
@@ -47,13 +41,9 @@ fn seq_after(a: u16, b: u16) -> bool {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum State {
-    /// Outgoing SYN sent, awaiting the peer's STATE
     SynSent,
-    /// Handshake done; data may flow
     Connected,
-    /// We sent a FIN; still draining/acking
     FinSent,
-    /// Terminal — either clean or via RESET/error
     Closed,
 }
 
@@ -69,7 +59,6 @@ struct OutPacket {
 pub(crate) struct ConnState {
     state: State,
     remote: SocketAddr,
-    /// Connection id stamped on our outgoing (non-SYN) packets
     conn_id_send: u16,
 
     seq_nr: u16,
@@ -81,37 +70,26 @@ pub(crate) struct ConnState {
     recv_ready: VecDeque<u8>,
     reorder: BTreeMap<u16, Vec<u8>>,
 
-    /// Peer's advertised receive window (flow control), in bytes
     peer_wnd: u32,
-    /// Our congestion window, in bytes (LEDBAT-controlled)
     max_window: usize,
-    /// Minimum observed one-way delay (LEDBAT baseline), microseconds
     base_delay: u32,
 
     rtt: f64,
     rtt_var: f64,
     rto: Duration,
-
-    /// One-way delay we last measured for the peer's packets; echoed back in our `timestamp_difference_microseconds` field so the peer can run LEDBAT against us
     reply_micros: u32,
 
-    /// True once we've received data we haven't acked yet
     needs_ack: bool,
-    /// App requested close; driver should emit a FIN once the send buffer has drained
     want_fin: bool,
-    /// Peer's FIN sequence number, once received; EOF is delivered to the reader after all bytes up to and including this are in order
     peer_fin: Option<u16>,
     eof: bool,
     error: Option<io::ErrorKind>,
 
-    /// Recovery marker for the current fast-retransmit episode; further SACKs before this seq is cumulatively acked do not shrink the window again
     recovery_seq: Option<u16>,
 
-    /// Encoded datagrams the driver should put on the wire this iteration
     outbox: Vec<Vec<u8>>,
     read_waker: Option<Waker>,
     write_waker: Option<Waker>,
-    /// Fired by the driver when the connection becomes established (or fails)
     connect_notify: Option<oneshot::Sender<io::Result<()>>>,
 }
 
@@ -530,11 +508,18 @@ pub(crate) enum RoleKind {
 
 /// Configuration handed to a connection driver by the socket layer
 pub(crate) struct DriverConfig {
-    pub udp: Arc<UdpSocket>,
+    pub transport: DatagramTransport,
     pub remote: SocketAddr,
     pub incoming: mpsc::UnboundedReceiver<(UtpHeader, Bytes)>,
     pub registry: ConnRegistry,
     pub key: ConnKey,
+    pub proxy_registry: Option<ProxyConnRegistry>,
+}
+
+#[derive(Clone)]
+pub(crate) enum DatagramTransport {
+    Direct(Arc<UdpSocket>),
+    Proxy(Arc<ProxyDatagram>),
 }
 
 /// Create the shared state for a new connection
@@ -675,6 +660,15 @@ pub(crate) async fn drive(shared: Arc<Shared>, mut cfg: DriverConfig, role: Role
     }
 
     cfg.registry.lock().remove(&cfg.key);
+    if let Some(proxy_registry) = &cfg.proxy_registry {
+        let mut proxy_registry = proxy_registry.lock();
+        if proxy_registry
+            .get(&cfg.key.1)
+            .is_some_and(|key| *key == cfg.key)
+        {
+            proxy_registry.remove(&cfg.key.1);
+        }
+    }
 }
 
 /// Drain the outbox to the wire. Datagrams are collected under the lock and sent after releasing it so UDP I/O never blocks the state mutex
@@ -684,7 +678,18 @@ async fn flush(shared: &Arc<Shared>, cfg: &DriverConfig) {
         std::mem::take(&mut st.outbox)
     };
     for d in datagrams {
-        let _ = cfg.udp.send_to(&d, cfg.remote).await;
+        let result = match &cfg.transport {
+            DatagramTransport::Direct(udp) => udp.send_to(&d, cfg.remote).await.map(|_| ()),
+            DatagramTransport::Proxy(proxy) => proxy
+                .send_to(&d, cfg.remote)
+                .await
+                .map(|_| ())
+                .map_err(|error| io::Error::new(io::ErrorKind::Other, error.to_string())),
+        };
+        if let Err(error) = result {
+            shared.state.lock().fail(error.kind());
+            break;
+        }
     }
 }
 

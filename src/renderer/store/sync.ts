@@ -1,5 +1,9 @@
 import { getCategoriesForKey, syncCategories } from "@shared/syncCategories";
 import {
+	normalizeNetworkProxyConfig,
+	normalizeProxyConfig,
+} from "@shared/types/config";
+import {
 	ANDROID_USENET_ARCHIVE_LIMITS,
 	DEFAULT_USENET_ARCHIVE_LIMITS,
 } from "@shared/types/usenet";
@@ -23,6 +27,11 @@ interface SyncState {
 let pushTimer: ReturnType<typeof setTimeout> | null = null;
 const pendingCategories = new Set<string>();
 const STATS_CATEGORY = "stats";
+
+const shouldApplyCategoryData = (categoryId: string): boolean =>
+	categoryId === STATS_CATEGORY ||
+	categoryId === "usenet" ||
+	categoryId === "network";
 
 function mergeUsenetProfiles(
 	localValue: unknown,
@@ -98,6 +107,12 @@ function mergeUsenetCategory(
 	};
 }
 
+function normalizeNetworkCategory(
+	data: Record<string, unknown>,
+): Record<string, unknown> {
+	return normalizeNetworkProxyConfig(data);
+}
+
 export const useSyncStore = defineStore("sync", {
 	state: (): SyncState => ({
 		syncing: false,
@@ -138,7 +153,8 @@ export const useSyncStore = defineStore("sync", {
 			const data: Record<string, unknown> = {};
 			for (const key of cat.keys) {
 				if (key in config) {
-					data[key] = config[key];
+					data[key] =
+						key === "proxy" ? normalizeProxyConfig(config[key]) : config[key];
 				}
 			}
 			return data;
@@ -155,6 +171,9 @@ export const useSyncStore = defineStore("sync", {
 			if (categoryId === "usenet") {
 				const localData = await this.extractCategoryData(categoryId);
 				data = mergeUsenetCategory(localData, data);
+			}
+			if (categoryId === "network") {
+				data = normalizeNetworkCategory(data);
 			}
 			await usePreferenceStore().save(data, { skipSync: true });
 		},
@@ -225,9 +244,7 @@ export const useSyncStore = defineStore("sync", {
 						| Record<string, unknown>
 						| undefined;
 					if (remoteData) {
-						if (categoryId === STATS_CATEGORY) {
-							await this.applyCategoryData(categoryId, remoteData);
-						} else if (categoryId === "usenet") {
+						if (shouldApplyCategoryData(categoryId)) {
 							await this.applyCategoryData(categoryId, remoteData);
 						} else {
 							Object.assign(merged, remoteData);
@@ -295,9 +312,7 @@ export const useSyncStore = defineStore("sync", {
 					}
 
 					if (!hasLocal && hasRemote && remoteData) {
-						if (categoryId === STATS_CATEGORY) {
-							await this.applyCategoryData(categoryId, remoteData);
-						} else if (categoryId === "usenet") {
+						if (shouldApplyCategoryData(categoryId)) {
 							await this.applyCategoryData(categoryId, remoteData);
 						} else {
 							Object.assign(toPull, remoteData);
@@ -315,9 +330,7 @@ export const useSyncStore = defineStore("sync", {
 					}
 
 					if (localTimestamp === undefined && hasRemote && remoteData) {
-						if (categoryId === STATS_CATEGORY) {
-							await this.applyCategoryData(categoryId, remoteData);
-						} else if (categoryId === "usenet") {
+						if (shouldApplyCategoryData(categoryId)) {
 							await this.applyCategoryData(categoryId, remoteData);
 						} else {
 							Object.assign(toPull, remoteData);
@@ -333,9 +346,7 @@ export const useSyncStore = defineStore("sync", {
 								await this.setCategoryTimestamp(categoryId, updatedAt);
 							}
 						} else if (remoteTimestamp > localTimestamp && remoteData) {
-							if (categoryId === STATS_CATEGORY) {
-								await this.applyCategoryData(categoryId, remoteData);
-							} else if (categoryId === "usenet") {
+							if (shouldApplyCategoryData(categoryId)) {
 								await this.applyCategoryData(categoryId, remoteData);
 							} else {
 								Object.assign(toPull, remoteData);

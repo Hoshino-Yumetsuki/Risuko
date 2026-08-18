@@ -9,7 +9,7 @@ use std::sync::Arc;
 use bytes::Bytes;
 use parking_lot::Mutex;
 use tokio::net::TcpListener;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, RwLock};
 
 use super::api::TorrentIdOrHash;
 use super::core::metainfo::{parse_torrent, FileDetails};
@@ -41,6 +41,7 @@ pub struct SessionOptions {
     pub upload_rate_limit: Option<u64>,
     pub disable_local_service_discovery: bool,
     pub encryption: super::peer::EncryptionPolicy,
+    pub p2p_proxy: Option<risuko_http::ProxyConnector>,
 }
 
 #[derive(Clone, Debug)]
@@ -51,6 +52,8 @@ pub struct AddTorrentOptions {
     pub list_only: bool,
     pub create_subfolder: bool,
     pub initial_peers: Vec<std::net::SocketAddr>,
+    pub p2p_proxy: Option<risuko_http::ProxyConnector>,
+    pub p2p_proxy_is_task_override: bool,
 }
 
 impl Default for AddTorrentOptions {
@@ -62,6 +65,8 @@ impl Default for AddTorrentOptions {
             list_only: false,
             create_subfolder: true,
             initial_peers: Vec::new(),
+            p2p_proxy: None,
+            p2p_proxy_is_task_override: false,
         }
     }
 }
@@ -85,6 +90,7 @@ pub struct ListOnlyResponse {
 pub struct Session {
     output_dir: PathBuf,
     opts: SessionOptions,
+    p2p_proxy: RwLock<Option<risuko_http::ProxyConnector>>,
     peer_id: Id20,
     listen_port: u16,
     utp: Option<Arc<super::utp::UtpSocket>>,
@@ -150,27 +156,35 @@ impl Session {
         let local_port = listener.local_addr()?.port();
         tracing::info!("session listening on port {local_port}");
 
-        // µTP (BEP-29) endpoint: bind UDP on the TCP listener's port so peers reach us over either transport, with outbound dials retrying µTP when TCP fails; a bind failure is non-fatal (µTP disabled, TCP only)
-        let utp =
-            match super::utp::UtpSocket::bind(SocketAddr::from(([0, 0, 0, 0], local_port))).await {
-                Ok(s) => {
-                    tracing::info!("µTP listening on udp/{}", s.local_addr().port());
-                    Some(s)
-                }
-                Err(e) => {
-                    tracing::warn!("µTP: bind udp/{local_port} failed ({e}); trying ephemeral");
-                    match super::utp::UtpSocket::bind(SocketAddr::from(([0, 0, 0, 0], 0))).await {
-                        Ok(s) => {
-                            tracing::info!("µTP listening on udp/{}", s.local_addr().port());
-                            Some(s)
-                        }
-                        Err(e2) => {
-                            tracing::warn!("µTP: disabled (bind failed: {e2})");
-                            None
-                        }
+        let utp = match super::utp::UtpSocket::bind_with_proxy(
+            SocketAddr::from(([0, 0, 0, 0], local_port)),
+            opts.p2p_proxy.clone(),
+        )
+        .await
+        {
+            Ok(s) => {
+                tracing::info!("µTP listening on udp/{}", s.local_addr().port());
+                Some(s)
+            }
+            Err(e) => {
+                tracing::warn!("µTP: bind udp/{local_port} failed ({e}); trying ephemeral");
+                match super::utp::UtpSocket::bind_with_proxy(
+                    SocketAddr::from(([0, 0, 0, 0], 0)),
+                    opts.p2p_proxy.clone(),
+                )
+                .await
+                {
+                    Ok(s) => {
+                        tracing::info!("µTP listening on udp/{}", s.local_addr().port());
+                        Some(s)
+                    }
+                    Err(e2) => {
+                        tracing::warn!("µTP: disabled (bind failed: {e2})");
+                        None
                     }
                 }
-            };
+            }
+        };
 
         let upnp_handle = if opts
             .listen
@@ -196,9 +210,11 @@ impl Session {
             .upload_rate_limit
             .map(|r| Arc::new(super::limiter::UploadLimiter::new(r)));
 
+        let initial_p2p_proxy = opts.p2p_proxy.clone();
         let session = Arc::new(Self {
             output_dir,
             opts,
+            p2p_proxy: RwLock::new(initial_p2p_proxy),
             peer_id,
             listen_port: local_port,
             utp,
@@ -239,7 +255,7 @@ impl Session {
 
         if !session.opts.disable_dht {
             // Reuse the process-wide warm DHT (also used by magnet resolution and each torrent's get_peers poller) rather than a session-local one; shared() spawns + bootstraps a single long-lived instance on first use
-            match super::dht::Dht::shared().await {
+            match super::dht::Dht::shared_with_proxy(session.opts.p2p_proxy.clone()).await {
                 Some(dht) => *session.dht.lock() = Some(dht),
                 None => tracing::warn!("dht: not started"),
             }
@@ -332,6 +348,25 @@ impl Session {
         self.utp.clone()
     }
 
+    async fn utp_for_route(
+        &self,
+        proxy: Option<risuko_http::ProxyConnector>,
+        task_override: bool,
+    ) -> Option<Arc<super::utp::UtpSocket>> {
+        if !task_override {
+            return self.utp_socket();
+        }
+        match super::utp::UtpSocket::bind_with_proxy(SocketAddr::from(([0, 0, 0, 0], 0)), proxy)
+            .await
+        {
+            Ok(socket) => Some(socket),
+            Err(error) => {
+                tracing::warn!("task µTP route unavailable: {error}");
+                None
+            }
+        }
+    }
+
     /// True if Local Service Discovery is currently spawned and running
     pub fn lsd_active(&self) -> bool {
         self.lsd.lock().is_some()
@@ -377,13 +412,23 @@ impl Session {
             }
             AddTorrent::Url(url) => {
                 let extra_trackers = opts.trackers.clone().unwrap_or_default();
-                let resolved = super::magnet::resolve_with_port_and_utp(
+                let profile_proxy = self.p2p_proxy.read().await.clone();
+                let route_proxy = if opts.p2p_proxy_is_task_override {
+                    opts.p2p_proxy.clone()
+                } else {
+                    opts.p2p_proxy.clone().or(profile_proxy)
+                };
+                let route_utp = self
+                    .utp_for_route(route_proxy.clone(), opts.p2p_proxy_is_task_override)
+                    .await;
+                let resolved = super::magnet::resolve_with_port_and_utp_and_proxy(
                     &url,
                     &extra_trackers,
                     self.listen_port,
                     std::time::Duration::from_secs(120),
                     self.opts.encryption,
-                    self.utp_socket(),
+                    route_utp,
+                    route_proxy,
                 )
                 .await?;
                 let torrent_bytes = super::magnet::synth_torrent_bytes(
@@ -488,6 +533,12 @@ impl Session {
         };
         // Reserved-bit advertisement is set only for *pure-v2* torrents (no v1 hash); hybrid torrents connect via the v1 info-hash and we intentionally don't assert the BEP-52 v2 bit there since empirically some swarms (notably CN Thunder/Xunlei clients) close the connection right after the BT handshake when v2 is asserted on a v1 info_hash
         let advertise_v2 = matches!(meta.meta_version, crate::core::metainfo::MetaVersion::V2);
+        let profile_proxy = self.p2p_proxy.read().await.clone();
+        let route_proxy = if opts.p2p_proxy_is_task_override {
+            opts.p2p_proxy.clone()
+        } else {
+            opts.p2p_proxy.clone().or(profile_proxy)
+        };
         let init = TorrentInit {
             meta: meta.clone(),
             lengths,
@@ -499,13 +550,17 @@ impl Session {
             advertise_v2,
             verifier,
             create_subfolder,
-            utp: self.utp.clone(),
+            utp: self
+                .utp_for_route(route_proxy.clone(), opts.p2p_proxy_is_task_override)
+                .await,
             upload_limiter: self.upload_limiter.clone(),
             dht: if info.private {
                 None
             } else {
                 self.dht.lock().clone()
             },
+            p2p_proxy: route_proxy,
+            p2p_proxy_is_task_override: opts.p2p_proxy_is_task_override,
         };
         let handle = match spawn_torrent(id, init, self.peer_id, self.listen_port).await {
             Ok(h) => h,
@@ -544,35 +599,95 @@ impl Session {
         if let Some(lsd) = self.lsd.lock().as_ref() {
             lsd.add_infohash(meta.info_hash);
         }
-        if !info.private {
-            if let Some(dht) = self.dht.lock().clone() {
-                let info_hash = meta.info_hash;
-                let listen_port = self.listen_port;
-                let weak = Arc::downgrade(&handle);
-                tokio::spawn(async move {
-                    loop {
-                        // Stop polling once the torrent has been removed
-                        let Some(t) = weak.upgrade() else { return };
-                        let cmd_tx = t.cmd_tx();
-                        drop(t);
-                        // get_peers to find seeders AND announce_peer so other clients searching this info-hash can find and dial us
-                        let mut rx = dht.get_peers_stream(
-                            info_hash,
-                            std::time::Duration::from_secs(60),
-                            Some(listen_port),
-                        );
-                        while let Some(addr) = rx.recv().await {
-                            if cmd_tx.send(TorrentCommand::AddPeer(addr)).await.is_err() {
-                                return; // torrent loop ended
-                            }
-                        }
-                        // A single lookup rarely returns the whole swarm and DHT peer sets churn; re-query on a steady cadence to keep the peer list topped up (mirrors a tracker re-announce interval)
-                        tokio::time::sleep(std::time::Duration::from_secs(120)).await;
-                    }
-                });
+        Ok(AddTorrentResponse::Added(id, handle))
+    }
+
+    pub async fn reconfigure_p2p_proxy(
+        &self,
+        proxy: Option<risuko_http::ProxyConnector>,
+        dht: Option<Arc<super::dht::Dht>>,
+    ) -> Result<(), String> {
+        let old_proxy = self.p2p_proxy.read().await.clone();
+        let old_dht = self.dht.lock().clone();
+        let handles: Vec<Arc<ManagedTorrent>> =
+            self.with_torrents(|iter| iter.map(|(_, handle)| handle).collect());
+        *self.p2p_proxy.write().await = proxy.clone();
+        if let Some(utp) = self.utp.clone() {
+            utp.reconfigure_proxy(proxy.clone()).await;
+        }
+        *self.dht.lock() = dht.clone();
+
+        let mut changed = Vec::with_capacity(handles.len());
+        for handle in &handles {
+            let (ack_tx, ack_rx) = tokio::sync::oneshot::channel();
+            let replace_proxy = !handle.p2p_proxy_is_task_override;
+            if let Err(error) = handle
+                .cmd_tx()
+                .send(TorrentCommand::ReconfigureP2p {
+                    proxy: proxy.clone(),
+                    replace_proxy,
+                    dht: dht.clone(),
+                    ack: ack_tx,
+                })
+                .await
+            {
+                self.rollback_p2p_route(&handles, old_proxy.clone(), old_dht.clone())
+                    .await;
+                return Err(format!(
+                    "torrent {} route update failed: {error}",
+                    handle.id
+                ));
+            }
+            changed.push(Arc::clone(handle));
+            if let Err(error) = ack_rx.await {
+                self.rollback_p2p_route(&handles, old_proxy.clone(), old_dht.clone())
+                    .await;
+                return Err(format!(
+                    "torrent {} route update interrupted: {error}",
+                    handle.id
+                ));
             }
         }
-        Ok(AddTorrentResponse::Added(id, handle))
+        Ok(())
+    }
+
+    async fn rollback_p2p_route(
+        &self,
+        handles: &[Arc<ManagedTorrent>],
+        proxy: Option<risuko_http::ProxyConnector>,
+        dht: Option<Arc<super::dht::Dht>>,
+    ) {
+        for handle in handles {
+            let (ack_tx, ack_rx) = tokio::sync::oneshot::channel();
+            let replace_proxy = !handle.p2p_proxy_is_task_override;
+            let send_result = handle
+                .cmd_tx()
+                .send(TorrentCommand::ReconfigureP2p {
+                    proxy: proxy.clone(),
+                    replace_proxy,
+                    dht: dht.clone(),
+                    ack: ack_tx,
+                })
+                .await;
+            if let Err(error) = send_result {
+                tracing::error!(
+                    torrent = handle.id,
+                    "failed to send P2P route rollback: {error}"
+                );
+                continue;
+            }
+            if let Err(error) = ack_rx.await {
+                tracing::error!(
+                    torrent = handle.id,
+                    "P2P route rollback acknowledgement failed: {error}"
+                );
+            }
+        }
+        if let Some(utp) = self.utp.clone() {
+            utp.reconfigure_proxy(proxy.clone()).await;
+        }
+        *self.p2p_proxy.write().await = proxy;
+        *self.dht.lock() = dht;
     }
 
     pub fn with_torrents<F, T>(&self, f: F) -> T

@@ -6,7 +6,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
-use tokio::net::TcpStream;
 use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 
@@ -23,9 +22,35 @@ pub async fn fetch_by_urn(
     completed: Arc<AtomicU64>,
     cancel: CancellationToken,
 ) -> Result<(), GnutellaError> {
-    let stream = timeout(Duration::from_secs(15), TcpStream::connect((host, port)))
+    fetch_by_urn_with_proxy(
+        host,
+        port,
+        n2r_path,
+        urn,
+        file_size,
+        out_path,
+        completed,
+        cancel,
+        risuko_http::ProxyConnector::direct(),
+    )
+    .await
+}
+
+pub async fn fetch_by_urn_with_proxy(
+    host: &str,
+    port: u16,
+    n2r_path: &str,
+    urn: &str,
+    file_size: u64,
+    out_path: &Path,
+    completed: Arc<AtomicU64>,
+    cancel: CancellationToken,
+    proxy: risuko_http::ProxyConnector,
+) -> Result<(), GnutellaError> {
+    let stream = timeout(Duration::from_secs(15), proxy.connect_tcp(host, port))
         .await
-        .map_err(|_| GnutellaError::Network("peer connect timeout".into()))??;
+        .map_err(|_| GnutellaError::Network("peer connect timeout".into()))?
+        .map_err(|error| GnutellaError::Network(format!("peer connect: {error}")))?;
     let (rd, mut wr) = tokio::io::split(stream);
     let req = format!(
         "GET {}?{} HTTP/1.1\r\nHost: {}:{}\r\nUser-Agent: Risuko/0.1\r\nX-Gnutella-Content-URN: {}\r\nAccept: */*\r\nConnection: close\r\n\r\n",

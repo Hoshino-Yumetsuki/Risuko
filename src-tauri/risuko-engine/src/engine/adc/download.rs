@@ -3,17 +3,29 @@
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 
+use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 
-use super::types::{is_adc_uri, parse_adc_hub_uri, parse_dchub_file_uri, AdcError};
+use super::types::{is_adc_uri, parse_adc_hub_uri, parse_dchub_file_uri, AdcError, HubInfo};
 use crate::engine::options::EngineOptions;
+
+pub async fn connect_hub_with_proxy(
+    hub: &HubInfo,
+    proxy: &risuko_http::ProxyConnector,
+) -> Result<risuko_http::BoxedIo, AdcError> {
+    proxy
+        .connect_tcp(&hub.host, hub.port)
+        .await
+        .map_err(|error| AdcError::Peer(format!("hub connect: {error}")))
+}
 
 /// Run a single ADC / NMDC download to completion: parse the URI, open the hub, locate a peer holding the requested TTH and copy the file to `dir`; returns the output path on success or a failure string (`"cancelled"` when aborted)
 pub async fn run_adc_download(
     uri: &str,
     dir: &str,
-    _opts: &EngineOptions,
+    opts: &EngineOptions,
     total: Arc<AtomicU64>,
     completed: Arc<AtomicU64>,
     speed: Arc<AtomicU64>,
@@ -26,7 +38,7 @@ pub async fn run_adc_download(
         return Err(format!("not an ADC/DC URI: {uri}"));
     }
 
-    parse_adc_hub_uri(uri).map_err(|e| e.to_string())?;
+    let hub = parse_adc_hub_uri(uri).map_err(|e| e.to_string())?;
     let file = parse_dchub_file_uri(uri).ok_or_else(|| {
         "ADC/DC hub-only URIs (without TTH+size+name) are not yet supported".to_string()
     })?;
@@ -42,6 +54,19 @@ pub async fn run_adc_download(
 
     if cancel_token.is_cancelled() {
         return Err("cancelled".into());
+    }
+
+    let proxy = opts
+        .p2p_proxy_connector()
+        .map_err(|error| format!("ADC P2P proxy: {error}"))?;
+    if proxy.proxy().is_some() {
+        timeout(
+            Duration::from_secs(15),
+            connect_hub_with_proxy(&hub, &proxy),
+        )
+        .await
+        .map_err(|_| "ADC hub connect timeout".to_string())?
+        .map_err(|error| error.to_string())?;
     }
 
     // Passive-only mode: no listening socket, so peer negotiation (`$ConnectToMe` / ADC `CTM`) cannot complete; bail before hub I/O so the task fails fast instead of hanging

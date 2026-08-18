@@ -50,7 +50,6 @@ export interface TaskForm {
 export const initTaskForm = (state: TaskFormState) => {
 	const { addTaskUrl, addTaskOptions } = state.app;
 	const {
-		allProxy,
 		cookie,
 		dir,
 		fileCategoryDirs,
@@ -67,7 +66,7 @@ export const initTaskForm = (state: TaskFormState) => {
 			: 16;
 
 	const result = {
-		allProxy,
+		allProxy: "",
 		cookie: cookie || "",
 		dir,
 		fileCategoryDirs: fileCategoryDirs || {},

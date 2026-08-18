@@ -123,8 +123,10 @@ impl SourceScheduler {
         completed: Arc<AtomicU64>,
         cancel_token: CancellationToken,
         peer_count: Arc<AtomicU32>,
+        proxy: risuko_http::ProxyConnector,
     ) -> Arc<Self> {
         let peer_cancel = cancel_token.clone();
+        let peer_proxy = proxy.clone();
         let dispatcher: CandidateDispatcher = Arc::new(move |candidate, permit| {
             spawn_peer_task_with_permit(
                 candidate.addr,
@@ -139,6 +141,7 @@ impl SourceScheduler {
                 peer_cancel.clone(),
                 peer_count.clone(),
                 permit,
+                peer_proxy.clone(),
             );
         });
         Self::with_dispatcher(
@@ -236,7 +239,7 @@ fn usable_source_addr(addr: SocketAddrV4) -> bool {
     addr.port() != 0 && is_public_ipv4(*addr.ip())
 }
 
-/// Run an ed2k download to completion or cancellation; like `http::run_http_download_multi`, updates atomic progress counters, returns Ok(final_path)/Err, and checks `cancel_token` for pause/stop
+/// Run an eD2K download without a proxy
 pub async fn run_ed2k_download(
     file_link: &Ed2kFileLink,
     dir: &str,
@@ -250,6 +253,39 @@ pub async fn run_ed2k_download(
     speed: Arc<AtomicU64>,
     connections: Arc<AtomicU32>,
     cancel_token: CancellationToken,
+) -> Result<PathBuf, String> {
+    run_ed2k_download_with_proxy(
+        file_link,
+        dir,
+        ed2k_servers,
+        client_port,
+        kad_udp_port,
+        kad,
+        kad_status,
+        total,
+        completed,
+        speed,
+        connections,
+        cancel_token,
+        risuko_http::ProxyConnector::direct(),
+    )
+    .await
+}
+
+pub async fn run_ed2k_download_with_proxy(
+    file_link: &Ed2kFileLink,
+    dir: &str,
+    ed2k_servers: Vec<String>,
+    client_port: u16,
+    kad_udp_port: Option<u16>,
+    kad: Option<Arc<KadService>>,
+    kad_status: Arc<parking_lot::Mutex<Option<KadLookupStatus>>>,
+    total: Arc<AtomicU64>,
+    completed: Arc<AtomicU64>,
+    speed: Arc<AtomicU64>,
+    connections: Arc<AtomicU32>,
+    cancel_token: CancellationToken,
+    proxy: risuko_http::ProxyConnector,
 ) -> Result<PathBuf, String> {
     // Keep ED2K's detached source dispatcher and peer tasks in a child scope; external pause/stop still propagates from `cancel_token`, while a normal worker return also stops orphaned work
     let worker_cancel = cancel_token.child_token();
@@ -283,6 +319,7 @@ pub async fn run_ed2k_download(
         completed.clone(),
         worker_cancel.clone(),
         peer_count.clone(),
+        proxy.clone(),
     );
 
     let servers = server_list(&ed2k_servers);
@@ -374,7 +411,13 @@ pub async fn run_ed2k_download(
         };
 
         tracing::info!("[ed2k] Trying server {} ({})", entry.name, addr);
-        let mut conn = ServerConnection::new(addr, client_hash, client_port, kad_udp_port);
+        let mut conn = ServerConnection::new_with_proxy(
+            addr,
+            client_hash,
+            client_port,
+            kad_udp_port,
+            proxy.clone(),
+        );
         let (event_rx, _packet_tx) = match conn.connect().await {
             Ok(pair) => pair,
             Err(e) => {
@@ -580,6 +623,7 @@ fn spawn_peer_task_with_permit(
     cancel_token: CancellationToken,
     peer_count: Arc<AtomicU32>,
     permit: OwnedSemaphorePermit,
+    proxy: risuko_http::ProxyConnector,
 ) {
     peer_count.fetch_add(1, Ordering::Relaxed);
     tokio::spawn(async move {
@@ -595,6 +639,7 @@ fn spawn_peer_task_with_permit(
             &chunks,
             &completed,
             &cancel_token,
+            proxy,
         )
         .await;
         peer_count.fetch_sub(1, Ordering::Relaxed);
@@ -617,14 +662,16 @@ async fn run_peer_download(
     chunks: &Arc<Mutex<ChunkManager>>,
     completed: &Arc<AtomicU64>,
     cancel_token: &CancellationToken,
+    proxy: risuko_http::ProxyConnector,
 ) -> Result<(), String> {
-    let mut peer = PeerConnection::new(
+    let mut peer = PeerConnection::new_with_proxy(
         addr,
         client_hash,
         client_id,
         client_port,
         server_ip,
         server_port,
+        proxy,
     );
     let (mut event_rx, _packet_tx) = tokio::select! {
         _ = cancel_token.cancelled() => return Err("cancelled".to_string()),

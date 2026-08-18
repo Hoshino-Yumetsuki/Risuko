@@ -1,4 +1,5 @@
 import { ADD_TASK_TYPE } from "@shared/constants";
+import { redactProxySettings } from "@shared/types/config";
 import logger from "@shared/utils/logger";
 import { invoke } from "@tauri-apps/api/core";
 import { toast } from "vue-sonner";
@@ -95,7 +96,7 @@ const addTaskByType = async (type: string) => {
 		payload = buildTorrentPayload(form);
 		return getTaskStore().addTorrent(payload);
 	} else {
-		logger.error("addTask fail", type, form);
+		logger.error("addTask fail", type, redactProxySettings(form));
 		throw new Error("task.unknown-task-type");
 	}
 };

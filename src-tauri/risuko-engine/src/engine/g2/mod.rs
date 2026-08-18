@@ -8,7 +8,7 @@ use std::time::Duration;
 use percent_encoding::percent_decode_str;
 use tokio_util::sync::CancellationToken;
 
-use crate::engine::gnutella::peer::fetch_by_urn;
+use crate::engine::gnutella::peer::fetch_by_urn_with_proxy;
 use crate::engine::gnutella::types::GnutellaError;
 use crate::engine::options::EngineOptions;
 
@@ -94,7 +94,7 @@ fn url_decode(s: &str) -> String {
 pub async fn run_g2_download(
     uri: &str,
     dir: &str,
-    _opts: &EngineOptions,
+    opts: &EngineOptions,
     total: Arc<AtomicU64>,
     completed: Arc<AtomicU64>,
     speed: Arc<AtomicU64>,
@@ -104,6 +104,7 @@ pub async fn run_g2_download(
     if !is_g2_uri(uri) {
         return Err(GnutellaError::InvalidUri(format!("not a G2 URI: {uri}")));
     }
+    let proxy = opts.p2p_proxy_connector().map_err(GnutellaError::Network)?;
     let link =
         parse_g2_uri(uri).ok_or_else(|| GnutellaError::InvalidUri("invalid g2 URI".into()))?;
     let urn = link
@@ -147,7 +148,7 @@ pub async fn run_g2_download(
         "g2-download",
     );
     let out_path = PathBuf::from(dir).join(safe);
-    let download_result = fetch_by_urn(
+    let download_result = fetch_by_urn_with_proxy(
         &link.host,
         link.port,
         "/uri-res/N2R",
@@ -156,6 +157,7 @@ pub async fn run_g2_download(
         &out_path,
         completed,
         cancel_token,
+        proxy,
     )
     .await;
     sampler_cancel.cancel();

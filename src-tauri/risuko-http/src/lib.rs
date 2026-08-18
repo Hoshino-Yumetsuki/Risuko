@@ -16,6 +16,9 @@ mod response;
 
 pub use body::ReqBody;
 pub use client::{Client, ClientBuilder};
+pub use connector::{
+    datagram_source_matches, BoxedIo, ProxyConnector, ProxyDatagram, ProxyDatagramSource,
+};
 pub use cookies::{CookieStore, Jar};
 pub use doh::{DohConfig, DohResolver};
 pub use error::{Error, Result};

@@ -655,6 +655,7 @@ import {
 	FILE_CATEGORIES,
 } from "@shared/constants";
 import { availableLanguages } from "@shared/locales";
+import { redactProxySettings } from "@shared/types/config";
 import {
 	changedConfig,
 	convertLineToComma,
@@ -1078,13 +1079,33 @@ export default {
 					this.formOriginal = cloneDeep(this.form);
 				});
 		},
-		submitForm(_formName) {
+		async submitForm(_formName) {
 			const data = {
 				...normalizeBasicConfig(diffConfig(this.formOriginal, this.form)),
 				...changedConfig.advanced,
 			};
+			const proxy = data.proxy;
+			const p2pProxyChanged =
+				proxy &&
+				typeof proxy === "object" &&
+				(proxy as Record<string, unknown>)["p2p-profile-explicit"] === true;
+			if (p2pProxyChanged) {
+				const { confirmed } = await confirm({
+					title: this.$t("preferences.proxy-p2p-restart-title"),
+					message: this.$t("preferences.proxy-p2p-restart-confirm"),
+					kind: "warning",
+					confirmText: this.$t("app.yes"),
+					cancelText: this.$t("app.no"),
+				});
+				if (!confirmed) {
+					return;
+				}
+			}
 
-			logger.log("[Risuko] preference changed data:", data);
+			logger.log(
+				"[Risuko] preference changed data:",
+				redactProxySettings(data as Record<string, unknown>),
+			);
 
 			usePreferenceStore()
 				.save(data)

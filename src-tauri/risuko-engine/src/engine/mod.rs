@@ -455,6 +455,20 @@ pub async fn restart_engine(
     Ok(())
 }
 
+pub async fn reload_p2p_profile(config: &ConfigManager) -> Result<(), Box<dyn std::error::Error>> {
+    if !should_start_embedded_engine(config) {
+        return Ok(());
+    }
+    let Some(manager) = get_manager().await else {
+        return Ok(());
+    };
+    let options = EngineOptions::from_config(config.get_system_config(), config.get_user_config());
+    manager
+        .reload_p2p_profile(options)
+        .await
+        .map_err(|error| error.into())
+}
+
 /// Get a handle to the task manager for direct calls
 pub async fn get_manager() -> Option<Arc<TaskManager>> {
     let guard = ENGINE_INSTANCE.lock().await;

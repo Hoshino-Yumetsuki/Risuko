@@ -215,7 +215,7 @@ pub async fn run_health_checks(
     if want("network") {
         cats.push(HealthCategory::from_checks(
             "network",
-            check_network(&options, slow, kad_snapshot.as_ref()).await,
+            check_network(&options, user_cfg.get("proxy"), slow, kad_snapshot.as_ref()).await,
         ));
     }
     if want("bittorrent") {
@@ -329,6 +329,7 @@ fn parse_boolish(v: Option<&Value>, default: bool) -> bool {
 
 async fn check_network(
     options: &EngineOptions,
+    proxy_config: Option<&Value>,
     slow: bool,
     kad: Option<&KadHealthSnapshot>,
 ) -> Vec<HealthCheck> {
@@ -370,26 +371,127 @@ async fn check_network(
 
     out.push(check_ed2k_kad(options, kad));
 
-    let proxy = options
-        .get_str("all-proxy")
+    let normalized_proxy = proxy_config
+        .map(risuko_engine::config::normalize_proxy_config)
+        .unwrap_or_else(|| serde_json::json!({}));
+    let http_profile = normalized_proxy.get("http").and_then(Value::as_object);
+    let http_enabled = http_profile
+        .and_then(|profile| profile.get("enable"))
+        .map(|value| parse_boolish(Some(value), false))
+        .unwrap_or(false);
+    let http_server = http_profile
+        .and_then(|profile| profile.get("server"))
+        .and_then(Value::as_str)
         .unwrap_or("")
-        .trim()
-        .to_string();
-    if proxy.is_empty() {
-        out.push(HealthCheck::skipped("proxy", "No proxy configured"));
-    } else if !proxy.contains("://") {
-        out.push(HealthCheck::fail(
-            "proxy",
-            format!("Proxy URL appears malformed: {}", proxy),
-            Some(HealthFix::open_pref("advanced")),
-        ));
-    } else if slow {
-        out.push(probe_proxy_reachability(&proxy).await);
+        .trim();
+    let http_profile_is_explicit =
+        proxy_config.is_some_and(risuko_engine::config::proxy_http_profile_is_explicit);
+    let http_proxy = if http_enabled && !http_server.is_empty() {
+        http_server
+    } else if !http_profile_is_explicit {
+        options.get_str("all-proxy").unwrap_or("").trim()
     } else {
-        out.push(HealthCheck::ok("proxy", format!("Proxy: {}", proxy)));
+        ""
+    };
+    let http_bypass = if http_enabled && !http_server.is_empty() {
+        http_profile
+            .and_then(|profile| profile.get("bypass"))
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+    } else if !http_profile_is_explicit {
+        options.get_str("no-proxy").unwrap_or("").trim()
+    } else {
+        ""
+    };
+    out.push(check_proxy_profile("proxy", "HTTP", http_proxy, http_bypass, slow).await);
+
+    let p2p_proxy = options.get_str("p2p-proxy").unwrap_or("").trim();
+    let p2p_bypass = options.get_str("p2p-no-proxy").unwrap_or("").trim();
+    out.push(check_proxy_profile("p2p-proxy", "P2P", p2p_proxy, p2p_bypass, slow).await);
+    let p2p_udp_proxy = options.get_str("p2p-udp-proxy").unwrap_or("").trim();
+    let p2p_udp_bypass = options.get_str("p2p-udp-no-proxy").unwrap_or("").trim();
+    if p2p_udp_proxy != p2p_proxy || p2p_udp_bypass != p2p_bypass {
+        out.push(
+            check_proxy_profile(
+                "p2p-udp-proxy",
+                "P2P UDP",
+                p2p_udp_proxy,
+                p2p_udp_bypass,
+                slow,
+            )
+            .await,
+        );
     }
 
     out
+}
+
+fn redact_proxy_url(value: &str) -> String {
+    let value = value.trim();
+    if let Ok(mut url) = risuko_http::Url::parse(value) {
+        let _ = url.set_username("");
+        let _ = url.set_password(None);
+        return url.to_string();
+    }
+
+    let Some((scheme, remainder)) = value.split_once("://") else {
+        return "<invalid proxy>".to_string();
+    };
+    let authority_end = remainder.find(['/', '?', '#']).unwrap_or(remainder.len());
+    let authority = &remainder[..authority_end];
+    let host = authority
+        .rsplit_once('@')
+        .map(|(_, host)| host)
+        .unwrap_or(authority);
+    if host.is_empty() || scheme.is_empty() {
+        "<invalid proxy>".to_string()
+    } else {
+        format!("{}://{}", scheme.to_ascii_lowercase(), host)
+    }
+}
+
+async fn check_proxy_profile(
+    id: &'static str,
+    label: &'static str,
+    proxy: &str,
+    bypass: &str,
+    slow: bool,
+) -> HealthCheck {
+    if proxy.is_empty() {
+        return HealthCheck::skipped(id, format!("No {label} proxy configured"));
+    }
+
+    let display = redact_proxy_url(proxy);
+    let details = serde_json::json!({
+        "profile": label.to_ascii_lowercase(),
+        "proxy": display,
+        "bypass": bypass,
+    });
+
+    if risuko_http::Proxy::all(proxy).is_err() {
+        return HealthCheck::fail(
+            id,
+            format!("{label} proxy URL is invalid ({display})"),
+            Some(HealthFix::open_pref("advanced")),
+        )
+        .with_details(details);
+    }
+
+    if slow {
+        return probe_proxy_reachability(id, label, proxy)
+            .await
+            .with_details(details);
+    }
+
+    let message = if label.starts_with("P2P") {
+        format!(
+            "{label} proxy configured ({display}); SOCKS5/SOCKS5H is required for UDP DHT, trackers, and uTP"
+        )
+    } else {
+        format!("HTTP proxy configured ({display})")
+    };
+    HealthCheck::ok(id, message).with_details(details)
 }
 
 fn check_ed2k_kad(options: &EngineOptions, kad: Option<&KadHealthSnapshot>) -> HealthCheck {
@@ -543,15 +645,15 @@ fn check_ed2k_kad(options: &EngineOptions, kad: Option<&KadHealthSnapshot>) -> H
     }
 }
 
-async fn probe_proxy_reachability(proxy_url: &str) -> HealthCheck {
+async fn probe_proxy_reachability(id: &str, label: &str, proxy_url: &str) -> HealthCheck {
     use risuko_http::{ClientBuilder, Method, Proxy};
 
     let proxy = match Proxy::all(proxy_url) {
         Ok(p) => p,
-        Err(e) => {
+        Err(_e) => {
             return HealthCheck::fail(
-                "proxy",
-                format!("Proxy parse error: {e}"),
+                id,
+                format!("{label} proxy URL could not be parsed"),
                 Some(HealthFix::open_pref("advanced")),
             );
         }
@@ -563,10 +665,10 @@ async fn probe_proxy_reachability(proxy_url: &str) -> HealthCheck {
         .build()
     {
         Ok(c) => c,
-        Err(e) => {
+        Err(_e) => {
             return HealthCheck::fail(
-                "proxy",
-                format!("Proxy client init failed: {e}"),
+                id,
+                format!("{label} proxy client could not be initialized"),
                 Some(HealthFix::open_pref("advanced")),
             );
         }
@@ -576,23 +678,31 @@ async fn probe_proxy_reachability(proxy_url: &str) -> HealthCheck {
             let status = resp.status();
             if status.is_success() || status.is_redirection() {
                 HealthCheck::ok(
-                    "proxy",
-                    format!("Proxy reachable ({proxy_url}, HTTP {})", status.as_u16()),
+                    id,
+                    format!(
+                        "{label} proxy reachable ({}, HTTP {})",
+                        redact_proxy_url(proxy_url),
+                        status.as_u16()
+                    ),
                 )
             } else {
                 HealthCheck::warn(
-                    "proxy",
+                    id,
                     format!(
-                        "Proxy returned HTTP {} for probe ({proxy_url})",
-                        status.as_u16()
+                        "{label} proxy returned HTTP {} for probe ({})",
+                        status.as_u16(),
+                        redact_proxy_url(proxy_url)
                     ),
                     Some(HealthFix::open_pref("advanced")),
                 )
             }
         }
-        Err(e) => HealthCheck::fail(
-            "proxy",
-            format!("Proxy probe failed via {proxy_url}: {e}"),
+        Err(_e) => HealthCheck::fail(
+            id,
+            format!(
+                "{label} proxy probe failed via {}",
+                redact_proxy_url(proxy_url)
+            ),
             Some(HealthFix::open_pref("advanced")),
         ),
     }
@@ -1611,6 +1721,25 @@ mod tests {
             ],
         );
         assert_eq!(cat.status, HealthStatus::Warn);
+    }
+
+    #[test]
+    fn proxy_diagnostics_redact_userinfo() {
+        let redacted = redact_proxy_url("socks5h://alice:s3cret@proxy.example:1080/path");
+        assert_eq!(redacted, "socks5h://proxy.example:1080/path");
+        assert!(!redacted.contains("alice"));
+        assert!(!redacted.contains("s3cret"));
+
+        let malformed = redact_proxy_url("http://alice:s3cret@proxy.example:bad");
+        assert_eq!(malformed, "http://proxy.example:bad");
+        assert!(!malformed.contains("s3cret"));
+    }
+
+    #[test]
+    fn proxy_diagnostics_never_echoes_unparseable_credentials() {
+        let redacted = redact_proxy_url("proxy-without-scheme alice:s3cret");
+        assert_eq!(redacted, "<invalid proxy>");
+        assert!(!redacted.contains("s3cret"));
     }
 
     #[test]

@@ -1,5 +1,5 @@
 import { getLanguage } from "@shared/locales";
-import type { AppConfig } from "@shared/types/config";
+import { type AppConfig, redactProxySettings } from "@shared/types/config";
 import logger from "@shared/utils/logger";
 import { invoke } from "@tauri-apps/api/core";
 import { createApp } from "vue";
@@ -267,7 +267,10 @@ async function init(config: AppConfig) {
 usePreferenceStore()
 	.fetchPreference()
 	.then((config) => {
-		logger.info("[Risuko] load preference:", config);
+		logger.info(
+			"[Risuko] load preference:",
+			redactProxySettings(config as Record<string, unknown>),
+		);
 		init(config);
 		const runAutoSyncTracker = () => {
 			usePreferenceStore().autoSyncTracker();

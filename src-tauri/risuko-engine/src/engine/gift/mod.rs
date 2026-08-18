@@ -6,7 +6,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::net::TcpStream;
 use tokio::time::{sleep, timeout};
 use tokio_util::sync::CancellationToken;
 
@@ -69,13 +68,11 @@ pub async fn run_gift_download(
         None => 1213,
     };
 
-    let stream = timeout(
-        Duration::from_secs(5),
-        TcpStream::connect((host.as_str(), port)),
-    )
-    .await
-    .map_err(|_| "giftd connect timeout".to_string())?
-    .map_err(|e| format!("giftd connect: {e}"))?;
+    let proxy = opts.p2p_proxy_connector()?;
+    let stream = timeout(Duration::from_secs(5), proxy.connect_tcp(&host, port))
+        .await
+        .map_err(|_| "giftd connect timeout".to_string())?
+        .map_err(|e| format!("giftd connect: {e}"))?;
     let (rd, mut wr) = tokio::io::split(stream);
     let mut reader = BufReader::new(rd);
 

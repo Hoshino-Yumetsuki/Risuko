@@ -10,6 +10,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::{watch, Mutex};
+use tokio_util::sync::CancellationToken;
+
+use super::options::TASK_P2P_PROXY_OVERRIDE_KEY;
 
 /// BitTorrent session tuning passed from the user/system config; all fields are optional, missing entries fall back to `risuko-bt` defaults
 #[derive(Clone, Debug, Default)]
@@ -23,6 +26,8 @@ pub struct BtTuning {
     pub encryption_policy: Option<String>,
     pub listen_ipv6: Option<bool>,
     pub enable_lsd: Option<bool>,
+    /// Process-wide P2P route for shared DHT and torrent-owned connections.
+    pub p2p_proxy: Option<risuko_http::ProxyConnector>,
 }
 
 /// Read-only BT session diagnostics used by the `/health` panel
@@ -50,10 +55,29 @@ struct CachedMagnetMeta {
 
 type SharedMagnetResult = Result<Arc<ResolvedMagnetMeta>, Arc<str>>;
 
-#[derive(Default)]
+const MAGNET_ROUTE_CHANGED: &str = "P2P proxy profile changed; magnet resolution cancelled";
+
+struct InFlightMagnet {
+    generation: u64,
+    sender: watch::Sender<Option<SharedMagnetResult>>,
+}
+
 struct MagnetMetaCacheState {
     completed: HashMap<[u8; 20], CachedMagnetMeta>,
-    in_flight: HashMap<[u8; 20], watch::Sender<Option<SharedMagnetResult>>>,
+    in_flight: HashMap<[u8; 20], InFlightMagnet>,
+    generation: u64,
+    cancellation: CancellationToken,
+}
+
+impl Default for MagnetMetaCacheState {
+    fn default() -> Self {
+        Self {
+            completed: HashMap::new(),
+            in_flight: HashMap::new(),
+            generation: 0,
+            cancellation: CancellationToken::new(),
+        }
+    }
 }
 
 #[derive(Clone, Default)]
@@ -86,39 +110,63 @@ impl MagnetMetaCache {
                 return Ok(entry.meta.clone());
             }
 
-            if let Some(sender) = state.in_flight.get(&key) {
+            if let Some(in_flight) = state.in_flight.get(&key) {
                 tracing::info!("Joining in-flight magnet metadata resolution");
-                sender.subscribe()
+                in_flight.sender.subscribe()
             } else {
                 let (sender, receiver) = watch::channel(None);
-                state.in_flight.insert(key, sender.clone());
+                let generation = state.generation;
+                let cancellation = state.cancellation.clone();
+                state.in_flight.insert(
+                    key,
+                    InFlightMagnet {
+                        generation,
+                        sender: sender.clone(),
+                    },
+                );
 
                 let cache = self.clone();
                 tokio::spawn(async move {
-                    let result = match AssertUnwindSafe(async move { resolver().await })
-                        .catch_unwind()
-                        .await
-                    {
-                        Ok(result) => result.map(Arc::new).map_err(Arc::<str>::from),
-                        Err(_) => {
-                            tracing::warn!("Magnet metadata resolver panicked");
-                            Err(Arc::<str>::from("Magnet metadata resolver panicked"))
+                    let result = tokio::select! {
+                        result = AssertUnwindSafe(async move { resolver().await }).catch_unwind() => {
+                            match result {
+                                Ok(result) => result.map(Arc::new).map_err(Arc::<str>::from),
+                                Err(_) => {
+                                    tracing::warn!("Magnet metadata resolver panicked");
+                                    Err(Arc::<str>::from("Magnet metadata resolver panicked"))
+                                }
+                            }
+                        }
+                        _ = cancellation.cancelled() => {
+                            Err(Arc::<str>::from(MAGNET_ROUTE_CHANGED))
                         }
                     };
 
-                    {
+                    let result = {
                         let mut state = cache.state.lock().await;
-                        if let Ok(meta) = &result {
-                            state.completed.insert(
-                                key,
-                                CachedMagnetMeta {
-                                    meta: meta.clone(),
-                                    expires_at: Instant::now() + MAGNET_META_CACHE_TTL,
-                                },
-                            );
+                        let current_generation = state.generation == generation;
+                        if !current_generation {
+                            Err(Arc::<str>::from(MAGNET_ROUTE_CHANGED))
+                        } else {
+                            if let Ok(meta) = &result {
+                                state.completed.insert(
+                                    key,
+                                    CachedMagnetMeta {
+                                        meta: meta.clone(),
+                                        expires_at: Instant::now() + MAGNET_META_CACHE_TTL,
+                                    },
+                                );
+                            }
+                            if state
+                                .in_flight
+                                .get(&key)
+                                .is_some_and(|entry| entry.generation == generation)
+                            {
+                                state.in_flight.remove(&key);
+                            }
+                            result
                         }
-                        state.in_flight.remove(&key);
-                    }
+                    };
 
                     let _ = sender.send(Some(result));
                 });
@@ -128,6 +176,45 @@ impl MagnetMetaCache {
         };
 
         Self::await_result(receiver).await
+    }
+
+    /// Return the current route generation and its cancellation token as one
+    /// snapshot. Reload invalidates both while holding the same state lock,
+    /// so callers can safely reject a resolver that was queued before a
+    /// profile swap but only started afterward.
+    async fn route_snapshot(&self) -> (u64, CancellationToken) {
+        let state = self.state.lock().await;
+        (state.generation, state.cancellation.clone())
+    }
+
+    async fn route_snapshot_for(
+        &self,
+        expected_generation: u64,
+    ) -> Result<CancellationToken, String> {
+        let state = self.state.lock().await;
+        if state.generation != expected_generation {
+            return Err(MAGNET_ROUTE_CHANGED.to_string());
+        }
+        Ok(state.cancellation.clone())
+    }
+
+    async fn invalidate(&self) {
+        let senders = {
+            let mut state = self.state.lock().await;
+            state.generation = state.generation.wrapping_add(1);
+            state.completed.clear();
+            state.cancellation.cancel();
+            state.cancellation = CancellationToken::new();
+            state
+                .in_flight
+                .drain()
+                .map(|(_, entry)| entry.sender)
+                .collect::<Vec<_>>()
+        };
+
+        for sender in senders {
+            let _ = sender.send(Some(Err(Arc::<str>::from(MAGNET_ROUTE_CHANGED))));
+        }
     }
 
     async fn await_result(
@@ -151,6 +238,7 @@ pub struct TorrentEngine {
     session: Option<Arc<bt::Session>>,
     output_dir: PathBuf,
     magnet_cache: MagnetMetaCache,
+    p2p_route_lock: Arc<Mutex<()>>,
 }
 
 impl TorrentEngine {
@@ -174,6 +262,7 @@ impl TorrentEngine {
                 upload_rate_limit: tuning.upload_rate_limit,
                 disable_local_service_discovery: !tuning.enable_lsd.unwrap_or(true),
                 encryption,
+                p2p_proxy: tuning.p2p_proxy.clone(),
                 ..Default::default()
             },
         )
@@ -189,6 +278,7 @@ impl TorrentEngine {
             session: Some(session),
             output_dir: output_dir.to_path_buf(),
             magnet_cache: MagnetMetaCache::default(),
+            p2p_route_lock: Arc::new(Mutex::new(())),
         })
     }
 
@@ -271,6 +361,11 @@ impl TorrentEngine {
             .unwrap_or(self.output_dir.to_str().unwrap_or("."));
 
         let trackers = Self::parse_trackers(options);
+        let task_p2p_proxy = p2p_proxy_from_options(options)?;
+        let task_p2p_proxy_is_override = options
+            .get(TASK_P2P_PROXY_OVERRIDE_KEY)
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
         let only_files = Self::parse_select_files(options);
         let create_subfolder = options
             .get("bt-create-subfolder")
@@ -288,6 +383,8 @@ impl TorrentEngine {
             list_only: false,
             create_subfolder,
             initial_peers,
+            p2p_proxy: task_p2p_proxy,
+            p2p_proxy_is_task_override: task_p2p_proxy_is_override,
         };
 
         tracing::info!("Adding torrent bytes ({} bytes) to dir={}", data.len(), dir);
@@ -315,16 +412,77 @@ impl TorrentEngine {
         options: &Map<String, Value>,
         timeout_secs: u64,
     ) -> Result<TorrentHandle, String> {
+        let (_, cancellation) = self.magnet_cache.route_snapshot().await;
+        self.resolve_and_add_magnet_with_cancellation(
+            magnet_uri,
+            options,
+            timeout_secs,
+            cancellation,
+        )
+        .await
+    }
+
+    /// Resolve and add a magnet only when it belongs to the supplied route
+    /// generation. The generation check and cancellation-token capture happen
+    /// under the cache lock, which is also used by route invalidation.
+    pub async fn resolve_and_add_magnet_at_generation(
+        &self,
+        magnet_uri: &str,
+        options: &Map<String, Value>,
+        timeout_secs: u64,
+        expected_generation: u64,
+    ) -> Result<TorrentHandle, String> {
+        let cancellation = self
+            .magnet_cache
+            .route_snapshot_for(expected_generation)
+            .await?;
+        self.resolve_and_add_magnet_with_cancellation(
+            magnet_uri,
+            options,
+            timeout_secs,
+            cancellation,
+        )
+        .await
+    }
+
+    pub async fn magnet_route_generation(&self) -> u64 {
+        self.magnet_cache.route_snapshot().await.0
+    }
+
+    async fn resolve_and_add_magnet_with_cancellation(
+        &self,
+        magnet_uri: &str,
+        options: &Map<String, Value>,
+        timeout_secs: u64,
+        cancellation: CancellationToken,
+    ) -> Result<TorrentHandle, String> {
         let (bytes, peers) = self
-            .resolve_magnet_bytes(magnet_uri, options, timeout_secs)
+            .resolve_magnet_bytes_with_cancellation(
+                magnet_uri,
+                options,
+                timeout_secs,
+                cancellation.clone(),
+            )
             .await?;
 
+        if cancellation.is_cancelled() {
+            return Err(MAGNET_ROUTE_CHANGED.to_string());
+        }
+
         save_torrent_metadata_if_enabled(&bytes, options, &self.output_dir).await;
+
+        if cancellation.is_cancelled() {
+            return Err(MAGNET_ROUTE_CHANGED.to_string());
+        }
 
         tracing::info!(
             "Magnet resolved with {} discovered peers; seeding download",
             peers.len()
         );
+        let _route_guard = self.p2p_route_lock.lock().await;
+        if cancellation.is_cancelled() {
+            return Err(MAGNET_ROUTE_CHANGED.to_string());
+        }
         self.add_torrent_bytes_with_peers(&bytes, options, peers)
             .await
     }
@@ -351,9 +509,18 @@ impl TorrentEngine {
 
         tracing::info!("Resolving magnet metadata: {}", magnet_uri);
         let start = std::time::Instant::now();
+        let (_, cancellation) = self.magnet_cache.route_snapshot().await;
         let (torrent_bytes, _) = self
-            .resolve_magnet_bytes(magnet_uri, options, timeout_secs)
+            .resolve_magnet_bytes_with_cancellation(
+                magnet_uri,
+                options,
+                timeout_secs,
+                cancellation.clone(),
+            )
             .await?;
+        if cancellation.is_cancelled() {
+            return Err(MAGNET_ROUTE_CHANGED.to_string());
+        }
         let meta = bt::parse_torrent(&torrent_bytes)
             .map_err(|e| format!("Failed to parse resolved metadata: {}", e))?;
         let files = extract_file_details(&meta.info);
@@ -365,11 +532,12 @@ impl TorrentEngine {
         Ok(files)
     }
 
-    async fn resolve_magnet_bytes(
+    async fn resolve_magnet_bytes_with_cancellation(
         &self,
         magnet_uri: &str,
         options: &Map<String, Value>,
         timeout_secs: u64,
+        cancellation: CancellationToken,
     ) -> Result<(Vec<u8>, Vec<SocketAddr>), String> {
         let info_hash_key = bt::Magnet::parse(magnet_uri)
             .ok()
@@ -380,18 +548,74 @@ impl TorrentEngine {
         );
         let session = self.get_session()?;
         let listen_port = session.listen_port();
-        let utp = session.utp_socket();
+        let task_proxy_override = options
+            .get(TASK_P2P_PROXY_OVERRIDE_KEY)
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let p2p_proxy = p2p_proxy_from_options(options)?;
+        let utp = if task_proxy_override {
+            match bt::utp::UtpSocket::bind_with_proxy(
+                SocketAddr::from(([0, 0, 0, 0], 0)),
+                p2p_proxy.clone(),
+            )
+            .await
+            {
+                Ok(socket) => Some(socket),
+                Err(error) => {
+                    tracing::warn!("task µTP route unavailable during magnet resolve: {error}");
+                    None
+                }
+            }
+        } else {
+            session.utp_socket()
+        };
         let magnet_uri = magnet_uri.to_string();
 
         let resolve = move || async move {
-            Self::resolve_magnet_uncached(magnet_uri, trackers, listen_port, timeout_secs, enc, utp)
-                .await
+            Self::resolve_magnet_uncached(
+                magnet_uri,
+                trackers,
+                listen_port,
+                timeout_secs,
+                enc,
+                utp,
+                p2p_proxy,
+            )
+            .await
         };
 
-        let resolved = match info_hash_key {
-            Some(key) => self.magnet_cache.get_or_resolve(key, resolve).await?,
-            None => Arc::new(resolve().await?),
+        let resolved = if task_proxy_override {
+            tokio::select! {
+                result = resolve() => {
+                    let result = result?;
+                    if cancellation.is_cancelled() {
+                        return Err(MAGNET_ROUTE_CHANGED.to_string());
+                    }
+                    Arc::new(result)
+                },
+                _ = cancellation.cancelled() => return Err(MAGNET_ROUTE_CHANGED.to_string()),
+            }
+        } else {
+            match info_hash_key {
+                Some(key) => self.magnet_cache.get_or_resolve(key, resolve).await?,
+                None => {
+                    tokio::select! {
+                        result = resolve() => {
+                            let result = result?;
+                            if cancellation.is_cancelled() {
+                                return Err(MAGNET_ROUTE_CHANGED.to_string());
+                            }
+                            Arc::new(result)
+                        },
+                        _ = cancellation.cancelled() => return Err(MAGNET_ROUTE_CHANGED.to_string()),
+                    }
+                }
+            }
         };
+
+        if cancellation.is_cancelled() {
+            return Err(MAGNET_ROUTE_CHANGED.to_string());
+        }
 
         Ok((resolved.bytes.to_vec(), resolved.peers.to_vec()))
     }
@@ -403,16 +627,18 @@ impl TorrentEngine {
         timeout_secs: u64,
         enc: bt::EncryptionPolicy,
         utp: Option<Arc<bt::utp::UtpSocket>>,
+        p2p_proxy: Option<risuko_http::ProxyConnector>,
     ) -> Result<ResolvedMagnetMeta, String> {
         let resolved = tokio::time::timeout(
             Duration::from_secs(timeout_secs),
-            bt::magnet::resolve_with_port_and_utp(
+            bt::magnet::resolve_with_port_and_utp_and_proxy(
                 &magnet_uri,
                 &trackers,
                 listen_port,
                 Duration::from_secs(timeout_secs),
                 enc,
                 utp,
+                p2p_proxy,
             ),
         )
         .await
@@ -540,6 +766,21 @@ impl TorrentEngine {
             .unpause(&handle)
             .await
             .map_err(|e| format!("Failed to unpause: {}", e))
+    }
+
+    pub async fn reconfigure_p2p_proxy(
+        &self,
+        proxy: Option<risuko_http::ProxyConnector>,
+        dht: Option<Arc<bt::dht::Dht>>,
+    ) -> Result<(), String> {
+        let _route_guard = self.p2p_route_lock.lock().await;
+        let session = self.get_session()?;
+        session.reconfigure_p2p_proxy(proxy, dht).await
+    }
+
+    pub async fn invalidate_magnet_resolutions(&self) {
+        let _route_guard = self.p2p_route_lock.lock().await;
+        self.magnet_cache.invalidate().await;
     }
 
     /// Drop a torrent from the bt session; `with_files=true` also wipes the on-disk payload, `with_files=false` keeps files but still releases the `by_hash` reservation so re-adding the same magnet isn't blocked as `AlreadyManaged`
@@ -827,6 +1068,33 @@ fn encryption_policy_from_str(s: Option<&str>) -> bt::EncryptionPolicy {
     }
 }
 
+pub(crate) fn p2p_proxy_from_options(
+    options: &Map<String, Value>,
+) -> Result<Option<risuko_http::ProxyConnector>, String> {
+    let tcp_server = options
+        .get("p2p-proxy")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let tcp_bypass = options
+        .get("p2p-no-proxy")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let udp_server = options
+        .get("p2p-udp-proxy")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let udp_bypass = options
+        .get("p2p-udp-no-proxy")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    if tcp_server.trim().is_empty() && udp_server.trim().is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(super::options::build_p2p_proxy_connector(
+        tcp_server, tcp_bypass, udp_server, udp_bypass,
+    )?))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -923,6 +1191,64 @@ mod tests {
         .expect("retry after resolver panic should not hang")
         .unwrap();
         assert_eq!(retried.bytes.as_ref(), &[12]);
+    }
+
+    #[tokio::test]
+    async fn magnet_cache_invalidation_cancels_old_route_and_clears_entries() {
+        let cache = MagnetMetaCache::default();
+        let key = [3; 20];
+        let started = Arc::new(tokio::sync::Notify::new());
+        let started_resolver = started.clone();
+        let pending = tokio::spawn({
+            let cache = cache.clone();
+            async move {
+                cache
+                    .get_or_resolve(key, move || async move {
+                        started_resolver.notify_one();
+                        tokio::time::sleep(Duration::from_secs(60)).await;
+                        Ok(resolved_meta(1))
+                    })
+                    .await
+            }
+        });
+
+        tokio::time::timeout(Duration::from_secs(1), started.notified())
+            .await
+            .expect("metadata resolver did not start");
+        cache.invalidate().await;
+        let error = tokio::time::timeout(Duration::from_secs(1), pending)
+            .await
+            .expect("in-flight lookup was not cancelled")
+            .expect("lookup task panicked")
+            .expect_err("cancelled lookup unexpectedly succeeded");
+        assert!(error.contains("P2P proxy profile changed"));
+
+        let refreshed = cache
+            .get_or_resolve(key, || async { Ok(resolved_meta(2)) })
+            .await
+            .unwrap();
+        assert_eq!(refreshed.bytes.as_ref(), &[2]);
+    }
+
+    #[tokio::test]
+    async fn delayed_resolver_cannot_adopt_the_new_route_generation() {
+        let cache = MagnetMetaCache::default();
+        let (old_generation, old_cancellation) = cache.route_snapshot().await;
+
+        // Model a resolver that was spawned before the reload, then delayed
+        // until after invalidation has installed a fresh cancellation token.
+        cache.invalidate().await;
+        assert!(old_cancellation.is_cancelled());
+
+        let error = cache
+            .route_snapshot_for(old_generation)
+            .await
+            .expect_err("old resolver must not adopt the new route token");
+        assert_eq!(error, MAGNET_ROUTE_CHANGED);
+
+        let (new_generation, new_cancellation) = cache.route_snapshot().await;
+        assert_ne!(new_generation, old_generation);
+        assert!(!new_cancellation.is_cancelled());
     }
 
     #[test]
