@@ -14,7 +14,7 @@ use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::UdpSocket;
 use tokio::sync::{mpsc, oneshot, Notify};
 
-use risuko_http::ProxyDatagram;
+use risuko_http::{Error as HttpError, ProxyDatagram};
 
 use super::now_micros;
 use super::packet::{PacketType, UtpHeader};
@@ -723,7 +723,7 @@ async fn flush(shared: &Arc<Shared>, cfg: &DriverConfig) {
                 .send_to(&d, cfg.remote)
                 .await
                 .map(|_| ())
-                .map_err(|error| io::Error::other(error.to_string())),
+                .map_err(proxy_error_to_io),
         };
         if let Err(error) = result {
             let mut st = shared.state.lock();
@@ -740,6 +740,13 @@ async fn flush(shared: &Arc<Shared>, cfg: &DriverConfig) {
             return;
         }
         shared.state.lock().record_send_success();
+    }
+}
+
+fn proxy_error_to_io(error: HttpError) -> io::Error {
+    match error {
+        HttpError::Io(error) => error,
+        error => io::Error::other(error.to_string()),
     }
 }
 
@@ -926,6 +933,13 @@ mod tests {
         assert!(!is_recoverable_send_error(&io::Error::from(
             io::ErrorKind::InvalidData,
         )));
+    }
+
+    #[test]
+    fn proxy_io_errors_preserve_their_retry_kind() {
+        let error = proxy_error_to_io(HttpError::Io(io::Error::from(io::ErrorKind::WouldBlock)));
+        assert_eq!(error.kind(), io::ErrorKind::WouldBlock);
+        assert!(is_recoverable_send_error(&error));
     }
 
     #[test]
