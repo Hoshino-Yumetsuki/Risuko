@@ -91,18 +91,14 @@ impl UtpSocket {
 
         // Drop every connection routed through the old proxy before replacing
         // the router. Direct-route connections remain registered.
-        let old_keys = self
-            .proxy_registry
-            .lock()
-            .values()
-            .copied()
-            .collect::<Vec<_>>();
-        if !old_keys.is_empty() {
+        {
+            let mut proxy_registry = self.proxy_registry.lock();
+            let old_keys = proxy_registry.values().copied().collect::<Vec<_>>();
             let mut registry = self.registry.lock();
             for key in old_keys {
                 registry.remove(&key);
             }
-            self.proxy_registry.lock().clear();
+            proxy_registry.clear();
         }
         if let Some(handle) = self.proxy_router_handle.lock().take() {
             handle.abort();
@@ -164,6 +160,7 @@ impl UtpSocket {
         remote: SocketAddr,
         timeout: Duration,
     ) -> io::Result<UtpStream> {
+        let reconfigure_guard = self.reconfigure_lock.lock().await;
         let route = self.outbound.read().clone();
         let uses_proxy = matches!(route, OutboundRoute::Proxy(_));
 
@@ -221,6 +218,7 @@ impl UtpSocket {
         };
         let driver_shared = shared.clone();
         tokio::spawn(stream::drive(driver_shared, cfg, Role::Initiator(done_tx)));
+        drop(reconfigure_guard);
 
         match tokio::time::timeout(timeout, done_rx).await {
             Ok(Ok(Ok(()))) => Ok(UtpStream::new(shared)),

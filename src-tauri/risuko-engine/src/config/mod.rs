@@ -168,6 +168,21 @@ fn normalize_proxy_bypass_value(value: Option<&Value>) -> String {
     NoProxy::normalize(raw)
 }
 
+fn normalize_user_map(map: &Map<String, Value>) -> Map<String, Value> {
+    map.iter()
+        .map(|(key, value)| {
+            (
+                key.clone(),
+                if key == "proxy" {
+                    normalize_proxy_config(value)
+                } else {
+                    value.clone()
+                },
+            )
+        })
+        .collect()
+}
+
 fn normalize_proxy_scopes(value: Option<&Value>) -> Vec<String> {
     let Some(value) = value.filter(|value| !value.is_null()) else {
         return PROXY_SCOPES
@@ -335,14 +350,7 @@ impl ConfigManager {
     }
 
     pub fn set_user_config_map(&mut self, map: &Map<String, Value>) -> Result<(), String> {
-        for (k, v) in map {
-            let value = if k == "proxy" {
-                normalize_proxy_config(v)
-            } else {
-                v.clone()
-            };
-            self.user_config.insert(k.clone(), value);
-        }
+        self.user_config.extend(normalize_user_map(map));
         self.save_user()
     }
 
@@ -352,19 +360,7 @@ impl ConfigManager {
         user: &Map<String, Value>,
     ) -> Result<(), String> {
         self.system_config = system.clone();
-        self.user_config = user
-            .iter()
-            .map(|(key, value)| {
-                (
-                    key.clone(),
-                    if key == "proxy" {
-                        normalize_proxy_config(value)
-                    } else {
-                        value.clone()
-                    },
-                )
-            })
-            .collect();
+        self.user_config = normalize_user_map(user);
         self.save_system()?;
         self.save_user()
     }

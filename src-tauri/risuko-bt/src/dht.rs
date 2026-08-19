@@ -61,6 +61,11 @@ fn shared_dht_cell() -> &'static tokio::sync::Mutex<SharedDhtState> {
     SHARED_DHT.get_or_init(|| tokio::sync::Mutex::new(SharedDhtState::default()))
 }
 
+fn shared_dht_install_lock() -> &'static tokio::sync::Mutex<()> {
+    static LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
+    LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+}
+
 pub const DEFAULT_BOOTSTRAP: &[&str] = &[
     "router.bittorrent.com:6881",
     "router.utorrent.com:6881",
@@ -100,7 +105,7 @@ fn dht_targets_match(expected: &DhtTarget, actual: &DhtTarget) -> bool {
 
 /// A live DHT node; holds bound UDP sockets (v4 always, v6 if available) and a background reader task per socket that routes responses to pending queries by transaction id
 pub struct Dht {
-    sock: Arc<UdpSocket>,
+    sock: Option<Arc<UdpSocket>>,
     sock6: Option<Arc<UdpSocket>>,
     proxy_datagram: Option<Arc<ProxyDatagram>>,
     our_id: Id20,
@@ -140,6 +145,9 @@ impl DhtRouteSwap {
             }
         } else {
             tracing::debug!("ignoring stale DHT route commit");
+            if let Some(next) = self.next {
+                next.shutdown().await;
+            }
         }
     }
 
@@ -153,7 +161,12 @@ impl DhtRouteSwap {
             };
             if !owns_current {
                 tracing::debug!("ignoring stale DHT route rollback");
-                return guard.dht.clone();
+                let current = guard.dht.clone();
+                drop(guard);
+                if let Some(next) = self.next {
+                    next.shutdown().await;
+                }
+                return current;
             }
             let current = guard.dht.take();
             guard.dht = self.previous.clone();
@@ -238,6 +251,7 @@ impl PendingToken {
 struct PendingEntry {
     tx: oneshot::Sender<KrpcResponse>,
     target: DhtTarget,
+    resolved_addrs: Option<Vec<SocketAddr>>,
     token: PendingToken,
 }
 
@@ -280,7 +294,13 @@ impl Dht {
                 .map_err(|error| std::io::Error::other(error.to_string()));
         }
         match target {
-            SocketAddr::V4(_) => self.sock.send_to(packet, target).await,
+            SocketAddr::V4(_) => {
+                self.sock
+                    .as_ref()
+                    .ok_or_else(|| std::io::Error::other("DHT IPv4 socket unavailable"))?
+                    .send_to(packet, target)
+                    .await
+            }
             SocketAddr::V6(_) => match &self.sock6 {
                 Some(socket) => socket.send_to(packet, target).await,
                 None => Err(std::io::Error::new(
@@ -314,7 +334,13 @@ impl Dht {
         let mut last_error = None;
         for target in targets {
             let result = match target {
-                SocketAddr::V4(_) => self.sock.send_to(packet, target).await,
+                SocketAddr::V4(_) => {
+                    self.sock
+                        .as_ref()
+                        .ok_or_else(|| std::io::Error::other("DHT IPv4 socket unavailable"))?
+                        .send_to(packet, target)
+                        .await
+                }
                 SocketAddr::V6(_) => match &self.sock6 {
                     Some(socket) => socket.send_to(packet, target).await,
                     None => Err(std::io::Error::new(
@@ -383,6 +409,7 @@ impl Dht {
     pub async fn prepare_shared_with_proxy(
         proxy: Option<risuko_http::ProxyConnector>,
     ) -> Result<DhtRouteSwap, String> {
+        let _install_guard = shared_dht_install_lock().lock().await;
         let requested_proxy = proxy.is_some();
         let (previous, previous_proxy_requested, previous_error) = {
             let mut guard = shared_dht_cell().lock().await;
@@ -431,6 +458,7 @@ impl Dht {
         proxy: Option<risuko_http::ProxyConnector>,
         force: bool,
     ) -> Option<Arc<Dht>> {
+        let _install_guard = shared_dht_install_lock().lock().await;
         let requested_proxy = proxy.is_some();
         let (previous, previous_proxy_requested) = {
             let mut guard = shared_dht_cell().lock().await;
@@ -490,19 +518,6 @@ impl Dht {
     pub async fn spawn_with_proxy(
         proxy: Option<risuko_http::ProxyConnector>,
     ) -> std::io::Result<Arc<Self>> {
-        let sock = UdpSocket::bind("0.0.0.0:0").await?;
-        let sock = Arc::new(sock);
-        // Try to bind a dual-stack IPv6 socket too; if the host lacks IPv6 the bind fails and we carry on with v4 only
-        let sock6 = match UdpSocket::bind("[::]:0").await {
-            Ok(s) => Some(Arc::new(s)),
-            Err(e) => {
-                tracing::debug!("dht: no ipv6 socket: {e}");
-                None
-            }
-        };
-        let our_id = random_id();
-        let pending: Arc<Mutex<PendingMap>> = Arc::new(Mutex::new(Default::default()));
-
         let proxy_datagram = match proxy {
             Some(connector) => {
                 let has_explicit_bypass = connector
@@ -519,6 +534,22 @@ impl Dht {
             }
             None => None,
         };
+
+        let (sock, sock6) = if proxy_datagram.is_none() {
+            let sock = Some(Arc::new(UdpSocket::bind("0.0.0.0:0").await?));
+            let sock6 = match UdpSocket::bind("[::]:0").await {
+                Ok(s) => Some(Arc::new(s)),
+                Err(e) => {
+                    tracing::debug!("dht: no ipv6 socket: {e}");
+                    None
+                }
+            };
+            (sock, sock6)
+        } else {
+            (None, None)
+        };
+        let our_id = random_id();
+        let pending: Arc<Mutex<PendingMap>> = Arc::new(Mutex::new(Default::default()));
 
         let this = Arc::new(Self {
             sock: sock.clone(),
@@ -538,7 +569,9 @@ impl Dht {
         let reader_handle = if let Some(datagram) = proxy_datagram.clone() {
             tokio::spawn(async move { proxy_reader_loop(datagram, pending_reader).await })
         } else {
-            tokio::spawn(async move { reader_loop(reader_sock, pending_reader).await })
+            tokio::spawn(async move {
+                reader_loop(reader_sock.expect("direct DHT socket"), pending_reader).await
+            })
         };
         *this.reader_handle.lock() = Some(reader_handle);
 
@@ -737,13 +770,20 @@ impl Dht {
         target: DhtTarget,
         info_hash: Id20,
     ) -> Option<GetPeersReply> {
-        let target = match target {
+        let (target, resolved_addrs) = match target {
             DhtTarget::Host(host, port) if self.proxy_datagram.is_none() => {
-                DhtTarget::Addr(lookup_host((host.as_str(), port)).await.ok()?.next()?)
+                let addresses = lookup_host((host.as_str(), port))
+                    .await
+                    .ok()?
+                    .collect::<Vec<_>>();
+                if addresses.is_empty() {
+                    return None;
+                }
+                (DhtTarget::Host(host, port), Some(addresses))
             }
-            target => target,
+            target => (target, None),
         };
-        let (txn, rx, _guard) = self.register_transaction(target.clone());
+        let (txn, rx, _guard) = self.register_transaction(target.clone(), resolved_addrs);
         let packet = build_get_peers(txn, &self.our_id, &info_hash);
         // `_guard` removes `txn` from `pending`
         let send_res = self.send_target(&packet, &target).await;
@@ -763,6 +803,7 @@ impl Dht {
     fn register_transaction(
         &self,
         target: DhtTarget,
+        resolved_addrs: Option<Vec<SocketAddr>>,
     ) -> (u16, oneshot::Receiver<KrpcResponse>, PendingGuard) {
         let (tx, rx) = oneshot::channel();
         let mut map = self.pending.lock();
@@ -776,6 +817,7 @@ impl Dht {
             PendingEntry {
                 tx,
                 target,
+                resolved_addrs,
                 token: token.clone(),
             },
         );
@@ -1073,7 +1115,13 @@ async fn reader_loop(sock: Arc<UdpSocket>, pending: Arc<Mutex<PendingMap>>) {
         };
         let mut guard = pending.lock();
         if let Some(entry) = guard.get(&txn) {
-            if dht_targets_match(&entry.target, &DhtTarget::Addr(from)) {
+            let matches = entry
+                .resolved_addrs
+                .as_ref()
+                .is_some_and(|addresses| addresses.contains(&from))
+                || (entry.resolved_addrs.is_none()
+                    && dht_targets_match(&entry.target, &DhtTarget::Addr(from)));
+            if matches {
                 if let Some(entry) = guard.remove(&txn) {
                     let _ = entry.tx.send(KrpcResponse {
                         from: DhtTarget::Addr(from),
@@ -1398,6 +1446,7 @@ mod tests {
             PendingEntry {
                 tx: old_tx,
                 target: DhtTarget::Addr(target),
+                resolved_addrs: None,
                 token: old_token.clone(),
             },
         );
@@ -1412,6 +1461,7 @@ mod tests {
             PendingEntry {
                 tx: new_tx,
                 target: DhtTarget::Addr(target),
+                resolved_addrs: None,
                 token: new_token,
             },
         );

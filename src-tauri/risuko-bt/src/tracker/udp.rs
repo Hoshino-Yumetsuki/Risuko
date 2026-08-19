@@ -190,7 +190,7 @@ async fn announce_inner_socket(
     is_ipv6: bool,
 ) -> Result<AnnounceResponse, TrackerError> {
     let (body, txn) = build_announce_body(conn_id, req);
-    let mut buf = vec![0u8; MAX_UDP_PACKET];
+    let mut buf = vec![0u8; announce_response_buffer_len(true, req.num_want)];
     for attempt in 0..3u32 {
         sock.send_to_host(&body, host, port)
             .await
@@ -198,7 +198,8 @@ async fn announce_inner_socket(
         let wait = Duration::from_secs(5u64 << attempt);
         match timeout(wait, sock.recv_from_target(&mut buf)).await {
             Ok(Ok((n, from))) if n >= 8 => {
-                if n == buf.len() {
+                let effective_max = buf.len().min(MAX_UDP_PAYLOAD);
+                if n >= effective_max {
                     tracing::warn!("UDP tracker announce response may be truncated");
                 }
                 let action = be::read_u32(&buf[0..4]);
@@ -232,13 +233,14 @@ async fn announce_inner(
     let (body, txn) = build_announce_body(conn_id, req);
 
     let is_ipv6 = sock.peer_addr().map(|a| a.is_ipv6()).unwrap_or(false);
-    let mut buf = vec![0u8; MAX_UDP_PACKET];
+    let mut buf = vec![0u8; announce_response_buffer_len(is_ipv6, req.num_want)];
     for attempt in 0..3u32 {
         sock.send(&body).await?;
         let wait = Duration::from_secs(5u64 << attempt);
         match timeout(wait, sock.recv(&mut buf)).await {
             Ok(Ok(n)) if n >= 8 => {
-                if n == buf.len() {
+                let effective_max = buf.len().min(MAX_UDP_PAYLOAD);
+                if n >= effective_max {
                     tracing::warn!("UDP tracker announce response may be truncated");
                 }
                 let action = be::read_u32(&buf[0..4]);
@@ -257,17 +259,16 @@ async fn announce_inner(
     Err(TrackerError::Timeout)
 }
 
-#[cfg(test)]
 fn announce_response_buffer_len(is_ipv6: bool, num_want: u32) -> usize {
     const HEADER: usize = 20;
     const MIN_BUFFER_LEN: usize = 2048;
     let stride: usize = if is_ipv6 { 18 } else { 6 };
     HEADER
         .saturating_add(stride.saturating_mul(num_want as usize))
-        .clamp(MIN_BUFFER_LEN, MAX_UDP_PACKET)
+        .clamp(MIN_BUFFER_LEN, MAX_UDP_PAYLOAD)
 }
 
-const MAX_UDP_PACKET: usize = 65_536;
+const MAX_UDP_PAYLOAD: usize = 65_507;
 
 fn build_announce_body(conn_id: u64, req: &AnnounceRequest) -> ([u8; 98], u32) {
     let txn = rand::rng().random::<u32>();
@@ -292,7 +293,7 @@ fn parse_announce_response_with_inference(buf: &[u8], preferred_ipv6: bool) -> A
     let payload_len = buf.len().saturating_sub(20);
     let is_ipv6 = if preferred_ipv6 {
         true
-    } else if payload_len > 0 && payload_len % 18 == 0 {
+    } else if payload_len > 0 && payload_len % 18 == 0 && payload_len % 6 != 0 {
         true
     } else {
         false

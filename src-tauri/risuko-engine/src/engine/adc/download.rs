@@ -68,6 +68,9 @@ pub async fn run_adc_download(
             }
             _ = cancel_token.cancelled() => return Err("cancelled".into()),
         }
+        if cancel_token.is_cancelled() {
+            return Err("cancelled".into());
+        }
     }
 
     // Passive-only mode: no listening socket, so peer negotiation (`$ConnectToMe` / ADC `CTM`) cannot complete; bail before hub I/O so the task fails fast instead of hanging

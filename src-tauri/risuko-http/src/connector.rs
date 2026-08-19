@@ -343,6 +343,38 @@ fn direct_datagram_source_allowed(no_proxy: &NoProxy, source: SocketAddr) -> boo
     no_proxy.matches_host_port(&source.ip().to_string(), Some(source.port()))
 }
 
+fn blocked_route_error(message: &str) -> Error {
+    if message == "SOCKS5 required for UDP proxying" {
+        return Error::Socks5Required;
+    }
+    if message.starts_with("io error: ") {
+        return Error::Socks5Required;
+    }
+    if message.starts_with("connection error: ") {
+        return Error::Socks5Required;
+    }
+    for (prefix, make) in [
+        (
+            "proxy protocol error: ",
+            Error::ProxyProtocol as fn(String) -> Error,
+        ),
+        (
+            "proxy authentication failed: ",
+            Error::ProxyAuthentication as fn(String) -> Error,
+        ),
+        (
+            "proxy timeout: ",
+            Error::ProxyTimeout as fn(String) -> Error,
+        ),
+        ("invalid url: ", Error::Url as fn(String) -> Error),
+    ] {
+        if let Some(detail) = message.strip_prefix(prefix) {
+            return make(detail.to_string());
+        }
+    }
+    Error::ProxyProtocol(message.to_string())
+}
+
 enum DatagramRoute {
     Direct {
         connector: Connector,
@@ -510,7 +542,7 @@ impl ProxyDatagram {
                     }
                     result
                 } else {
-                    Err(Error::ProxyProtocol(error.clone()))
+                    Err(blocked_route_error(error))
                 }
             }
         }
@@ -570,7 +602,7 @@ impl ProxyDatagram {
                 error,
             } => {
                 if !no_proxy.matches_host_port(&host, Some(port)) {
-                    return Err(Error::ProxyProtocol(error.clone()));
+                    return Err(blocked_route_error(error));
                 }
                 let target = resolve_first(connector, &host, port).await?;
                 let result = self
