@@ -24,6 +24,7 @@ use crate::engine::speed_limiter::{SpeedEma, SpeedLimiter};
 const PART_SUFFIX: &str = ".part";
 const BUF_SIZE: usize = 64 * 1024;
 const PROXY_BRIDGE_ACCEPT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+const PROXY_BRIDGE_TOKEN_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(1);
 const PROXY_BRIDGE_TOKEN_LEN: usize = 32;
 
 /// Macro running the FTP/FTPS download loop on a connected+logged-in stream, avoiding duplication across `AsyncFtpStream` vs `AsyncRustlsFtpStream` (whose concrete type differs after `into_secure`)
@@ -221,7 +222,7 @@ pub async fn run_ftp_ftps_download(
 
     let addr = format!("{}:{}", parsed.host, parsed.port);
     let file_size = total.load(Ordering::Relaxed);
-    let http_proxy = http_proxy_from_options(options)?;
+    let http_proxy = proxy_for_target(http_proxy_from_options(options)?, &parsed.host, parsed.port);
 
     if parsed.protocol == FtpProtocol::Ftps {
         // Match aria2's `--check-certificate=true` default; only accept self-signed or invalid certs when `check-certificate=false`
@@ -413,6 +414,18 @@ pub(super) fn http_proxy_from_options(
     ))
 }
 
+fn proxy_for_target(
+    proxy: Option<risuko_http::ProxyConnector>,
+    host: &str,
+    port: u16,
+) -> Option<risuko_http::ProxyConnector> {
+    proxy.filter(|connector| {
+        !connector
+            .no_proxy()
+            .is_some_and(|bypass| bypass.matches_host_port(host, Some(port)))
+    })
+}
+
 async fn proxy_bridge(
     proxy: risuko_http::ProxyConnector,
     host: String,
@@ -427,7 +440,12 @@ async fn proxy_bridge(
             loop {
                 let (mut local, _) = listener.accept().await?;
                 let mut presented = [0u8; PROXY_BRIDGE_TOKEN_LEN];
-                if local.read_exact(&mut presented).await.is_ok() && presented == token {
+                let token_read = tokio::time::timeout(
+                    PROXY_BRIDGE_TOKEN_READ_TIMEOUT,
+                    local.read_exact(&mut presented),
+                )
+                .await;
+                if matches!(token_read, Ok(Ok(_))) && presented == token {
                     return Ok::<_, io::Error>(local);
                 }
             }
@@ -535,5 +553,47 @@ pub(super) fn basename_from_ftp_path(path: &str) -> String {
     match trimmed.rfind('/') {
         Some(idx) if !trimmed[idx + 1..].is_empty() => trimmed[idx + 1..].to_string(),
         _ => "download".to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bypassed_target_does_not_use_http_proxy() {
+        let proxy = risuko_http::ProxyConnector::from_proxy(
+            risuko_http::Proxy::all("http://127.0.0.1:8080").unwrap(),
+        )
+        .with_no_proxy(risuko_http::NoProxy::parse("bypass.example"));
+
+        assert!(proxy_for_target(Some(proxy.clone()), "bypass.example", 990).is_none());
+        assert!(proxy_for_target(Some(proxy), "proxy.example", 990).is_some());
+    }
+
+    #[tokio::test]
+    async fn stalled_bridge_client_does_not_block_authenticated_client() {
+        let upstream = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let upstream_addr = upstream.local_addr().unwrap();
+        let bridge = proxy_bridge(
+            risuko_http::ProxyConnector::direct(),
+            upstream_addr.ip().to_string(),
+            upstream_addr.port(),
+        )
+        .await
+        .unwrap();
+
+        let stalled = TcpStream::connect(bridge.endpoint).await.unwrap();
+        let bridged = tokio::time::timeout(std::time::Duration::from_secs(3), bridge.connect())
+            .await
+            .expect("stalled client blocked the bridge")
+            .unwrap();
+        let _upstream_connection = tokio::time::timeout(std::time::Duration::from_secs(1), upstream.accept())
+            .await
+            .expect("authenticated bridge client did not reach upstream")
+            .unwrap();
+
+        drop(bridged);
+        drop(stalled);
     }
 }

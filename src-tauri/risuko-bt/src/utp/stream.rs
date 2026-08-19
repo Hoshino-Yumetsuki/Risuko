@@ -18,7 +18,10 @@ use risuko_http::ProxyDatagram;
 
 use super::now_micros;
 use super::packet::{PacketType, UtpHeader};
-use super::socket::{ConnKey, ConnRegistry, ProxyConnRegistry};
+use super::socket::{
+    ConnKey, ConnRegistry, ConnectionToken, ProxyConnRegistry, remove_connection_registration,
+    remove_proxy_connection_registration,
+};
 const MSS: usize = 1200;
 const RECV_BUF_MAX: usize = 1024 * 1024;
 const SEND_BUF_MAX: usize = 512 * 1024;
@@ -513,6 +516,7 @@ pub(crate) struct DriverConfig {
     pub incoming: mpsc::UnboundedReceiver<(UtpHeader, Bytes)>,
     pub registry: ConnRegistry,
     pub key: ConnKey,
+    pub token: ConnectionToken,
     pub proxy_registry: Option<ProxyConnRegistry>,
 }
 
@@ -659,15 +663,9 @@ pub(crate) async fn drive(shared: Arc<Shared>, mut cfg: DriverConfig, role: Role
         flush(&shared, &cfg).await;
     }
 
-    cfg.registry.lock().remove(&cfg.key);
+    remove_connection_registration(&cfg.registry, cfg.key, &cfg.token);
     if let Some(proxy_registry) = &cfg.proxy_registry {
-        let mut proxy_registry = proxy_registry.lock();
-        if proxy_registry
-            .get(&cfg.key.1)
-            .is_some_and(|key| *key == cfg.key)
-        {
-            proxy_registry.remove(&cfg.key.1);
-        }
+        remove_proxy_connection_registration(proxy_registry, cfg.key.1, &cfg.token);
     }
 }
 

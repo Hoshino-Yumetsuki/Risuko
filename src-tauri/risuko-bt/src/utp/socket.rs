@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 use std::io;
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -19,9 +20,61 @@ use super::stream::{self, DatagramTransport, DriverConfig, Role, RoleKind, UtpSt
 
 pub(crate) type ConnKey = (SocketAddr, u16);
 
-pub(crate) type ConnRegistry =
-    Arc<Mutex<HashMap<ConnKey, mpsc::UnboundedSender<(UtpHeader, Bytes)>>>>;
-pub(crate) type ProxyConnRegistry = Arc<Mutex<HashMap<u16, ConnKey>>>;
+#[derive(Clone)]
+pub(crate) struct ConnectionToken(Arc<()>);
+
+impl ConnectionToken {
+    fn new() -> Self {
+        Self(Arc::new(()))
+    }
+
+    pub(crate) fn matches(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+#[derive(Clone)]
+pub(crate) struct ConnRegistration {
+    pub(crate) sender: mpsc::UnboundedSender<(UtpHeader, Bytes)>,
+    pub(crate) token: ConnectionToken,
+}
+
+#[derive(Clone)]
+pub(crate) struct ProxyConnRegistration {
+    pub(crate) key: ConnKey,
+    pub(crate) token: ConnectionToken,
+}
+
+pub(crate) type ConnRegistry = Arc<Mutex<HashMap<ConnKey, ConnRegistration>>>;
+pub(crate) type ProxyConnRegistry = Arc<Mutex<HashMap<u16, ProxyConnRegistration>>>;
+
+pub(crate) fn remove_connection_registration(
+    registry: &ConnRegistry,
+    key: ConnKey,
+    token: &ConnectionToken,
+) {
+    let mut registry = registry.lock();
+    if registry
+        .get(&key)
+        .is_some_and(|entry| entry.token.matches(token))
+    {
+        registry.remove(&key);
+    }
+}
+
+pub(crate) fn remove_proxy_connection_registration(
+    proxy_registry: &ProxyConnRegistry,
+    connection_id: u16,
+    token: &ConnectionToken,
+) {
+    let mut proxy_registry = proxy_registry.lock();
+    if proxy_registry
+        .get(&connection_id)
+        .is_some_and(|entry| entry.token.matches(token))
+    {
+        proxy_registry.remove(&connection_id);
+    }
+}
 
 const MAX_DATAGRAM: usize = 2048;
 const ROUTER_READ_SLAB: usize = MAX_DATAGRAM * 64;
@@ -37,6 +90,7 @@ pub struct UtpSocket {
     proxy_router_handle: Mutex<Option<tokio::task::JoinHandle<()>>>,
     outbound: RwLock<OutboundRoute>,
     reconfigure_lock: AsyncMutex<()>,
+    reconfigure_generation: AtomicU64,
 }
 
 #[derive(Clone)]
@@ -44,6 +98,28 @@ enum OutboundRoute {
     Direct,
     Proxy(Arc<ProxyDatagram>),
     Blocked { error: String, bypass: NoProxy },
+}
+
+async fn build_outbound_route(proxy: Option<ProxyConnector>) -> OutboundRoute {
+    match proxy {
+        None => OutboundRoute::Direct,
+        Some(connector) if connector.udp_proxy().is_none() => OutboundRoute::Direct,
+        Some(connector) => {
+            let bypass = connector.udp_no_proxy().unwrap_or_default();
+            let bind = if bypass.is_empty() {
+                connector.bind_udp().await
+            } else {
+                connector.bind_udp_with_bypass().await
+            };
+            match bind {
+                Ok(datagram) => OutboundRoute::Proxy(Arc::new(datagram)),
+                Err(error) => OutboundRoute::Blocked {
+                    error: error.to_string(),
+                    bypass,
+                },
+            }
+        }
+    }
 }
 
 impl UtpSocket {
@@ -82,41 +158,35 @@ impl UtpSocket {
             proxy_router_handle: Mutex::new(None),
             outbound: RwLock::new(OutboundRoute::Direct),
             reconfigure_lock: AsyncMutex::new(()),
+            reconfigure_generation: AtomicU64::new(0),
         })
     }
 
     /// Replace the outbound route while preserving the local listener
     pub async fn reconfigure_proxy(&self, proxy: Option<ProxyConnector>) {
+        let generation = self
+            .reconfigure_generation
+            .fetch_add(1, Ordering::AcqRel)
+            .wrapping_add(1);
+        let route = build_outbound_route(proxy).await;
         let _reconfigure_guard = self.reconfigure_lock.lock().await;
-
-        let route = match proxy {
-            None => OutboundRoute::Direct,
-            Some(connector) if connector.udp_proxy().is_none() => OutboundRoute::Direct,
-            Some(connector) => {
-                let bypass = connector.udp_no_proxy().unwrap_or_default();
-                let bind = if bypass.is_empty() {
-                    connector.bind_udp().await
-                } else {
-                    connector.bind_udp_with_bypass().await
-                };
-                match bind {
-                    Ok(datagram) => OutboundRoute::Proxy(Arc::new(datagram)),
-                    Err(error) => OutboundRoute::Blocked {
-                        error: error.to_string(),
-                        bypass,
-                    },
-                }
-            }
-        };
+        if self.reconfigure_generation.load(Ordering::Acquire) != generation {
+            return;
+        }
 
         // Drop every connection routed through the old proxy before replacing
         // the router. Direct-route connections remain registered.
         {
             let mut proxy_registry = self.proxy_registry.lock();
-            let old_keys = proxy_registry.values().copied().collect::<Vec<_>>();
+            let old_connections = proxy_registry.values().cloned().collect::<Vec<_>>();
             let mut registry = self.registry.lock();
-            for key in old_keys {
-                registry.remove(&key);
+            for connection in old_connections {
+                if registry
+                    .get(&connection.key)
+                    .is_some_and(|entry| entry.token.matches(&connection.token))
+                {
+                    registry.remove(&connection.key);
+                }
             }
             proxy_registry.clear();
         }
@@ -154,7 +224,7 @@ impl UtpSocket {
         let route = self.outbound.read().clone();
         let uses_proxy = matches!(route, OutboundRoute::Proxy(_));
 
-        let (key, inc_rx) = {
+        let (key, token, inc_rx) = {
             let mut proxy_registry = self.proxy_registry.lock();
             let mut reg = self.registry.lock();
             let mut id: u16 = rand::rng().random();
@@ -172,12 +242,25 @@ impl UtpSocket {
                 }
             }
             let key = (remote, id);
+            let token = ConnectionToken::new();
             let (inc_tx, inc_rx) = mpsc::unbounded_channel();
-            reg.insert(key, inc_tx);
+            reg.insert(
+                key,
+                ConnRegistration {
+                    sender: inc_tx,
+                    token: token.clone(),
+                },
+            );
             if uses_proxy {
-                proxy_registry.insert(id, key);
+                proxy_registry.insert(
+                    id,
+                    ProxyConnRegistration {
+                        key,
+                        token: token.clone(),
+                    },
+                );
             }
-            (key, inc_rx)
+            (key, token, inc_rx)
         };
         let recv_id = key.1;
         let send_id = recv_id.wrapping_add(1);
@@ -189,14 +272,8 @@ impl UtpSocket {
                 if bypass.matches_host_port(&remote.ip().to_string(), Some(remote.port())) {
                     DatagramTransport::Direct(self.udp.clone())
                 } else {
-                    self.registry.lock().remove(&key);
-                    let mut proxy_registry = self.proxy_registry.lock();
-                    if proxy_registry
-                        .get(&recv_id)
-                        .is_some_and(|stored_key| *stored_key == key)
-                    {
-                        proxy_registry.remove(&recv_id);
-                    }
+                    remove_connection_registration(&self.registry, key, &token);
+                    remove_proxy_connection_registration(&self.proxy_registry, recv_id, &token);
                     return Err(io::Error::new(io::ErrorKind::Unsupported, error));
                 }
             }
@@ -210,6 +287,7 @@ impl UtpSocket {
             incoming: inc_rx,
             registry: self.registry.clone(),
             key,
+            token: token.clone(),
             proxy_registry: uses_proxy.then(|| self.proxy_registry.clone()),
         };
         let driver_shared = shared.clone();
@@ -230,14 +308,8 @@ impl UtpSocket {
                     st.force_close();
                 }
                 shared.nudge.notify_one();
-                self.registry.lock().remove(&key);
-                let mut proxy_registry = self.proxy_registry.lock();
-                if proxy_registry
-                    .get(&recv_id)
-                    .is_some_and(|stored_key| *stored_key == key)
-                {
-                    proxy_registry.remove(&recv_id);
-                }
+                remove_connection_registration(&self.registry, key, &token);
+                remove_proxy_connection_registration(&self.proxy_registry, recv_id, &token);
                 Err(io::Error::new(
                     io::ErrorKind::TimedOut,
                     "utp connect timed out",
@@ -305,8 +377,8 @@ async fn router(
         // Fast path: an established connection owns this id
         {
             let reg = registry.lock();
-            if let Some(tx) = reg.get(&key) {
-                let _ = tx.send((header, payload));
+            if let Some(entry) = reg.get(&key) {
+                let _ = entry.sender.send((header, payload));
                 continue;
             }
         }
@@ -330,14 +402,21 @@ fn open_inbound(
     let recv_id = send_id.wrapping_add(1);
     let key = (src, recv_id);
 
-    let inc_rx = {
+    let (token, inc_rx) = {
         let mut reg = registry.lock();
         if reg.contains_key(&key) {
             return; // duplicate / retransmitted SYN for an open connection
         }
         let (inc_tx, inc_rx) = mpsc::unbounded_channel();
-        reg.insert(key, inc_tx);
-        inc_rx
+        let token = ConnectionToken::new();
+        reg.insert(
+            key,
+            ConnRegistration {
+                sender: inc_tx,
+                token: token.clone(),
+            },
+        );
+        (token, inc_rx)
     };
 
     let shared = stream::new_shared(src, send_id, RoleKind::Responder);
@@ -349,6 +428,7 @@ fn open_inbound(
         incoming: inc_rx,
         registry: registry.clone(),
         key,
+        token,
         proxy_registry: None,
     };
     tokio::spawn(stream::drive(shared.clone(), cfg, Role::Responder));
@@ -382,25 +462,27 @@ async fn proxy_router(
         match src {
             ProxyDatagramSource::Ip(src) => {
                 let key = (src, header.connection_id);
-                if let Some(tx) = registry.lock().get(&key) {
-                    let _ = tx.send((header, payload));
+                if let Some(entry) = registry.lock().get(&key) {
+                    let _ = entry.sender.send((header, payload));
                 }
             }
             ProxyDatagramSource::Host(host, port) => {
-                let key = proxy_registry.lock().get(&header.connection_id).copied();
-                let Some(key) = key else {
+                let connection = proxy_registry.lock().get(&header.connection_id).cloned();
+                let Some(connection) = connection else {
                     continue;
                 };
-                if key.0.port() != port
+                if connection.key.0.port() != port
                     || !risuko_http::datagram_source_matches(
                         &ProxyDatagramSource::Host(host, port),
-                        key.0,
+                        connection.key.0,
                     )
                 {
                     continue;
                 }
-                if let Some(tx) = registry.lock().get(&key) {
-                    let _ = tx.send((header, payload));
+                if let Some(entry) = registry.lock().get(&connection.key) {
+                    if entry.token.matches(&connection.token) {
+                        let _ = entry.sender.send((header, payload));
+                    }
                 }
             }
         }
@@ -504,7 +586,13 @@ mod tests {
         let registry = sock.registry.clone();
         let key: ConnKey = ("127.0.0.1:9".parse().unwrap(), 7);
         let (tx, mut rx) = mpsc::unbounded_channel();
-        registry.lock().insert(key, tx);
+        registry.lock().insert(
+            key,
+            ConnRegistration {
+                sender: tx,
+                token: ConnectionToken::new(),
+            },
+        );
 
         drop(sock);
 
@@ -513,5 +601,36 @@ mod tests {
             .await
             .expect("registry sender kept the driver channel open");
         assert!(received.is_none());
+    }
+
+    #[test]
+    fn stale_cleanup_preserves_reused_connection_registration() {
+        let registry: ConnRegistry = Arc::new(Mutex::new(HashMap::new()));
+        let proxy_registry: ProxyConnRegistry = Arc::new(Mutex::new(HashMap::new()));
+        let key: ConnKey = ("127.0.0.1:9".parse().unwrap(), 7);
+        let stale = ConnectionToken::new();
+        let current = ConnectionToken::new();
+        let (tx, _rx) = mpsc::unbounded_channel();
+
+        registry.lock().insert(
+            key,
+            ConnRegistration {
+                sender: tx,
+                token: current.clone(),
+            },
+        );
+        proxy_registry.lock().insert(
+            key.1,
+            ProxyConnRegistration {
+                key,
+                token: current.clone(),
+            },
+        );
+
+        remove_connection_registration(&registry, key, &stale);
+        remove_proxy_connection_registration(&proxy_registry, key.1, &stale);
+
+        assert!(registry.lock().contains_key(&key));
+        assert!(proxy_registry.lock().contains_key(&key.1));
     }
 }
