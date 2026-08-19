@@ -222,7 +222,8 @@ pub async fn run_ftp_ftps_download(
 
     let addr = format!("{}:{}", parsed.host, parsed.port);
     let file_size = total.load(Ordering::Relaxed);
-    let http_proxy = proxy_for_target(http_proxy_from_options(options)?, &parsed.host, parsed.port);
+    let http_proxy = http_proxy_from_options(options)?;
+    let control_proxy = proxy_for_target(http_proxy.clone(), &parsed.host, parsed.port);
 
     if parsed.protocol == FtpProtocol::Ftps {
         // Match aria2's `--check-certificate=true` default; only accept self-signed or invalid certs when `check-certificate=false`
@@ -235,14 +236,14 @@ pub async fn run_ftp_ftps_download(
         }
         let connector = super::tls::ftps_tls_connector(!verify_cert);
 
-        if parsed.port == 990 && http_proxy.is_some() {
+        if parsed.port == 990 && control_proxy.is_some() {
             return Err("FTPS implicit proxying is unsupported".to_string());
         }
-        let proxy_control = if let Some(proxy) = &http_proxy {
+        let proxy_control = if let Some(proxy) = &control_proxy {
             Some(
                 proxy_bridge(proxy.clone(), parsed.host.clone(), parsed.port)
                     .await
-                    .map_err(|e| format!("FTPS proxy bridge failed: {e}"))?
+                    .map_err(|e| format!("FTPS proxy bridge failed: {e}"))?,
             )
         } else {
             None
@@ -303,7 +304,7 @@ pub async fn run_ftp_ftps_download(
             task_limiter
         )?;
     } else {
-        let mut ftp = if let Some(proxy) = http_proxy.clone() {
+        let mut ftp = if let Some(proxy) = control_proxy {
             let control = proxy_bridge(proxy, parsed.host.clone(), parsed.port)
                 .await
                 .map_err(|e| format!("FTP proxy bridge failed: {e}"))?
@@ -569,6 +570,13 @@ mod tests {
 
         assert!(proxy_for_target(Some(proxy.clone()), "bypass.example", 990).is_none());
         assert!(proxy_for_target(Some(proxy), "proxy.example", 990).is_some());
+
+        let port_qualified = risuko_http::ProxyConnector::from_proxy(
+            risuko_http::Proxy::all("http://127.0.0.1:8080").unwrap(),
+        )
+        .with_no_proxy(risuko_http::NoProxy::parse("bypass.example:21"));
+        assert!(proxy_for_target(Some(port_qualified.clone()), "bypass.example", 21).is_none());
+        assert!(proxy_for_target(Some(port_qualified), "bypass.example", 50000).is_some());
     }
 
     #[tokio::test]
@@ -588,10 +596,11 @@ mod tests {
             .await
             .expect("stalled client blocked the bridge")
             .unwrap();
-        let _upstream_connection = tokio::time::timeout(std::time::Duration::from_secs(1), upstream.accept())
-            .await
-            .expect("authenticated bridge client did not reach upstream")
-            .unwrap();
+        let _upstream_connection =
+            tokio::time::timeout(std::time::Duration::from_secs(1), upstream.accept())
+                .await
+                .expect("authenticated bridge client did not reach upstream")
+                .unwrap();
 
         drop(bridged);
         drop(stalled);

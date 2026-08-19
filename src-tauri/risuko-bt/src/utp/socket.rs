@@ -462,8 +462,13 @@ async fn proxy_router(
         match src {
             ProxyDatagramSource::Ip(src) => {
                 let key = (src, header.connection_id);
-                if let Some(entry) = registry.lock().get(&key) {
-                    let _ = entry.sender.send((header, payload));
+                let connection = proxy_registry.lock().get(&header.connection_id).cloned();
+                if let Some(connection) = connection.filter(|connection| connection.key == key) {
+                    if let Some(entry) = registry.lock().get(&key) {
+                        if entry.token.matches(&connection.token) {
+                            let _ = entry.sender.send((header, payload));
+                        }
+                    }
                 }
             }
             ProxyDatagramSource::Host(host, port) => {

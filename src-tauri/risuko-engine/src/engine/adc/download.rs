@@ -5,18 +5,8 @@ use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
-use super::types::{is_adc_uri, parse_adc_hub_uri, parse_dchub_file_uri, AdcError, HubInfo};
+use super::types::{is_adc_uri, parse_adc_hub_uri, parse_dchub_file_uri, AdcError};
 use crate::engine::options::EngineOptions;
-
-pub async fn connect_hub_with_proxy(
-    hub: &HubInfo,
-    proxy: &risuko_http::ProxyConnector,
-) -> Result<risuko_http::BoxedIo, AdcError> {
-    proxy
-        .connect_tcp(&hub.host, hub.port)
-        .await
-        .map_err(|error| AdcError::Peer(format!("hub connect: {error}")))
-}
 
 /// Run a single ADC / NMDC download to completion: parse the URI, open the hub, locate a peer holding the requested TTH and copy the file to `dir`; returns the output path on success or a failure string (`"cancelled"` when aborted)
 pub async fn run_adc_download(

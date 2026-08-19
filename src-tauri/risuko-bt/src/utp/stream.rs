@@ -19,8 +19,8 @@ use risuko_http::ProxyDatagram;
 use super::now_micros;
 use super::packet::{PacketType, UtpHeader};
 use super::socket::{
-    ConnKey, ConnRegistry, ConnectionToken, ProxyConnRegistry, remove_connection_registration,
-    remove_proxy_connection_registration,
+    remove_connection_registration, remove_proxy_connection_registration, ConnKey, ConnRegistry,
+    ConnectionToken, ProxyConnRegistry,
 };
 const MSS: usize = 1200;
 const RECV_BUF_MAX: usize = 1024 * 1024;
@@ -682,13 +682,28 @@ async fn flush(shared: &Arc<Shared>, cfg: &DriverConfig) {
                 .send_to(&d, cfg.remote)
                 .await
                 .map(|_| ())
-                .map_err(|error| io::Error::new(io::ErrorKind::Other, error.to_string())),
+                .map_err(|error| io::Error::other(error.to_string())),
         };
         if let Err(error) = result {
-            shared.state.lock().fail(error.kind());
+            if !is_recoverable_send_error(&error) {
+                shared.state.lock().fail(error.kind());
+            }
             break;
         }
     }
+}
+
+fn is_recoverable_send_error(error: &io::Error) -> bool {
+    matches!(
+        error.kind(),
+        io::ErrorKind::WouldBlock
+            | io::ErrorKind::Interrupted
+            | io::ErrorKind::TimedOut
+            | io::ErrorKind::ConnectionRefused
+            | io::ErrorKind::NetworkUnreachable
+            | io::ErrorKind::HostUnreachable
+            | io::ErrorKind::NetworkDown
+    )
 }
 
 /// A µTP connection presented as an async byte stream. Plugs into the peer connection layer wherever a `TcpStream` would go
@@ -848,5 +863,18 @@ mod tests {
         assert!(st.unacked.is_empty());
         assert!(st.send_buf.is_empty());
         assert!(st.next_deadline().is_none());
+    }
+
+    #[test]
+    fn transient_send_errors_remain_retriable() {
+        assert!(is_recoverable_send_error(&io::Error::from(
+            io::ErrorKind::ConnectionRefused,
+        )));
+        assert!(is_recoverable_send_error(&io::Error::from(
+            io::ErrorKind::NetworkUnreachable,
+        )));
+        assert!(!is_recoverable_send_error(&io::Error::from(
+            io::ErrorKind::InvalidData,
+        )));
     }
 }

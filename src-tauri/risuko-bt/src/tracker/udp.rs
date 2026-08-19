@@ -213,7 +213,7 @@ async fn announce_inner_socket(
                         risuko_http::ProxyDatagramSource::Ip(address)
                             if address.is_ipv6()
                     );
-                    return Ok(parse_announce_response_with_inference(
+                    return Ok(parse_announce_response(
                         &buf[..n],
                         is_ipv6 || source_is_ipv6,
                     ));
@@ -287,18 +287,6 @@ fn build_announce_body(conn_id: u64, req: &AnnounceRequest) -> ([u8; 98], u32) {
     be::write_u32(&mut body[92..96], req.num_want);
     be::write_u16(&mut body[96..98], req.port);
     (body, txn)
-}
-
-fn parse_announce_response_with_inference(buf: &[u8], preferred_ipv6: bool) -> AnnounceResponse {
-    let payload_len = buf.len().saturating_sub(20);
-    let is_ipv6 = if preferred_ipv6 {
-        true
-    } else if payload_len > 0 && payload_len % 18 == 0 && payload_len % 6 != 0 {
-        true
-    } else {
-        false
-    };
-    parse_announce_response(buf, is_ipv6)
 }
 
 fn parse_announce_response(buf: &[u8], is_ipv6: bool) -> AnnounceResponse {
