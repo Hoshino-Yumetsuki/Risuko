@@ -34,6 +34,8 @@ const MIN_RTO: Duration = Duration::from_millis(500);
 const MAX_RTO: Duration = Duration::from_secs(10);
 const INITIAL_RTO: Duration = Duration::from_secs(1);
 const MAX_RETRANSMITS: u32 = 8;
+const SEND_RETRY_DELAY: Duration = Duration::from_millis(100);
+const MAX_SEND_RETRIES: u32 = 8;
 const LINGER_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// `a` is strictly after `b` in 16-bit sequence space (within half the ring)
@@ -91,6 +93,8 @@ pub(crate) struct ConnState {
     recovery_seq: Option<u16>,
 
     outbox: Vec<Vec<u8>>,
+    send_retry_at: Option<Instant>,
+    send_retry_count: u32,
     read_waker: Option<Waker>,
     write_waker: Option<Waker>,
     connect_notify: Option<oneshot::Sender<io::Result<()>>>,
@@ -441,7 +445,34 @@ impl ConnState {
 
     /// Next instant the driver must wake to do timer work, if any
     fn next_deadline(&self) -> Option<Instant> {
-        self.unacked.front().map(|p| p.sent_at + self.rto)
+        let retransmit_at = self.unacked.front().map(|p| p.sent_at + self.rto);
+        match (retransmit_at, self.send_retry_at) {
+            (Some(retransmit_at), Some(send_retry_at)) => Some(retransmit_at.min(send_retry_at)),
+            (Some(deadline), None) | (None, Some(deadline)) => Some(deadline),
+            (None, None) => None,
+        }
+    }
+
+    fn schedule_send_retry(&mut self) -> bool {
+        if self.send_retry_count >= MAX_SEND_RETRIES {
+            return false;
+        }
+        self.send_retry_count += 1;
+        self.send_retry_at = Some(Instant::now() + SEND_RETRY_DELAY);
+        true
+    }
+
+    fn retry_failed_datagrams(&mut self, mut datagrams: Vec<Vec<u8>>) -> bool {
+        if !self.schedule_send_retry() {
+            return false;
+        }
+        datagrams.append(&mut self.outbox);
+        self.outbox = datagrams;
+        true
+    }
+
+    fn record_send_success(&mut self) {
+        self.send_retry_count = 0;
     }
 
     fn fail(&mut self, kind: io::ErrorKind) {
@@ -561,6 +592,8 @@ pub(crate) fn new_shared(remote: SocketAddr, conn_id_send: u16, kind: RoleKind) 
             error: None,
             recovery_seq: None,
             outbox: Vec::new(),
+            send_retry_at: None,
+            send_retry_count: 0,
             read_waker: None,
             write_waker: None,
             connect_notify: None,
@@ -673,9 +706,17 @@ pub(crate) async fn drive(shared: Arc<Shared>, mut cfg: DriverConfig, role: Role
 async fn flush(shared: &Arc<Shared>, cfg: &DriverConfig) {
     let datagrams: Vec<Vec<u8>> = {
         let mut st = shared.state.lock();
+        if st
+            .send_retry_at
+            .is_some_and(|retry_at| retry_at > Instant::now())
+        {
+            return;
+        }
+        st.send_retry_at = None;
         std::mem::take(&mut st.outbox)
     };
-    for d in datagrams {
+    let mut datagrams = datagrams.into_iter();
+    while let Some(d) = datagrams.next() {
         let result = match &cfg.transport {
             DatagramTransport::Direct(udp) => udp.send_to(&d, cfg.remote).await.map(|_| ()),
             DatagramTransport::Proxy(proxy) => proxy
@@ -685,11 +726,20 @@ async fn flush(shared: &Arc<Shared>, cfg: &DriverConfig) {
                 .map_err(|error| io::Error::other(error.to_string())),
         };
         if let Err(error) = result {
-            if !is_recoverable_send_error(&error) {
-                shared.state.lock().fail(error.kind());
+            let mut st = shared.state.lock();
+            if is_recoverable_send_error(&error) {
+                let mut pending = vec![d];
+                pending.extend(datagrams);
+                if st.retry_failed_datagrams(pending) {
+                    return;
+                }
+                st.fail(error.kind());
+            } else {
+                st.fail(error.kind());
             }
-            break;
+            return;
         }
+        shared.state.lock().record_send_success();
     }
 }
 
@@ -876,5 +926,18 @@ mod tests {
         assert!(!is_recoverable_send_error(&io::Error::from(
             io::ErrorKind::InvalidData,
         )));
+    }
+
+    #[test]
+    fn retrying_unsent_datagrams_arms_a_deadline_and_preserves_order() {
+        let shared = new_shared("127.0.0.1:1".parse().unwrap(), 2, RoleKind::Responder);
+        let mut st = shared.state.lock();
+        assert!(st.unacked.is_empty());
+        st.outbox = vec![vec![3]];
+
+        assert!(st.retry_failed_datagrams(vec![vec![1], vec![2]]));
+        assert!(st.next_deadline().is_some());
+        assert_eq!(st.send_retry_count, 1);
+        assert_eq!(st.outbox, vec![vec![1], vec![2], vec![3]]);
     }
 }
