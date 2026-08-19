@@ -9,6 +9,7 @@ use std::sync::Mutex as StdMutex;
 use std::task::{Context, Poll};
 use std::time::Instant;
 
+use rand::RngExt;
 use serde_json::{Map, Value};
 use suppaftp::tokio::{AsyncFtpStream, AsyncRustlsFtpStream};
 use tokio::io::AsyncReadExt as _;
@@ -23,6 +24,7 @@ use crate::engine::speed_limiter::{SpeedEma, SpeedLimiter};
 const PART_SUFFIX: &str = ".part";
 const BUF_SIZE: usize = 64 * 1024;
 const PROXY_BRIDGE_ACCEPT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+const PROXY_BRIDGE_TOKEN_LEN: usize = 32;
 
 /// Macro running the FTP/FTPS download loop on a connected+logged-in stream, avoiding duplication across `AsyncFtpStream` vs `AsyncRustlsFtpStream` (whose concrete type differs after `into_secure`)
 macro_rules! ftp_transfer {
@@ -232,6 +234,9 @@ pub async fn run_ftp_ftps_download(
         }
         let connector = super::tls::ftps_tls_connector(!verify_cert);
 
+        if parsed.port == 990 && http_proxy.is_some() {
+            return Err("FTPS implicit proxying is unsupported".to_string());
+        }
         let proxy_control = if let Some(proxy) = &http_proxy {
             Some(
                 proxy_bridge(proxy.clone(), parsed.host.clone(), parsed.port)
@@ -242,23 +247,9 @@ pub async fn run_ftp_ftps_download(
             None
         };
         let mut ftp = if parsed.port == 990 {
-            if let Some(bridge) = proxy_control {
-                let endpoint = bridge.endpoint();
-                let result = AsyncRustlsFtpStream::connect_secure_implicit(
-                    endpoint,
-                    connector,
-                    &parsed.host,
-                )
-                .await;
-                let ready = bridge.wait_ready().await;
-                let ftp = result.map_err(|e| format!("FTPS implicit connect failed: {e}"))?;
-                ready.map_err(|e| format!("FTPS proxy connect failed: {e}"))?;
-                ftp
-            } else {
-                AsyncRustlsFtpStream::connect_secure_implicit(&addr, connector, &parsed.host)
-                    .await
-                    .map_err(|e| format!("FTPS implicit connect failed: {e}"))?
-            }
+            AsyncRustlsFtpStream::connect_secure_implicit(&addr, connector, &parsed.host)
+                .await
+                .map_err(|e| format!("FTPS implicit connect failed: {e}"))?
         } else {
             let control = match proxy_control {
                 Some(bridge) => bridge
@@ -422,14 +413,6 @@ pub(super) fn http_proxy_from_options(
     ))
 }
 
-pub(super) async fn proxy_bridge_endpoint(
-    proxy: risuko_http::ProxyConnector,
-    host: String,
-    port: u16,
-) -> io::Result<ProxyBridge> {
-    proxy_bridge(proxy, host, port).await
-}
-
 async fn proxy_bridge(
     proxy: risuko_http::ProxyConnector,
     host: String,
@@ -437,10 +420,21 @@ async fn proxy_bridge(
 ) -> io::Result<ProxyBridge> {
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let endpoint = listener.local_addr()?;
+    let token: [u8; PROXY_BRIDGE_TOKEN_LEN] = rand::rng().random();
     let (ready_tx, ready_rx) = oneshot::channel();
     tokio::spawn(async move {
-        match tokio::time::timeout(PROXY_BRIDGE_ACCEPT_TIMEOUT, listener.accept()).await {
-            Ok(Ok((mut local, _))) => match proxy.connect_tcp(&host, port).await {
+        let accepted = tokio::time::timeout(PROXY_BRIDGE_ACCEPT_TIMEOUT, async {
+            loop {
+                let (mut local, _) = listener.accept().await?;
+                let mut presented = [0u8; PROXY_BRIDGE_TOKEN_LEN];
+                if local.read_exact(&mut presented).await.is_ok() && presented == token {
+                    return Ok::<_, io::Error>(local);
+                }
+            }
+        })
+        .await;
+        match accepted {
+            Ok(Ok(mut local)) => match proxy.connect_tcp(&host, port).await {
                 Ok(mut tunneled) => {
                     let _ = ready_tx.send(Ok(()));
                     let _ = tokio::io::copy_bidirectional(&mut local, &mut tunneled).await;
@@ -462,20 +456,18 @@ async fn proxy_bridge(
     });
     Ok(ProxyBridge {
         endpoint,
+        token,
         ready: ready_rx,
     })
 }
 
 pub(super) struct ProxyBridge {
     endpoint: std::net::SocketAddr,
+    token: [u8; PROXY_BRIDGE_TOKEN_LEN],
     ready: oneshot::Receiver<io::Result<()>>,
 }
 
 impl ProxyBridge {
-    pub(super) fn endpoint(&self) -> std::net::SocketAddr {
-        self.endpoint
-    }
-
     pub(super) async fn wait_ready(self) -> io::Result<()> {
         self.ready.await.map_err(|_| {
             io::Error::new(io::ErrorKind::ConnectionAborted, "FTP proxy bridge stopped")
@@ -484,7 +476,8 @@ impl ProxyBridge {
     }
 
     async fn connect(self) -> io::Result<TcpStream> {
-        let stream = TcpStream::connect(self.endpoint).await?;
+        let mut stream = TcpStream::connect(self.endpoint).await?;
+        stream.write_all(&self.token).await?;
         self.wait_ready().await?;
         Ok(stream)
     }

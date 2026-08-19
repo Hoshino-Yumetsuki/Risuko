@@ -361,7 +361,10 @@ fn clone_route_error(error: &Error) -> Error {
         Error::NoRecords => Error::NoRecords,
         Error::Timeout => Error::Timeout,
         Error::Status(status) => Error::Status(*status),
-        Error::Io(error) => Error::Io(std::io::Error::new(error.kind(), error.to_string())),
+        Error::Io(error) => match error.raw_os_error() {
+            Some(code) => Error::Io(std::io::Error::from_raw_os_error(code)),
+            None => Error::Io(std::io::Error::new(error.kind(), error.to_string())),
+        },
         Error::Tls(message) => Error::Tls(message.clone()),
     }
 }
@@ -2177,7 +2180,7 @@ mod tests {
         let receiver = UdpSocket::bind("127.0.0.1:0").await.unwrap();
         let target = receiver.local_addr().unwrap();
         let connector = ProxyConnector::from_proxy(
-            Proxy::all(format!("socks5://127.0.0.1:1"))
+            Proxy::all("socks5://127.0.0.1:1")
                 .unwrap()
                 .with_bypass("127.0.0.1"),
         );

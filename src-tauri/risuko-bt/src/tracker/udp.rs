@@ -290,7 +290,15 @@ fn build_announce_body(conn_id: u64, req: &AnnounceRequest) -> ([u8; 98], u32) {
 }
 
 fn parse_announce_response_with_inference(buf: &[u8], preferred_ipv6: bool) -> AnnounceResponse {
-    parse_announce_response(buf, preferred_ipv6)
+    let payload_len = buf.len().saturating_sub(20);
+    let is_ipv6 = if preferred_ipv6 {
+        true
+    } else if payload_len > 0 && payload_len % 18 == 0 && payload_len % 6 != 0 {
+        true
+    } else {
+        false
+    };
+    parse_announce_response(buf, is_ipv6)
 }
 
 fn parse_announce_response(buf: &[u8], is_ipv6: bool) -> AnnounceResponse {

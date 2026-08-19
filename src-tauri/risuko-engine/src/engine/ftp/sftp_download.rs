@@ -14,7 +14,7 @@ use serde_json::{Map, Value};
 use tokio::io::AsyncWriteExt;
 use tokio_util::sync::CancellationToken;
 
-use super::ftp_download::{http_proxy_from_options, option_str, proxy_bridge_endpoint};
+use super::ftp_download::{http_proxy_from_options, option_str};
 use super::FtpUri;
 use crate::engine::speed_limiter::{SpeedEma, SpeedLimiter};
 use crate::engine::ssh_known_hosts::TofuHandler;
@@ -163,30 +163,16 @@ pub async fn run_sftp_download(
 
     let addr = format!("{}:{}", parsed.host, parsed.port);
     let http_proxy = http_proxy_from_options(options)?;
-    let proxy_bridge = if let Some(proxy) = http_proxy {
-        Some(
-            proxy_bridge_endpoint(proxy, parsed.host.clone(), parsed.port)
-                .await
-                .map_err(|e| format!("SFTP proxy connect failed: {e}"))?,
-        )
-    } else {
-        None
-    };
-    let connect_addr = match proxy_bridge.as_ref() {
-        Some(bridge) => bridge.endpoint(),
-        None => addr
-            .parse()
-            .map_err(|e| format!("SFTP address invalid: {e}"))?,
-    };
-    let session_result = client::connect(config, &connect_addr, TofuHandler::new(addr.clone()))
-        .await
-        .map_err(|e| format!("SSH connect failed: {e}"));
-    if let Some(bridge) = proxy_bridge {
-        bridge
-            .wait_ready()
+    let session_result = if let Some(proxy) = http_proxy {
+        let stream = proxy
+            .connect_tcp(&parsed.host, parsed.port)
             .await
             .map_err(|e| format!("SFTP proxy connect failed: {e}"))?;
+        client::connect_stream(config, stream, TofuHandler::new(addr.clone())).await
+    } else {
+        client::connect(config, &addr, TofuHandler::new(addr.clone())).await
     }
+    .map_err(|e| format!("SSH connect failed: {e}"));
     let mut session = session_result?;
 
     // Authenticate

@@ -87,6 +87,8 @@ impl UtpSocket {
 
     /// Replace the outbound route while preserving the local listener
     pub async fn reconfigure_proxy(&self, proxy: Option<ProxyConnector>) {
+        let _reconfigure_guard = self.reconfigure_lock.lock().await;
+
         let route = match proxy {
             None => OutboundRoute::Direct,
             Some(connector) if connector.udp_proxy().is_none() => OutboundRoute::Direct,
@@ -106,8 +108,6 @@ impl UtpSocket {
                 }
             }
         };
-
-        let _reconfigure_guard = self.reconfigure_lock.lock().await;
 
         // Drop every connection routed through the old proxy before replacing
         // the router. Direct-route connections remain registered.
@@ -190,7 +190,13 @@ impl UtpSocket {
                     DatagramTransport::Direct(self.udp.clone())
                 } else {
                     self.registry.lock().remove(&key);
-                    self.proxy_registry.lock().remove(&recv_id);
+                    let mut proxy_registry = self.proxy_registry.lock();
+                    if proxy_registry
+                        .get(&recv_id)
+                        .is_some_and(|stored_key| *stored_key == key)
+                    {
+                        proxy_registry.remove(&recv_id);
+                    }
                     return Err(io::Error::new(io::ErrorKind::Unsupported, error));
                 }
             }
@@ -225,7 +231,13 @@ impl UtpSocket {
                 }
                 shared.nudge.notify_one();
                 self.registry.lock().remove(&key);
-                self.proxy_registry.lock().remove(&recv_id);
+                let mut proxy_registry = self.proxy_registry.lock();
+                if proxy_registry
+                    .get(&recv_id)
+                    .is_some_and(|stored_key| *stored_key == key)
+                {
+                    proxy_registry.remove(&recv_id);
+                }
                 Err(io::Error::new(
                     io::ErrorKind::TimedOut,
                     "utp connect timed out",

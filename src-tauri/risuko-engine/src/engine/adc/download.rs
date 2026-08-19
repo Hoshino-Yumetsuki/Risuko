@@ -22,7 +22,7 @@ pub async fn connect_hub_with_proxy(
 pub async fn run_adc_download(
     uri: &str,
     dir: &str,
-    opts: &EngineOptions,
+    _opts: &EngineOptions,
     total: Arc<AtomicU64>,
     completed: Arc<AtomicU64>,
     speed: Arc<AtomicU64>,
@@ -52,10 +52,6 @@ pub async fn run_adc_download(
     if cancel_token.is_cancelled() {
         return Err("cancelled".into());
     }
-
-    let _proxy = opts
-        .p2p_proxy_connector()
-        .map_err(|error| format!("ADC P2P proxy: {error}"))?;
 
     // Passive-only mode: no listening socket, so peer negotiation (`$ConnectToMe` / ADC `CTM`) cannot complete; bail before hub I/O so the task fails fast instead of hanging
     let _ = (&tth, &completed, dir);

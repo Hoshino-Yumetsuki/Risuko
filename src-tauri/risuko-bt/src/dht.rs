@@ -783,7 +783,7 @@ impl Dht {
                 if addresses.is_empty() {
                     return None;
                 }
-                (DhtTarget::Addr(addresses[0]), Some(addresses))
+                (DhtTarget::Host(host, port), Some(addresses))
             }
             target => (target, None),
         };
