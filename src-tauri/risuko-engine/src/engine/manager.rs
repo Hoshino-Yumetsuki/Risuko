@@ -30,6 +30,7 @@ use std::collections::HashSet;
 
 const MAGNET_METADATA_ATTEMPT_TIMEOUT_SECS: u64 = 60;
 const MAGNET_METADATA_RETRY_DELAY_SECS: u64 = 15;
+const P2P_RELOAD_CANCEL_TIMEOUT: Duration = Duration::from_secs(10);
 
 static WORKER_EPOCH: AtomicU64 = AtomicU64::new(1);
 
@@ -444,6 +445,11 @@ impl Drop for RevWriteGuard<'_> {
 }
 
 pub struct TaskManager {
+    config_dir: PathBuf,
+    p2p_reload_lock: tokio::sync::Mutex<()>,
+    /// Monotonic manager-side route epoch used to reject resolver jobs that
+    /// were queued before a P2P profile replacement.
+    p2p_route_generation: Arc<AtomicU64>,
     tasks: Arc<RevLock>,
     saved_rev: AtomicU64,
     active_downloads: Arc<RwLock<HashMap<String, ActiveDownload>>>,
@@ -457,7 +463,7 @@ pub struct TaskManager {
     global_speed_limiter: Arc<SpeedLimiter>,
     cookie_store: Arc<CookieStore>,
     usenet_connection_capacity: Arc<ProviderConnectionCapacityRegistry>,
-    kad_runtime: KadRuntime,
+    kad_runtime: Arc<parking_lot::RwLock<KadRuntime>>,
 }
 
 #[derive(Clone)]
@@ -477,7 +483,7 @@ impl KadRuntime {
 
     fn udp_port(&self) -> Option<u16> {
         match self {
-            Self::Running(service) => Some(service.udp_port()),
+            Self::Running(service) => service.advertised_udp_port(),
             Self::Disabled { .. } | Self::Failed { .. } => None,
         }
     }
@@ -593,6 +599,15 @@ impl TaskManager {
         }
 
         let output_dir = options.dir();
+        let p2p_proxy_result = super::torrent::p2p_proxy_from_options(&options.global);
+        let p2p_proxy_invalid = p2p_proxy_result.is_err();
+        let p2p_proxy = match p2p_proxy_result {
+            Ok(proxy) => proxy,
+            Err(error) => {
+                tracing::warn!("Invalid global P2P proxy (torrent engine disabled): {error}");
+                None
+            }
+        };
         let tuning = super::torrent::BtTuning {
             max_outstanding_per_peer: options.bt_max_outstanding_per_peer(),
             max_peers_per_torrent: options.bt_max_peers_per_torrent(),
@@ -602,14 +617,19 @@ impl TaskManager {
             encryption_policy: Some(options.bt_encryption_policy().to_string()),
             listen_ipv6: Some(options.bt_listen_v6()),
             enable_lsd: Some(options.bt_enable_lsd()),
+            p2p_proxy,
         };
-        let torrent_engine = TorrentEngine::new_with_tuning(Path::new(&output_dir), tuning)
-            .await
-            .map_err(|e| {
-                tracing::warn!("Torrent engine init failed (non-fatal): {}", e);
-                e
-            })
-            .ok();
+        let torrent_engine = if p2p_proxy_invalid {
+            None
+        } else {
+            TorrentEngine::new_with_tuning(Path::new(&output_dir), tuning)
+                .await
+                .map_err(|e| {
+                    tracing::warn!("Torrent engine init failed (non-fatal): {}", e);
+                    e
+                })
+                .ok()
+        };
 
         let global_speed_limiter =
             Arc::new(SpeedLimiter::new(options.max_overall_download_limit()));
@@ -624,17 +644,21 @@ impl TaskManager {
                 error,
             },
             Ok(port) if !options.ed2k_enable_kad() => KadRuntime::Disabled { port },
-            Ok(port) => {
-                let kad_config =
-                    KadConfig::new(config_dir.to_path_buf(), port, options.ed2k_port());
-                match KadService::bind(kad_config).await {
-                    Ok(service) => KadRuntime::Running(service),
-                    Err(error) => KadRuntime::Failed {
-                        port,
-                        error: error.to_string(),
-                    },
+            Ok(port) => match options.p2p_proxy_connector() {
+                Err(error) => KadRuntime::Failed { port, error },
+                Ok(connector) => {
+                    let kad_config =
+                        KadConfig::new(config_dir.to_path_buf(), port, options.ed2k_port())
+                            .with_proxy(connector.has_proxy().then_some(connector));
+                    match KadService::bind(kad_config).await {
+                        Ok(service) => KadRuntime::Running(service),
+                        Err(error) => KadRuntime::Failed {
+                            port,
+                            error: error.to_string(),
+                        },
+                    }
                 }
-            }
+            },
         };
 
         let manager = Self {
@@ -652,7 +676,10 @@ impl TaskManager {
             global_speed_limiter,
             cookie_store: Arc::new(CookieStore::new(config_dir)),
             usenet_connection_capacity: Arc::new(ProviderConnectionCapacityRegistry::default()),
-            kad_runtime,
+            config_dir: config_dir.to_path_buf(),
+            p2p_reload_lock: tokio::sync::Mutex::new(()),
+            p2p_route_generation: Arc::new(AtomicU64::new(0)),
+            kad_runtime: Arc::new(parking_lot::RwLock::new(kad_runtime)),
         };
 
         if manager.restore_torrent_mappings().await {
@@ -915,6 +942,7 @@ impl TaskManager {
         torrent_data: Vec<u8>,
         options: Map<String, Value>,
     ) -> Result<String, String> {
+        let _p2p_reload_guard = self.p2p_reload_lock.lock().await;
         let gid = generate_gid();
         let merged = self.options.read().await.merge_task_options(&options);
         let out = options
@@ -1191,6 +1219,7 @@ impl TaskManager {
         magnet_uri: &str,
         options: Map<String, Value>,
     ) -> Result<String, String> {
+        let _p2p_reload_guard = self.p2p_reload_lock.lock().await;
         let gid = generate_gid();
         let merged = self.options.read().await.merge_task_options(&options);
         let out = options
@@ -1252,6 +1281,10 @@ impl TaskManager {
         options: Map<String, Value>,
         timeout_secs: u64,
     ) -> Result<Vec<torrent::TorrentFileInfo>, String> {
+        // Keep the task-option snapshot and the engine's route generation
+        // together. A proxy reload must either wait for this preview to finish
+        // or start after it has captured the new profile.
+        let _p2p_reload_guard = self.p2p_reload_lock.lock().await;
         let merged = self.options.read().await.merge_task_options(&options);
         let te_guard = self.torrent_engine.read().await;
         if let Some(ref te) = *te_guard {
@@ -1279,9 +1312,23 @@ impl TaskManager {
         let torrent_ids = self.torrent_ids.clone();
         let torrent_engine = self.torrent_engine.clone();
         let events = self.events.clone();
+        let p2p_route_generation = self.p2p_route_generation.clone();
+        let expected_route_generation =
+            p2p_route_generation.load(std::sync::atomic::Ordering::Acquire);
+        // This snapshot is taken while the caller owns p2p_reload_lock. The
+        // engine-side generation check below closes the small gap after this
+        // task is spawned but before its first network operation.
+        let expected_engine_generation = match torrent_engine.read().await.clone() {
+            Some(engine) => Some(engine.magnet_route_generation().await),
+            None => None,
+        };
 
         tokio::spawn(async move {
             loop {
+                if p2p_route_generation.load(Ordering::Acquire) != expected_route_generation {
+                    break;
+                }
+
                 let still_active = {
                     let guard = tasks.read().await;
                     guard
@@ -1289,6 +1336,10 @@ impl TaskManager {
                         .any(|task| is_live_magnet(task, &gid, &magnet_uri))
                 };
                 if !still_active {
+                    break;
+                }
+
+                if p2p_route_generation.load(Ordering::Acquire) != expected_route_generation {
                     break;
                 }
 
@@ -1308,15 +1359,32 @@ impl TaskManager {
                     break;
                 };
 
-                match engine
-                    .resolve_and_add_magnet(
-                        &magnet_uri,
-                        &options,
-                        MAGNET_METADATA_ATTEMPT_TIMEOUT_SECS,
-                    )
-                    .await
-                {
+                if p2p_route_generation.load(Ordering::Acquire) != expected_route_generation {
+                    break;
+                }
+
+                let result = match expected_engine_generation {
+                    Some(engine_generation) => {
+                        engine
+                            .resolve_and_add_magnet_at_generation(
+                                &magnet_uri,
+                                &options,
+                                MAGNET_METADATA_ATTEMPT_TIMEOUT_SECS,
+                                engine_generation,
+                            )
+                            .await
+                    }
+                    None => Err("Torrent engine route unavailable".to_string()),
+                };
+
+                match result {
                     Ok(handle) => {
+                        if p2p_route_generation.load(Ordering::Acquire) != expected_route_generation
+                        {
+                            let _ = engine.remove(handle.id, false).await;
+                            break;
+                        }
+
                         let mut attached = false;
                         {
                             let mut guard = tasks.write().await;
@@ -1343,6 +1411,9 @@ impl TaskManager {
                         break;
                     }
                     Err(e) => {
+                        if e == "P2P proxy profile changed; magnet resolution cancelled" {
+                            break;
+                        }
                         if !is_retryable_magnet_resolution_error(&e) {
                             let mut guard = tasks.write().await;
                             if let Some(task) = guard
@@ -1585,6 +1656,30 @@ impl TaskManager {
                 ),
             );
 
+            let still_active = tasks
+                .read()
+                .await
+                .iter()
+                .any(|task| task.gid == gid && task.status == TaskStatus::Active);
+            if !still_active {
+                counters.cancel_token.cancel();
+                finish_task(
+                    &tasks,
+                    &active,
+                    &events,
+                    &gid,
+                    worker_epoch,
+                    proto_label,
+                    &counters,
+                    Err("cancelled during P2P proxy reload".to_string()),
+                    |_| {},
+                    |task, _| task.total_length,
+                    |_, e| classify_error(e, proto_label),
+                )
+                .await;
+                return;
+            }
+
             let opts_snapshot = {
                 let runtime_opts = options.read().await.clone();
                 let merged = runtime_opts.merge_task_options(&task_options);
@@ -1792,6 +1887,12 @@ impl TaskManager {
 
     /// Start download workers for waiting tasks up to max concurrent limit
     async fn try_start_next(&self) {
+        let _p2p_reload_guard = self.p2p_reload_lock.lock().await;
+        self.try_start_next_unlocked().await;
+    }
+
+    /// Start waiting workers while the caller already owns the P2P reload gate.
+    async fn try_start_next_unlocked(&self) {
         let (max_concurrent, options_snapshot) = {
             let options_guard = self.options.read().await;
             (
@@ -2238,6 +2339,7 @@ impl TaskManager {
         let gid = task.gid.clone();
         let uri = task.uris.first().cloned().unwrap_or_default();
         let dir = task.dir.clone();
+        let task_options = task.options.clone();
         let events = self.events.clone();
         let tasks = self.tasks.clone();
         let active = self.active_downloads.clone();
@@ -2259,16 +2361,45 @@ impl TaskManager {
             active_download.kad_status = kad_status.clone();
             active.write().await.insert(gid.clone(), active_download);
 
+            let still_active = tasks
+                .read()
+                .await
+                .iter()
+                .any(|task| task.gid == gid && task.status == TaskStatus::Active);
+            if !still_active {
+                counters.cancel_token.cancel();
+                finish_task(
+                    &tasks,
+                    &active,
+                    &events,
+                    &gid,
+                    worker_epoch,
+                    "ed2k",
+                    &counters,
+                    Err("cancelled during P2P proxy reload".to_string()),
+                    |_| {},
+                    |task, _| task.total_length,
+                    |_, e| classify_error(e, "ed2k"),
+                )
+                .await;
+                return;
+            }
+
             let file_link = super::ed2k::parse_ed2k_link(&uri);
-            let opts_guard = options.read().await;
-            let ed2k_servers = opts_guard.ed2k_servers();
-            let ed2k_port = opts_guard.ed2k_port();
-            drop(opts_guard);
+            let effective_options = {
+                let options = options.read().await;
+                EngineOptions {
+                    global: options.merge_task_options(&task_options),
+                }
+            };
+            let ed2k_servers = effective_options.ed2k_servers();
+            let ed2k_port = effective_options.ed2k_port();
+            let p2p_proxy = effective_options.p2p_proxy_connector();
 
             let c = counters.clone();
-            let download_result = match file_link {
-                Ok(link) => {
-                    super::ed2k::run_ed2k_download(
+            let download_result = match (file_link, p2p_proxy) {
+                (Ok(link), Ok(p2p_proxy)) => {
+                    super::ed2k::run_ed2k_download_with_proxy(
                         &link,
                         &dir,
                         ed2k_servers,
@@ -2281,10 +2412,12 @@ impl TaskManager {
                         c.speed,
                         c.connections,
                         c.cancel_token,
+                        p2p_proxy,
                     )
                     .await
                 }
-                Err(e) => Err(e),
+                (Err(e), _) => Err(e),
+                (_, Err(e)) => Err(e),
             };
 
             finish_task(
@@ -2853,6 +2986,14 @@ impl TaskManager {
     }
 
     async fn ensure_active_magnet_resolvers(&self) {
+        let _p2p_reload_guard = self.p2p_reload_lock.lock().await;
+        self.ensure_active_magnet_resolvers_unlocked().await;
+    }
+
+    /// Reconcile active magnet tasks while the caller already owns the P2P
+    /// reload gate. Keeping the option snapshot and route epoch under that
+    /// gate prevents a resolver from pairing old options with a new route.
+    async fn ensure_active_magnet_resolvers_unlocked(&self) {
         let jobs = {
             // Acquire in the same order as remove() (torrent_ids -> pending_magnets -> tasks) to avoid a deadlock where remove() holds torrent_ids.write() while waiting for tasks.write() and we hold tasks.read() while waiting for torrent_ids.read()
             let torrent_ids = self.torrent_ids.read().await;
@@ -3305,7 +3446,8 @@ impl TaskManager {
 
     /// Read-only eMule Kad diagnostics for the `/health` panel
     pub async fn kad_health_snapshot(&self) -> KadHealthSnapshot {
-        match &self.kad_runtime {
+        let runtime = self.kad_runtime.read().clone();
+        match &runtime {
             KadRuntime::Running(service) => service.health_snapshot().await,
             KadRuntime::Disabled { port } => KadHealthSnapshot::disabled(*port),
             KadRuntime::Failed { port, error } => KadHealthSnapshot {
@@ -3325,15 +3467,16 @@ impl TaskManager {
     }
 
     pub fn kad_service(&self) -> Option<Arc<KadService>> {
-        self.kad_runtime.service()
+        self.kad_runtime.read().service()
     }
 
     pub fn kad_udp_port(&self) -> Option<u16> {
-        self.kad_runtime.udp_port()
+        self.kad_runtime.read().udp_port()
     }
 
     fn kad_initial_task_status(&self) -> KadLookupStatus {
-        match &self.kad_runtime {
+        let runtime = self.kad_runtime.read().clone();
+        match &runtime {
             KadRuntime::Running(_) => KadLookupStatus::default(),
             KadRuntime::Disabled { .. } => KadLookupStatus {
                 state: KadState::Disabled,
@@ -3484,6 +3627,494 @@ impl TaskManager {
             return Ok(());
         }
         Err(format!("GID {} not found", gid))
+    }
+
+    fn is_p2p_task_kind(kind: TaskKind) -> bool {
+        matches!(
+            kind,
+            TaskKind::Torrent
+                | TaskKind::Ed2k
+                | TaskKind::Adc
+                | TaskKind::Gnutella
+                | TaskKind::G2
+                | TaskKind::Gift
+        )
+    }
+
+    pub async fn reload_p2p_profile(&self, new_options: EngineOptions) -> Result<(), String> {
+        let _reload_guard = self.p2p_reload_lock.lock().await;
+        let (old_proxy, old_bypass, old_udp_proxy, old_udp_bypass, old_route, old_route_available) = {
+            let options = self.options.read().await.clone();
+            let (old_route, old_route_available) = match options.p2p_proxy_connector() {
+                Ok(connector) => (connector.has_proxy().then_some(connector), true),
+                Err(error) => {
+                    tracing::warn!("previous P2P proxy was invalid during reload: {error}");
+                    (None, false)
+                }
+            };
+            (
+                options
+                    .get_str("p2p-proxy")
+                    .unwrap_or("")
+                    .trim()
+                    .to_string(),
+                options.get_str("p2p-no-proxy").unwrap_or("").to_string(),
+                options
+                    .get_str("p2p-udp-proxy")
+                    .unwrap_or("")
+                    .trim()
+                    .to_string(),
+                options
+                    .get_str("p2p-udp-no-proxy")
+                    .unwrap_or("")
+                    .to_string(),
+                old_route,
+                old_route_available,
+            )
+        };
+        let (new_proxy, new_bypass, new_udp_proxy, new_udp_bypass) = (
+            new_options
+                .get_str("p2p-proxy")
+                .unwrap_or("")
+                .trim()
+                .to_string(),
+            new_options
+                .get_str("p2p-no-proxy")
+                .unwrap_or("")
+                .to_string(),
+            new_options
+                .get_str("p2p-udp-proxy")
+                .unwrap_or("")
+                .trim()
+                .to_string(),
+            new_options
+                .get_str("p2p-udp-no-proxy")
+                .unwrap_or("")
+                .to_string(),
+        );
+        if old_proxy == new_proxy
+            && old_bypass == new_bypass
+            && old_udp_proxy == new_udp_proxy
+            && old_udp_bypass == new_udp_bypass
+        {
+            return Ok(());
+        }
+
+        // Invalidate resolver jobs before changing task state or rebuilding
+        // any shared runtime. New jobs cannot capture this epoch until the
+        // reload has finished updating the effective options.
+        self.p2p_route_generation.fetch_add(1, Ordering::AcqRel);
+
+        let active_p2p: Vec<(String, TaskKind)> = {
+            let mut tasks = self.tasks.write().await;
+            let mut active = Vec::new();
+            for task in tasks.iter_mut() {
+                if task.status == TaskStatus::Active && Self::is_p2p_task_kind(task.kind) {
+                    active.push((task.gid.clone(), task.kind));
+                    task.status = TaskStatus::Paused;
+                    task.download_speed = 0;
+                    task.upload_speed = 0;
+                    self.events.send(EngineEvent::DownloadPause {
+                        gid: task.gid.clone(),
+                    });
+                }
+            }
+            active
+        };
+        let active_gids: HashSet<String> = active_p2p.iter().map(|(gid, _)| gid.clone()).collect();
+
+        // Invalidate metadata lookups before rebuilding any shared P2P
+        // runtime. They may have captured the old profile and otherwise
+        // could keep announcing or dialing through it after the swap.
+        if let Some(engine) = self.torrent_engine.read().await.clone() {
+            engine.invalidate_magnet_resolutions().await;
+        }
+
+        // Cancel legacy workers first
+        let deadline = tokio::time::Instant::now() + P2P_RELOAD_CANCEL_TIMEOUT;
+        loop {
+            let still_running = {
+                let active = self.active_downloads.read().await;
+                for gid in &active_gids {
+                    if let Some(download) = active.get(gid) {
+                        download.cancel_token.cancel();
+                    }
+                }
+                active.keys().any(|gid| active_gids.contains(gid))
+            };
+            if !still_running || tokio::time::Instant::now() >= deadline {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        if {
+            let active = self.active_downloads.read().await;
+            active.keys().any(|gid| active_gids.contains(gid))
+        } {
+            self.mark_p2p_reload_failed(
+                &active_gids,
+                "timed out stopping the previous P2P runtime",
+            )
+            .await;
+            return Err("Timed out stopping active P2P tasks for proxy reload".to_string());
+        }
+
+        let connector = match new_options.p2p_proxy_connector() {
+            Ok(connector) => connector,
+            Err(error) => {
+                self.mark_p2p_reload_failed(&active_gids, &error).await;
+                return Err(error);
+            }
+        };
+        let proxy = connector.has_proxy().then_some(connector);
+
+        let torrent_gids: Vec<String> = active_p2p
+            .iter()
+            .filter(|(_, kind)| *kind == TaskKind::Torrent)
+            .map(|(gid, _)| gid.clone())
+            .collect();
+        let torrent_targets = {
+            let ids = self.torrent_ids.read().await;
+            torrent_gids
+                .iter()
+                .filter_map(|gid| ids.get(gid).copied().map(|id| (gid.clone(), id)))
+                .collect::<Vec<_>>()
+        };
+        let torrent_engine = self.torrent_engine.read().await.clone();
+        if let Some(engine) = torrent_engine.as_ref() {
+            for (_, id) in torrent_targets {
+                if let Err(error) = engine.pause(id).await {
+                    self.mark_p2p_reload_failed(
+                        &active_gids,
+                        &format!("failed to pause torrent runtime: {error}"),
+                    )
+                    .await;
+                    return Err(error);
+                }
+            }
+        }
+
+        // Snapshot
+        let old_dht = risuko_bt::dht::Dht::current_shared().await;
+
+        // Prepare the shared DHT
+        let engine_was_missing = self.torrent_engine.read().await.is_none();
+        let mut dht_swap = match risuko_bt::dht::Dht::prepare_shared_with_proxy(proxy.clone()).await
+        {
+            Ok(swap) => Some(swap),
+            Err(error) => {
+                self.mark_p2p_reload_failed(&active_gids, &error).await;
+                return Err(format!("failed to rebuild BitTorrent DHT: {error}"));
+            }
+        };
+        let dht = dht_swap.as_ref().and_then(|swap| swap.next());
+
+        if engine_was_missing {
+            if let Err(error) = self
+                .initialize_torrent_engine(&new_options, proxy.clone())
+                .await
+            {
+                if let Some(swap) = dht_swap.take() {
+                    let _ = swap.rollback().await;
+                }
+                self.mark_p2p_reload_failed(&active_gids, &error).await;
+                return Err(error);
+            }
+        }
+
+        // Kad
+        let next_kad = self.build_kad_runtime(&new_options, proxy.clone()).await;
+        if let KadRuntime::Failed { error, .. } = &next_kad {
+            if let Some(swap) = dht_swap.take() {
+                let _ = swap.rollback().await;
+            }
+            if engine_was_missing {
+                *self.torrent_engine.write().await = None;
+            }
+            self.mark_p2p_reload_failed(&active_gids, error).await;
+            return Err(format!("failed to rebuild Kad runtime: {error}"));
+        }
+        let old_kad = {
+            let mut guard = self.kad_runtime.write();
+            std::mem::replace(&mut *guard, next_kad)
+        };
+        let old_kad_for_rollback = old_kad.clone();
+
+        let torrent_engine = self.torrent_engine.read().await.clone();
+        if let Some(engine) = torrent_engine.as_ref() {
+            if let Err(error) = engine.reconfigure_p2p_proxy(proxy.clone(), dht).await {
+                if engine_was_missing {
+                    *self.torrent_engine.write().await = None;
+                }
+                let error = self
+                    .rollback_p2p_reload(
+                        &active_gids,
+                        &error,
+                        dht_swap.take(),
+                        old_kad_for_rollback.clone(),
+                        old_route.clone(),
+                        old_dht.clone(),
+                        old_route_available,
+                        &old_proxy,
+                        &old_bypass,
+                        &old_udp_proxy,
+                        &old_udp_bypass,
+                    )
+                    .await;
+                return Err(error);
+            }
+        }
+
+        {
+            let mut options = self.options.write().await;
+            options.set("p2p-proxy".to_string(), Value::String(new_proxy));
+            options.set("p2p-no-proxy".to_string(), Value::String(new_bypass));
+            options.set("p2p-udp-proxy".to_string(), Value::String(new_udp_proxy));
+            options.set(
+                "p2p-udp-no-proxy".to_string(),
+                Value::String(new_udp_bypass),
+            );
+        }
+
+        let mut torrent_to_resume = Vec::new();
+        {
+            let mut tasks = self.tasks.write().await;
+            for (gid, kind) in &active_p2p {
+                let Some(task) = tasks.iter_mut().find(|task| task.gid == *gid) else {
+                    continue;
+                };
+                if task.status != TaskStatus::Paused {
+                    continue;
+                }
+                task.error_code = None;
+                task.error_message = None;
+                if *kind == TaskKind::Torrent {
+                    task.status = TaskStatus::Active;
+                    torrent_to_resume.push(gid.clone());
+                } else {
+                    task.status = TaskStatus::Waiting;
+                }
+            }
+        }
+        let torrent_engine = self.torrent_engine.read().await.clone();
+        let torrent_ids = self.torrent_ids.read().await.clone();
+        if !torrent_to_resume.is_empty() && torrent_engine.is_none() {
+            let error = "torrent engine unavailable after P2P proxy reload".to_string();
+            if engine_was_missing {
+                *self.torrent_engine.write().await = None;
+            }
+            let error = self
+                .rollback_p2p_reload(
+                    &active_gids,
+                    &error,
+                    dht_swap.take(),
+                    old_kad_for_rollback.clone(),
+                    old_route.clone(),
+                    old_dht.clone(),
+                    old_route_available,
+                    &old_proxy,
+                    &old_bypass,
+                    &old_udp_proxy,
+                    &old_udp_bypass,
+                )
+                .await;
+            return Err(error);
+        }
+        if let Some(engine) = torrent_engine.as_ref() {
+            for gid in torrent_to_resume {
+                if let Some(id) = torrent_ids.get(&gid) {
+                    if let Err(error) = engine.unpause(*id).await {
+                        if engine_was_missing {
+                            *self.torrent_engine.write().await = None;
+                        }
+                        let error = self
+                            .rollback_p2p_reload(
+                                &active_gids,
+                                &error,
+                                dht_swap.take(),
+                                old_kad_for_rollback.clone(),
+                                old_route.clone(),
+                                old_dht.clone(),
+                                old_route_available,
+                                &old_proxy,
+                                &old_bypass,
+                                &old_udp_proxy,
+                                &old_udp_bypass,
+                            )
+                            .await;
+                        return Err(error);
+                    }
+                } else {
+                    self.ensure_active_magnet_resolvers_unlocked().await;
+                }
+                self.send_download_start(&gid);
+            }
+        }
+        if let Some(swap) = dht_swap.take() {
+            swap.commit().await;
+        }
+        if let KadRuntime::Running(service) = old_kad {
+            service.shutdown().await;
+        }
+        self.try_start_next_unlocked().await;
+        Ok(())
+    }
+
+    async fn initialize_torrent_engine(
+        &self,
+        options: &EngineOptions,
+        proxy: Option<risuko_http::ProxyConnector>,
+    ) -> Result<(), String> {
+        let output_dir = options.dir();
+        let tuning = super::torrent::BtTuning {
+            max_outstanding_per_peer: options.bt_max_outstanding_per_peer(),
+            max_peers_per_torrent: options.bt_max_peers_per_torrent(),
+            upload_rate_limit: options.bt_upload_rate_limit(),
+            enable_upnp: Some(options.bt_enable_upnp()),
+            upnp_lease: options.bt_upnp_lease(),
+            encryption_policy: Some(options.bt_encryption_policy().to_string()),
+            listen_ipv6: Some(options.bt_listen_v6()),
+            enable_lsd: Some(options.bt_enable_lsd()),
+            p2p_proxy: proxy,
+        };
+        let engine = TorrentEngine::new_with_tuning(Path::new(&output_dir), tuning).await?;
+        *self.torrent_engine.write().await = Some(engine);
+        let _ = self.restore_torrent_mappings().await;
+        Ok(())
+    }
+
+    async fn mark_p2p_reload_failed(&self, gids: &HashSet<String>, error: &str) {
+        let mut tasks = self.tasks.write().await;
+        for task in tasks.iter_mut() {
+            if gids.contains(&task.gid)
+                && matches!(
+                    task.status,
+                    TaskStatus::Active | TaskStatus::Waiting | TaskStatus::Paused
+                )
+            {
+                task.status = TaskStatus::Paused;
+                task.download_speed = 0;
+                task.upload_speed = 0;
+                task.error_code = Some("P2P_PROXY_RELOAD_FAILED".to_string());
+                task.error_message = Some(format!("P2P proxy reload failed: {error}"));
+            }
+        }
+    }
+
+    async fn rollback_p2p_reload(
+        &self,
+        gids: &HashSet<String>,
+        error: &str,
+        dht_swap: Option<risuko_bt::dht::DhtRouteSwap>,
+        old_kad: KadRuntime,
+        old_route: Option<risuko_http::ProxyConnector>,
+        old_dht: Option<Arc<risuko_bt::dht::Dht>>,
+        restore_session: bool,
+        old_proxy: &str,
+        old_bypass: &str,
+        old_udp_proxy: &str,
+        old_udp_bypass: &str,
+    ) -> String {
+        let mut surfaced = error.to_string();
+
+        self.mark_p2p_reload_failed(gids, &surfaced).await;
+        {
+            let active = self.active_downloads.read().await;
+            for gid in gids {
+                if let Some(download) = active.get(gid) {
+                    download.cancel_token.cancel();
+                }
+            }
+        }
+        if let Some(engine) = self.torrent_engine.read().await.clone() {
+            let torrent_ids = self.torrent_ids.read().await.clone();
+            for gid in gids {
+                if let Some(id) = torrent_ids.get(gid) {
+                    if let Err(pause_error) = engine.pause(*id).await {
+                        surfaced.push_str(&format!(
+                            "; failed to pause torrent while rolling back: {pause_error}"
+                        ));
+                    }
+                }
+            }
+        }
+
+        let failed_kad = {
+            let mut guard = self.kad_runtime.write();
+            std::mem::replace(&mut *guard, old_kad)
+        };
+        if let KadRuntime::Running(service) = failed_kad {
+            service.shutdown().await;
+        }
+
+        if restore_session {
+            if let Some(engine) = self.torrent_engine.read().await.clone() {
+                if let Err(restore_error) = engine
+                    .reconfigure_p2p_proxy(old_route, old_dht.clone())
+                    .await
+                {
+                    surfaced.push_str(&format!(
+                        "; failed to restore the previous P2P route: {restore_error}"
+                    ));
+                }
+            }
+        } else if !old_proxy.trim().is_empty() || !old_udp_proxy.trim().is_empty() {
+            *self.torrent_engine.write().await = None;
+        }
+
+        if let Some(swap) = dht_swap {
+            let _ = swap.rollback().await;
+        }
+
+        {
+            let mut options = self.options.write().await;
+            options.set(
+                "p2p-proxy".to_string(),
+                Value::String(old_proxy.to_string()),
+            );
+            options.set(
+                "p2p-no-proxy".to_string(),
+                Value::String(old_bypass.to_string()),
+            );
+            options.set(
+                "p2p-udp-proxy".to_string(),
+                Value::String(old_udp_proxy.to_string()),
+            );
+            options.set(
+                "p2p-udp-no-proxy".to_string(),
+                Value::String(old_udp_bypass.to_string()),
+            );
+        }
+
+        surfaced
+    }
+
+    async fn build_kad_runtime(
+        &self,
+        options: &EngineOptions,
+        connector: Option<risuko_http::ProxyConnector>,
+    ) -> KadRuntime {
+        let port = match options.ed2k_kad_port_checked() {
+            Ok(port) => port,
+            Err(error) => {
+                return KadRuntime::Failed {
+                    port: options.ed2k_kad_port(),
+                    error,
+                }
+            }
+        };
+        if !options.ed2k_enable_kad() {
+            return KadRuntime::Disabled { port };
+        }
+        let config = KadConfig::new(self.config_dir.clone(), port, options.ed2k_port())
+            .with_proxy(connector.filter(|value| value.has_proxy()));
+        match KadService::bind(config).await {
+            Ok(service) => KadRuntime::Running(service),
+            Err(error) => KadRuntime::Failed {
+                port,
+                error: error.to_string(),
+            },
+        }
     }
 
     pub async fn change_global_option(&self, opts: Map<String, Value>) {
@@ -3934,7 +4565,8 @@ impl TaskManager {
             te.shutdown().await;
         }
 
-        if let KadRuntime::Running(service) = &self.kad_runtime {
+        let runtime = self.kad_runtime.read().clone();
+        if let KadRuntime::Running(service) = &runtime {
             service.shutdown().await;
         }
     }
@@ -4236,6 +4868,9 @@ mod tests {
         let cookie_store = Arc::new(CookieStore::new(dir.path()));
 
         TaskManager {
+            config_dir: dir.path().to_path_buf(),
+            p2p_reload_lock: tokio::sync::Mutex::new(()),
+            p2p_route_generation: Arc::new(AtomicU64::new(0)),
             tasks: Arc::new(RevLock::new(tasks)),
             saved_rev: AtomicU64::new(u64::MAX),
             active_downloads: Arc::new(RwLock::new(HashMap::new())),
@@ -4249,7 +4884,9 @@ mod tests {
             global_speed_limiter,
             cookie_store,
             usenet_connection_capacity: Arc::new(ProviderConnectionCapacityRegistry::default()),
-            kad_runtime: KadRuntime::Disabled { port: 4672 },
+            kad_runtime: Arc::new(parking_lot::RwLock::new(KadRuntime::Disabled {
+                port: 4672,
+            })),
         }
     }
 

@@ -31,12 +31,38 @@ fn client() -> &'static risuko_http::Client {
 }
 
 pub async fn announce(url: &str, req: &AnnounceRequest) -> Result<AnnounceResponse, TrackerError> {
+    announce_with_proxy(url, req, None).await
+}
+
+pub async fn announce_with_proxy(
+    url: &str,
+    req: &AnnounceRequest,
+    proxy: Option<&risuko_http::ProxyConnector>,
+) -> Result<AnnounceResponse, TrackerError> {
     let query = build_query(req);
     // Append to existing query string if the URL already has one
     let sep = if url.contains('?') { '&' } else { '?' };
     let full = format!("{}{}{}", url, sep, query);
 
-    let bytes = client()
+    let client = if let Some(proxy) = proxy {
+        let mut builder = risuko_http::Client::builder()
+            .timeout(Duration::from_secs(15))
+            .connect_timeout(Duration::from_secs(5))
+            .pool_max_idle_per_host(4);
+        if let Some(route) = proxy.proxy() {
+            builder = builder.proxy(route.clone());
+        }
+        if let Some(bypass) = proxy.no_proxy() {
+            builder = builder.no_proxy(bypass.clone());
+        }
+        builder
+            .build()
+            .map_err(|e| TrackerError::Http(e.to_string()))?
+    } else {
+        client().clone()
+    };
+
+    let bytes = client
         .get(&full)
         .send()
         .await

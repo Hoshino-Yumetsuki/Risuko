@@ -20,6 +20,8 @@ use tokio::task::JoinHandle;
 use tokio::time::{sleep, timeout};
 use tokio_util::sync::CancellationToken;
 
+use risuko_http::{ProxyDatagram, ProxyDatagramSource};
+
 use self::routing::{
     is_public_ipv4, KadId, LookupConfig, LookupTracker, NodeId, RoutingTable, SourceSet,
 };
@@ -63,10 +65,9 @@ pub struct KadConfig {
     pub bind_addr: Ipv4Addr,
     pub udp_port: u16,
     pub tcp_port: u16,
+    pub proxy: Option<risuko_http::ProxyConnector>,
     pub lookup: LookupConfig,
-    // Production uses the reviewed bundled snapshot; tests inject an empty list so loopback fixtures never send packets to public Kad nodes
     bootstrap_seeds: Option<Vec<SocketAddrV4>>,
-    // Loopback UDP fixtures exercise the real dispatcher, while production routing must never retain private endpoints
     #[cfg(test)]
     allow_private_contacts: bool,
 }
@@ -78,11 +79,17 @@ impl KadConfig {
             bind_addr: Ipv4Addr::UNSPECIFIED,
             udp_port,
             tcp_port,
+            proxy: None,
             lookup: LookupConfig::default(),
             bootstrap_seeds: None,
             #[cfg(test)]
             allow_private_contacts: false,
         }
+    }
+
+    pub fn with_proxy(mut self, proxy: Option<risuko_http::ProxyConnector>) -> Self {
+        self.proxy = proxy;
+        self
     }
 
     #[cfg(test)]
@@ -258,7 +265,7 @@ impl RequestExpectation {
 }
 
 struct KadRuntime {
-    socket: Mutex<Option<Arc<UdpSocket>>>,
+    socket: Mutex<Option<Arc<KadSocket>>>,
     pending: Arc<Mutex<Vec<PendingRequest>>>,
     next_request_id: AtomicU64,
     dispatcher: Mutex<Option<JoinHandle<()>>>,
@@ -274,6 +281,50 @@ struct KadRuntime {
     active_tasks: Arc<KadTaskTracker>,
     checkpoint_tx: mpsc::Sender<()>,
     checkpoint_worker: Mutex<Option<JoinHandle<()>>>,
+}
+
+enum KadSocket {
+    Direct(Arc<UdpSocket>),
+    Proxied(Arc<ProxyDatagram>),
+}
+
+impl KadSocket {
+    async fn send_to(&self, payload: &[u8], target: SocketAddr) -> std::io::Result<usize> {
+        match self {
+            Self::Direct(socket) => socket.send_to(payload, target).await,
+            Self::Proxied(socket) => socket
+                .send_to(payload, target)
+                .await
+                .map_err(|error| std::io::Error::other(error.to_string())),
+        }
+    }
+
+    async fn recv_from(&self, buffer: &mut [u8]) -> std::io::Result<(usize, ProxyDatagramSource)> {
+        match self {
+            Self::Direct(socket) => socket
+                .recv_from(buffer)
+                .await
+                .map(|(length, source)| (length, ProxyDatagramSource::Ip(source))),
+            Self::Proxied(socket) => socket
+                .recv_from_target(buffer)
+                .await
+                .map_err(|error| std::io::Error::other(error.to_string())),
+        }
+    }
+
+    fn local_port(&self) -> std::io::Result<u16> {
+        match self {
+            Self::Direct(socket) => Ok(socket.local_addr()?.port()),
+            Self::Proxied(socket) => socket
+                .local_addr()
+                .map(|address| address.port())
+                .map_err(|error| std::io::Error::other(error.to_string())),
+        }
+    }
+}
+
+fn kad_source_matches(target: SocketAddr, source: &ProxyDatagramSource) -> bool {
+    risuko_http::datagram_source_matches(source, target)
 }
 
 /// Tracks work that may mutate the routing table; shutdown closes the tracker before the final state write so no lookup or liveness task can publish a newer in-memory table after it has been persisted
@@ -362,7 +413,7 @@ pub struct KadService {
 }
 
 impl KadService {
-    pub async fn bind(config: KadConfig) -> Result<Arc<Self>, KadError> {
+    pub async fn bind(mut config: KadConfig) -> Result<Arc<Self>, KadError> {
         if config.udp_port == 0 {
             return Err(KadError::Bind(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
@@ -387,9 +438,35 @@ impl KadService {
         } else {
             loaded
         };
-        let socket = UdpSocket::bind(SocketAddrV4::new(config.bind_addr, config.udp_port))
-            .await
-            .map_err(KadError::Bind)?;
+        let socket = match config.proxy.clone() {
+            Some(proxy) => {
+                let has_explicit_bypass = proxy
+                    .udp_no_proxy()
+                    .is_some_and(|matcher| !matcher.is_empty());
+                let datagram = if proxy.supports_udp() || has_explicit_bypass {
+                    proxy.bind_udp_with_bypass().await
+                } else {
+                    proxy.bind_udp().await
+                }
+                .map_err(|error| {
+                    KadError::Bind(std::io::Error::new(
+                        std::io::ErrorKind::Unsupported,
+                        error.to_string(),
+                    ))
+                })?;
+                KadSocket::Proxied(Arc::new(datagram))
+            }
+            None => KadSocket::Direct(Arc::new(
+                UdpSocket::bind(SocketAddrV4::new(config.bind_addr, config.udp_port))
+                    .await
+                    .map_err(KadError::Bind)?,
+            )),
+        };
+        let bound_port = match &socket {
+            KadSocket::Direct(_) => socket.local_port().map_err(KadError::Bind)?,
+            KadSocket::Proxied(_) => config.udp_port,
+        };
+        config.udp_port = bound_port;
         let node_id = loaded.node_id;
         let mut routing = RoutingTable::new(node_id);
         for contact in loaded.contacts {
@@ -401,7 +478,7 @@ impl KadService {
             enabled: true,
             bound: true,
             state: KadState::Bootstrapping,
-            udp_port: config.udp_port,
+            udp_port: bound_port,
             node_id: node_id.to_string(),
             routing_contacts: cached_contacts,
             cached_contacts,
@@ -448,6 +525,14 @@ impl KadService {
 
     pub fn udp_port(&self) -> u16 {
         self.runtime.config.udp_port
+    }
+
+    pub fn advertised_udp_port(&self) -> Option<u16> {
+        self.runtime
+            .config
+            .proxy
+            .is_none()
+            .then_some(self.runtime.config.udp_port)
     }
 
     pub fn lookup_sources(
@@ -798,7 +883,7 @@ impl KadService {
     ) {
         let request = build_hello_request(
             &self.runtime.node_id.0,
-            self.runtime.config.udp_port,
+            self.advertised_udp_port().unwrap_or(0),
             self.runtime.config.tcp_port,
             KAD_VERSION,
         );
@@ -1397,7 +1482,7 @@ impl KadService {
 
 /// Receive all datagrams for the shared Kad socket and route each valid response to the request holding the matching correlation key; a single `recv_from` task is required because Tokio sockets give no safe way for multiple consumers to match responses to requests
 async fn run_dispatcher(
-    socket: Arc<UdpSocket>,
+    socket: Arc<KadSocket>,
     pending: Arc<Mutex<Vec<PendingRequest>>>,
     shutdown: CancellationToken,
 ) {
@@ -1414,13 +1499,31 @@ async fn run_dispatcher(
             continue;
         };
 
+        // Resolve domain-form relay sources outside the pending lock. DNS can
+        // await, and holding this lock would prevent new Kad requests from
+        // registering while one malformed/unresolvable source is examined.
+        let candidates = {
+            let entries = pending.lock().await;
+            entries
+                .iter()
+                .filter(|entry| entry.expectation.matches(&packet))
+                .map(|entry| (entry.id, entry.target))
+                .collect::<Vec<_>>()
+        };
+        let mut matching_ids = HashSet::new();
+        for (id, target) in candidates {
+            if kad_source_matches(target, &source) {
+                matching_ids.insert(id);
+            }
+        }
+
         let (oneshot_senders, stream_senders) = {
             let mut entries = pending.lock().await;
             let mut oneshot_senders = Vec::new();
             let mut stream_senders = Vec::new();
             let mut index = 0;
             while index < entries.len() {
-                if entries[index].target == source && entries[index].expectation.matches(&packet) {
+                if matching_ids.contains(&entries[index].id) {
                     match &entries[index].response {
                         PendingResponse::Single(_) => {
                             let entry = entries.swap_remove(index);
@@ -1578,6 +1681,19 @@ mod tests {
     fn free_loopback_port() -> u16 {
         let socket = StdUdpSocket::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0)).unwrap();
         socket.local_addr().unwrap().port()
+    }
+
+    #[test]
+    fn domain_form_proxy_source_never_triggers_local_resolution() {
+        let target: SocketAddr = "127.0.0.1:4662".parse().unwrap();
+        assert!(!kad_source_matches(
+            target,
+            &ProxyDatagramSource::Host("localhost".to_string(), 4662)
+        ));
+        assert!(kad_source_matches(
+            target,
+            &ProxyDatagramSource::Host("127.0.0.1".to_string(), 4662)
+        ));
     }
 
     async fn test_service(lookup: LookupConfig) -> (Arc<KadService>, tempfile::TempDir, u16) {

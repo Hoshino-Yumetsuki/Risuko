@@ -3,7 +3,6 @@
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
-
 use tokio_util::sync::CancellationToken;
 
 use super::types::{is_adc_uri, parse_adc_hub_uri, parse_dchub_file_uri, AdcError};
@@ -26,7 +25,7 @@ pub async fn run_adc_download(
         return Err(format!("not an ADC/DC URI: {uri}"));
     }
 
-    parse_adc_hub_uri(uri).map_err(|e| e.to_string())?;
+    let _hub = parse_adc_hub_uri(uri).map_err(|e| e.to_string())?;
     let file = parse_dchub_file_uri(uri).ok_or_else(|| {
         "ADC/DC hub-only URIs (without TTH+size+name) are not yet supported".to_string()
     })?;

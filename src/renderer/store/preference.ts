@@ -5,7 +5,11 @@ import {
 } from "@shared/constants";
 import { getLanguage } from "@shared/locales";
 import { getCategoriesForKey } from "@shared/syncCategories";
-import type { AppConfig } from "@shared/types/config";
+import {
+	type AppConfig,
+	normalizeProxyConfig,
+	redactProxySettings,
+} from "@shared/types/config";
 import {
 	CREDENTIAL_SECRET_FIELDS,
 	type SavedCredential,
@@ -64,12 +68,12 @@ export const usePreferenceStore = defineStore("preference", {
 				return {} as AppConfig;
 			}
 		},
-		save(config: Partial<AppConfig>, options?: { skipSync?: boolean }) {
+		async save(config: Partial<AppConfig>, options?: { skipSync?: boolean }) {
 			const taskStore = useTaskStore();
 			taskStore.saveSession();
 
 			if (isEmpty(config)) {
-				return Promise.resolve();
+				return;
 			}
 
 			if (!options?.skipSync) {
@@ -90,7 +94,24 @@ export const usePreferenceStore = defineStore("preference", {
 			}
 
 			const normalized = changeKeysToCamelCase(changeKeysToKebabCase(config));
+			const previousConfig = this.config;
 			this.updatePreference(normalized);
+
+			try {
+				await api.savePreference(config);
+				this.updatePreference(api.config || normalized);
+			} catch (error) {
+				try {
+					this.updatePreference(await api.fetchPreference());
+				} catch (refreshError) {
+					this.config = previousConfig;
+					logger.warn(
+						"[Risuko] failed to refresh preferences after save failure:",
+						(refreshError as Error).message,
+					);
+				}
+				throw error;
+			}
 
 			if (!options?.skipSync) {
 				try {
@@ -100,14 +121,12 @@ export const usePreferenceStore = defineStore("preference", {
 				}
 			}
 
-			const saved = api.savePreference(config);
 			if (
 				"maxOverallDownloadLimit" in normalized ||
 				"maxOverallUploadLimit" in normalized
 			) {
-				saved.then(() => this.applyEngineMode()).catch(() => undefined);
+				this.applyEngineMode().catch(() => undefined);
 			}
-			return saved;
 		},
 		recordHistoryDirectory(directory: string) {
 			const { historyDirectories = [], favoriteDirectories = [] } = this.config;
@@ -349,11 +368,21 @@ export const usePreferenceStore = defineStore("preference", {
 			this.updatePreference({ locale: locale || "auto" });
 		},
 		updatePreference(config: Partial<AppConfig>) {
-			this.config = { ...this.config, ...config };
+			this.config = {
+				...this.config,
+				...config,
+				...(Object.hasOwn(config, "proxy")
+					? { proxy: normalizeProxyConfig(config.proxy) }
+					: {}),
+			};
 		},
 		fetchBtTracker(trackerSource: string[] = []) {
-			const { proxy = { enable: false } } = this.config;
-			logger.log("fetchBtTracker", trackerSource, proxy);
+			const proxy = normalizeProxyConfig(this.config.proxy);
+			logger.log(
+				"fetchBtTracker",
+				trackerSource,
+				redactProxySettings({ proxy }),
+			);
 			return fetchBtTrackerFromSource(trackerSource, proxy, undefined, (urls) =>
 				api.fetchTrackerSources(urls),
 			);

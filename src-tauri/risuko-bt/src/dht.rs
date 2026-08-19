@@ -2,6 +2,7 @@
 
 use std::collections::{BTreeMap, HashSet};
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -11,17 +12,25 @@ use tokio::net::{lookup_host, UdpSocket};
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinSet;
 
+use risuko_http::{ProxyDatagram, ProxyDatagramSource};
+
 use super::bencode::{decode_all_external, encode_to_vec, DecodeLimits, Value};
 use super::core::Id20;
 
 /// Decoded `get_peers` reply: source addr, responder id (if present), peer list, and learned (id, addr) nodes
 type GetPeersReply = (
-    SocketAddr,
+    DhtTarget,
     Option<Id20>,
     Vec<SocketAddr>,
     Vec<(Id20, SocketAddr)>,
     Option<Vec<u8>>,
 );
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+enum DhtTarget {
+    Addr(SocketAddr),
+    Host(String, u16),
+}
 
 /// Body fields parsed from a `get_peers` response (no source addr)
 type GetPeersResponseBody = (
@@ -37,6 +46,26 @@ const QUERY_TIMEOUT: Duration = Duration::from_secs(4);
 const MAX_ROUND_QUERIES: usize = 50;
 const KRPC_DECODE_LIMITS: DecodeLimits = DecodeLimits::new(2048, 16, 1024);
 
+/// Process-wide DHT ownership and route state
+#[derive(Default)]
+struct SharedDhtState {
+    dht: Option<Arc<Dht>>,
+    proxy_requested: Option<bool>,
+    last_error: Option<String>,
+}
+
+static SHARED_DHT: std::sync::OnceLock<tokio::sync::Mutex<SharedDhtState>> =
+    std::sync::OnceLock::new();
+
+fn shared_dht_cell() -> &'static tokio::sync::Mutex<SharedDhtState> {
+    SHARED_DHT.get_or_init(|| tokio::sync::Mutex::new(SharedDhtState::default()))
+}
+
+fn shared_dht_install_lock() -> &'static tokio::sync::Mutex<()> {
+    static LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
+    LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+}
+
 pub const DEFAULT_BOOTSTRAP: &[&str] = &[
     "router.bittorrent.com:6881",
     "router.utorrent.com:6881",
@@ -45,24 +74,161 @@ pub const DEFAULT_BOOTSTRAP: &[&str] = &[
     "router.bitcomet.com:6881",
 ];
 
+fn bootstrap_targets() -> Vec<DhtTarget> {
+    DEFAULT_BOOTSTRAP
+        .iter()
+        .filter_map(|raw| {
+            let (host, port) = raw.rsplit_once(':')?;
+            let port = port.parse().ok()?;
+            Some(DhtTarget::Host(
+                host.trim_matches(['[', ']']).to_string(),
+                port,
+            ))
+        })
+        .collect()
+}
+
+fn dht_targets_match(expected: &DhtTarget, actual: &DhtTarget) -> bool {
+    match (expected, actual) {
+        (DhtTarget::Addr(expected), DhtTarget::Addr(actual)) => expected == actual,
+        (
+            DhtTarget::Host(expected_host, expected_port),
+            DhtTarget::Host(actual_host, actual_port),
+        ) => expected_port == actual_port && expected_host.eq_ignore_ascii_case(actual_host),
+        // Proxy readers may report the hostname-form source used in a SOCKS5
+        // domain request as an IP address. Direct requests are normalized to
+        // Addr before registration and therefore never use this fallback.
+        (DhtTarget::Host(..), DhtTarget::Addr(..)) => true,
+        _ => false,
+    }
+}
+
 /// A live DHT node; holds bound UDP sockets (v4 always, v6 if available) and a background reader task per socket that routes responses to pending queries by transaction id
 pub struct Dht {
-    sock: Arc<UdpSocket>,
+    sock: Option<Arc<UdpSocket>>,
     sock6: Option<Arc<UdpSocket>>,
+    proxy_datagram: Option<Arc<ProxyDatagram>>,
     our_id: Id20,
     pending: Arc<Mutex<PendingMap>>,
     routing: Arc<Mutex<RoutingTable>>,
     reader_handle: Mutex<Option<tokio::task::JoinHandle<()>>>,
     reader6_handle: Mutex<Option<tokio::task::JoinHandle<()>>>,
+    lookup_handles: Mutex<Vec<tokio::task::JoinHandle<()>>>,
+    shutdown: AtomicBool,
+}
+
+pub struct DhtRouteSwap {
+    previous: Option<Arc<Dht>>,
+    previous_proxy_requested: Option<bool>,
+    previous_error: Option<String>,
+    next: Option<Arc<Dht>>,
+}
+
+impl DhtRouteSwap {
+    pub fn next(&self) -> Option<Arc<Dht>> {
+        self.next.clone()
+    }
+
+    /// Finalize the route transition and stop the old runtime.
+    pub async fn commit(self) {
+        let owns_current = {
+            let guard = shared_dht_cell().lock().await;
+            match (&guard.dht, &self.next) {
+                (None, None) => true,
+                (Some(current), Some(next)) => Arc::ptr_eq(current, next),
+                _ => false,
+            }
+        };
+        if owns_current {
+            if let Some(previous) = self.previous {
+                previous.shutdown().await;
+            }
+        } else {
+            tracing::debug!("ignoring stale DHT route commit");
+            if let Some(next) = self.next {
+                next.shutdown().await;
+            }
+        }
+    }
+
+    pub async fn rollback(self) -> Option<Arc<Dht>> {
+        let restored = {
+            let mut guard = shared_dht_cell().lock().await;
+            let owns_current = match (&guard.dht, &self.next) {
+                (None, None) => true,
+                (Some(current), Some(next)) => Arc::ptr_eq(current, next),
+                _ => false,
+            };
+            if !owns_current {
+                tracing::debug!("ignoring stale DHT route rollback");
+                let current = guard.dht.clone();
+                drop(guard);
+                if let Some(next) = self.next {
+                    next.shutdown().await;
+                }
+                return current;
+            }
+            let current = guard.dht.take();
+            guard.dht = self.previous.clone();
+            guard.proxy_requested = self.previous_proxy_requested;
+            guard.last_error = self.previous_error.clone();
+            (current, guard.dht.clone())
+        };
+
+        if let Some(current) = restored.0 {
+            if self
+                .previous
+                .as_ref()
+                .is_none_or(|previous| !Arc::ptr_eq(previous, &current))
+            {
+                current.shutdown().await;
+            }
+        }
+        restored.1
+    }
+}
+
+impl std::fmt::Debug for Dht {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Dht").finish_non_exhaustive()
+    }
 }
 
 impl Drop for Dht {
     fn drop(&mut self) {
+        self.shutdown.store(true, Ordering::Release);
+        self.abort_lookups();
         if let Some(h) = self.reader_handle.lock().take() {
             h.abort();
         }
         if let Some(h) = self.reader6_handle.lock().take() {
             h.abort();
+        }
+    }
+}
+
+impl Dht {
+    fn abort_lookups(&self) {
+        let handles = std::mem::take(&mut *self.lookup_handles.lock());
+        for handle in handles {
+            handle.abort();
+        }
+    }
+
+    /// Stop iterative lookups while keeping this runtime available for a
+    /// possible route rollback.
+    pub fn cancel_lookups(&self) {
+        self.abort_lookups();
+    }
+
+    pub async fn shutdown(&self) {
+        self.shutdown.store(true, Ordering::Release);
+        self.abort_lookups();
+        if let Some(handle) = self.reader_handle.lock().take() {
+            handle.abort();
+        }
+        if let Some(handle) = self.reader6_handle.lock().take() {
+            handle.abort();
         }
     }
 }
@@ -84,7 +250,8 @@ impl PendingToken {
 
 struct PendingEntry {
     tx: oneshot::Sender<KrpcResponse>,
-    target: SocketAddr,
+    target: DhtTarget,
+    resolved_addrs: Option<Vec<SocketAddr>>,
     token: PendingToken,
 }
 
@@ -108,37 +275,278 @@ impl Drop for PendingGuard {
 }
 
 struct KrpcResponse {
-    from: SocketAddr,
+    from: DhtTarget,
     body: Value,
 }
 
 impl Dht {
-    /// Process-wide DHT node, lazily spawned and bootstrapped on first use
+    async fn send_packet(&self, packet: &[u8], target: SocketAddr) -> std::io::Result<usize> {
+        if self.shutdown.load(Ordering::Acquire) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "DHT runtime was reconfigured",
+            ));
+        }
+        if let Some(proxy) = &self.proxy_datagram {
+            return proxy
+                .send_to(packet, target)
+                .await
+                .map_err(|error| std::io::Error::other(error.to_string()));
+        }
+        match target {
+            SocketAddr::V4(_) => {
+                self.sock
+                    .as_ref()
+                    .ok_or_else(|| std::io::Error::other("DHT IPv4 socket unavailable"))?
+                    .send_to(packet, target)
+                    .await
+            }
+            SocketAddr::V6(_) => match &self.sock6 {
+                Some(socket) => socket.send_to(packet, target).await,
+                None => Err(std::io::Error::new(
+                    std::io::ErrorKind::AddrNotAvailable,
+                    "IPv6 DHT socket unavailable",
+                )),
+            },
+        }
+    }
+
+    async fn send_packet_host(
+        &self,
+        packet: &[u8],
+        host: &str,
+        port: u16,
+    ) -> std::io::Result<usize> {
+        if self.shutdown.load(Ordering::Acquire) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "DHT runtime was reconfigured",
+            ));
+        }
+        if let Some(proxy) = &self.proxy_datagram {
+            return proxy
+                .send_to_host(packet, host, port)
+                .await
+                .map_err(|error| std::io::Error::other(error.to_string()));
+        }
+
+        let targets = lookup_host((host, port)).await?;
+        let mut last_error = None;
+        for target in targets {
+            let result = match target {
+                SocketAddr::V4(_) => {
+                    self.sock
+                        .as_ref()
+                        .ok_or_else(|| std::io::Error::other("DHT IPv4 socket unavailable"))?
+                        .send_to(packet, target)
+                        .await
+                }
+                SocketAddr::V6(_) => match &self.sock6 {
+                    Some(socket) => socket.send_to(packet, target).await,
+                    None => Err(std::io::Error::new(
+                        std::io::ErrorKind::AddrNotAvailable,
+                        "IPv6 DHT socket unavailable",
+                    )),
+                },
+            };
+            match result {
+                Ok(n) => return Ok(n),
+                Err(error) => last_error = Some(error),
+            }
+        }
+        Err(last_error.unwrap_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("no addresses for {host}"),
+            )
+        }))
+    }
+
+    async fn send_target(&self, packet: &[u8], target: &DhtTarget) -> std::io::Result<usize> {
+        match target {
+            DhtTarget::Addr(addr) => self.send_packet(packet, *addr).await,
+            DhtTarget::Host(host, port) => self.send_packet_host(packet, host, *port).await,
+        }
+    }
+
+    pub async fn current_shared() -> Option<Arc<Dht>> {
+        shared_dht_cell().lock().await.dht.clone()
+    }
+
     pub async fn shared() -> Option<Arc<Dht>> {
-        static SHARED: tokio::sync::OnceCell<Arc<Dht>> = tokio::sync::OnceCell::const_new();
-        SHARED
-            .get_or_try_init(|| async {
-                let dht = Dht::spawn().await?;
-                // Warm the routing table in the background so the first lookup already has live, close-ish nodes to query
+        if let Some(dht) = Self::current_shared().await {
+            return Some(dht);
+        }
+
+        if shared_dht_cell().lock().await.proxy_requested == Some(true) {
+            return None;
+        }
+        Self::shared_with_proxy(None).await
+    }
+
+    pub async fn shared_with_proxy(proxy: Option<risuko_http::ProxyConnector>) -> Option<Arc<Dht>> {
+        Self::install_shared(proxy, false).await
+    }
+
+    pub async fn replace_shared_with_proxy(
+        proxy: Option<risuko_http::ProxyConnector>,
+    ) -> Option<Arc<Dht>> {
+        let swap = Self::prepare_shared_with_proxy(proxy).await.ok()?;
+        let next = swap.next();
+        swap.commit().await;
+        next
+    }
+
+    pub async fn replace_shared_with_proxy_checked(
+        proxy: Option<risuko_http::ProxyConnector>,
+    ) -> Result<Option<Arc<Dht>>, String> {
+        let swap = Self::prepare_shared_with_proxy(proxy).await?;
+        let next = swap.next();
+        swap.commit().await;
+        Ok(next)
+    }
+
+    pub async fn prepare_shared_with_proxy(
+        proxy: Option<risuko_http::ProxyConnector>,
+    ) -> Result<DhtRouteSwap, String> {
+        let _install_guard = shared_dht_install_lock().lock().await;
+        let requested_proxy = proxy.is_some();
+        let (previous, previous_proxy_requested, previous_error) = {
+            let mut guard = shared_dht_cell().lock().await;
+            let snapshot = (
+                guard.dht.clone(),
+                guard.proxy_requested,
+                guard.last_error.clone(),
+            );
+            guard.proxy_requested = Some(requested_proxy);
+            guard.last_error = None;
+            snapshot
+        };
+        let next = match Dht::spawn_with_proxy(proxy).await {
+            Ok(dht) => {
                 let warm = dht.clone();
                 tokio::spawn(async move { warm.bootstrap().await });
-                Ok::<Arc<Dht>, std::io::Error>(dht)
-            })
-            .await
-            .ok()
-            .cloned()
+                Some(dht)
+            }
+            Err(error) => {
+                let message = error.to_string();
+                let mut guard = shared_dht_cell().lock().await;
+                guard.dht = previous.clone();
+                guard.proxy_requested = previous_proxy_requested.or(Some(requested_proxy));
+                guard.last_error = Some(message.clone());
+                return Err(message);
+            }
+        };
+        shared_dht_cell().lock().await.dht = next.clone();
+
+        if let Some(previous) = previous.as_ref() {
+            // A route swap may take time to rebuild the surrounding runtime;
+            // stop old lookups immediately so they cannot keep announcing on
+            // the previous proxy while the swap is in progress.
+            previous.cancel_lookups();
+        }
+
+        Ok(DhtRouteSwap {
+            previous,
+            previous_proxy_requested,
+            previous_error,
+            next,
+        })
+    }
+
+    async fn install_shared(
+        proxy: Option<risuko_http::ProxyConnector>,
+        force: bool,
+    ) -> Option<Arc<Dht>> {
+        let _install_guard = shared_dht_install_lock().lock().await;
+        let requested_proxy = proxy.is_some();
+        let (previous, previous_proxy_requested) = {
+            let mut guard = shared_dht_cell().lock().await;
+            if !force && guard.proxy_requested == Some(requested_proxy) && guard.dht.is_some() {
+                return guard.dht.clone();
+            }
+            if !force
+                && guard.proxy_requested == Some(true)
+                && !requested_proxy
+                && guard.dht.is_none()
+            {
+                return None;
+            }
+            let previous = guard.dht.clone();
+            let previous_proxy_requested = guard.proxy_requested;
+            guard.last_error = None;
+            (previous, previous_proxy_requested)
+        };
+
+        let next = match Dht::spawn_with_proxy(proxy).await {
+            Ok(dht) => {
+                let warm = dht.clone();
+                tokio::spawn(async move { warm.bootstrap().await });
+                Some(dht)
+            }
+            Err(error) => {
+                let mut guard = shared_dht_cell().lock().await;
+                guard.dht = previous.clone();
+                guard.proxy_requested = previous_proxy_requested.or(Some(requested_proxy));
+                guard.last_error = Some(error.to_string());
+                tracing::warn!(
+                    proxied = requested_proxy,
+                    "DHT runtime initialization failed: {error}"
+                );
+                None
+            }
+        };
+        if next.is_some() {
+            let mut guard = shared_dht_cell().lock().await;
+            guard.proxy_requested = Some(requested_proxy);
+            guard.dht = next.clone();
+        }
+
+        if next.is_some() {
+            if let Some(previous) = previous {
+                previous.cancel_lookups();
+                previous.shutdown().await;
+            }
+        }
+        next
     }
 
     pub async fn spawn() -> std::io::Result<Arc<Self>> {
-        let sock = UdpSocket::bind("0.0.0.0:0").await?;
-        let sock = Arc::new(sock);
-        // Try to bind a dual-stack IPv6 socket too; if the host lacks IPv6 the bind fails and we carry on with v4 only
-        let sock6 = match UdpSocket::bind("[::]:0").await {
-            Ok(s) => Some(Arc::new(s)),
-            Err(e) => {
-                tracing::debug!("dht: no ipv6 socket: {e}");
-                None
+        Self::spawn_with_proxy(None).await
+    }
+
+    pub async fn spawn_with_proxy(
+        proxy: Option<risuko_http::ProxyConnector>,
+    ) -> std::io::Result<Arc<Self>> {
+        let proxy_datagram = match proxy {
+            Some(connector) => {
+                let has_explicit_bypass = connector
+                    .udp_no_proxy()
+                    .is_some_and(|matcher| !matcher.is_empty());
+                let result = if has_explicit_bypass {
+                    connector.bind_udp_with_bypass().await
+                } else {
+                    connector.bind_udp().await
+                };
+                Some(Arc::new(result.map_err(|error| {
+                    std::io::Error::new(std::io::ErrorKind::Unsupported, error.to_string())
+                })?))
             }
+            None => None,
+        };
+
+        let (sock, sock6) = if proxy_datagram.is_none() {
+            let sock = Some(Arc::new(UdpSocket::bind("0.0.0.0:0").await?));
+            let sock6 = match UdpSocket::bind("[::]:0").await {
+                Ok(s) => Some(Arc::new(s)),
+                Err(e) => {
+                    tracing::debug!("dht: no ipv6 socket: {e}");
+                    None
+                }
+            };
+            (sock, sock6)
+        } else {
+            (None, None)
         };
         let our_id = random_id();
         let pending: Arc<Mutex<PendingMap>> = Arc::new(Mutex::new(Default::default()));
@@ -146,26 +554,33 @@ impl Dht {
         let this = Arc::new(Self {
             sock: sock.clone(),
             sock6: sock6.clone(),
+            proxy_datagram: proxy_datagram.clone(),
             our_id,
             pending: pending.clone(),
             routing: Arc::new(Mutex::new(RoutingTable::new(our_id))),
             reader_handle: Mutex::new(None),
             reader6_handle: Mutex::new(None),
+            lookup_handles: Mutex::new(Vec::new()),
+            shutdown: AtomicBool::new(false),
         });
 
         let reader_sock = sock.clone();
         let pending_reader = pending.clone();
-        let reader_handle = tokio::spawn(async move {
-            reader_loop(reader_sock, pending_reader).await;
-        });
+        let reader_handle = if let Some(datagram) = proxy_datagram.clone() {
+            tokio::spawn(async move { proxy_reader_loop(datagram, pending_reader).await })
+        } else {
+            tokio::spawn(async move {
+                reader_loop(reader_sock.expect("direct DHT socket"), pending_reader).await
+            })
+        };
         *this.reader_handle.lock() = Some(reader_handle);
 
-        if let Some(s6) = sock6 {
-            let pending6 = pending.clone();
-            let reader6_handle = tokio::spawn(async move {
-                reader_loop(s6, pending6).await;
-            });
-            *this.reader6_handle.lock() = Some(reader6_handle);
+        if proxy_datagram.is_none() {
+            if let Some(s6) = sock6 {
+                let pending6 = pending.clone();
+                let reader6_handle = tokio::spawn(async move { reader_loop(s6, pending6).await });
+                *this.reader6_handle.lock() = Some(reader6_handle);
+            }
         }
 
         tracing::debug!(
@@ -186,13 +601,20 @@ impl Dht {
     ) -> mpsc::UnboundedReceiver<SocketAddr> {
         let (tx, rx) = mpsc::unbounded_channel::<SocketAddr>();
         let this = self.clone();
-        tokio::spawn(async move {
+        let handle = tokio::spawn(async move {
             let _ = tokio::time::timeout(
                 budget,
                 this.iterative_get_peers(info_hash, tx, announce_port),
             )
             .await;
         });
+        let mut handles = self.lookup_handles.lock();
+        handles.retain(|handle| !handle.is_finished());
+        if self.shutdown.load(Ordering::Acquire) {
+            handle.abort();
+        } else {
+            handles.push(handle);
+        }
         rx
     }
 
@@ -202,32 +624,33 @@ impl Dht {
         peer_tx: mpsc::UnboundedSender<SocketAddr>,
         announce_port: Option<u16>,
     ) {
-        // Seed the lookup from our warm routing table first (Kademlia reuses known-close nodes), then augment with public bootstrap hostnames; without the routing-table seed every lookup restarts cold from bootstrap servers (slow, and why the first magnet resolutions after launch were sluggish), whereas a warm table lets later lookups start close to the target and converge quickly
-        let mut addrs: Vec<SocketAddr> = self.routing.lock().closest(&info_hash, K * 2);
-        for host in DEFAULT_BOOTSTRAP {
-            if let Ok(iter) = lookup_host(host).await {
-                addrs.extend(iter);
-            }
-        }
-        if addrs.is_empty() {
-            tracing::debug!("dht: no bootstrap nodes resolved");
+        let mut targets: Vec<DhtTarget> = self
+            .routing
+            .lock()
+            .closest(&info_hash, K * 2)
+            .into_iter()
+            .map(DhtTarget::Addr)
+            .collect();
+        targets.extend(bootstrap_targets());
+        if targets.is_empty() {
+            tracing::debug!("dht: no bootstrap nodes available");
             return;
         }
 
-        let mut shortlist: BTreeMap<Id20, SocketAddr> = BTreeMap::new();
-        let mut queried: HashSet<SocketAddr> = HashSet::new();
+        let mut shortlist: BTreeMap<Id20, DhtTarget> = BTreeMap::new();
+        let mut queried: HashSet<DhtTarget> = HashSet::new();
         let mut peers_seen: HashSet<SocketAddr> = HashSet::new();
-        let mut announce_targets: BTreeMap<Id20, (SocketAddr, Vec<u8>)> = BTreeMap::new();
+        let mut announce_targets: BTreeMap<Id20, (DhtTarget, Vec<u8>)> = BTreeMap::new();
 
         let mut seed_seen = HashSet::new();
-        addrs.retain(|addr| seed_seen.insert(*addr));
-        addrs.truncate(MAX_ROUND_QUERIES);
-        queried.extend(addrs.iter().copied());
+        targets.retain(|target| seed_seen.insert(target.clone()));
+        targets.truncate(MAX_ROUND_QUERIES);
+        queried.extend(targets.iter().cloned());
 
         let mut futs: JoinSet<Option<GetPeersReply>> = JoinSet::new();
-        for a in addrs {
+        for target in targets {
             let this = self.clone();
-            futs.spawn(async move { this.query_get_peers(a, info_hash).await });
+            futs.spawn(async move { this.query_get_peers(target, info_hash).await });
         }
 
         let mut total_peers = 0usize;
@@ -257,10 +680,12 @@ impl Dht {
             total_peers += new_peers;
 
             // Record the responder as a live DHT node, preferring the id it reported in its KRPC response and falling back to a pseudo-id only if omitted; the real id keeps XOR distance accurate, which matters for lookup convergence
-            let node_id = responder_id.unwrap_or_else(|| pseudo_id(from));
-            shortlist.insert(node_id.distance(&info_hash), from);
+            let node_id = responder_id.unwrap_or_else(|| pseudo_id_target(&from));
+            shortlist.insert(node_id.distance(&info_hash), from.clone());
             if responder_id.is_some() {
-                self.routing.lock().add(node_id, from);
+                if let DhtTarget::Addr(from) = &from {
+                    self.routing.lock().add(node_id, *from);
+                }
             }
             if let Some(tok) = token {
                 announce_targets.insert(node_id.distance(&info_hash), (from, tok));
@@ -275,7 +700,7 @@ impl Dht {
                 total_nodes += 1;
                 let d = nid.distance(&info_hash);
                 if let std::collections::btree_map::Entry::Vacant(e) = shortlist.entry(d) {
-                    e.insert(*naddr);
+                    e.insert(DhtTarget::Addr(*naddr));
                     progressed = true;
                 }
                 self.routing.lock().add(*nid, *naddr);
@@ -294,19 +719,20 @@ impl Dht {
 
             // Queue up to ALPHA new queries from the closest unvisited
             let mut dispatched = 0usize;
-            let mut to_dispatch: Vec<SocketAddr> = Vec::new();
-            for (_d, a) in shortlist.iter().take(K * 2) {
-                if queried.insert(*a) {
-                    to_dispatch.push(*a);
+            let mut to_dispatch: Vec<DhtTarget> = Vec::new();
+            for (_d, target) in shortlist.iter().take(K * 2) {
+                let target = target.clone();
+                if queried.insert(target.clone()) {
+                    to_dispatch.push(target);
                     dispatched += 1;
                     if dispatched >= ALPHA {
                         break;
                     }
                 }
             }
-            for a in to_dispatch {
+            for target in to_dispatch {
                 let this = self.clone();
-                futs.spawn(async move { this.query_get_peers(a, info_hash).await });
+                futs.spawn(async move { this.query_get_peers(target, info_hash).await });
             }
 
             if dispatched == 0 && futs.is_empty() {
@@ -334,35 +760,37 @@ impl Dht {
                     port,
                     &token,
                 );
-                let _ = match addr {
-                    SocketAddr::V4(_) => self.sock.send_to(&pkt, addr).await,
-                    SocketAddr::V6(_) => match &self.sock6 {
-                        Some(s6) => s6.send_to(&pkt, addr).await,
-                        None => continue,
-                    },
-                };
+                let _ = self.send_target(&pkt, &addr).await;
             }
         }
     }
 
     async fn query_get_peers(
         self: Arc<Self>,
-        target: SocketAddr,
+        target: DhtTarget,
         info_hash: Id20,
     ) -> Option<GetPeersReply> {
-        let (txn, rx, _guard) = self.register_transaction(target);
-        let packet = build_get_peers(txn, &self.our_id, &info_hash);
-        // `_guard` removes `txn` from `pending`, including JoinSet aborts on budget timeout; route via the appropriate socket family, dropping the query if we target an IPv6 node but lack a v6 socket
-        let send_res = match target {
-            SocketAddr::V4(_) => self.sock.send_to(&packet, target).await,
-            SocketAddr::V6(_) => {
-                if let Some(s6) = &self.sock6 {
-                    s6.send_to(&packet, target).await
-                } else {
+        let (target, resolved_addrs) = match target {
+            DhtTarget::Host(host, port) if self.proxy_datagram.is_none() => {
+                let addresses = lookup_host((host.as_str(), port))
+                    .await
+                    .ok()?
+                    .filter(|address| match address {
+                        SocketAddr::V4(_) => self.sock.is_some(),
+                        SocketAddr::V6(_) => self.sock6.is_some(),
+                    })
+                    .collect::<Vec<_>>();
+                if addresses.is_empty() {
                     return None;
                 }
+                (DhtTarget::Addr(addresses[0]), Some(addresses))
             }
+            target => (target, None),
         };
+        let (txn, rx, _guard) = self.register_transaction(target.clone(), resolved_addrs);
+        let packet = build_get_peers(txn, &self.our_id, &info_hash);
+        // `_guard` removes `txn` from `pending`
+        let send_res = self.send_target(&packet, &target).await;
         if send_res.is_err() {
             return None;
         }
@@ -378,7 +806,8 @@ impl Dht {
 
     fn register_transaction(
         &self,
-        target: SocketAddr,
+        target: DhtTarget,
+        resolved_addrs: Option<Vec<SocketAddr>>,
     ) -> (u16, oneshot::Receiver<KrpcResponse>, PendingGuard) {
         let (tx, rx) = oneshot::channel();
         let mut map = self.pending.lock();
@@ -392,6 +821,7 @@ impl Dht {
             PendingEntry {
                 tx,
                 target,
+                resolved_addrs,
                 token: token.clone(),
             },
         );
@@ -537,6 +967,19 @@ fn pseudo_id(addr: SocketAddr) -> Id20 {
     Id20::from_slice(&h.finalize()[..20]).unwrap()
 }
 
+fn pseudo_id_target(target: &DhtTarget) -> Id20 {
+    match target {
+        DhtTarget::Addr(addr) => pseudo_id(*addr),
+        DhtTarget::Host(host, port) => {
+            use sha1::{Digest, Sha1};
+            let mut h = Sha1::new();
+            h.update(host.as_bytes());
+            h.update(port.to_be_bytes());
+            Id20::from_slice(&h.finalize()[..20]).unwrap()
+        }
+    }
+}
+
 /// Build a BEP-5 `announce_peer` query; the `token` must be one we received from this node's prior `get_peers` response, otherwise it rejects us
 fn build_announce_peer(
     txn: u16,
@@ -676,12 +1119,75 @@ async fn reader_loop(sock: Arc<UdpSocket>, pending: Arc<Mutex<PendingMap>>) {
         };
         let mut guard = pending.lock();
         if let Some(entry) = guard.get(&txn) {
-            if entry.target == from {
+            let matches = entry
+                .resolved_addrs
+                .as_ref()
+                .is_some_and(|addresses| addresses.contains(&from))
+                || (entry.resolved_addrs.is_none()
+                    && dht_targets_match(&entry.target, &DhtTarget::Addr(from)));
+            if matches {
                 if let Some(entry) = guard.remove(&txn) {
-                    let _ = entry.tx.send(KrpcResponse { from, body: msg });
+                    let _ = entry.tx.send(KrpcResponse {
+                        from: DhtTarget::Addr(from),
+                        body: msg,
+                    });
                 }
             }
             // Mismatch: ignore the packet, leave entry for the real responder
+        }
+    }
+}
+
+async fn proxy_reader_loop(sock: Arc<ProxyDatagram>, pending: Arc<Mutex<PendingMap>>) {
+    let mut buf = vec![0u8; 2048];
+    loop {
+        let (n, source) = match sock.recv_from_target(&mut buf).await {
+            Ok(x) => x,
+            Err(error) => {
+                tracing::debug!("dht proxy reader stopped: {error}");
+                return;
+            }
+        };
+        let from = match &source {
+            ProxyDatagramSource::Ip(address) => DhtTarget::Addr(*address),
+            ProxyDatagramSource::Host(host, port) => DhtTarget::Host(host.clone(), *port),
+        };
+        let Ok(msg) = decode_all_external(&buf[..n], KRPC_DECODE_LIMITS) else {
+            continue;
+        };
+        let Some(ty) = msg.get(b"y").and_then(|v| v.as_bytes()) else {
+            continue;
+        };
+        if ty != b"r" && ty != b"e" {
+            continue;
+        }
+        let Some(tid) = msg.get(b"t").and_then(|v| v.as_bytes()) else {
+            continue;
+        };
+        let txn = match tid.len() {
+            2 => u16::from_be_bytes([tid[0], tid[1]]),
+            _ => continue,
+        };
+        let expected = pending.lock().get(&txn).map(|entry| entry.target.clone());
+        let matches = match (&expected, &source) {
+            (Some(DhtTarget::Addr(target)), ProxyDatagramSource::Host(..)) => {
+                risuko_http::datagram_source_matches(&source, *target)
+            }
+            (Some(expected), _) => dht_targets_match(expected, &from),
+            (None, _) => false,
+        };
+        if matches {
+            let mut guard = pending.lock();
+            if let Some(entry) = guard.get(&txn) {
+                if expected
+                    .as_ref()
+                    .is_some_and(|target| target == &entry.target)
+                {
+                    if let Some(entry) = guard.remove(&txn) {
+                        let _ = entry.tx.send(KrpcResponse { from, body: msg });
+                    }
+                }
+            }
         }
     }
 }
@@ -690,6 +1196,77 @@ async fn reader_loop(sock: Arc<UdpSocket>, pending: Arc<Mutex<PendingMap>>) {
 mod tests {
     use super::*;
     use crate::bencode::decode_all;
+
+    // Shared-DHT tests mutate process-wide state
+    static SHARED_TEST_LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> =
+        std::sync::OnceLock::new();
+
+    async fn reset_shared_state() {
+        let previous = {
+            let mut state = shared_dht_cell().lock().await;
+            state.proxy_requested = None;
+            state.last_error = None;
+            state.dht.take()
+        };
+        if let Some(previous) = previous {
+            previous.shutdown().await;
+        }
+    }
+
+    #[tokio::test]
+    async fn proxied_dht_failure_blocks_implicit_direct_creation() {
+        let lock = SHARED_TEST_LOCK.get_or_init(|| tokio::sync::Mutex::new(()));
+        let _guard = lock.lock().await;
+        reset_shared_state().await;
+
+        // HTTP CONNECT can carry TCP but must fail DHT's UDP association
+        let proxy = risuko_http::ProxyConnector::from_proxy(
+            risuko_http::Proxy::all("http://127.0.0.1:8080").unwrap(),
+        );
+        assert!(Dht::replace_shared_with_proxy(Some(proxy)).await.is_none());
+        assert!(Dht::current_shared().await.is_none());
+        assert!(Dht::shared().await.is_none());
+
+        reset_shared_state().await;
+    }
+
+    #[tokio::test]
+    async fn dht_route_swap_surfaces_unavailable_http_udp_route() {
+        let lock = SHARED_TEST_LOCK.get_or_init(|| tokio::sync::Mutex::new(()));
+        let _guard = lock.lock().await;
+        reset_shared_state().await;
+
+        let previous = Dht::replace_shared_with_proxy(None)
+            .await
+            .expect("direct DHT should bind");
+        let proxy = risuko_http::ProxyConnector::from_proxy(
+            risuko_http::Proxy::all("http://127.0.0.1:8080").unwrap(),
+        );
+
+        let error = match Dht::prepare_shared_with_proxy(Some(proxy)).await {
+            Ok(_) => panic!("HTTP UDP limitation must fail a checked route swap"),
+            Err(error) => error,
+        };
+        assert!(error.to_ascii_lowercase().contains("socks5 required"));
+        let restored = Dht::current_shared()
+            .await
+            .expect("failed route preparation must preserve the old DHT");
+        assert!(Arc::ptr_eq(&restored, &previous));
+        assert!(Dht::shared().await.is_some());
+        drop(previous);
+
+        reset_shared_state().await;
+    }
+
+    #[test]
+    fn bootstrap_nodes_remain_host_targets_until_sent() {
+        let targets = bootstrap_targets();
+        assert_eq!(targets.len(), DEFAULT_BOOTSTRAP.len());
+        assert!(matches!(
+            targets.first(),
+            Some(DhtTarget::Host(host, 6881)) if host == "router.bittorrent.com"
+        ));
+    }
 
     #[test]
     fn routing_table_inserts_dedupes_and_indexes_distance() {
@@ -872,7 +1449,8 @@ mod tests {
             txn,
             PendingEntry {
                 tx: old_tx,
-                target,
+                target: DhtTarget::Addr(target),
+                resolved_addrs: None,
                 token: old_token.clone(),
             },
         );
@@ -886,7 +1464,8 @@ mod tests {
             txn,
             PendingEntry {
                 tx: new_tx,
-                target,
+                target: DhtTarget::Addr(target),
+                resolved_addrs: None,
                 token: new_token,
             },
         );

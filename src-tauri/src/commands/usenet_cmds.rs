@@ -1,6 +1,7 @@
 //! Usenet provider commands
 
 use fs4::FileExt;
+use risuko_engine::engine::options::EngineOptions;
 use risuko_engine::engine::usenet::{UsenetCredentialResolver, UsenetProviderProfile};
 use risuko_engine::engine::usenet_transport::NntpConnection;
 use serde_json::{json, Map, Value};
@@ -373,9 +374,30 @@ pub async fn usenet_test_profile(
         ),
         None => None,
     };
-    let mut connection = NntpConnection::connect(&profile, credentials)
-        .await
-        .map_err(|error| error.to_string())?;
+    let http_proxy = {
+        let config = state
+            .config
+            .lock()
+            .map_err(|_| "Configuration lock poisoned".to_string())?;
+        let options =
+            EngineOptions::from_config(config.get_system_config(), config.get_user_config());
+        let server = options.get_str("all-proxy").unwrap_or("").trim();
+        if server.is_empty() {
+            None
+        } else {
+            let proxy = risuko_http::Proxy::all(server)
+                .map_err(|error| format!("Invalid HTTP profile proxy: {error}"))?;
+            let bypass = options.get_str("no-proxy").unwrap_or("");
+            Some(
+                risuko_http::ProxyConnector::from_proxy(proxy)
+                    .with_no_proxy(risuko_http::NoProxy::parse(bypass)),
+            )
+        }
+    };
+    let mut connection =
+        NntpConnection::connect_with_proxy(&profile, credentials, http_proxy.as_ref())
+            .await
+            .map_err(|error| error.to_string())?;
     let _ = connection
         .capabilities()
         .await

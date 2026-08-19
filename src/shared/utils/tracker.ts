@@ -1,8 +1,5 @@
-import {
-	MAX_BT_TRACKER_LENGTH,
-	ONE_SECOND,
-	PROXY_SCOPES,
-} from "@shared/constants";
+import { MAX_BT_TRACKER_LENGTH, ONE_SECOND } from "@shared/constants";
+import { normalizeProxyConfig, type ProxyConfig } from "@shared/types/config";
 import axios from "axios";
 
 const TRACKER_SOURCE_CACHE_TTL = 10 * 60 * ONE_SECOND;
@@ -54,12 +51,7 @@ const getCachedTrackerSource = (key: string, now: number) => {
 
 export const fetchBtTrackerFromSource = async (
 	source: string[],
-	proxyConfig: {
-		enable?: boolean;
-		server?: string;
-		bypass?: string;
-		scope?: string[];
-	} = {},
+	proxyConfig: ProxyConfig = {},
 	resolveProxy?: (url: string) => Promise<string | null>,
 	fetchSource?: (urls: string[]) => Promise<string[]>,
 ) => {
@@ -68,13 +60,13 @@ export const fetchBtTrackerFromSource = async (
 	}
 
 	const now = Date.now();
-	const { enable, server, scope = [] } = proxyConfig;
-	const proxyEnabled =
-		enable && server && scope.includes(PROXY_SCOPES.UPDATE_TRACKERS);
+	const normalized = normalizeProxyConfig(proxyConfig).http;
+	const { enable, server, bypass, scope = [] } = normalized;
+	const proxyEnabled = enable && server && scope.includes("update-trackers");
 	const proxyCacheKey = fetchSource
-		? `${enable ? "1" : "0"}|${server || ""}|${proxyConfig.bypass || ""}|${scope.join(",")}`
+		? `${enable ? "1" : "0"}|${server || ""}|${bypass || ""}|${scope.join(",")}`
 		: proxyEnabled
-			? `${server}|${proxyConfig.bypass || ""}`
+			? `${server}|${bypass || ""}`
 			: "";
 	const cacheKey = buildTrackerSourceCacheKey(source, proxyCacheKey);
 	const cached = getCachedTrackerSource(cacheKey, now);

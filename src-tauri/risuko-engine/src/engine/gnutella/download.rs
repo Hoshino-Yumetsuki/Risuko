@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use tokio_util::sync::CancellationToken;
 
-use super::peer::fetch_by_urn;
+use super::peer::fetch_by_urn_with_proxy;
 use super::types::{is_gnutella_uri, parse_gnutella_uri, GnutellaError};
 use crate::engine::options::EngineOptions;
 
@@ -14,7 +14,7 @@ use crate::engine::options::EngineOptions;
 pub async fn run_gnutella_download(
     uri: &str,
     dir: &str,
-    _opts: &EngineOptions,
+    opts: &EngineOptions,
     total: Arc<AtomicU64>,
     completed: Arc<AtomicU64>,
     speed: Arc<AtomicU64>,
@@ -25,6 +25,7 @@ pub async fn run_gnutella_download(
     if !is_gnutella_uri(uri) {
         return Err(format!("not a Gnutella URI: {uri}"));
     }
+    let proxy = opts.p2p_proxy_connector()?;
     let link = parse_gnutella_uri(uri).ok_or_else(|| "invalid gnutella URI".to_string())?;
     let urn = link
         .urn
@@ -49,7 +50,7 @@ pub async fn run_gnutella_download(
     );
     let out_path = PathBuf::from(dir).join(safe);
 
-    fetch_by_urn(
+    fetch_by_urn_with_proxy(
         &link.host,
         link.port,
         if link.n2r_path.is_empty() {
@@ -62,6 +63,7 @@ pub async fn run_gnutella_download(
         &out_path,
         completed,
         cancel_token,
+        proxy,
     )
     .await
     .map_err(|e: GnutellaError| e.to_string())?;

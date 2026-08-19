@@ -16,7 +16,7 @@ use super::core::{
 };
 use super::dht::Dht;
 use super::peer::{connect_with_utp_fallback, PeerCommand, PeerEvent, SpawnPeer};
-use super::tracker::{announce, AnnounceEvent, AnnounceRequest};
+use super::tracker::{AnnounceEvent, AnnounceRequest};
 use super::wire::extended::{
     parse_ut_metadata, ut_metadata_request, ut_metadata_type, ExtHandshake, EXT_HANDSHAKE_ID,
 };
@@ -89,7 +89,28 @@ pub async fn resolve_with_port_and_utp(
     encryption: crate::peer::EncryptionPolicy,
     utp: Option<Arc<crate::utp::UtpSocket>>,
 ) -> Result<Resolved, String> {
-    resolve_with_peers_and_port_and_utp(
+    resolve_with_port_and_utp_and_proxy(
+        magnet_uri,
+        extra_trackers,
+        listen_port,
+        budget,
+        encryption,
+        utp,
+        None,
+    )
+    .await
+}
+
+pub async fn resolve_with_port_and_utp_and_proxy(
+    magnet_uri: &str,
+    extra_trackers: &[String],
+    listen_port: u16,
+    budget: Duration,
+    encryption: crate::peer::EncryptionPolicy,
+    utp: Option<Arc<crate::utp::UtpSocket>>,
+    proxy: Option<risuko_http::ProxyConnector>,
+) -> Result<Resolved, String> {
+    resolve_with_peers_and_port_and_utp_and_proxy(
         magnet_uri,
         extra_trackers,
         &[],
@@ -97,6 +118,7 @@ pub async fn resolve_with_port_and_utp(
         budget,
         encryption,
         utp,
+        proxy,
     )
     .await
 }
@@ -148,6 +170,29 @@ pub async fn resolve_with_peers_and_port_and_utp(
     encryption: crate::peer::EncryptionPolicy,
     utp: Option<Arc<crate::utp::UtpSocket>>,
 ) -> Result<Resolved, String> {
+    resolve_with_peers_and_port_and_utp_and_proxy(
+        magnet_uri,
+        extra_trackers,
+        extra_peers,
+        listen_port,
+        budget,
+        encryption,
+        utp,
+        None,
+    )
+    .await
+}
+
+pub async fn resolve_with_peers_and_port_and_utp_and_proxy(
+    magnet_uri: &str,
+    extra_trackers: &[String],
+    extra_peers: &[SocketAddr],
+    listen_port: u16,
+    budget: Duration,
+    encryption: crate::peer::EncryptionPolicy,
+    utp: Option<Arc<crate::utp::UtpSocket>>,
+    proxy: Option<risuko_http::ProxyConnector>,
+) -> Result<Resolved, String> {
     let magnet = Magnet::parse(magnet_uri).map_err(|e| e.to_string())?;
     let info_hash = magnet.info_hash();
     let want_v1 = magnet.info_hash_v1();
@@ -179,8 +224,16 @@ pub async fn resolve_with_peers_and_port_and_utp(
         let req = req.clone();
         let tx = peer_tx.clone();
         let per_tracker = budget.min(TRACKER_TIMEOUT);
+        let tracker_proxy = proxy.clone();
         tracker_set.spawn(async move {
-            match announce(&url, &req, per_tracker).await {
+            match super::tracker::announce_with_proxy(
+                &url,
+                &req,
+                per_tracker,
+                tracker_proxy.as_ref(),
+            )
+            .await
+            {
                 Ok(r) => {
                     tracing::debug!("tracker {url} returned {} peers", r.peers.len());
                     for p in r.peers {
@@ -193,7 +246,7 @@ pub async fn resolve_with_peers_and_port_and_utp(
     }
 
     // Fire up DHT in parallel
-    let dht_handle: Option<tokio::task::JoinHandle<()>> = match Dht::shared().await {
+    let dht_handle: Option<tokio::task::JoinHandle<()>> = match Dht::current_shared().await {
         Some(dht) => {
             let tx = peer_tx.clone();
             let dht_budget = budget.min(Duration::from_secs(60));
@@ -249,6 +302,7 @@ pub async fn resolve_with_peers_and_port_and_utp(
         let sem = sem.clone();
         let layers_failed = layers_failed.clone();
         let utp = utp.clone();
+        let proxy = proxy.clone();
         async move {
             let mut joinset: JoinSet<()> = JoinSet::new();
 
@@ -274,6 +328,7 @@ pub async fn resolve_with_peers_and_port_and_utp(
                         let result_tx = result_tx.clone();
                         let layers_failed = layers_failed.clone();
                         let utp = utp.clone();
+                        let peer_proxy = proxy.clone();
                         joinset.spawn(async move {
                             let _permit = permit;
                             let fetched = tokio::time::timeout(
@@ -285,6 +340,7 @@ pub async fn resolve_with_peers_and_port_and_utp(
                                     encryption,
                                     advertise_v2,
                                     utp,
+                                    peer_proxy,
                                 ),
                             )
                             .await
@@ -478,6 +534,7 @@ async fn try_fetch_from_peer(
     encryption: crate::peer::EncryptionPolicy,
     advertise_v2: bool,
     utp: Option<Arc<crate::utp::UtpSocket>>,
+    proxy: Option<risuko_http::ProxyConnector>,
 ) -> Option<(Vec<u8>, BTreeMap<Id32, Vec<u8>>, bool)> {
     // Build a per-peer extended-handshake builder; the connection layer invokes it once with the peer's IP so `yourip` matches that peer (some swarms, notably CN BT clients, only engage with remotes that populate this), and metadata size is unknown until the peer replies so we leave it `None` here
     let ext_handshake_builder: crate::peer::ExtHandshakeBuilder =
@@ -499,6 +556,7 @@ async fn try_fetch_from_peer(
             encryption,
             advertise_v2,
             ext_handshake_builder: Some(ext_handshake_builder),
+            proxy,
         },
         utp,
     )

@@ -72,12 +72,21 @@ pub async fn announce(
     req: &AnnounceRequest,
     timeout: Duration,
 ) -> Result<AnnounceResponse, TrackerError> {
+    announce_with_proxy(url, req, timeout, None).await
+}
+
+pub async fn announce_with_proxy(
+    url: &str,
+    req: &AnnounceRequest,
+    timeout: Duration,
+    proxy: Option<&risuko_http::ProxyConnector>,
+) -> Result<AnnounceResponse, TrackerError> {
     if url.starts_with("http://") || url.starts_with("https://") {
-        tokio::time::timeout(timeout, http::announce(url, req))
+        tokio::time::timeout(timeout, http::announce_with_proxy(url, req, proxy))
             .await
             .map_err(|_| TrackerError::Timeout)?
     } else if url.starts_with("udp://") {
-        tokio::time::timeout(timeout, udp::announce(url, req))
+        tokio::time::timeout(timeout, udp::announce_with_proxy(url, req, proxy))
             .await
             .map_err(|_| TrackerError::Timeout)?
     } else {

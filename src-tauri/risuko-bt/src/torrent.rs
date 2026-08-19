@@ -19,7 +19,7 @@ use super::core::{supports_v2_wire, Id20, Lengths, MerkleProofTable, PieceVerifi
 use super::peer::{connect_with_utp_fallback, PeerCommand, PeerEvent, SpawnPeer};
 use super::piece::{ChunkTracker, PieceTracker};
 use super::storage::{FileSet, FilesystemStorage};
-use super::tracker::{announce as tracker_announce, AnnounceEvent, AnnounceRequest};
+use super::tracker::{AnnounceEvent, AnnounceRequest};
 use super::utp::UtpSocket;
 use super::wire::extended::{
     build_holepunch, holepunch_err, holepunch_type, parse_holepunch, ut_metadata_data,
@@ -87,6 +87,8 @@ pub struct TorrentInit {
     pub utp: Option<Arc<UtpSocket>>,
     pub upload_limiter: Option<Arc<crate::limiter::UploadLimiter>>,
     pub dht: Option<Arc<super::dht::Dht>>,
+    pub p2p_proxy: Option<risuko_http::ProxyConnector>,
+    pub p2p_proxy_is_task_override: bool,
 }
 
 #[derive(Debug)]
@@ -100,6 +102,12 @@ pub enum TorrentCommand {
     },
     Pause(oneshot::Sender<()>),
     Unpause(oneshot::Sender<()>),
+    ReconfigureP2p {
+        proxy: Option<risuko_http::ProxyConnector>,
+        replace_proxy: bool,
+        dht: Option<Arc<super::dht::Dht>>,
+        ack: oneshot::Sender<()>,
+    },
     Stop(oneshot::Sender<()>),
 }
 
@@ -112,6 +120,7 @@ pub struct ManagedTorrent {
     pub root_dir: PathBuf,
     pub advertise_v2: Arc<AtomicBool>,
     pub ext_handshake_builder: crate::peer::ExtHandshakeBuilder,
+    pub p2p_proxy_is_task_override: bool,
     pub(crate) cmd_tx: mpsc::Sender<TorrentCommand>,
     pub(crate) stats: Arc<Mutex<TorrentStats>>,
 }
@@ -194,6 +203,7 @@ pub async fn spawn(
         root_dir: init.root_dir.clone(),
         advertise_v2: Arc::clone(&advertise_v2_flag),
         ext_handshake_builder,
+        p2p_proxy_is_task_override: init.p2p_proxy_is_task_override,
         cmd_tx,
         stats: stats.clone(),
     });
@@ -274,8 +284,10 @@ async fn torrent_loop(
     let lengths = init.lengths;
     let encryption = init.encryption;
     let utp = init.utp.clone();
+    let outbound_utp = utp.clone();
     let upload_limiter = init.upload_limiter.clone();
-    let dht = init.dht.clone();
+    let mut dht = init.dht.clone();
+    let mut p2p_proxy = init.p2p_proxy.clone();
     let supports_v2 = supports_v2_wire(&init.meta);
     let verifier = init.verifier;
     let hash_tables: Option<Arc<Vec<MerkleProofTable>>> = {
@@ -357,13 +369,16 @@ async fn torrent_loop(
         vec![info_hash]
     };
     let (peer_src_tx, mut peer_addr_rx) = mpsc::channel::<SocketAddr>(256);
+    let tracker_urls = collect_trackers(&init.meta);
+    let tracker_info_hashes = announce_hashes.clone();
     let mut tracker_tasks = spawn_tracker_pollers(
         peer_src_tx.clone(),
-        collect_trackers(&init.meta),
-        announce_hashes,
+        tracker_urls.clone(),
+        tracker_info_hashes.clone(),
         our_peer_id,
         listen_port,
         Arc::clone(&stats),
+        p2p_proxy.clone(),
     );
 
     let (peer_event_tx, mut peer_event_rx) = mpsc::channel::<(u32, PeerEvent)>(8192);
@@ -394,11 +409,12 @@ async fn torrent_loop(
     let mut choke_dirty = false;
     let mut last_pex = Instant::now();
     let mut bytes_this_tick = (0u64, 0u64);
-    // Upload bytes accumulate from spawned send tasks; share via atomic so we only credit them after the disk read and channel send succeed
     let upload_tick: Arc<AtomicU64> = Arc::new(AtomicU64::new(0));
-    // Track in-flight piece write/hash tasks so Stop can wait for or cancel them; without this, a Stop racing with a piece-completion write_at could leave a partially-written piece on disk while the torrent loop has already returned
     let mut write_tasks: tokio::task::JoinSet<VerifyResult> = tokio::task::JoinSet::new();
     let mut outbound_tasks: tokio::task::JoinSet<()> = tokio::task::JoinSet::new();
+    let mut dht_poll_handle: Option<tokio::task::JoinHandle<()>> = dht.clone().map(|initial_dht| {
+        spawn_dht_poller(initial_dht, info_hash, listen_port, peer_src_tx.clone())
+    });
 
     let stop_ack = 'torrent: loop {
         tokio::select! {
@@ -437,7 +453,8 @@ async fn torrent_loop(
                             encryption,
                             advertise_v2,
                             &ext_handshake_builder,
-                            &utp,
+                            &outbound_utp,
+                            &p2p_proxy,
                             &mut outbound_tasks,
                         );
                     }
@@ -560,6 +577,17 @@ async fn torrent_loop(
                 }
                 TorrentCommand::Unpause(ack) => {
                     paused = false;
+                    if tracker_tasks.is_empty() {
+                        tracker_tasks = spawn_tracker_pollers(
+                            peer_src_tx.clone(),
+                            tracker_urls.clone(),
+                            tracker_info_hashes.clone(),
+                            our_peer_id,
+                            listen_port,
+                            Arc::clone(&stats),
+                            p2p_proxy.clone(),
+                        );
+                    }
                     // Resume immediately rather than waiting up to one tick
                     drain_peer_backlog(
                         &mut priority_backlog,
@@ -580,9 +608,34 @@ async fn torrent_loop(
                         encryption,
                         advertise_v2,
                         &ext_handshake_builder,
-                        &utp,
+                        &outbound_utp,
+                        &p2p_proxy,
                         &mut outbound_tasks,
                     );
+                    let _ = ack.send(());
+                }
+                TorrentCommand::ReconfigureP2p { proxy, replace_proxy, dht: next_dht, ack } => {
+                    if replace_proxy {
+                        p2p_proxy = proxy;
+                    }
+                    if let Some(handle) = dht_poll_handle.take() {
+                        handle.abort();
+                    }
+                    dht = next_dht;
+                    if let Some(next_dht) = dht.clone() {
+                        dht_poll_handle = Some(spawn_dht_poller(
+                            next_dht,
+                            info_hash,
+                            listen_port,
+                            peer_src_tx.clone(),
+                        ));
+                    }
+                    if replace_proxy {
+                        tracker_tasks.shutdown(false).await;
+                    }
+                    // The manager normally sends this command while paused;
+                    // defer new announces until the matching Unpause so the
+                    // route swap cannot race a stale peer dial.
                     let _ = ack.send(());
                 }
                 TorrentCommand::Stop(ack) => break 'torrent Some(ack),
@@ -617,7 +670,8 @@ async fn torrent_loop(
                         encryption,
                         advertise_v2,
                         &ext_handshake_builder,
-                        &utp,
+                        &outbound_utp,
+                        &p2p_proxy,
                         &mut outbound_tasks,
                     );
                 }
@@ -695,7 +749,8 @@ async fn torrent_loop(
                         encryption,
                         advertise_v2,
                         &ext_handshake_builder,
-                        &utp,
+                        &outbound_utp,
+                        &p2p_proxy,
                         &mut outbound_tasks,
                     );
                 }
@@ -953,7 +1008,8 @@ async fn torrent_loop(
                         encryption,
                         advertise_v2,
                         &ext_handshake_builder,
-                        &utp,
+                        &outbound_utp,
+                        &p2p_proxy,
                         &mut outbound_tasks,
                     );
                     drive_requests(&mut peers, &mut piece_tracker, &mut chunk_tracker).await;
@@ -961,6 +1017,10 @@ async fn torrent_loop(
             }
         }
     };
+
+    if let Some(handle) = dht_poll_handle.take() {
+        handle.abort();
+    }
 
     for (pid, peer) in peers.drain() {
         let _ = peer.cmd_tx.try_send(PeerCommand::Disconnect);
@@ -980,7 +1040,7 @@ async fn torrent_loop(
     }
     pending_dials.clear();
 
-    tracker_tasks.shutdown().await;
+    tracker_tasks.shutdown(true).await;
 
     priority_backlog.clear();
     peer_backlog.clear();
@@ -1024,6 +1084,26 @@ async fn torrent_loop(
     if let Some(ack) = stop_ack {
         let _ = ack.send(());
     }
+}
+
+fn spawn_dht_poller(
+    dht: Arc<super::dht::Dht>,
+    info_hash: Id20,
+    listen_port: u16,
+    peer_tx: mpsc::Sender<SocketAddr>,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        loop {
+            let mut peers =
+                dht.get_peers_stream(info_hash, Duration::from_secs(60), Some(listen_port));
+            while let Some(addr) = peers.recv().await {
+                if peer_tx.send(addr).await.is_err() {
+                    return;
+                }
+            }
+            tokio::time::sleep(Duration::from_secs(120)).await;
+        }
+    })
 }
 
 mod peer_registry {
@@ -1116,6 +1196,7 @@ async fn run_outbound_peer(
     ext_handshake_builder: Option<crate::peer::ExtHandshakeBuilder>,
     utp: Option<Arc<UtpSocket>>,
     known_useful: bool,
+    proxy: Option<risuko_http::ProxyConnector>,
 ) {
     let spawn = SpawnPeer {
         addr,
@@ -1131,6 +1212,7 @@ async fn run_outbound_peer(
         encryption,
         advertise_v2,
         ext_handshake_builder,
+        proxy,
     };
     if known_useful {
         tracing::debug!("redialing useful peer {addr} TCP-first with µTP fallback");
@@ -2177,6 +2259,7 @@ fn drain_peer_backlog(
     advertise_v2: bool,
     ext_handshake_builder: &crate::peer::ExtHandshakeBuilder,
     utp: &Option<Arc<UtpSocket>>,
+    proxy: &Option<risuko_http::ProxyConnector>,
     outbound_tasks: &mut tokio::task::JoinSet<()>,
 ) {
     // Promote due useful-peer redials into the priority backlog
@@ -2220,6 +2303,7 @@ fn drain_peer_backlog(
             Some(ext_handshake_builder.clone()),
             utp.clone(),
             known_useful,
+            proxy.clone(),
         ));
     };
 
@@ -2800,13 +2884,17 @@ fn collect_trackers(meta: &TorrentMeta) -> Vec<String> {
 }
 
 struct TrackerPollers {
-    shutdown_tx: watch::Sender<bool>,
+    shutdown_tx: watch::Sender<Option<bool>>,
     tasks: tokio::task::JoinSet<()>,
 }
 
 impl TrackerPollers {
-    async fn shutdown(&mut self) {
-        let _ = self.shutdown_tx.send(true);
+    fn is_empty(&self) -> bool {
+        self.tasks.is_empty()
+    }
+
+    async fn shutdown(&mut self, announce_stopped: bool) {
+        let _ = self.shutdown_tx.send(Some(announce_stopped));
         let deadline = tokio::time::Instant::now() + TRACKER_SHUTDOWN_GRACE;
 
         while !self.tasks.is_empty() {
@@ -2906,14 +2994,15 @@ async fn run_tracker_poller(
     peer_id: Id20,
     port: u16,
     stats: Arc<Mutex<TorrentStats>>,
-    mut shutdown: watch::Receiver<bool>,
+    mut shutdown: watch::Receiver<Option<bool>>,
+    proxy: Option<risuko_http::ProxyConnector>,
 ) {
     let mut pending_event = AnnounceEvent::Started;
     let mut sent_completed = false;
     let mut consecutive_failures = 0u32;
 
     'poll: loop {
-        if *shutdown.borrow() {
+        if shutdown.borrow().is_some() {
             break;
         }
         let finished = stats.lock().finished;
@@ -2924,7 +3013,7 @@ async fn run_tracker_poller(
         let result = tokio::select! {
             biased;
             _ = shutdown.changed() => break 'poll,
-            result = tracker_announce(&url, &req, TRACKER_ANNOUNCE_TIMEOUT) => result,
+            result = super::tracker::announce_with_proxy(&url, &req, TRACKER_ANNOUNCE_TIMEOUT, proxy.as_ref()) => result,
         };
 
         let delay = match result {
@@ -2968,8 +3057,19 @@ async fn run_tracker_poller(
         }
     }
 
+    if !(*shutdown.borrow()).unwrap_or(true) {
+        return;
+    }
+
     let stopped = tracker_request(info_hash, peer_id, port, &stats, AnnounceEvent::Stopped, 0);
-    match tracker_announce(&url, &stopped, TRACKER_STOPPED_TIMEOUT).await {
+    match super::tracker::announce_with_proxy(
+        &url,
+        &stopped,
+        TRACKER_STOPPED_TIMEOUT,
+        proxy.as_ref(),
+    )
+    .await
+    {
         Ok(_) => tracing::debug!("tracker STOPPED ok url={url}"),
         Err(e) => tracing::debug!("tracker STOPPED failed url={url}: {e}"),
     }
@@ -2982,8 +3082,9 @@ fn spawn_tracker_pollers(
     peer_id: Id20,
     port: u16,
     stats: Arc<Mutex<TorrentStats>>,
+    proxy: Option<risuko_http::ProxyConnector>,
 ) -> TrackerPollers {
-    let (shutdown_tx, shutdown_rx) = watch::channel(false);
+    let (shutdown_tx, shutdown_rx) = watch::channel(None);
     let mut tasks = tokio::task::JoinSet::new();
     for url in trackers {
         for info_hash in &info_hashes {
@@ -2995,6 +3096,7 @@ fn spawn_tracker_pollers(
                 port,
                 Arc::clone(&stats),
                 shutdown_rx.clone(),
+                proxy.clone(),
             ));
         }
     }

@@ -160,23 +160,44 @@ impl NntpConnection {
         profile: &UsenetProviderProfile,
         credentials: Option<UsenetCredentials>,
     ) -> Result<Self, NntpError> {
+        Self::connect_with_proxy(profile, credentials, None).await
+    }
+
+    pub async fn connect_with_proxy(
+        profile: &UsenetProviderProfile,
+        credentials: Option<UsenetCredentials>,
+        proxy: Option<&risuko_http::ProxyConnector>,
+    ) -> Result<Self, NntpError> {
         validate_profile(profile)?;
         if profile.security_mode == "implicit-tls" {
-            let mut connection = Self::connect_implicit(profile).await?;
+            let mut connection = Self::connect_implicit(profile, proxy).await?;
             if let Some(credentials) = credentials {
                 connection.authenticate(credentials).await?;
             }
             return Ok(connection);
         }
-        let stream = timeout(
-            CONNECT_TIMEOUT,
-            TcpStream::connect((profile.host.as_str(), profile.port)),
-        )
-        .await
-        .map_err(|_| NntpError::Timeout)?
-        .map_err(NntpError::Io)?;
+        let stream: BoxedStream = match proxy {
+            Some(proxy) => BoxedStream(Box::new(
+                timeout(
+                    CONNECT_TIMEOUT,
+                    proxy.connect_tcp(&profile.host, profile.port),
+                )
+                .await
+                .map_err(|_| NntpError::Timeout)?
+                .map_err(proxy_connection_error)?,
+            )),
+            None => BoxedStream(Box::new(
+                timeout(
+                    CONNECT_TIMEOUT,
+                    TcpStream::connect((profile.host.as_str(), profile.port)),
+                )
+                .await
+                .map_err(|_| NntpError::Timeout)?
+                .map_err(NntpError::Io)?,
+            )),
+        };
         let mut connection = Self {
-            reader: BufReader::new(BoxedStream(Box::new(stream))),
+            reader: BufReader::new(stream),
             profile_id: profile.id.clone(),
             greeted: false,
         };
@@ -200,14 +221,30 @@ impl NntpConnection {
         Ok(connection)
     }
 
-    async fn connect_implicit(profile: &UsenetProviderProfile) -> Result<Self, NntpError> {
-        let stream = timeout(
-            CONNECT_TIMEOUT,
-            TcpStream::connect((profile.host.as_str(), profile.port)),
-        )
-        .await
-        .map_err(|_| NntpError::Timeout)?
-        .map_err(NntpError::Io)?;
+    async fn connect_implicit(
+        profile: &UsenetProviderProfile,
+        proxy: Option<&risuko_http::ProxyConnector>,
+    ) -> Result<Self, NntpError> {
+        let stream: BoxedStream = match proxy {
+            Some(proxy) => BoxedStream(Box::new(
+                timeout(
+                    CONNECT_TIMEOUT,
+                    proxy.connect_tcp(&profile.host, profile.port),
+                )
+                .await
+                .map_err(|_| NntpError::Timeout)?
+                .map_err(proxy_connection_error)?,
+            )),
+            None => BoxedStream(Box::new(
+                timeout(
+                    CONNECT_TIMEOUT,
+                    TcpStream::connect((profile.host.as_str(), profile.port)),
+                )
+                .await
+                .map_err(|_| NntpError::Timeout)?
+                .map_err(NntpError::Io)?,
+            )),
+        };
         let tls = timeout(
             IO_TIMEOUT,
             tls_connector().connect(server_name(&profile.host)?, stream),
@@ -450,6 +487,15 @@ impl NntpConnection {
                 return Ok(());
             }
         }
+    }
+}
+
+fn proxy_connection_error(error: risuko_http::Error) -> NntpError {
+    match error {
+        risuko_http::Error::ProxyAuthentication(message) => {
+            NntpError::AuthenticationFailed { code: 0, message }
+        }
+        error => NntpError::Io(io::Error::other(error.to_string())),
     }
 }
 

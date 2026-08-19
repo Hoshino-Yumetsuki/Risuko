@@ -1,6 +1,5 @@
 use std::net::SocketAddrV4;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 
 use super::protocol::*;
@@ -37,6 +36,7 @@ pub struct PeerConnection {
     server_port: u16,
     tx: Option<mpsc::Sender<Ed2kPacket>>,
     tasks: Vec<tokio::task::JoinHandle<()>>,
+    proxy: risuko_http::ProxyConnector,
 }
 
 impl PeerConnection {
@@ -48,6 +48,26 @@ impl PeerConnection {
         server_ip: u32,
         server_port: u16,
     ) -> Self {
+        Self::new_with_proxy(
+            addr,
+            client_hash,
+            client_id,
+            client_port,
+            server_ip,
+            server_port,
+            risuko_http::ProxyConnector::direct(),
+        )
+    }
+
+    pub fn new_with_proxy(
+        addr: SocketAddrV4,
+        client_hash: [u8; 16],
+        client_id: u32,
+        client_port: u16,
+        server_ip: u32,
+        server_port: u16,
+        proxy: risuko_http::ProxyConnector,
+    ) -> Self {
         Self {
             addr,
             client_hash,
@@ -57,6 +77,7 @@ impl PeerConnection {
             server_port,
             tx: None,
             tasks: Vec::new(),
+            proxy,
         }
     }
 
@@ -64,11 +85,13 @@ impl PeerConnection {
     pub async fn connect(
         &mut self,
     ) -> Result<(mpsc::Receiver<PeerEvent>, mpsc::Sender<Ed2kPacket>), String> {
-        let stream = TcpStream::connect(self.addr)
+        let stream = self
+            .proxy
+            .connect_tcp(&self.addr.ip().to_string(), self.addr.port())
             .await
             .map_err(|e| format!("Failed to connect to peer {}: {}", self.addr, e))?;
 
-        let (read_half, mut write_half) = stream.into_split();
+        let (read_half, mut write_half) = tokio::io::split(stream);
 
         // Send hello
         let hello = build_hello_client(

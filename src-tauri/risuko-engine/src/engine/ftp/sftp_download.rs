@@ -14,7 +14,7 @@ use serde_json::{Map, Value};
 use tokio::io::AsyncWriteExt;
 use tokio_util::sync::CancellationToken;
 
-use super::ftp_download::option_str;
+use super::ftp_download::{http_proxy_from_options, option_str};
 use super::FtpUri;
 use crate::engine::speed_limiter::{SpeedEma, SpeedLimiter};
 use crate::engine::ssh_known_hosts::TofuHandler;
@@ -162,9 +162,18 @@ pub async fn run_sftp_download(
     let config = Arc::new(client::Config::default());
 
     let addr = format!("{}:{}", parsed.host, parsed.port);
-    let mut session = client::connect(config, &addr, TofuHandler::new(addr.clone()))
-        .await
-        .map_err(|e| format!("SSH connect failed: {e}"))?;
+    let http_proxy = http_proxy_from_options(options)?;
+    let session_result = if let Some(proxy) = http_proxy {
+        let stream = proxy
+            .connect_tcp(&parsed.host, parsed.port)
+            .await
+            .map_err(|e| format!("SFTP proxy connect failed: {e}"))?;
+        client::connect_stream(config, stream, TofuHandler::new(addr.clone())).await
+    } else {
+        client::connect(config, &addr, TofuHandler::new(addr.clone())).await
+    }
+    .map_err(|e| format!("SSH connect failed: {e}"));
+    let mut session = session_result?;
 
     // Authenticate
     let authenticated = try_authenticate(

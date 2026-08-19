@@ -10,6 +10,8 @@ pub fn system_defaults() -> Map<String, Value> {
 
     let mut m = Map::new();
     m.insert("all-proxy".into(), json!(""));
+    m.insert("p2p-proxy".into(), json!(""));
+    m.insert("p2p-udp-proxy".into(), json!(""));
     m.insert("allow-overwrite".into(), json!(false));
     m.insert("auto-file-renaming".into(), json!(true));
     m.insert("bt-exclude-tracker".into(), json!(""));
@@ -49,6 +51,8 @@ pub fn system_defaults() -> Map<String, Value> {
     m.insert("max-overall-download-limit".into(), json!(0));
     m.insert("max-overall-upload-limit".into(), json!(0));
     m.insert("no-proxy".into(), json!(""));
+    m.insert("p2p-no-proxy".into(), json!(""));
+    m.insert("p2p-udp-no-proxy".into(), json!(""));
     m.insert("rpc-listen-port".into(), json!(16800));
     m.insert("rpc-secret".into(), json!(""));
     m.insert("remote-time".into(), json!(false));
@@ -149,10 +153,21 @@ pub fn user_defaults() -> Map<String, Value> {
     m.insert(
         "proxy".into(),
         json!({
-            "enable": false,
-            "server": "",
-            "bypass": "",
-            "scope": ["download", "update-app", "update-trackers"]
+            "http": {
+                "enable": false,
+                "server": "",
+                "bypass": "",
+                "scope": ["download", "update-app", "update-trackers"]
+            },
+            "p2p": {
+                "enable": false,
+                "server": "",
+                "bypass": "",
+                "udp": {
+                    "server": "",
+                    "bypass": ""
+                }
+            }
         }),
     );
     m.insert("rpc-host".into(), json!("127.0.0.1"));

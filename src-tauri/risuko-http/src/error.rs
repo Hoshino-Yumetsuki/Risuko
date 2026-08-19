@@ -10,6 +10,14 @@ pub enum Error {
     Builder(String),
     #[error("connection error: {0}")]
     Connect(String),
+    #[error("SOCKS5 required for UDP proxying")]
+    Socks5Required,
+    #[error("proxy authentication failed: {0}")]
+    ProxyAuthentication(String),
+    #[error("proxy protocol error: {0}")]
+    ProxyProtocol(String),
+    #[error("proxy timeout: {0}")]
+    ProxyTimeout(String),
     #[error("request error: {0}")]
     Request(String),
     #[error("redirect error: {0}")]

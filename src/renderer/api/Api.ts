@@ -1,5 +1,5 @@
 import { startupOnlyKeys } from "@shared/configKeys";
-import type { AppConfig } from "@shared/types/config";
+import { type AppConfig, redactProxySettings } from "@shared/types/config";
 import type { HealthReport, RunHealthChecksParams } from "@shared/types/health";
 import type {
 	LogFileSummary,
@@ -43,6 +43,20 @@ const ENGINE_RESTART_USER_KEYS: string[] = [
 	"external-engine-secret",
 	"engine-overrides",
 ];
+const P2P_RUNTIME_OPTION_KEYS = new Set([
+	"p2p-proxy",
+	"p2p-no-proxy",
+	"p2p-udp-proxy",
+	"p2p-udp-no-proxy",
+]);
+const PROXY_RUNTIME_OPTION_KEYS = new Set([
+	"all-proxy",
+	"no-proxy",
+	"p2p-proxy",
+	"p2p-no-proxy",
+	"p2p-udp-proxy",
+	"p2p-udp-no-proxy",
+]);
 const TASK_LIST_FETCH_SIZE = 5000;
 
 export default class Api {
@@ -92,36 +106,50 @@ export default class Api {
 	async savePreferenceToNativeStore(params: Record<string, unknown> = {}) {
 		const { user, system, others } = separateConfig(params);
 		const config: Record<string, Record<string, unknown>> = {};
+		const runtimeSystem = Object.fromEntries(
+			Object.entries(system).filter(
+				([key]) =>
+					!startupOnlyKeys.includes(key) && !P2P_RUNTIME_OPTION_KEYS.has(key),
+			),
+		);
 
 		if (!isEmpty(user)) {
-			logger.info("[Risuko] save user config: ", user);
+			const userRecord = user as Record<string, unknown>;
+			const diagnosticUser = redactProxySettings(userRecord);
+			logger.info("[Risuko] save user config: ", diagnosticUser);
 			config.user = user;
 		}
 
 		if (!isEmpty(system)) {
-			logger.info("[Risuko] save system config: ", system);
-			config.system = system;
-
-			const runtimeSystemEntries = Object.entries(system).filter(
-				([key]) => !startupOnlyKeys.includes(key),
+			logger.info(
+				"[Risuko] save system config: ",
+				redactProxySettings(system as Record<string, unknown>),
 			);
-			const runtimeSystem = Object.fromEntries(runtimeSystemEntries);
-			if (!isEmpty(runtimeSystem)) {
-				await this.changeGlobalOption(runtimeSystem).catch((err) => {
-					logger.warn(
-						"[Risuko] changeGlobalOption failed:",
-						err?.message || err,
-					);
-				});
-				this.updateActiveTaskOption(runtimeSystem);
-			}
+			config.system = system;
 		}
 
 		if (!isEmpty(others)) {
 			logger.info("[Risuko] save config found illegal key: ", others);
 		}
 
-		return invoke("save_preference", { config });
+		const result = await invoke("save_preference", { config });
+		if (!isEmpty(runtimeSystem)) {
+			try {
+				await this.changeGlobalOption(runtimeSystem);
+			} catch (err) {
+				logger.warn("[Risuko] changeGlobalOption failed:", err?.message || err);
+			}
+			const activeTaskOptions = Object.fromEntries(
+				Object.entries(runtimeSystem).filter(
+					([key]) => !PROXY_RUNTIME_OPTION_KEYS.has(key),
+				),
+			);
+			if (!isEmpty(activeTaskOptions)) {
+				this.updateActiveTaskOption(activeTaskOptions);
+			}
+		}
+
+		return result;
 	}
 
 	getVersion() {

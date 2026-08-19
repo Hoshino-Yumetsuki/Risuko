@@ -268,7 +268,16 @@ export default {
 	"change-language": "Change language",
 	"hide-app-menu": "Hide App Menu (Windows & Linux Only)",
 	proxy: "Proxy",
+	"proxy-http-profile": "HTTP / FTP / Usenet proxy",
+	"proxy-p2p-profile": "P2P proxy",
 	"enable-proxy": "Enable Proxy",
+	"enable-p2p-proxy": "Enable P2P Proxy",
+	"proxy-p2p-tcp-server": "TCP proxy server",
+	"proxy-p2p-tcp-bypass": "TCP proxy bypass",
+	"proxy-p2p-udp-server": "UDP proxy server",
+	"proxy-p2p-udp-server-placeholder":
+		"Optional; leave blank to use the TCP P2P proxy",
+	"proxy-p2p-udp-bypass": "UDP proxy bypass",
 	"proxy-bypass-input-tips":
 		"Bypass proxy settings for these Hosts and Domains, one per line",
 	"proxy-scope-label": "Used for",
@@ -280,6 +289,13 @@ export default {
 	"proxy-scope-update-trackers-desc":
 		"Fetch BT tracker lists through the proxy",
 	"proxy-tips": "View Proxy Manual",
+	"proxy-p2p-tips":
+		"SOCKS5 or SOCKS5H is required for DHT, UDP trackers, and uTP. HTTP proxies are used only for TCP P2P connections.",
+	"proxy-p2p-udp-tips":
+		"Leave the UDP proxy blank to reuse the TCP P2P route. UDP proxying requires SOCKS5 or SOCKS5H; HTTP proxies cannot carry UDP.",
+	"proxy-p2p-restart-title": "Restart P2P downloads?",
+	"proxy-p2p-restart-confirm":
+		"Changing the P2P proxy restarts active peer-to-peer downloads. HTTP, FTP, and Usenet downloads keep running.",
 	doh: "DNS over HTTPS",
 	"doh-tips":
 		"Resolve hostnames through an encrypted DNS endpoint instead of your system resolver",

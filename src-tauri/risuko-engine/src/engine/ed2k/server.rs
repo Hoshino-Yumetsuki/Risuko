@@ -1,6 +1,5 @@
 use std::net::SocketAddrV4;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 
 use super::protocol::*;
@@ -31,6 +30,7 @@ pub struct ServerConnection {
     client_port: u16,
     kad_udp_port: Option<u16>,
     tx: Option<mpsc::Sender<Ed2kPacket>>,
+    proxy: risuko_http::ProxyConnector,
 }
 
 /// Errors from processing a single server packet
@@ -52,12 +52,29 @@ impl ServerConnection {
         client_port: u16,
         kad_udp_port: Option<u16>,
     ) -> Self {
+        Self::new_with_proxy(
+            addr,
+            client_hash,
+            client_port,
+            kad_udp_port,
+            risuko_http::ProxyConnector::direct(),
+        )
+    }
+
+    pub fn new_with_proxy(
+        addr: SocketAddrV4,
+        client_hash: [u8; 16],
+        client_port: u16,
+        kad_udp_port: Option<u16>,
+        proxy: risuko_http::ProxyConnector,
+    ) -> Self {
         Self {
             addr,
             client_hash,
             client_port,
             kad_udp_port,
             tx: None,
+            proxy,
         }
     }
 
@@ -65,11 +82,13 @@ impl ServerConnection {
     pub async fn connect(
         &mut self,
     ) -> Result<(mpsc::Receiver<ServerEvent>, mpsc::Sender<Ed2kPacket>), String> {
-        let stream = TcpStream::connect(self.addr)
+        let stream = self
+            .proxy
+            .connect_tcp(&self.addr.ip().to_string(), self.addr.port())
             .await
             .map_err(|e| format!("Failed to connect to {}: {}", self.addr, e))?;
 
-        let (read_half, mut write_half) = stream.into_split();
+        let (read_half, mut write_half) = tokio::io::split(stream);
 
         // Send hello
         let hello = build_hello_server(&self.client_hash, self.client_port, self.kad_udp_port);

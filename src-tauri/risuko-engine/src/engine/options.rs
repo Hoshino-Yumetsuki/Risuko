@@ -5,6 +5,7 @@ use super::speed_limiter::parse_speed_limit;
 
 pub const DEFAULT_ED2K_PORT: u16 = 4662;
 pub const DEFAULT_ED2K_KAD_PORT: u16 = 4672;
+pub(crate) const TASK_P2P_PROXY_OVERRIDE_KEY: &str = "risuko-task-p2p-proxy-override";
 
 fn is_reserved_engine_key(key: &str) -> bool {
     let normalized = key.to_ascii_lowercase();
@@ -69,6 +70,115 @@ impl EngineOptions {
         // Escape hatch: users can supply arbitrary engine keys from the UI via `engine-overrides` so new backend options work without dedicated form fields
         apply_engine_overrides(&mut global, user);
 
+        if let Some(proxy) = user.get("proxy") {
+            let normalized = crate::config::normalize_proxy_config(proxy);
+            let http_profile_is_explicit = crate::config::proxy_http_profile_is_explicit(proxy);
+            let http = normalized.get("http").and_then(Value::as_object);
+            let http_enabled = http
+                .and_then(|p| p.get("enable"))
+                .is_some_and(value_as_bool);
+            let http_server = http
+                .and_then(|p| p.get("server"))
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .unwrap_or("");
+            let http_active = http_enabled && !http_server.is_empty();
+            let download = http
+                .and_then(|p| p.get("scope"))
+                .and_then(Value::as_array)
+                .is_some_and(|scopes| scopes.iter().any(|v| v.as_str() == Some("download")));
+
+            if http_enabled || http_profile_is_explicit {
+                global.insert(
+                    "all-proxy".into(),
+                    Value::String(if http_active && download {
+                        http_server.to_string()
+                    } else {
+                        String::new()
+                    }),
+                );
+                global.insert(
+                    "no-proxy".into(),
+                    Value::String(if http_active && download {
+                        http.and_then(|p| p.get("bypass"))
+                            .and_then(Value::as_str)
+                            .unwrap_or("")
+                            .to_string()
+                    } else {
+                        String::new()
+                    }),
+                );
+            }
+
+            if crate::config::proxy_p2p_profile_is_explicit(proxy) {
+                let p2p = normalized.get("p2p").and_then(Value::as_object);
+                let p2p_enabled = p2p.and_then(|p| p.get("enable")).is_some_and(value_as_bool);
+                let p2p_server = p2p
+                    .and_then(|p| p.get("server"))
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .unwrap_or("");
+                let p2p_tcp_active = p2p_enabled && !p2p_server.is_empty();
+                global.insert(
+                    "p2p-proxy".into(),
+                    Value::String(if p2p_tcp_active {
+                        p2p_server.to_string()
+                    } else {
+                        String::new()
+                    }),
+                );
+                global.insert(
+                    "p2p-no-proxy".into(),
+                    Value::String(if p2p_tcp_active {
+                        p2p.and_then(|p| p.get("bypass"))
+                            .and_then(Value::as_str)
+                            .unwrap_or("")
+                            .to_string()
+                    } else {
+                        String::new()
+                    }),
+                );
+
+                let udp = p2p.and_then(|p| p.get("udp")).and_then(Value::as_object);
+                let udp_server_override = udp
+                    .and_then(|profile| profile.get("server"))
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .unwrap_or("");
+                let udp_server = if udp_server_override.is_empty() {
+                    p2p_server
+                } else {
+                    udp_server_override
+                };
+                let udp_bypass = if udp_server_override.is_empty() {
+                    p2p.and_then(|p| p.get("bypass"))
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                } else {
+                    udp.and_then(|profile| profile.get("bypass"))
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                };
+                let p2p_route_active = p2p_enabled && !udp_server.is_empty();
+                global.insert(
+                    "p2p-udp-proxy".into(),
+                    Value::String(if p2p_route_active {
+                        udp_server.to_string()
+                    } else {
+                        String::new()
+                    }),
+                );
+                global.insert(
+                    "p2p-udp-no-proxy".into(),
+                    Value::String(if p2p_route_active {
+                        udp_bypass.to_string()
+                    } else {
+                        String::new()
+                    }),
+                );
+            }
+        }
+
         Self { global }
     }
 
@@ -95,6 +205,15 @@ impl EngineOptions {
             Value::Number(n) => n.as_u64().map(|v| v != 0),
             _ => None,
         }
+    }
+
+    pub fn p2p_proxy_connector(&self) -> Result<risuko_http::ProxyConnector, String> {
+        build_p2p_proxy_connector(
+            self.get_str("p2p-proxy").unwrap_or(""),
+            self.get_str("p2p-no-proxy").unwrap_or(""),
+            self.get_str("p2p-udp-proxy").unwrap_or(""),
+            self.get_str("p2p-udp-no-proxy").unwrap_or(""),
+        )
     }
 
     pub fn set(&mut self, key: String, value: Value) {
@@ -288,8 +407,235 @@ impl EngineOptions {
         for (k, v) in task_opts {
             merged.insert(k.clone(), v.clone());
         }
+
+        let task_has_proxy = task_opts.contains_key("proxy");
+        let task_proxy_has_nested_p2p = task_opts
+            .get("proxy")
+            .and_then(Value::as_object)
+            .is_some_and(|proxy| proxy.contains_key("p2p"));
+        let task_proxy_has_nested_p2p_udp = task_opts
+            .get("proxy")
+            .and_then(Value::as_object)
+            .and_then(|proxy| proxy.get("p2p"))
+            .and_then(Value::as_object)
+            .is_some_and(|p2p| p2p.contains_key("udp"));
+        let task_has_http_route = task_opts.contains_key("all-proxy")
+            || task_opts.contains_key("no-proxy")
+            || task_has_proxy;
+        let task_has_p2p_route = task_opts.contains_key("p2p-proxy")
+            || task_opts.contains_key("p2p-no-proxy")
+            || task_opts.contains_key("p2p-udp-proxy")
+            || task_opts.contains_key("p2p-udp-no-proxy")
+            || task_proxy_has_nested_p2p;
+        if task_has_proxy {
+            match task_opts.get("proxy") {
+                Some(Value::String(server)) => {
+                    merged.insert("all-proxy".into(), Value::String(server.clone()));
+                    merged.insert("p2p-proxy".into(), Value::String(server.clone()));
+                    if !task_opts.contains_key("no-proxy") {
+                        merged.insert("no-proxy".into(), Value::String(String::new()));
+                    }
+                    if !task_opts.contains_key("p2p-no-proxy") {
+                        merged.insert("p2p-no-proxy".into(), Value::String(String::new()));
+                    }
+                    if !task_opts.contains_key("p2p-udp-proxy") {
+                        merged.insert("p2p-udp-proxy".into(), Value::String(server.clone()));
+                    }
+                    if !task_opts.contains_key("p2p-udp-no-proxy") {
+                        merged.insert("p2p-udp-no-proxy".into(), Value::String(String::new()));
+                    }
+                }
+                Some(value @ Value::Object(_)) => {
+                    let normalized = crate::config::normalize_proxy_config(value);
+                    if let Some(http) = normalized.get("http").and_then(Value::as_object) {
+                        let http_server = http
+                            .get("server")
+                            .and_then(Value::as_str)
+                            .map(str::trim)
+                            .unwrap_or("");
+                        let http_active = value_as_bool(http.get("enable").unwrap_or(&Value::Null))
+                            && !http_server.is_empty();
+                        merged.insert(
+                            "all-proxy".into(),
+                            Value::String(if http_active {
+                                http_server.to_string()
+                            } else {
+                                String::new()
+                            }),
+                        );
+                        merged.insert(
+                            "no-proxy".into(),
+                            Value::String(if http_active {
+                                http.get("bypass")
+                                    .and_then(Value::as_str)
+                                    .unwrap_or("")
+                                    .to_string()
+                            } else {
+                                String::new()
+                            }),
+                        );
+                    }
+                    if let Some(p2p) = normalized.get("p2p").and_then(Value::as_object) {
+                        let p2p_server = p2p
+                            .get("server")
+                            .and_then(Value::as_str)
+                            .map(str::trim)
+                            .unwrap_or("");
+                        let p2p_enabled = value_as_bool(p2p.get("enable").unwrap_or(&Value::Null));
+                        let p2p_tcp_active = p2p_enabled && !p2p_server.is_empty();
+                        merged.insert(
+                            "p2p-proxy".into(),
+                            Value::String(if p2p_tcp_active {
+                                p2p_server.to_string()
+                            } else {
+                                String::new()
+                            }),
+                        );
+                        merged.insert(
+                            "p2p-no-proxy".into(),
+                            Value::String(if p2p_tcp_active {
+                                p2p.get("bypass")
+                                    .and_then(Value::as_str)
+                                    .unwrap_or("")
+                                    .to_string()
+                            } else {
+                                String::new()
+                            }),
+                        );
+
+                        let udp = p2p.get("udp").and_then(Value::as_object);
+                        let udp_override = udp
+                            .and_then(|profile| profile.get("server"))
+                            .and_then(Value::as_str)
+                            .map(str::trim)
+                            .unwrap_or("");
+                        let udp_server = if udp_override.is_empty() {
+                            p2p_server
+                        } else {
+                            udp_override
+                        };
+                        let udp_bypass = if udp_override.is_empty() {
+                            p2p.get("bypass").and_then(Value::as_str).unwrap_or("")
+                        } else {
+                            udp.and_then(|profile| profile.get("bypass"))
+                                .and_then(Value::as_str)
+                                .unwrap_or("")
+                        };
+                        let p2p_route_active = p2p_enabled && !udp_server.is_empty();
+                        merged.insert(
+                            "p2p-udp-proxy".into(),
+                            Value::String(if p2p_route_active {
+                                udp_server.to_string()
+                            } else {
+                                String::new()
+                            }),
+                        );
+                        merged.insert(
+                            "p2p-udp-no-proxy".into(),
+                            Value::String(if p2p_route_active {
+                                udp_bypass.to_string()
+                            } else {
+                                String::new()
+                            }),
+                        );
+                    }
+                }
+                _ => {}
+            }
+        }
+        if task_has_http_route && !task_has_p2p_route {
+            if !task_opts.contains_key("p2p-proxy") {
+                if let Some(value) = merged.get("all-proxy").cloned() {
+                    merged.insert("p2p-proxy".into(), value);
+                }
+            }
+            if !task_opts.contains_key("p2p-no-proxy") {
+                if let Some(value) = merged.get("no-proxy").cloned() {
+                    merged.insert("p2p-no-proxy".into(), value);
+                }
+            }
+            if !task_opts.contains_key("p2p-udp-proxy") {
+                if let Some(value) = merged.get("all-proxy").cloned() {
+                    merged.insert("p2p-udp-proxy".into(), value);
+                }
+            }
+            if !task_opts.contains_key("p2p-udp-no-proxy") {
+                if let Some(value) = merged.get("no-proxy").cloned() {
+                    merged.insert("p2p-udp-no-proxy".into(), value);
+                }
+            }
+        }
+        // A task-level TCP P2P override applies to UDP as well unless it has
+        // explicitly supplied a separate UDP route.
+        if task_has_p2p_route
+            && !task_proxy_has_nested_p2p_udp
+            && !task_opts.contains_key("p2p-udp-proxy")
+            && !task_opts.contains_key("p2p-udp-no-proxy")
+        {
+            if let Some(value) = merged.get("p2p-proxy").cloned() {
+                merged.insert("p2p-udp-proxy".into(), value);
+            }
+            if let Some(value) = merged.get("p2p-no-proxy").cloned() {
+                merged.insert("p2p-udp-no-proxy".into(), value);
+            }
+        }
+        if task_has_proxy || task_has_http_route || task_has_p2p_route {
+            merged.insert(TASK_P2P_PROXY_OVERRIDE_KEY.to_string(), Value::Bool(true));
+        }
         merged
     }
+}
+
+fn value_as_bool(value: &Value) -> bool {
+    match value {
+        Value::Bool(value) => *value,
+        Value::Number(value) => value.as_i64().is_some_and(|value| value != 0),
+        Value::String(value) => matches!(
+            value.trim().to_ascii_lowercase().as_str(),
+            "true" | "1" | "yes" | "on"
+        ),
+        _ => false,
+    }
+}
+
+pub(crate) fn build_p2p_proxy_connector(
+    tcp_server: &str,
+    tcp_bypass: &str,
+    udp_server: &str,
+    udp_bypass: &str,
+) -> Result<risuko_http::ProxyConnector, String> {
+    let tcp_server = tcp_server.trim();
+    let tcp_bypass = tcp_bypass.trim();
+    let udp_override = udp_server.trim();
+    let effective_udp_server = if udp_override.is_empty() {
+        tcp_server
+    } else {
+        udp_override
+    };
+    let effective_udp_bypass = if udp_override.is_empty() {
+        tcp_bypass
+    } else {
+        udp_bypass.trim()
+    };
+
+    let tcp = if tcp_server.is_empty() {
+        risuko_http::ProxyConnector::direct()
+    } else {
+        let proxy = risuko_http::Proxy::all_with_bypass(tcp_server, tcp_bypass)
+            .map_err(|error| format!("invalid P2P TCP proxy: {error}"))?;
+        risuko_http::ProxyConnector::from_proxy(proxy)
+    };
+
+    if effective_udp_server.is_empty()
+        || (effective_udp_server == tcp_server && effective_udp_bypass == tcp_bypass)
+    {
+        return Ok(tcp);
+    }
+
+    let udp_proxy = risuko_http::Proxy::all_with_bypass(effective_udp_server, effective_udp_bypass)
+        .map_err(|error| format!("invalid P2P UDP proxy: {error}"))?;
+    let udp = risuko_http::ProxyConnector::from_proxy(udp_proxy);
+    Ok(tcp.with_udp_proxy(Some(udp)))
 }
 
 #[cfg(test)]
@@ -358,6 +704,94 @@ mod tests {
         assert_eq!(opts.rpc_secret(), "secret123");
     }
 
+    #[test]
+    fn from_config_preserves_system_http_proxy_for_nested_default_profile() {
+        let mut system = make_system();
+        system.insert("all-proxy".into(), json!("http://system-proxy:8080"));
+        system.insert("no-proxy".into(), json!("localhost,127.0.0.1"));
+        let user = serde_json::from_value::<Map<String, Value>>(json!({
+            "proxy": {
+                "http": {
+                    "enable": false,
+                    "server": "",
+                    "bypass": "",
+                    "scope": ["download", "update-app", "update-trackers"]
+                },
+                "p2p": {
+                    "enable": false,
+                    "server": "",
+                    "bypass": ""
+                }
+            }
+        }))
+        .unwrap();
+
+        let opts = EngineOptions::from_config(&system, &user);
+        assert_eq!(opts.get_str("all-proxy"), Some("http://system-proxy:8080"));
+        assert_eq!(opts.get_str("no-proxy"), Some("localhost,127.0.0.1"));
+    }
+
+    #[test]
+    fn from_config_preserves_system_p2p_proxy_for_nested_default_profile() {
+        let mut system = make_system();
+        system.insert("p2p-proxy".into(), json!("socks5://system-p2p:1080"));
+        system.insert("p2p-no-proxy".into(), json!("localhost"));
+        system.insert(
+            "p2p-udp-proxy".into(),
+            json!("socks5h://system-p2p-udp:1080"),
+        );
+        system.insert("p2p-udp-no-proxy".into(), json!("127.0.0.1"));
+        let user = serde_json::from_value::<Map<String, Value>>(json!({
+            "proxy": {
+                "http": {
+                    "enable": false,
+                    "server": "",
+                    "bypass": "",
+                    "scope": ["download", "update-app", "update-trackers"]
+                },
+                "p2p": {
+                    "enable": false,
+                    "server": "",
+                    "bypass": "",
+                    "udp": {
+                        "server": "",
+                        "bypass": ""
+                    }
+                }
+            }
+        }))
+        .unwrap();
+
+        let opts = EngineOptions::from_config(&system, &user);
+        assert_eq!(opts.get_str("p2p-proxy"), Some("socks5://system-p2p:1080"));
+        assert_eq!(opts.get_str("p2p-no-proxy"), Some("localhost"));
+        assert_eq!(
+            opts.get_str("p2p-udp-proxy"),
+            Some("socks5h://system-p2p-udp:1080")
+        );
+        assert_eq!(opts.get_str("p2p-udp-no-proxy"), Some("127.0.0.1"));
+    }
+
+    #[test]
+    fn from_config_legacy_disabled_proxy_clears_system_http_route() {
+        let mut system = make_system();
+        system.insert("all-proxy".into(), json!("http://system-proxy:8080"));
+        system.insert("no-proxy".into(), json!("localhost"));
+        let user = serde_json::from_value::<Map<String, Value>>(json!({
+            "proxy": {
+                "enable": false,
+                "server": "",
+                "bypass": "",
+                "scope": ["download"]
+            }
+        }))
+        .unwrap();
+
+        let opts = EngineOptions::from_config(&system, &user);
+        assert_eq!(opts.get_str("all-proxy"), Some(""));
+        assert_eq!(opts.get_str("no-proxy"), Some(""));
+    }
+
     // -- getters with defaults --
 
     #[test]
@@ -375,6 +809,104 @@ mod tests {
         assert!(opts.ed2k_enable_kad());
         assert_eq!(opts.ed2k_kad_port_checked().unwrap(), 4672);
         assert_eq!(opts.ed2k_kad_port(), 4672);
+    }
+
+    #[test]
+    fn p2p_proxy_connector_rejects_unsupported_schemes() {
+        let mut system = Map::new();
+        system.insert("p2p-proxy".into(), json!("https://proxy.example:443"));
+        let opts = EngineOptions::from_config(&system, &Map::new());
+        let error = opts
+            .p2p_proxy_connector()
+            .expect_err("https proxies are unsupported");
+        assert!(error.contains("unsupported") || error.contains("not yet supported"));
+    }
+
+    #[test]
+    fn p2p_proxy_connector_is_direct_when_profile_is_empty() {
+        let opts = EngineOptions::from_config(&Map::new(), &Map::new());
+        assert!(opts.p2p_proxy_connector().unwrap().proxy().is_none());
+    }
+
+    #[test]
+    fn p2p_proxy_connector_uses_an_independent_udp_profile() {
+        let user = serde_json::from_value::<Map<String, Value>>(json!({
+            "proxy": {
+                "p2p": {
+                    "enable": true,
+                    "server": "http://tcp.example:8080",
+                    "bypass": "tcp.example",
+                    "udp": {
+                        "server": "socks5h://udp.example:1080",
+                        "bypass": "udp.example"
+                    }
+                }
+            }
+        }))
+        .unwrap();
+        let opts = EngineOptions::from_config(&Map::new(), &user);
+        assert_eq!(opts.get_str("p2p-proxy"), Some("http://tcp.example:8080"));
+        assert_eq!(
+            opts.get_str("p2p-udp-proxy"),
+            Some("socks5h://udp.example:1080")
+        );
+        let connector = opts.p2p_proxy_connector().unwrap();
+        assert!(connector.proxy().is_some());
+        assert!(connector.udp_proxy().is_some());
+        assert!(connector.supports_udp());
+        assert!(connector
+            .no_proxy()
+            .unwrap()
+            .matches_host_port("tcp.example", Some(80)));
+        assert!(connector
+            .udp_no_proxy()
+            .unwrap()
+            .matches_host_port("udp.example", Some(80)));
+    }
+
+    #[test]
+    fn udp_only_p2p_profile_keeps_the_udp_route() {
+        let user = serde_json::from_value::<Map<String, Value>>(json!({
+            "proxy": {
+                "p2p": {
+                    "enable": true,
+                    "server": "",
+                    "udp": {
+                        "server": "socks5h://udp.example:1080",
+                        "bypass": "localhost"
+                    }
+                }
+            }
+        }))
+        .unwrap();
+        let opts = EngineOptions::from_config(&Map::new(), &user);
+        assert_eq!(opts.get_str("p2p-proxy"), Some(""));
+        assert_eq!(
+            opts.get_str("p2p-udp-proxy"),
+            Some("socks5h://udp.example:1080")
+        );
+        let connector = opts.p2p_proxy_connector().unwrap();
+        assert!(connector.proxy().is_none());
+        assert!(connector.udp_proxy().is_some());
+        assert!(connector.supports_udp());
+    }
+
+    #[test]
+    fn serverless_p2p_profile_has_no_effective_bypass() {
+        let user = serde_json::from_value::<Map<String, Value>>(json!({
+            "proxy": {
+                "p2p": {
+                    "enable": true,
+                    "server": "",
+                    "bypass": "localhost"
+                }
+            }
+        }))
+        .unwrap();
+
+        let opts = EngineOptions::from_config(&Map::new(), &user);
+        assert_eq!(opts.get_str("p2p-proxy"), Some(""));
+        assert_eq!(opts.get_str("p2p-no-proxy"), Some(""));
     }
 
     #[test]
@@ -439,9 +971,135 @@ mod tests {
 
     #[test]
     fn merge_task_options_empty_task_returns_globals() {
-        let opts = EngineOptions::from_config(&make_system(), &Map::new());
+        let mut global = make_system();
+        global.insert("all-proxy".into(), json!("http://http-profile:8080"));
+        global.insert("p2p-proxy".into(), json!("socks5://p2p-profile:1080"));
+        let opts = EngineOptions::from_config(&global, &Map::new());
         let merged = opts.merge_task_options(&Map::new());
         assert_eq!(merged.get("dir").unwrap(), "/downloads");
+        assert_eq!(
+            merged.get("all-proxy"),
+            Some(&json!("http://http-profile:8080"))
+        );
+        assert_eq!(
+            merged.get("p2p-proxy"),
+            Some(&json!("socks5://p2p-profile:1080"))
+        );
+        assert!(merged.get(TASK_P2P_PROXY_OVERRIDE_KEY).is_none());
+    }
+
+    #[test]
+    fn merge_task_options_preserves_explicit_nested_p2p_profile() {
+        let mut global = make_system();
+        global.insert("p2p-proxy".into(), json!("socks5://global:1080"));
+        let opts = EngineOptions::from_config(&global, &Map::new());
+        let task = serde_json::from_value::<Map<String, Value>>(json!({
+            "proxy": {
+                "http": {
+                    "enable": true,
+                    "server": "http://task:8080"
+                },
+                "p2p": {
+                    "enable": false,
+                    "server": "socks5://ignored:1080"
+                }
+            }
+        }))
+        .unwrap();
+
+        let merged = opts.merge_task_options(&task);
+        assert_eq!(merged.get("all-proxy"), Some(&json!("http://task:8080")));
+        assert_eq!(merged.get("p2p-proxy"), Some(&json!("")));
+        assert_eq!(merged.get(TASK_P2P_PROXY_OVERRIDE_KEY), Some(&json!(true)));
+    }
+
+    #[test]
+    fn merge_task_options_preserves_nested_udp_override() {
+        let mut global = make_system();
+        global.insert("p2p-proxy".into(), json!("socks5://global:1080"));
+        global.insert("p2p-udp-proxy".into(), json!("socks5://global-udp:1080"));
+        let opts = EngineOptions::from_config(&global, &Map::new());
+        let task = serde_json::from_value::<Map<String, Value>>(json!({
+            "proxy": {
+                "p2p": {
+                    "enable": true,
+                    "server": "http://task-tcp:8080",
+                    "bypass": "task-tcp.example",
+                    "udp": {
+                        "server": "socks5h://task-udp:1080",
+                        "bypass": "task-udp.example"
+                    }
+                }
+            }
+        }))
+        .unwrap();
+
+        let merged = opts.merge_task_options(&task);
+        assert_eq!(
+            merged.get("p2p-proxy"),
+            Some(&json!("http://task-tcp:8080"))
+        );
+        assert_eq!(merged.get("p2p-no-proxy"), Some(&json!("task-tcp.example")));
+        assert_eq!(
+            merged.get("p2p-udp-proxy"),
+            Some(&json!("socks5h://task-udp:1080"))
+        );
+        assert_eq!(
+            merged.get("p2p-udp-no-proxy"),
+            Some(&json!("task-udp.example"))
+        );
+    }
+
+    #[test]
+    fn merge_task_options_nested_empty_udp_inherits_tcp_route() {
+        let opts = EngineOptions::from_config(&Map::new(), &Map::new());
+        let task = serde_json::from_value::<Map<String, Value>>(json!({
+            "proxy": {
+                "p2p": {
+                    "enable": true,
+                    "server": "socks5://task:1080",
+                    "bypass": "task.example",
+                    "udp": {
+                        "server": "",
+                        "bypass": "ignored.example"
+                    }
+                }
+            }
+        }))
+        .unwrap();
+
+        let merged = opts.merge_task_options(&task);
+        assert_eq!(
+            merged.get("p2p-udp-proxy"),
+            Some(&json!("socks5://task:1080"))
+        );
+        assert_eq!(merged.get("p2p-udp-no-proxy"), Some(&json!("task.example")));
+    }
+
+    #[test]
+    fn merge_task_options_treats_serverless_profiles_as_direct() {
+        let opts = EngineOptions::from_config(&Map::new(), &Map::new());
+        let task = serde_json::from_value::<Map<String, Value>>(json!({
+            "proxy": {
+                "http": {
+                    "enable": true,
+                    "server": "",
+                    "bypass": "http.example"
+                },
+                "p2p": {
+                    "enable": true,
+                    "server": "",
+                    "bypass": "peer.example"
+                }
+            }
+        }))
+        .unwrap();
+
+        let merged = opts.merge_task_options(&task);
+        assert_eq!(merged.get("all-proxy"), Some(&json!("")));
+        assert_eq!(merged.get("no-proxy"), Some(&json!("")));
+        assert_eq!(merged.get("p2p-proxy"), Some(&json!("")));
+        assert_eq!(merged.get("p2p-no-proxy"), Some(&json!("")));
     }
 
     // -- BT accessors --

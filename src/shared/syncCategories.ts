@@ -39,7 +39,16 @@ const namedCategories: SyncCategory[] = [
 	},
 	{
 		id: "network",
-		keys: ["proxy", "all-proxy", "cookie"],
+		keys: [
+			"proxy",
+			"all-proxy",
+			"no-proxy",
+			"p2p-proxy",
+			"p2p-no-proxy",
+			"p2p-udp-proxy",
+			"p2p-udp-no-proxy",
+			"cookie",
+		],
 	},
 	{
 		id: "tracker",
@@ -81,7 +90,6 @@ const namedCategories: SyncCategory[] = [
 			"max-worker-retries",
 			"netrc-path",
 			"no-netrc",
-			"no-proxy",
 			"out",
 			"referer",
 			"remote-time",

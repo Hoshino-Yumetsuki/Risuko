@@ -94,6 +94,7 @@ struct NntpArticleSource {
     active_time: ActiveTimeTracker,
     max_active_seconds: u64,
     cancel: CancellationToken,
+    proxy: Option<risuko_http::ProxyConnector>,
 }
 
 /// Non-serializable state
@@ -435,7 +436,11 @@ impl NntpArticleSource {
         tokio::select! {
             biased;
             _ = self.cancel.cancelled() => Err(NntpError::Cancelled),
-            connection = NntpConnection::connect(profile, credentials) => connection,
+            connection = NntpConnection::connect_with_proxy(
+                profile,
+                credentials,
+                self.proxy.as_ref(),
+            ) => connection,
         }
     }
 }
@@ -517,6 +522,29 @@ pub fn profiles_from_options(
         .map_err(|error| format!("Invalid Usenet provider profiles: {error}"))
 }
 
+fn http_proxy_from_options(
+    options: &Map<String, Value>,
+) -> Result<Option<risuko_http::ProxyConnector>, String> {
+    let server = options
+        .get("all-proxy")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim();
+    if server.is_empty() {
+        return Ok(None);
+    }
+    let proxy = risuko_http::Proxy::all(server)
+        .map_err(|error| format!("Invalid HTTP profile proxy: {error}"))?;
+    let bypass = options
+        .get("no-proxy")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    Ok(Some(
+        risuko_http::ProxyConnector::from_proxy(proxy)
+            .with_no_proxy(risuko_http::NoProxy::parse(bypass)),
+    ))
+}
+
 pub async fn run_usenet_download_with_resolver(
     task: &DownloadTask,
     options: &Map<String, Value>,
@@ -573,6 +601,7 @@ pub(crate) async fn run_usenet_download_with_resolver_and_capacity(
         active_time: active_time.clone(),
         max_active_seconds: archive_limits.max_active_seconds,
         cancel: cancel.clone(),
+        proxy: http_proxy_from_options(options)?,
     };
     let assembly_limits = YencAssemblyLimits::new(
         archive_limits.max_entry_bytes,
@@ -1123,6 +1152,7 @@ mod tests {
             active_time: ActiveTimeTracker::new(),
             max_active_seconds: 60,
             cancel: CancellationToken::new(),
+            proxy: None,
         }
     }
 

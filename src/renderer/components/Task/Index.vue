@@ -113,6 +113,7 @@
 <script lang="ts">
 import { ArrowDownNarrowWide, ArrowUpNarrowWide, Search, X } from "@lucide/vue";
 import { ADD_TASK_TYPE } from "@shared/constants";
+import { redactProxySettings } from "@shared/types/config";
 import { bytesToSize, getTaskUri, parseHeader } from "@shared/utils";
 import logger from "@shared/utils/logger";
 import api from "@/api";
@@ -365,7 +366,10 @@ export default {
 			options: { header?: string; [key: string]: unknown } = {},
 		) {
 			const { header, ...rest } = options;
-			logger.log("[Risuko] show add task dialog options: ", options);
+			logger.log(
+				"[Risuko] show add task dialog options: ",
+				redactProxySettings(options),
+			);
 
 			const headers = parseHeader(header as string);
 			const newOptions = {
@@ -565,7 +569,7 @@ export default {
 			useTaskStore()
 				.getTaskOption(gid)
 				.then((data: Record<string, string>) => {
-					logger.log("[Risuko] get task option:", data);
+					logger.log("[Risuko] get task option:", redactProxySettings(data));
 					const { dir, header, split } = data;
 					const options = {
 						dir,

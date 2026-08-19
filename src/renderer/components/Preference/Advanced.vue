@@ -95,9 +95,12 @@
             </div>
           </div>
           <div class="settings-section-content">
+            <div class="proxy-profile-title">
+              {{ $t('preferences.proxy-http-profile') }}
+            </div>
             <div
               class="settings-row"
-              data-preference-search-target="preferences.enable-proxy preferences.proxy preferences.proxy-scope-label preferences.proxy-scope-download preferences.proxy-scope-update-app preferences.proxy-scope-update-trackers"
+              data-preference-search-target="preferences.enable-proxy preferences.proxy-http-profile preferences.proxy-scope-label preferences.proxy-scope-download preferences.proxy-scope-update-app preferences.proxy-scope-update-trackers"
             >
               <div class="settings-row-content">
                 <div class="settings-row-title">
@@ -106,18 +109,18 @@
               </div>
               <div class="settings-row-action">
                 <ui-checkbox
-                  :model-value="form.proxy.enable"
+                  :model-value="form.proxy.http.enable"
                   :title="$t('preferences.enable-proxy')"
                   :aria-label="$t('preferences.enable-proxy')"
-                  @change="onProxyEnableChange"
+                  @change="onHttpProxyEnableChange"
                 />
               </div>
             </div>
-            <div v-if="form.proxy.enable" style="margin-top: 14px">
+            <div v-if="form.proxy.http.enable" style="margin-top: 14px">
               <div class="form-item-sub" style="margin-bottom: 10px">
                 <Input
                   :placeholder="$t('task.task-proxy-placeholder')"
-                  v-model="form.proxy.server"
+                  v-model="form.proxy.http.server"
                 />
               </div>
               <div class="form-item-sub" style="margin-bottom: 10px">
@@ -125,7 +128,7 @@
                   :rows="2"
                   autocomplete="off"
                   :placeholder="`${$t('preferences.proxy-bypass-input-tips')}`"
-                  v-model="form.proxy.bypass"
+                  v-model="form.proxy.http.bypass"
                 />
               </div>
               <div class="form-item-sub proxy-scope-group">
@@ -134,7 +137,7 @@
                 }}</label>
                 <div v-for="item in proxyScopeOptions" :key="item" class="proxy-scope-item">
                   <ui-checkbox
-                    :model-value="form.proxy.scope.includes(item)"
+                    :model-value="form.proxy.http.scope.includes(item)"
                     @change="(val) => onProxyScopeToggle(item, val)"
                   >
                     {{ $t(`preferences.proxy-scope-${item}`) }}
@@ -153,6 +156,91 @@
                     <ExternalLink :size="12" />
                   </a>
                 </div>
+              </div>
+            </div>
+            <div class="proxy-profile-title" style="margin-top: 18px">
+              {{ $t('preferences.proxy-p2p-profile') }}
+            </div>
+            <div
+              class="settings-row"
+              data-preference-search-target="preferences.proxy-p2p-profile preferences.enable-p2p-proxy preferences.proxy-p2p-tcp-server preferences.proxy-p2p-tcp-bypass preferences.proxy-p2p-udp-server preferences.proxy-p2p-udp-bypass preferences.proxy-p2p-udp-tips"
+            >
+              <div class="settings-row-content">
+                <div class="settings-row-title">
+                  {{ $t('preferences.enable-p2p-proxy') }}
+                </div>
+              </div>
+              <div class="settings-row-action">
+                <ui-checkbox
+                  :model-value="form.proxy.p2p.enable"
+                  :title="$t('preferences.enable-p2p-proxy')"
+                  :aria-label="$t('preferences.enable-p2p-proxy')"
+                  @change="onP2pProxyEnableChange"
+                />
+              </div>
+            </div>
+            <div v-if="form.proxy.p2p.enable" style="margin-top: 14px">
+              <div
+                class="form-item-sub"
+                style="margin-bottom: 10px"
+                data-preference-search-target="preferences.proxy-p2p-tcp-server"
+              >
+                <label class="settings-select-item-label" style="margin-bottom: 6px; display: block">
+                  {{ $t('preferences.proxy-p2p-tcp-server') }}
+                </label>
+                <Input
+                  :placeholder="$t('task.task-proxy-placeholder')"
+                  v-model="form.proxy.p2p.server"
+                />
+              </div>
+              <div
+                class="form-item-sub"
+                style="margin-bottom: 10px"
+                data-preference-search-target="preferences.proxy-p2p-tcp-bypass"
+              >
+                <label class="settings-select-item-label" style="margin-bottom: 6px; display: block">
+                  {{ $t('preferences.proxy-p2p-tcp-bypass') }}
+                </label>
+                <Textarea
+                  :rows="2"
+                  autocomplete="off"
+                  :placeholder="`${$t('preferences.proxy-bypass-input-tips')}`"
+                  v-model="form.proxy.p2p.bypass"
+                />
+              </div>
+              <div
+                class="form-item-sub"
+                style="margin-bottom: 10px"
+                data-preference-search-target="preferences.proxy-p2p-udp-server"
+              >
+                <label class="settings-select-item-label" style="margin-bottom: 6px; display: block">
+                  {{ $t('preferences.proxy-p2p-udp-server') }}
+                </label>
+                <Input
+                  :placeholder="$t('preferences.proxy-p2p-udp-server-placeholder')"
+                  v-model="form.proxy.p2p.udp.server"
+                />
+              </div>
+              <div
+                class="form-item-sub"
+                style="margin-bottom: 10px"
+                data-preference-search-target="preferences.proxy-p2p-udp-bypass"
+              >
+                <label class="settings-select-item-label" style="margin-bottom: 6px; display: block">
+                  {{ $t('preferences.proxy-p2p-udp-bypass') }}
+                </label>
+                <Textarea
+                  :rows="2"
+                  autocomplete="off"
+                  :placeholder="`${$t('preferences.proxy-bypass-input-tips')}`"
+                  v-model="form.proxy.p2p.udp.bypass"
+                />
+              </div>
+              <div class="form-info" style="margin-bottom: 8px">
+                {{ $t('preferences.proxy-p2p-udp-tips') }}
+              </div>
+              <div class="form-info">
+                {{ $t('preferences.proxy-p2p-tips') }}
               </div>
             </div>
           </div>
@@ -1420,6 +1508,10 @@ import {
 	PROXY_SCOPE_OPTIONS,
 	TRACKER_SOURCE_OPTIONS,
 } from "@shared/constants";
+import {
+	normalizeProxyConfig,
+	redactProxySettings,
+} from "@shared/types/config";
 import userAgentMap from "@shared/ua";
 import {
 	buildRpcUrl,
@@ -1490,27 +1582,6 @@ const resolveDohProvider = (storedProvider, storedUrl) => {
 		return storedProvider;
 	}
 	return "cloudflare";
-};
-
-const normalizeProxyConfig = (value) => {
-	const proxy = value && typeof value === "object" ? value : {};
-	const allowedScopes = new Set(PROXY_SCOPE_OPTIONS);
-	const scope = Array.isArray(proxy.scope)
-		? [
-				...new Set(
-					proxy.scope.filter(
-						(item) => typeof item === "string" && allowedScopes.has(item),
-					),
-				),
-			]
-		: [...PROXY_SCOPE_OPTIONS];
-
-	return {
-		enable: parseBooleanConfig(proxy.enable, false),
-		server: typeof proxy.server === "string" ? proxy.server.trim() : "",
-		bypass: typeof proxy.bypass === "string" ? proxy.bypass : "",
-		scope,
-	};
 };
 
 const initForm = (config) => {
@@ -1726,6 +1797,30 @@ const ADVANCED_NUMERIC_KEYS = [
 	"lowestSpeedLimit",
 	"lowestSpeedLimitTimeout",
 ];
+
+const effectiveP2pProxyProfile = (proxy: unknown) => {
+	const { p2p } = normalizeProxyConfig(proxy);
+	if (!p2p.enable) {
+		return {
+			server: "",
+			bypass: "",
+			udp: { server: "", bypass: "" },
+		};
+	}
+	const server = p2p.server;
+	const bypass = server ? p2p.bypass : "";
+	const udpServer = p2p.udp.server || server;
+	const udpBypass = p2p.udp.server ? p2p.udp.bypass : bypass;
+	return {
+		server,
+		bypass,
+		udp: { server: udpServer, bypass: udpBypass },
+	};
+};
+
+const p2pProxyProfileChanged = (before: unknown, after: unknown): boolean =>
+	JSON.stringify(effectiveP2pProxyProfile(before)) !==
+	JSON.stringify(effectiveP2pProxyProfile(after));
 
 const normalizeAdvancedConfig = (data, rpcDefaultPort) => {
 	for (const key of ADVANCED_BOOLEAN_KEYS) {
@@ -2082,15 +2177,21 @@ export default {
 				[protocol]: !!enabled,
 			};
 		},
-		onProxyEnableChange(enable) {
+		onHttpProxyEnableChange(enable) {
 			this.form.proxy = {
 				...this.form.proxy,
-				enable: !!enable,
+				http: { ...this.form.proxy.http, enable: !!enable },
+			};
+		},
+		onP2pProxyEnableChange(enable) {
+			this.form.proxy = {
+				...this.form.proxy,
+				p2p: { ...this.form.proxy.p2p, enable: !!enable },
 			};
 		},
 		onProxyScopeToggle(item, checked) {
 			const isChecked = !!checked;
-			const scope = [...this.form.proxy.scope];
+			const scope = [...this.form.proxy.http.scope];
 			const idx = scope.indexOf(item);
 			if (isChecked && idx < 0) {
 				scope.push(item);
@@ -2099,7 +2200,7 @@ export default {
 			}
 			this.form.proxy = {
 				...this.form.proxy,
-				scope,
+				http: { ...this.form.proxy.http, scope },
 			};
 		},
 		changeUA(type) {
@@ -2165,11 +2266,20 @@ export default {
 					this.formOriginal = cloneDeep(this.form);
 				});
 		},
-		submitForm(_formName) {
+		async submitForm(_formName) {
 			const data = {
 				...diffConfig(this.formOriginal, this.form),
 				...changedConfig.basic,
 			};
+			const p2pProxyChanged =
+				"proxy" in data &&
+				p2pProxyProfileChanged(this.formOriginal.proxy, this.form.proxy);
+			if (p2pProxyChanged && data.proxy && typeof data.proxy === "object") {
+				data.proxy = {
+					...(data.proxy as Record<string, unknown>),
+					"p2p-profile-explicit": true,
+				};
+			}
 
 			if ("engineOverridesText" in data) {
 				const raw = `${this.form.engineOverridesText || ""}`.trim();
@@ -2252,6 +2362,19 @@ export default {
 
 			normalizeAdvancedConfig(data, this.rpcDefaultPort);
 
+			if (p2pProxyChanged) {
+				const { confirmed } = await confirm({
+					title: this.$t("preferences.proxy-p2p-restart-title"),
+					message: this.$t("preferences.proxy-p2p-restart-confirm"),
+					kind: "warning",
+					confirmText: this.$t("app.yes"),
+					cancelText: this.$t("app.no"),
+				});
+				if (!confirmed) {
+					return;
+				}
+			}
+
 			{
 				const safeData = { ...data };
 				if ("externalEngineSecret" in safeData) {
@@ -2265,7 +2388,10 @@ export default {
 						Object.keys(safeData.engineOverrides).map((k) => [k, "[REDACTED]"]),
 					);
 				}
-				logger.log("[Risuko] preference changed data:", safeData);
+				logger.log(
+					"[Risuko] preference changed data:",
+					redactProxySettings(safeData as Record<string, unknown>),
+				);
 			}
 
 			usePreferenceStore()
@@ -2334,10 +2460,22 @@ export default {
 		}
 	},
 	async beforeRouteLeave(to, _from) {
-		changedConfig.advanced = normalizeAdvancedConfig(
+		const advancedChanges = normalizeAdvancedConfig(
 			diffConfig(this.formOriginal, this.form),
 			this.rpcDefaultPort,
 		);
+		if (
+			"proxy" in advancedChanges &&
+			p2pProxyProfileChanged(this.formOriginal.proxy, this.form.proxy) &&
+			advancedChanges.proxy &&
+			typeof advancedChanges.proxy === "object"
+		) {
+			advancedChanges.proxy = {
+				...(advancedChanges.proxy as Record<string, unknown>),
+				"p2p-profile-explicit": true,
+			};
+		}
+		changedConfig.advanced = advancedChanges;
 		if (to.path === "/preference/basic") {
 			return true;
 		}

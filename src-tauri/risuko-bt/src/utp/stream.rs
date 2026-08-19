@@ -14,19 +14,18 @@ use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::UdpSocket;
 use tokio::sync::{mpsc, oneshot, Notify};
 
+use risuko_http::{Error as HttpError, ProxyDatagram};
+
 use super::now_micros;
 use super::packet::{PacketType, UtpHeader};
-use super::socket::{ConnKey, ConnRegistry};
-
-/// Payload bytes per outgoing DATA packet; conservative to stay under common path MTUs (1500 - IP - UDP - µTP header) without PMTU discovery
+use super::socket::{
+    remove_connection_registration, remove_proxy_connection_registration, ConnKey, ConnRegistry,
+    ConnectionToken, ProxyConnRegistry,
+};
 const MSS: usize = 1200;
-/// Cap on our reorder + ready buffers; also what we advertise as `wnd_size`
 const RECV_BUF_MAX: usize = 1024 * 1024;
-/// Cap on app bytes buffered for sending before `poll_write` backpressures
 const SEND_BUF_MAX: usize = 512 * 1024;
-/// LEDBAT target queuing delay (100 ms, per BEP-29)
 const TARGET_MICROS: f64 = 100_000.0;
-/// LEDBAT window-gain factor
 const CWND_GAIN: f64 = 1.0;
 const MIN_CWND: usize = 2 * MSS;
 const MAX_CWND: usize = 2 * 1024 * 1024;
@@ -34,9 +33,9 @@ const INITIAL_CWND: usize = 3 * MSS;
 const MIN_RTO: Duration = Duration::from_millis(500);
 const MAX_RTO: Duration = Duration::from_secs(10);
 const INITIAL_RTO: Duration = Duration::from_secs(1);
-/// Give up retransmitting after this many tries and reset the connection
 const MAX_RETRANSMITS: u32 = 8;
-/// Tear the driver down if nothing happens for this long after close
+const SEND_RETRY_DELAY: Duration = Duration::from_millis(100);
+const MAX_SEND_RETRIES: u32 = 8;
 const LINGER_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// `a` is strictly after `b` in 16-bit sequence space (within half the ring)
@@ -47,13 +46,9 @@ fn seq_after(a: u16, b: u16) -> bool {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum State {
-    /// Outgoing SYN sent, awaiting the peer's STATE
     SynSent,
-    /// Handshake done; data may flow
     Connected,
-    /// We sent a FIN; still draining/acking
     FinSent,
-    /// Terminal — either clean or via RESET/error
     Closed,
 }
 
@@ -69,7 +64,6 @@ struct OutPacket {
 pub(crate) struct ConnState {
     state: State,
     remote: SocketAddr,
-    /// Connection id stamped on our outgoing (non-SYN) packets
     conn_id_send: u16,
 
     seq_nr: u16,
@@ -81,37 +75,28 @@ pub(crate) struct ConnState {
     recv_ready: VecDeque<u8>,
     reorder: BTreeMap<u16, Vec<u8>>,
 
-    /// Peer's advertised receive window (flow control), in bytes
     peer_wnd: u32,
-    /// Our congestion window, in bytes (LEDBAT-controlled)
     max_window: usize,
-    /// Minimum observed one-way delay (LEDBAT baseline), microseconds
     base_delay: u32,
 
     rtt: f64,
     rtt_var: f64,
     rto: Duration,
-
-    /// One-way delay we last measured for the peer's packets; echoed back in our `timestamp_difference_microseconds` field so the peer can run LEDBAT against us
     reply_micros: u32,
 
-    /// True once we've received data we haven't acked yet
     needs_ack: bool,
-    /// App requested close; driver should emit a FIN once the send buffer has drained
     want_fin: bool,
-    /// Peer's FIN sequence number, once received; EOF is delivered to the reader after all bytes up to and including this are in order
     peer_fin: Option<u16>,
     eof: bool,
     error: Option<io::ErrorKind>,
 
-    /// Recovery marker for the current fast-retransmit episode; further SACKs before this seq is cumulatively acked do not shrink the window again
     recovery_seq: Option<u16>,
 
-    /// Encoded datagrams the driver should put on the wire this iteration
     outbox: Vec<Vec<u8>>,
+    send_retry_at: Option<Instant>,
+    send_retry_count: u32,
     read_waker: Option<Waker>,
     write_waker: Option<Waker>,
-    /// Fired by the driver when the connection becomes established (or fails)
     connect_notify: Option<oneshot::Sender<io::Result<()>>>,
 }
 
@@ -460,7 +445,34 @@ impl ConnState {
 
     /// Next instant the driver must wake to do timer work, if any
     fn next_deadline(&self) -> Option<Instant> {
-        self.unacked.front().map(|p| p.sent_at + self.rto)
+        let retransmit_at = self.unacked.front().map(|p| p.sent_at + self.rto);
+        match (retransmit_at, self.send_retry_at) {
+            (Some(retransmit_at), Some(send_retry_at)) => Some(retransmit_at.min(send_retry_at)),
+            (Some(deadline), None) | (None, Some(deadline)) => Some(deadline),
+            (None, None) => None,
+        }
+    }
+
+    fn schedule_send_retry(&mut self) -> bool {
+        if self.send_retry_count >= MAX_SEND_RETRIES {
+            return false;
+        }
+        self.send_retry_count += 1;
+        self.send_retry_at = Some(Instant::now() + SEND_RETRY_DELAY);
+        true
+    }
+
+    fn retry_failed_datagrams(&mut self, mut datagrams: Vec<Vec<u8>>) -> bool {
+        if !self.schedule_send_retry() {
+            return false;
+        }
+        datagrams.append(&mut self.outbox);
+        self.outbox = datagrams;
+        true
+    }
+
+    fn record_send_success(&mut self) {
+        self.send_retry_count = 0;
     }
 
     fn fail(&mut self, kind: io::ErrorKind) {
@@ -530,11 +542,19 @@ pub(crate) enum RoleKind {
 
 /// Configuration handed to a connection driver by the socket layer
 pub(crate) struct DriverConfig {
-    pub udp: Arc<UdpSocket>,
+    pub transport: DatagramTransport,
     pub remote: SocketAddr,
     pub incoming: mpsc::UnboundedReceiver<(UtpHeader, Bytes)>,
     pub registry: ConnRegistry,
     pub key: ConnKey,
+    pub token: ConnectionToken,
+    pub proxy_registry: Option<ProxyConnRegistry>,
+}
+
+#[derive(Clone)]
+pub(crate) enum DatagramTransport {
+    Direct(Arc<UdpSocket>),
+    Proxy(Arc<ProxyDatagram>),
 }
 
 /// Create the shared state for a new connection
@@ -572,6 +592,8 @@ pub(crate) fn new_shared(remote: SocketAddr, conn_id_send: u16, kind: RoleKind) 
             error: None,
             recovery_seq: None,
             outbox: Vec::new(),
+            send_retry_at: None,
+            send_retry_count: 0,
             read_waker: None,
             write_waker: None,
             connect_notify: None,
@@ -674,18 +696,71 @@ pub(crate) async fn drive(shared: Arc<Shared>, mut cfg: DriverConfig, role: Role
         flush(&shared, &cfg).await;
     }
 
-    cfg.registry.lock().remove(&cfg.key);
+    remove_connection_registration(&cfg.registry, cfg.key, &cfg.token);
+    if let Some(proxy_registry) = &cfg.proxy_registry {
+        remove_proxy_connection_registration(proxy_registry, cfg.key.1, &cfg.token);
+    }
 }
 
 /// Drain the outbox to the wire. Datagrams are collected under the lock and sent after releasing it so UDP I/O never blocks the state mutex
 async fn flush(shared: &Arc<Shared>, cfg: &DriverConfig) {
     let datagrams: Vec<Vec<u8>> = {
         let mut st = shared.state.lock();
+        if st
+            .send_retry_at
+            .is_some_and(|retry_at| retry_at > Instant::now())
+        {
+            return;
+        }
+        st.send_retry_at = None;
         std::mem::take(&mut st.outbox)
     };
-    for d in datagrams {
-        let _ = cfg.udp.send_to(&d, cfg.remote).await;
+    let mut datagrams = datagrams.into_iter();
+    while let Some(d) = datagrams.next() {
+        let result = match &cfg.transport {
+            DatagramTransport::Direct(udp) => udp.send_to(&d, cfg.remote).await.map(|_| ()),
+            DatagramTransport::Proxy(proxy) => proxy
+                .send_to(&d, cfg.remote)
+                .await
+                .map(|_| ())
+                .map_err(proxy_error_to_io),
+        };
+        if let Err(error) = result {
+            let mut st = shared.state.lock();
+            if is_recoverable_send_error(&error) {
+                let mut pending = vec![d];
+                pending.extend(datagrams);
+                if st.retry_failed_datagrams(pending) {
+                    return;
+                }
+                st.fail(error.kind());
+            } else {
+                st.fail(error.kind());
+            }
+            return;
+        }
+        shared.state.lock().record_send_success();
     }
+}
+
+fn proxy_error_to_io(error: HttpError) -> io::Error {
+    match error {
+        HttpError::Io(error) => error,
+        error => io::Error::other(error.to_string()),
+    }
+}
+
+fn is_recoverable_send_error(error: &io::Error) -> bool {
+    matches!(
+        error.kind(),
+        io::ErrorKind::WouldBlock
+            | io::ErrorKind::Interrupted
+            | io::ErrorKind::TimedOut
+            | io::ErrorKind::ConnectionRefused
+            | io::ErrorKind::NetworkUnreachable
+            | io::ErrorKind::HostUnreachable
+            | io::ErrorKind::NetworkDown
+    )
 }
 
 /// A µTP connection presented as an async byte stream. Plugs into the peer connection layer wherever a `TcpStream` would go
@@ -845,5 +920,38 @@ mod tests {
         assert!(st.unacked.is_empty());
         assert!(st.send_buf.is_empty());
         assert!(st.next_deadline().is_none());
+    }
+
+    #[test]
+    fn transient_send_errors_remain_retriable() {
+        assert!(is_recoverable_send_error(&io::Error::from(
+            io::ErrorKind::ConnectionRefused,
+        )));
+        assert!(is_recoverable_send_error(&io::Error::from(
+            io::ErrorKind::NetworkUnreachable,
+        )));
+        assert!(!is_recoverable_send_error(&io::Error::from(
+            io::ErrorKind::InvalidData,
+        )));
+    }
+
+    #[test]
+    fn proxy_io_errors_preserve_their_retry_kind() {
+        let error = proxy_error_to_io(HttpError::Io(io::Error::from(io::ErrorKind::WouldBlock)));
+        assert_eq!(error.kind(), io::ErrorKind::WouldBlock);
+        assert!(is_recoverable_send_error(&error));
+    }
+
+    #[test]
+    fn retrying_unsent_datagrams_arms_a_deadline_and_preserves_order() {
+        let shared = new_shared("127.0.0.1:1".parse().unwrap(), 2, RoleKind::Responder);
+        let mut st = shared.state.lock();
+        assert!(st.unacked.is_empty());
+        st.outbox = vec![vec![3]];
+
+        assert!(st.retry_failed_datagrams(vec![vec![1], vec![2]]));
+        assert!(st.next_deadline().is_some());
+        assert_eq!(st.send_retry_count, 1);
+        assert_eq!(st.outbox, vec![vec![1], vec![2], vec![3]]);
     }
 }
