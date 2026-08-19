@@ -237,29 +237,34 @@ pub async fn run_ftp_ftps_download(
                 proxy_bridge(proxy.clone(), parsed.host.clone(), parsed.port)
                     .await
                     .map_err(|e| format!("FTPS proxy bridge failed: {e}"))?
-                    .connect()
-                    .await
-                    .map_err(|e| format!("FTPS proxy connect failed: {e}"))?,
             )
         } else {
             None
         };
         let mut ftp = if parsed.port == 990 {
-            let control = match proxy_control {
-                Some(control) => control,
-                None => TcpStream::connect(&addr)
+            if let Some(bridge) = proxy_control {
+                let endpoint = bridge.endpoint();
+                let result = AsyncRustlsFtpStream::connect_secure_implicit(
+                    endpoint,
+                    connector,
+                    &parsed.host,
+                )
+                .await;
+                let ready = bridge.wait_ready().await;
+                let ftp = result.map_err(|e| format!("FTPS implicit connect failed: {e}"))?;
+                ready.map_err(|e| format!("FTPS proxy connect failed: {e}"))?;
+                ftp
+            } else {
+                AsyncRustlsFtpStream::connect_secure_implicit(&addr, connector, &parsed.host)
                     .await
-                    .map_err(|e| format!("FTPS implicit connect failed: {e}"))?,
-            };
-            AsyncRustlsFtpStream::connect_with_stream(control)
-                .await
-                .map_err(|e| format!("FTPS implicit connect failed: {e}"))?
-                .into_secure(connector, &parsed.host)
-                .await
-                .map_err(|e| format!("FTPS implicit TLS failed: {e}"))?
+                    .map_err(|e| format!("FTPS implicit connect failed: {e}"))?
+            }
         } else {
             let control = match proxy_control {
-                Some(control) => control,
+                Some(bridge) => bridge
+                    .connect()
+                    .await
+                    .map_err(|e| format!("FTPS proxy connect failed: {e}"))?,
                 None => TcpStream::connect(&addr)
                     .await
                     .map_err(|e| format!("FTPS explicit connect failed: {e}"))?,
@@ -421,8 +426,8 @@ pub(super) async fn proxy_bridge_endpoint(
     proxy: risuko_http::ProxyConnector,
     host: String,
     port: u16,
-) -> io::Result<std::net::SocketAddr> {
-    Ok(proxy_bridge(proxy, host, port).await?.endpoint)
+) -> io::Result<ProxyBridge> {
+    proxy_bridge(proxy, host, port).await
 }
 
 async fn proxy_bridge(
@@ -461,17 +466,26 @@ async fn proxy_bridge(
     })
 }
 
-struct ProxyBridge {
+pub(super) struct ProxyBridge {
     endpoint: std::net::SocketAddr,
     ready: oneshot::Receiver<io::Result<()>>,
 }
 
 impl ProxyBridge {
-    async fn connect(self) -> io::Result<TcpStream> {
-        let stream = TcpStream::connect(self.endpoint).await?;
+    pub(super) fn endpoint(&self) -> std::net::SocketAddr {
+        self.endpoint
+    }
+
+    pub(super) async fn wait_ready(self) -> io::Result<()> {
         self.ready.await.map_err(|_| {
             io::Error::new(io::ErrorKind::ConnectionAborted, "FTP proxy bridge stopped")
         })??;
+        Ok(())
+    }
+
+    async fn connect(self) -> io::Result<TcpStream> {
+        let stream = TcpStream::connect(self.endpoint).await?;
+        self.wait_ready().await?;
         Ok(stream)
     }
 }

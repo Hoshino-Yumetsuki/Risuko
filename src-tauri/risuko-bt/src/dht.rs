@@ -775,11 +775,15 @@ impl Dht {
                 let addresses = lookup_host((host.as_str(), port))
                     .await
                     .ok()?
+                    .filter(|address| match address {
+                        SocketAddr::V4(_) => self.sock.is_some(),
+                        SocketAddr::V6(_) => self.sock6.is_some(),
+                    })
                     .collect::<Vec<_>>();
                 if addresses.is_empty() {
                     return None;
                 }
-                (DhtTarget::Host(host, port), Some(addresses))
+                (DhtTarget::Addr(addresses[0]), Some(addresses))
             }
             target => (target, None),
         };

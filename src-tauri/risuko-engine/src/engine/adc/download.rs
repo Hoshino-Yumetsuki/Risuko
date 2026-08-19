@@ -3,9 +3,6 @@
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
-
-use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 
 use super::types::{is_adc_uri, parse_adc_hub_uri, parse_dchub_file_uri, AdcError, HubInfo};
@@ -38,7 +35,7 @@ pub async fn run_adc_download(
         return Err(format!("not an ADC/DC URI: {uri}"));
     }
 
-    let hub = parse_adc_hub_uri(uri).map_err(|e| e.to_string())?;
+    let _hub = parse_adc_hub_uri(uri).map_err(|e| e.to_string())?;
     let file = parse_dchub_file_uri(uri).ok_or_else(|| {
         "ADC/DC hub-only URIs (without TTH+size+name) are not yet supported".to_string()
     })?;
@@ -56,22 +53,9 @@ pub async fn run_adc_download(
         return Err("cancelled".into());
     }
 
-    let proxy = opts
+    let _proxy = opts
         .p2p_proxy_connector()
         .map_err(|error| format!("ADC P2P proxy: {error}"))?;
-    if proxy.proxy().is_some() {
-        tokio::select! {
-            result = timeout(Duration::from_secs(15), connect_hub_with_proxy(&hub, &proxy)) => {
-                result
-                    .map_err(|_| "ADC hub connect timeout".to_string())?
-                    .map_err(|error| error.to_string())?;
-            }
-            _ = cancel_token.cancelled() => return Err("cancelled".into()),
-        }
-        if cancel_token.is_cancelled() {
-            return Err("cancelled".into());
-        }
-    }
 
     // Passive-only mode: no listening socket, so peer negotiation (`$ConnectToMe` / ADC `CTM`) cannot complete; bail before hub I/O so the task fails fast instead of hanging
     let _ = (&tth, &completed, dir);

@@ -87,6 +87,26 @@ impl UtpSocket {
 
     /// Replace the outbound route while preserving the local listener
     pub async fn reconfigure_proxy(&self, proxy: Option<ProxyConnector>) {
+        let route = match proxy {
+            None => OutboundRoute::Direct,
+            Some(connector) if connector.udp_proxy().is_none() => OutboundRoute::Direct,
+            Some(connector) => {
+                let bypass = connector.udp_no_proxy().unwrap_or_default();
+                let bind = if bypass.is_empty() {
+                    connector.bind_udp().await
+                } else {
+                    connector.bind_udp_with_bypass().await
+                };
+                match bind {
+                    Ok(datagram) => OutboundRoute::Proxy(Arc::new(datagram)),
+                    Err(error) => OutboundRoute::Blocked {
+                        error: error.to_string(),
+                        bypass,
+                    },
+                }
+            }
+        };
+
         let _reconfigure_guard = self.reconfigure_lock.lock().await;
 
         // Drop every connection routed through the old proxy before replacing
@@ -104,45 +124,15 @@ impl UtpSocket {
             handle.abort();
         }
 
-        let route = match proxy {
-            None => {
-                *self.outbound.write() = OutboundRoute::Direct;
-                OutboundRoute::Direct
-            }
-            Some(connector) if connector.udp_proxy().is_none() => {
-                *self.outbound.write() = OutboundRoute::Direct;
-                OutboundRoute::Direct
-            }
-            Some(connector) => {
-                let bypass = connector.udp_no_proxy().unwrap_or_default();
-                *self.outbound.write() = OutboundRoute::Blocked {
-                    error: "P2P proxy UDP association is being established".into(),
-                    bypass: bypass.clone(),
-                };
-                let bind = if bypass.is_empty() {
-                    connector.bind_udp().await
-                } else {
-                    connector.bind_udp_with_bypass().await
-                };
-                match bind {
-                    Ok(datagram) => {
-                        let datagram = Arc::new(datagram);
-                        let router_datagram = datagram.clone();
-                        let registry = self.registry.clone();
-                        let proxy_registry = self.proxy_registry.clone();
-                        let handle = tokio::spawn(async move {
-                            proxy_router(router_datagram, registry, proxy_registry).await
-                        });
-                        *self.proxy_router_handle.lock() = Some(handle);
-                        OutboundRoute::Proxy(datagram)
-                    }
-                    Err(error) => OutboundRoute::Blocked {
-                        error: error.to_string(),
-                        bypass,
-                    },
-                }
-            }
-        };
+        if let OutboundRoute::Proxy(datagram) = &route {
+            let router_datagram = datagram.clone();
+            let registry = self.registry.clone();
+            let proxy_registry = self.proxy_registry.clone();
+            let handle = tokio::spawn(async move {
+                proxy_router(router_datagram, registry, proxy_registry).await
+            });
+            *self.proxy_router_handle.lock() = Some(handle);
+        }
         *self.outbound.write() = route;
     }
 

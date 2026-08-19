@@ -266,7 +266,7 @@ impl ProxyConnector {
                     .as_deref()
                     .cloned()
                     .unwrap_or_default();
-                ProxyDatagram::blocked(self.udp_inner().clone(), no_proxy, error.to_string()).await
+                ProxyDatagram::blocked(self.udp_inner().clone(), no_proxy, error).await
             }
             Err(error) => Err(error),
         }
@@ -343,36 +343,27 @@ fn direct_datagram_source_allowed(no_proxy: &NoProxy, source: SocketAddr) -> boo
     no_proxy.matches_host_port(&source.ip().to_string(), Some(source.port()))
 }
 
-fn blocked_route_error(message: &str) -> Error {
-    if message == "SOCKS5 required for UDP proxying" {
-        return Error::Socks5Required;
+fn clone_route_error(error: &Error) -> Error {
+    match error {
+        Error::Url(message) => Error::Url(message.clone()),
+        Error::Header(message) => Error::Header(message.clone()),
+        Error::Builder(message) => Error::Builder(message.clone()),
+        Error::Connect(message) => Error::Connect(message.clone()),
+        Error::Socks5Required => Error::Socks5Required,
+        Error::ProxyAuthentication(message) => Error::ProxyAuthentication(message.clone()),
+        Error::ProxyProtocol(message) => Error::ProxyProtocol(message.clone()),
+        Error::ProxyTimeout(message) => Error::ProxyTimeout(message.clone()),
+        Error::Request(message) => Error::Request(message.clone()),
+        Error::Redirect(message) => Error::Redirect(message.clone()),
+        Error::Body(message) => Error::Body(message.clone()),
+        Error::Decode(message) => Error::Decode(message.clone()),
+        Error::Encode(message) => Error::Encode(message.clone()),
+        Error::NoRecords => Error::NoRecords,
+        Error::Timeout => Error::Timeout,
+        Error::Status(status) => Error::Status(*status),
+        Error::Io(error) => Error::Io(std::io::Error::new(error.kind(), error.to_string())),
+        Error::Tls(message) => Error::Tls(message.clone()),
     }
-    if message.starts_with("io error: ") {
-        return Error::Socks5Required;
-    }
-    if message.starts_with("connection error: ") {
-        return Error::Socks5Required;
-    }
-    for (prefix, make) in [
-        (
-            "proxy protocol error: ",
-            Error::ProxyProtocol as fn(String) -> Error,
-        ),
-        (
-            "proxy authentication failed: ",
-            Error::ProxyAuthentication as fn(String) -> Error,
-        ),
-        (
-            "proxy timeout: ",
-            Error::ProxyTimeout as fn(String) -> Error,
-        ),
-        ("invalid url: ", Error::Url as fn(String) -> Error),
-    ] {
-        if let Some(detail) = message.strip_prefix(prefix) {
-            return make(detail.to_string());
-        }
-    }
-    Error::ProxyProtocol(message.to_string())
 }
 
 enum DatagramRoute {
@@ -389,7 +380,7 @@ enum DatagramRoute {
     Blocked {
         connector: Connector,
         no_proxy: NoProxy,
-        error: String,
+        error: Arc<Error>,
     },
 }
 
@@ -404,7 +395,7 @@ impl ProxyDatagram {
         })
     }
 
-    async fn blocked(connector: Connector, no_proxy: NoProxy, error: String) -> HttpResult<Self> {
+    async fn blocked(connector: Connector, no_proxy: NoProxy, error: Error) -> HttpResult<Self> {
         let (socket, secondary_socket) = bind_udp_socket_pair(false).await?;
         Ok(Self {
             socket,
@@ -412,7 +403,7 @@ impl ProxyDatagram {
             route: DatagramRoute::Blocked {
                 connector,
                 no_proxy,
-                error,
+                error: Arc::new(error),
             },
             direct_targets: Arc::new(std::sync::Mutex::new(HashSet::new())),
         })
@@ -542,7 +533,7 @@ impl ProxyDatagram {
                     }
                     result
                 } else {
-                    Err(blocked_route_error(error))
+                    Err(clone_route_error(error))
                 }
             }
         }
@@ -602,7 +593,7 @@ impl ProxyDatagram {
                 error,
             } => {
                 if !no_proxy.matches_host_port(&host, Some(port)) {
-                    return Err(blocked_route_error(error));
+                    return Err(clone_route_error(error));
                 }
                 let target = resolve_first(connector, &host, port).await?;
                 let result = self
@@ -2202,12 +2193,11 @@ mod tests {
                 .unwrap()
                 .unwrap();
         assert_eq!(&buffer[..length], b"direct");
-        assert!(matches!(
-            datagram
-                .send_to_host(b"proxied", "192.0.2.1", target.port())
-                .await,
-            Err(Error::Socks5Required)
-        ));
+        let error = datagram
+            .send_to_host(b"proxied", "192.0.2.1", target.port())
+            .await
+            .unwrap_err();
+        assert!(matches!(error, Error::Io(_) | Error::Connect(_)));
     }
 
     struct HangingResolver;

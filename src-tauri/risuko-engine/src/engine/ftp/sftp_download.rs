@@ -163,17 +163,31 @@ pub async fn run_sftp_download(
 
     let addr = format!("{}:{}", parsed.host, parsed.port);
     let http_proxy = http_proxy_from_options(options)?;
-    let connect_addr = if let Some(proxy) = http_proxy {
-        proxy_bridge_endpoint(proxy, parsed.host.clone(), parsed.port)
-            .await
-            .map_err(|e| format!("SFTP proxy connect failed: {e}"))?
+    let proxy_bridge = if let Some(proxy) = http_proxy {
+        Some(
+            proxy_bridge_endpoint(proxy, parsed.host.clone(), parsed.port)
+                .await
+                .map_err(|e| format!("SFTP proxy connect failed: {e}"))?,
+        )
     } else {
-        addr.parse()
-            .map_err(|e| format!("SFTP address invalid: {e}"))?
+        None
     };
-    let mut session = client::connect(config, &connect_addr, TofuHandler::new(addr.clone()))
+    let connect_addr = match proxy_bridge.as_ref() {
+        Some(bridge) => bridge.endpoint(),
+        None => addr
+            .parse()
+            .map_err(|e| format!("SFTP address invalid: {e}"))?,
+    };
+    let session_result = client::connect(config, &connect_addr, TofuHandler::new(addr.clone()))
         .await
-        .map_err(|e| format!("SSH connect failed: {e}"))?;
+        .map_err(|e| format!("SSH connect failed: {e}"));
+    if let Some(bridge) = proxy_bridge {
+        bridge
+            .wait_ready()
+            .await
+            .map_err(|e| format!("SFTP proxy connect failed: {e}"))?;
+    }
+    let mut session = session_result?;
 
     // Authenticate
     let authenticated = try_authenticate(
