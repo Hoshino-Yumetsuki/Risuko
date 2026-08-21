@@ -32,6 +32,7 @@ import {
 	formatOptionsForEngine,
 	separateConfig,
 } from "@shared/utils";
+import { toKebabCasePreserveNumbers } from "@shared/utils/configKeyCase";
 import logger from "@shared/utils/logger";
 import { invoke } from "@tauri-apps/api/core";
 import { isEmpty } from "lodash";
@@ -217,6 +218,51 @@ export default class Api {
 		const { gid, options = {} } = params;
 		const engineOptions = formatOptionsForEngine(options);
 		return invoke("change_option", { gid, options: engineOptions });
+	}
+
+	updateTask(params: {
+		gid: string;
+		patch: {
+			uris?: string[];
+			dir?: string;
+			out?: string;
+			trackers?: string[];
+			options?: Record<string, unknown>;
+		};
+	}) {
+		const { gid, patch } = params;
+		const enginePatch: Record<string, unknown> = {};
+		if (patch.uris !== undefined) {
+			enginePatch.uris = patch.uris;
+		}
+		if (patch.dir !== undefined) {
+			enginePatch.dir = patch.dir;
+		}
+		if (patch.out !== undefined) {
+			enginePatch.out = patch.out;
+		}
+		if (patch.trackers !== undefined) {
+			enginePatch.trackers = patch.trackers;
+		}
+		if (patch.options !== undefined) {
+			const formatted: Record<string, unknown> = {};
+			for (const [key, value] of Object.entries(patch.options)) {
+				if (value === null) {
+					// Engine treats JSON null as "unset this option key"
+					formatted[toKebabCasePreserveNumbers(key)] = null;
+				} else if (Array.isArray(value)) {
+					formatted[toKebabCasePreserveNumbers(key)] = value.join("\n");
+				} else {
+					formatted[toKebabCasePreserveNumbers(key)] = `${value}`;
+				}
+			}
+			enginePatch.options = formatted;
+		}
+		return invoke<{
+			restarted: boolean;
+			trackersAdded: number;
+			progressPreserved: boolean;
+		}>("update_task", { gid, patch: enginePatch });
 	}
 
 	getGlobalStat() {

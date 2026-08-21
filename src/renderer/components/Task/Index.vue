@@ -104,6 +104,10 @@
           v-model:visible="scheduleDialogVisible"
           :task="scheduleTask"
         />
+        <edit-task-dialog
+          v-model:visible="editDialogVisible"
+          :task="editTask"
+        />
       </div>
       <loading-overlay :show="taskActionLoading" :text="taskActionLoadingText" />
     </div>
@@ -119,6 +123,7 @@ import logger from "@shared/utils/logger";
 import api from "@/api";
 import { commands } from "@/components/CommandManager/instance";
 import SubnavSwitcher from "@/components/Subnav/SubnavSwitcher.vue";
+import EditTaskDialog from "@/components/Task/EditTaskDialog.vue";
 import ScheduleDialog from "@/components/Task/ScheduleDialog.vue";
 import TaskActions from "@/components/Task/TaskActions.vue";
 import TaskList from "@/components/Task/TaskList.vue";
@@ -146,6 +151,7 @@ export default {
 		[TaskList.name]: TaskList,
 		[TaskDetail.name]: TaskDetail,
 		[ScheduleDialog.name]: ScheduleDialog,
+		[EditTaskDialog.name]: EditTaskDialog,
 		[SubnavSwitcher.name]: SubnavSwitcher,
 		[LoadingOverlay.name]: LoadingOverlay,
 		Select,
@@ -295,6 +301,8 @@ export default {
 			taskActionLoadingText: "",
 			scheduleDialogVisible: false,
 			scheduleTask: null,
+			editDialogVisible: false,
+			editTask: null,
 		};
 	},
 	methods: {
@@ -685,6 +693,10 @@ export default {
 			this.scheduleTask = payload.task;
 			this.scheduleDialogVisible = true;
 		},
+		handleEditTask(payload) {
+			this.editTask = payload.task;
+			this.editDialogVisible = true;
+		},
 		handleStartTaskNow(payload) {
 			const { task, taskName } = payload;
 			useTaskStore()
@@ -712,6 +724,7 @@ export default {
 		commands.on("copy-task-link", this.handleCopyTaskLink);
 		commands.on("show-task-info", this.handleShowTaskInfo);
 		commands.on("schedule-task", this.handleScheduleTask);
+		commands.on("edit-task", this.handleEditTask);
 		commands.on("start-task-now", this.handleStartTaskNow);
 	},
 	beforeUnmount() {
@@ -726,6 +739,7 @@ export default {
 		commands.off("copy-task-link", this.handleCopyTaskLink);
 		commands.off("show-task-info", this.handleShowTaskInfo);
 		commands.off("schedule-task", this.handleScheduleTask);
+		commands.off("edit-task", this.handleEditTask);
 		commands.off("start-task-now", this.handleStartTaskNow);
 	},
 };

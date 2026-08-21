@@ -316,4 +316,26 @@ export default {
 	"filter-image": "选择 图片文件",
 	"filter-document": "选择 文档文件",
 	"clear-filter": "清除筛选",
+	"edit-task": "编辑…",
+	"edit-dialog-title": "编辑任务",
+	"edit-tab-general": "常规",
+	"edit-tab-sources": "源地址",
+	"edit-tab-trackers": "Trackers",
+	"edit-tab-network": "网络",
+	"edit-mirrors": "镜像",
+	"edit-mirror-add": "添加",
+	"edit-trackers-hint":
+		"添加 Tracker 地址（每行一个）。新 Tracker 会立即生效，无需中断种子下载。",
+	"edit-restart-warning":
+		"此任务正在下载。保存后会短暂重启下载线程以应用新设置，进度会尽量保留。",
+	"edit-progress-warning":
+		"更换主下载地址可能导致无法续传（若新文件与原文件不完全一致，例如 ETag 或长度不同）。",
+	"edit-confirm": "保存",
+	"edit-success": "任务已更新",
+	"edit-fail": "更新任务失败",
+	"edit-no-changes": "没有需要保存的更改",
+	"edit-speed-limit": "速度限制",
+	"edit-speed-limit-placeholder": "0 或留空表示不限速（例如 500K）",
+	"edit-primary-uri": "下载地址",
+	"edit-primary-uri-placeholder": "主下载地址",
 };

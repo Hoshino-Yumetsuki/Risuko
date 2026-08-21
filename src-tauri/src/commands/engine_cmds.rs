@@ -1101,6 +1101,15 @@ pub async fn change_option(gid: String, options: Value) -> Result<(), String> {
 }
 
 #[tauri::command]
+pub async fn update_task(gid: String, patch: Value) -> Result<Value, String> {
+    let manager = engine::get_manager().await.ok_or("Engine not running")?;
+    let patch: engine::task::TaskPatch =
+        serde_json::from_value(patch).map_err(|e| format!("Invalid task patch: {e}"))?;
+    let outcome = manager.update_task(&gid, patch).await?;
+    serde_json::to_value(outcome).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub async fn change_global_option_engine(options: Value) -> Result<(), String> {
     let manager = engine::get_manager().await.ok_or("Engine not running")?;
     let opts = match options {

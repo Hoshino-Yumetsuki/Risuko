@@ -156,4 +156,26 @@ export default {
 	"batch-remove-item": "Xóa",
 	"torrent-preview-folder-toggle": "Chuyển đổi lựa chọn thư mục",
 	"clear-filter": "Xóa bộ lọc",
+	"edit-task": "Edit…",
+	"edit-dialog-title": "Edit task",
+	"edit-tab-general": "General",
+	"edit-tab-sources": "Sources",
+	"edit-tab-trackers": "Trackers",
+	"edit-tab-network": "Network",
+	"edit-mirrors": "Mirrors",
+	"edit-mirror-add": "Add",
+	"edit-trackers-hint":
+		"Add tracker URLs (one per line). New trackers are announced immediately without interrupting the torrent.",
+	"edit-restart-warning":
+		"This task is downloading. Saving will briefly restart the worker so the new settings take effect. Progress is kept when possible.",
+	"edit-progress-warning":
+		"Changing the primary download URL may discard resume data if the new file is not byte-identical (different ETag/length).",
+	"edit-confirm": "Save",
+	"edit-success": "Task updated",
+	"edit-fail": "Failed to update task",
+	"edit-no-changes": "No changes to save",
+	"edit-speed-limit": "Speed limit",
+	"edit-speed-limit-placeholder": "0 or empty = unlimited (e.g. 500K)",
+	"edit-primary-uri": "Download URL",
+	"edit-primary-uri-placeholder": "Primary download URL",
 };

@@ -13,6 +13,11 @@
 	html {
 		overflow: hidden;
 	}
+	a[x-apple-data-detectors] {
+		color: inherit !important;
+		text-decoration: none;
+		font: inherit;
+	}
 	body {
 		font-family: var(
 			--app-font-family,

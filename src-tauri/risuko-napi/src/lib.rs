@@ -361,6 +361,20 @@ pub async fn change_option(gid: String, options: serde_json::Value) -> Result<()
 }
 
 #[napi]
+pub async fn update_task(gid: String, patch: serde_json::Value) -> Result<serde_json::Value> {
+    with_manager(|mgr| async move {
+        let patch: risuko_engine::engine::task::TaskPatch = serde_json::from_value(patch)
+            .map_err(|e| Error::from_reason(format!("Invalid task patch: {e}")))?;
+        let outcome = mgr
+            .update_task(&gid, patch)
+            .await
+            .map_err(Error::from_reason)?;
+        serde_json::to_value(outcome).map_err(|e| Error::from_reason(e.to_string()))
+    })
+    .await
+}
+
+#[napi]
 pub async fn change_global_option(options: serde_json::Value) -> Result<()> {
     with_manager(|mgr| async move {
         let opts = value_to_map(options);

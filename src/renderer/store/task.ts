@@ -943,6 +943,21 @@ export const useTaskStore = defineStore("task", {
 			await this.fetchList();
 			this.saveSession();
 		},
+		async updateTask(
+			gid: string,
+			patch: {
+				uris?: string[];
+				dir?: string;
+				out?: string;
+				trackers?: string[];
+				options?: Record<string, unknown>;
+			},
+		) {
+			const outcome = await api.updateTask({ gid, patch });
+			await this.fetchList();
+			this.saveSession();
+			return outcome;
+		},
 		async startNow(gid: string) {
 			await api.startTaskNow({ gid });
 			await this.fetchList();

@@ -502,9 +502,8 @@ impl ProxyDatagram {
                 .socket_for_target(target)
                 .send_to(payload, target)
                 .await
-                .map(|written| {
+                .inspect(|_| {
                     self.remember_direct_target(target);
-                    written
                 })
                 .map_err(Error::Io),
             DatagramRoute::Socks5 { relay, .. } => {

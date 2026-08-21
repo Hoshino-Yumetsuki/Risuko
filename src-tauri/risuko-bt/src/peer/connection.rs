@@ -96,7 +96,7 @@ pub async fn connect(spawn: SpawnPeer) -> std::io::Result<(PeerHandle, mpsc::Rec
         )
         .await
         .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "connect timeout"))?
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?,
+        .map_err(|e| std::io::Error::other(e.to_string()))?,
         None => {
             let stream = timeout(spawn.connect_timeout, TcpStream::connect(spawn.addr))
                 .await
@@ -393,9 +393,7 @@ async fn drive_handshake(
                     Some(proxy) => proxy
                         .connect_tcp(&spawn.addr.ip().to_string(), spawn.addr.port())
                         .await
-                        .map_err(|e| {
-                            std::io::Error::new(std::io::ErrorKind::Other, e.to_string())
-                        })?,
+                        .map_err(|e| std::io::Error::other(e.to_string()))?,
                     None => {
                         let stream = TcpStream::connect(spawn.addr).await?;
                         let _ = stream.set_nodelay(true);

@@ -183,6 +183,7 @@ pub async fn resolve_with_peers_and_port_and_utp(
     .await
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn resolve_with_peers_and_port_and_utp_and_proxy(
     magnet_uri: &str,
     extra_trackers: &[String],
