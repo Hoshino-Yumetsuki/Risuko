@@ -32,16 +32,17 @@
 
           <TabsContent v-if="!isBT" value="general" class="mt-0 flex flex-col gap-3">
             <div>
-              <label class="mb-1 block text-[11px] text-muted-foreground">{{ $t('task.task-out') }}</label>
-              <Input v-model="form.out" auto-complete="off" :placeholder="$t('task.task-out-tips')" />
+              <label for="edit-task-out" class="mb-1 block text-[11px] text-muted-foreground">{{ $t('task.task-out') }}</label>
+              <Input id="edit-task-out" v-model="form.out" auto-complete="off" :placeholder="$t('task.task-out-tips')" />
             </div>
             <div>
-              <label class="mb-1 block text-[11px] text-muted-foreground">{{ $t('task.task-dir') }}</label>
+              <label for="edit-task-dir" class="mb-1 block text-[11px] text-muted-foreground">{{ $t('task.task-dir') }}</label>
               <div class="input-group input-group--bordered">
                 <span class="input-prepend">
                   <history-directory @selected="onHistoryDir" />
                 </span>
                 <Input
+                  id="edit-task-dir"
                   v-model="form.dir"
                   readonly
                   class="path-indicator-field flex-1 rounded-none border-none shadow-none noinput"
@@ -53,12 +54,13 @@
             </div>
             <div class="grid grid-cols-2 gap-3">
               <div>
-                <label class="mb-1 block text-[11px] text-muted-foreground">{{ $t('task.task-split') }}</label>
-                <NumberInput v-model="form.split" :min="1" :max="128" />
+                <label for="edit-task-split" class="mb-1 block text-[11px] text-muted-foreground">{{ $t('task.task-split') }}</label>
+                <NumberInput id="edit-task-split" v-model="form.split" :min="1" :max="128" />
               </div>
               <div>
-                <label class="mb-1 block text-[11px] text-muted-foreground">{{ $t('task.edit-speed-limit') }}</label>
+                <label for="edit-task-speed-limit" class="mb-1 block text-[11px] text-muted-foreground">{{ $t('task.edit-speed-limit') }}</label>
                 <Input
+                  id="edit-task-speed-limit"
                   v-model="form.maxDownloadLimit"
                   auto-complete="off"
                   :placeholder="$t('task.edit-speed-limit-placeholder')"
@@ -69,8 +71,9 @@
 
           <TabsContent v-if="!isBT" value="sources" class="mt-0 flex flex-col gap-3">
             <div>
-              <label class="mb-1 block text-[11px] text-muted-foreground">{{ $t('task.edit-primary-uri') }}</label>
+              <label for="edit-task-primary-uri" class="mb-1 block text-[11px] text-muted-foreground">{{ $t('task.edit-primary-uri') }}</label>
               <Textarea
+                id="edit-task-primary-uri"
                 v-model="form.primaryUri"
                 rows="2"
                 class="resize-none font-mono text-xs"
@@ -78,7 +81,7 @@
               />
             </div>
             <div>
-              <div class="mb-1 text-[11px] text-muted-foreground">{{ $t('task.edit-mirrors') }}</div>
+              <label for="edit-task-mirror-draft" class="mb-1 block text-[11px] text-muted-foreground">{{ $t('task.edit-mirrors') }}</label>
               <p class="mb-2 text-[11px] leading-relaxed text-muted-foreground">
                 {{ $t('task.mirror-hint') }}
               </p>
@@ -102,6 +105,7 @@
               </ul>
               <div class="flex gap-2">
                 <Input
+                  id="edit-task-mirror-draft"
                   v-model="mirrorDraft"
                   class="flex-1 font-mono text-xs"
                   :placeholder="$t('task.mirror-placeholder')"
@@ -129,10 +133,11 @@
               </ul>
             </div>
             <div>
-              <p class="mb-2 text-[11px] leading-relaxed text-muted-foreground">
+              <label for="edit-task-trackers" class="mb-2 block text-[11px] leading-relaxed text-muted-foreground">
                 {{ $t('task.edit-trackers-hint') }}
-              </p>
+              </label>
               <Textarea
+                id="edit-task-trackers"
                 v-model="form.trackersToAdd"
                 rows="5"
                 class="resize-y font-mono text-xs"
@@ -143,27 +148,28 @@
 
           <TabsContent value="network" class="mt-0 flex flex-col gap-3">
             <div>
-              <label class="mb-1 block text-[11px] text-muted-foreground">{{ $t('task.task-proxy') }}</label>
+              <label for="edit-task-proxy" class="mb-1 block text-[11px] text-muted-foreground">{{ $t('task.task-proxy') }}</label>
               <Input
+                id="edit-task-proxy"
                 v-model="form.allProxy"
                 :placeholder="$t('task.task-proxy-placeholder')"
               />
             </div>
             <div>
-              <label class="mb-1 block text-[11px] text-muted-foreground">{{ $t('task.task-user-agent') }}</label>
-              <Textarea v-model="form.userAgent" rows="2" class="resize-none text-xs" />
+              <label for="edit-task-user-agent" class="mb-1 block text-[11px] text-muted-foreground">{{ $t('task.task-user-agent') }}</label>
+              <Textarea id="edit-task-user-agent" v-model="form.userAgent" rows="2" class="resize-none text-xs" />
             </div>
             <div>
-              <label class="mb-1 block text-[11px] text-muted-foreground">{{ $t('task.task-referer') }}</label>
-              <Textarea v-model="form.referer" rows="2" class="resize-none text-xs" />
+              <label for="edit-task-referer" class="mb-1 block text-[11px] text-muted-foreground">{{ $t('task.task-referer') }}</label>
+              <Textarea id="edit-task-referer" v-model="form.referer" rows="2" class="resize-none text-xs" />
             </div>
             <div>
-              <label class="mb-1 block text-[11px] text-muted-foreground">{{ $t('task.task-cookie') }}</label>
-              <Textarea v-model="form.cookie" rows="2" class="resize-none text-xs" />
+              <label for="edit-task-cookie" class="mb-1 block text-[11px] text-muted-foreground">{{ $t('task.task-cookie') }}</label>
+              <Textarea id="edit-task-cookie" v-model="form.cookie" rows="2" class="resize-none text-xs" />
             </div>
             <div>
-              <label class="mb-1 block text-[11px] text-muted-foreground">{{ $t('task.task-authorization') }}</label>
-              <Textarea v-model="form.authorization" rows="2" class="resize-none text-xs" />
+              <label for="edit-task-authorization" class="mb-1 block text-[11px] text-muted-foreground">{{ $t('task.task-authorization') }}</label>
+              <Textarea id="edit-task-authorization" v-model="form.authorization" rows="2" class="resize-none text-xs" />
             </div>
           </TabsContent>
         </Tabs>
@@ -263,10 +269,12 @@ function normalizeLimit(raw: unknown): string {
 function splitHeaderLines(header: unknown): {
 	cookie: string;
 	authorization: string;
+	userAgent: string;
 	others: string[];
 } {
 	let cookie = "";
 	let authorization = "";
+	let userAgent = "";
 	const others: string[] = [];
 	const lines: string[] = Array.isArray(header)
 		? header.map(String)
@@ -284,11 +292,13 @@ function splitHeaderLines(header: unknown): {
 			cookie ||= value;
 		} else if (name === "authorization") {
 			authorization ||= value;
+		} else if (name === "user-agent") {
+			userAgent ||= value;
 		} else {
 			others.push(line.trim());
 		}
 	}
-	return { cookie, authorization, others };
+	return { cookie, authorization, userAgent, others };
 }
 
 function parseTrackerLines(text: string): string[] {
@@ -515,6 +525,7 @@ export default {
 				const {
 					cookie: headerCookie,
 					authorization,
+					userAgent: headerUserAgent,
 					others: otherHeaders,
 				} = splitHeaderLines(options.header);
 				const cookie =
@@ -522,7 +533,9 @@ export default {
 					headerCookie;
 				const announceList = this.task.bittorrent?.announceList || [];
 				const trackerLine = convertTrackerDataToLine(
-					announceList.map((tier: string[]) => tier[0]).filter(Boolean),
+					announceList
+						.flatMap((tier) => (Array.isArray(tier) ? tier : [tier]))
+						.filter(Boolean),
 				);
 				const optionTracker =
 					typeof options.btTracker === "string"
@@ -552,6 +565,7 @@ export default {
 							(options["all-proxy"] as string)) ||
 						"",
 					userAgent:
+						headerUserAgent ||
 						(typeof options.userAgent === "string" && options.userAgent) ||
 						(typeof options["user-agent"] === "string" &&
 							(options["user-agent"] as string)) ||
@@ -637,10 +651,14 @@ export default {
 
 			const headerChanged =
 				this.form.cookie.trim() !== this.snapshot.cookie.trim() ||
-				this.form.authorization.trim() !== this.snapshot.authorization.trim();
+				this.form.authorization.trim() !== this.snapshot.authorization.trim() ||
+				this.form.userAgent.trim() !== this.snapshot.userAgent.trim();
 			if (headerChanged) {
 				// Custom headers this dialog does not expose must survive the rewrite
 				const header: string[] = [...this.otherHeaders];
+				if (this.form.userAgent.trim()) {
+					header.push(`User-Agent: ${this.form.userAgent.trim()}`);
+				}
 				if (this.form.cookie.trim()) {
 					header.push(`Cookie: ${this.form.cookie.trim()}`);
 				}

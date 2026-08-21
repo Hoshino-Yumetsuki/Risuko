@@ -91,6 +91,7 @@
 	--input: var(--border-strong);
 	--ring: var(--primary);
 	--radius: 0.5rem;
+
 	color-scheme: light;
 	--app-font-family-system:
 		"Monospaced Number", "Chinese Quote", -apple-system, "BlinkMacSystemFont",

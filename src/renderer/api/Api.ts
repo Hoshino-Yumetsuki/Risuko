@@ -32,7 +32,6 @@ import {
 	formatOptionsForEngine,
 	separateConfig,
 } from "@shared/utils";
-import { toKebabCasePreserveNumbers } from "@shared/utils/configKeyCase";
 import logger from "@shared/utils/logger";
 import { invoke } from "@tauri-apps/api/core";
 import { isEmpty } from "lodash";
@@ -245,18 +244,7 @@ export default class Api {
 			enginePatch.trackers = patch.trackers;
 		}
 		if (patch.options !== undefined) {
-			const formatted: Record<string, unknown> = {};
-			for (const [key, value] of Object.entries(patch.options)) {
-				if (value === null) {
-					// Engine treats JSON null as "unset this option key"
-					formatted[toKebabCasePreserveNumbers(key)] = null;
-				} else if (Array.isArray(value)) {
-					formatted[toKebabCasePreserveNumbers(key)] = value.join("\n");
-				} else {
-					formatted[toKebabCasePreserveNumbers(key)] = `${value}`;
-				}
-			}
-			enginePatch.options = formatted;
+			enginePatch.options = formatOptionsForEngine(patch.options, true);
 		}
 		return invoke<{
 			restarted: boolean;

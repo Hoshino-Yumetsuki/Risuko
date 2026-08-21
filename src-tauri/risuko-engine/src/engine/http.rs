@@ -83,8 +83,9 @@ fn chunk_meta_path(part_path: &Path) -> PathBuf {
 }
 
 fn part_file_path(dir: &Path, out: &str) -> PathBuf {
+    let out = sanitize_filename(out);
     let name = if out.ends_with(PART_SUFFIX) {
-        out.to_string()
+        out
     } else {
         format!("{out}{PART_SUFFIX}")
     };
@@ -99,6 +100,9 @@ pub fn relocate_partial(
     new_dir: &str,
     new_out: &str,
 ) -> Result<bool, String> {
+    if old_out.trim().is_empty() || new_out.trim().is_empty() {
+        return Err("Cannot relocate partial: output name is empty".to_string());
+    }
     if old_dir == new_dir && old_out == new_out {
         return Ok(false);
     }
@@ -110,18 +114,22 @@ pub fn relocate_partial(
     if old_part == new_part {
         return Ok(true);
     }
-    if new_part.exists() {
+    let old_meta = chunk_meta_path(&old_part);
+    let new_meta = chunk_meta_path(&new_part);
+    if new_part.exists() || new_meta.exists() {
+        let dest = if new_part.exists() {
+            new_part.display().to_string()
+        } else {
+            new_meta.display().to_string()
+        };
         return Err(format!(
-            "Cannot relocate partial: destination already exists ({})",
-            new_part.display()
+            "Cannot relocate partial: destination already exists ({dest})"
         ));
     }
     if let Some(parent) = new_part.parent() {
         fs::create_dir_all(parent)
             .map_err(|e| format!("Failed to create destination dir {}: {e}", parent.display()))?;
     }
-    let old_meta = chunk_meta_path(&old_part);
-    let new_meta = chunk_meta_path(&new_part);
     fs::rename(&old_part, &new_part)
         .map_err(|e| format!("Failed to move partial {}: {e}", old_part.display()))?;
     if old_meta.exists() {
@@ -3424,6 +3432,52 @@ mod tests {
         )
         .unwrap();
         assert!(!moved);
+    }
+
+    #[test]
+    fn relocate_partial_strips_path_separators_from_output_names() {
+        let dir = tempfile::tempdir().unwrap();
+        let old_dir = dir.path().join("old");
+        let new_dir = dir.path().join("new");
+        std::fs::create_dir_all(&old_dir).unwrap();
+        std::fs::create_dir_all(&new_dir).unwrap();
+        std::fs::write(old_dir.join("safe.bin.part"), b"partial").unwrap();
+
+        let moved = relocate_partial(
+            old_dir.to_str().unwrap(),
+            "../safe.bin",
+            new_dir.to_str().unwrap(),
+            "subdir/renamed.bin",
+        )
+        .expect("relocate sanitized names");
+        assert!(moved);
+        assert!(new_dir.join("renamed.bin.part").exists());
+        assert!(!new_dir.join("subdir").exists());
+        assert!(!dir.path().join("safe.bin.part").exists());
+    }
+
+    #[test]
+    fn relocate_partial_rejects_orphan_chunks_sidecar() {
+        let dir = tempfile::tempdir().unwrap();
+        let old_dir = dir.path().join("old");
+        let new_dir = dir.path().join("new");
+        std::fs::create_dir_all(&old_dir).unwrap();
+        std::fs::create_dir_all(&new_dir).unwrap();
+        std::fs::write(old_dir.join("file.bin.part"), b"partial").unwrap();
+        let dest_part = new_dir.join("file.bin.part");
+        let mut dest_meta = dest_part.as_os_str().to_owned();
+        dest_meta.push(CHUNK_META_SUFFIX);
+        std::fs::write(std::path::PathBuf::from(dest_meta), b"{}").unwrap();
+
+        let err = relocate_partial(
+            old_dir.to_str().unwrap(),
+            "file.bin",
+            new_dir.to_str().unwrap(),
+            "file.bin",
+        )
+        .expect_err("orphan sidecar");
+        assert!(err.contains("already exists"));
+        assert!(old_dir.join("file.bin.part").exists());
     }
 
     #[test]

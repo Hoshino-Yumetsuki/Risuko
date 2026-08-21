@@ -245,3 +245,58 @@ async fn readd_of_complete_torrent_rehashes_existing_files() {
         other => panic!("expected Added, got {:?}", std::mem::discriminant(&other)),
     }
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn adding_first_tracker_to_trackerless_torrent_starts_polling() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let tracker_addr = listener.local_addr().unwrap();
+    let (seen_tx, seen_rx) = tokio::sync::oneshot::channel();
+    tokio::spawn(async move {
+        let Ok((mut stream, _)) = listener.accept().await else {
+            return;
+        };
+        let mut buf = vec![0u8; 4096];
+        let n = stream.read(&mut buf).await.unwrap_or(0);
+        let request = String::from_utf8_lossy(&buf[..n]);
+        let body = b"d8:intervali60e5:peers0:e";
+        let header = format!(
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            body.len()
+        );
+        let _ = stream.write_all(header.as_bytes()).await;
+        let _ = stream.write_all(body).await;
+        let _ = seen_tx.send(request.contains("info_hash"));
+    });
+
+    let tmp = tempfile::tempdir().unwrap();
+    let session = Session::new_with_opts(tmp.path().to_path_buf(), quiet_session_opts())
+        .await
+        .unwrap();
+    let bytes = make_torrent_bytes("no-trackers");
+    let added = session
+        .add_torrent(
+            AddTorrent::TorrentFileBytes(bytes.into()),
+            Some(AddTorrentOptions::default()),
+        )
+        .await
+        .expect("add trackerless torrent");
+    let handle = match added {
+        AddTorrentResponse::Added(_, handle) => handle,
+        other => panic!("expected Added, got {:?}", std::mem::discriminant(&other)),
+    };
+
+    let url = format!("http://{tracker_addr}/announce");
+    let added = session
+        .add_trackers(handle.info_hash(), vec![url])
+        .await
+        .expect("add first tracker");
+    assert_eq!(added, 1);
+
+    let announced = tokio::time::timeout(std::time::Duration::from_secs(3), seen_rx)
+        .await
+        .expect("tracker poller should announce immediately")
+        .expect("tracker request observed");
+    assert!(announced, "announce query should include info_hash");
+}

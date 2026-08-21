@@ -48,9 +48,10 @@ impl FilesystemStorage {
             .map(|f| f.path.clone())
             .collect();
         task::spawn_blocking(move || {
-            paths
-                .iter()
-                .any(|p| std::fs::metadata(p).is_ok_and(|m| m.len() > 0))
+            !paths.is_empty()
+                && paths
+                    .iter()
+                    .all(|p| std::fs::metadata(p).is_ok_and(|m| m.len() > 0))
         })
         .await
         .unwrap_or(false)
@@ -389,6 +390,14 @@ mod tests {
         assert!(!storage.has_existing_payload_files().await);
 
         tokio::fs::write(root.join("sub").join("b.bin"), b"x")
+            .await
+            .unwrap();
+        assert!(
+            !storage.has_existing_payload_files().await,
+            "partial payload must not skip a rescan"
+        );
+
+        tokio::fs::write(root.join("a.txt"), b"hello")
             .await
             .unwrap();
         assert!(storage.has_existing_payload_files().await);

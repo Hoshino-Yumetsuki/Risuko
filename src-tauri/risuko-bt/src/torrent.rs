@@ -648,7 +648,7 @@ async fn torrent_loop(
                     for url in &new_urls {
                         tracker_urls.push(url.clone());
                     }
-                    if !new_urls.is_empty() && !tracker_tasks.is_empty() {
+                    if !new_urls.is_empty() {
                         tracker_tasks.spawn_additional(
                             peer_src_tx.clone(),
                             new_urls,
