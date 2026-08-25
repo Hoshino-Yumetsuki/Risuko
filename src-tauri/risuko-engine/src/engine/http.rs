@@ -130,19 +130,93 @@ pub fn relocate_partial(
         fs::create_dir_all(parent)
             .map_err(|e| format!("Failed to create destination dir {}: {e}", parent.display()))?;
     }
-    fs::rename(&old_part, &new_part)
-        .map_err(|e| format!("Failed to move partial {}: {e}", old_part.display()))?;
-    if old_meta.exists() {
-        if let Err(e) = fs::rename(&old_meta, &new_meta) {
-            // Best-effort rollback so the next resume still finds the pair together
-            let _ = fs::rename(&new_part, &old_part);
-            return Err(format!(
-                "Failed to move chunk meta {}: {e}",
-                old_meta.display()
-            ));
-        }
-    }
+    relocate_file_pair(&old_part, &new_part, &old_meta, &new_meta)?;
     Ok(true)
+}
+
+fn is_cross_device_error(e: &std::io::Error) -> bool {
+    if e.kind() == std::io::ErrorKind::CrossesDevices {
+        return true;
+    }
+    match e.raw_os_error() {
+        #[cfg(unix)]
+        Some(18) => true,
+        #[cfg(windows)]
+        Some(17) => true,
+        _ => false,
+    }
+}
+
+fn sync_path(path: &Path) -> Result<(), String> {
+    let file = fs::File::open(path)
+        .map_err(|e| format!("Failed to open {} for sync: {e}", path.display()))?;
+    file.sync_data()
+        .map_err(|e| format!("Failed to sync {}: {e}", path.display()))
+}
+
+fn copy_file_durable(src: &Path, dst: &Path, what: &str) -> Result<(), String> {
+    fs::copy(src, dst).map_err(|e| {
+        format!(
+            "Failed to copy {what} {} -> {}: {e}",
+            src.display(),
+            dst.display()
+        )
+    })?;
+    sync_path(dst)
+}
+
+fn relocate_file_pair(
+    old_part: &Path,
+    new_part: &Path,
+    old_meta: &Path,
+    new_meta: &Path,
+) -> Result<(), String> {
+    let meta_exists = old_meta.exists();
+    match fs::rename(old_part, new_part) {
+        Ok(()) => {
+            if meta_exists {
+                if let Err(e) = fs::rename(old_meta, new_meta) {
+                    let _ = fs::rename(new_part, old_part);
+                    return Err(format!(
+                        "Failed to move chunk meta {}: {e}",
+                        old_meta.display()
+                    ));
+                }
+            }
+            Ok(())
+        }
+        Err(e) if is_cross_device_error(&e) => {
+            copy_file_durable(old_part, new_part, "partial").inspect_err(|_| {
+                let _ = fs::remove_file(new_part);
+            })?;
+            if meta_exists {
+                if let Err(meta_err) = copy_file_durable(old_meta, new_meta, "chunk meta") {
+                    let _ = fs::remove_file(new_meta);
+                    let _ = fs::remove_file(new_part);
+                    return Err(meta_err);
+                }
+            }
+            fs::remove_file(old_part).map_err(|e| {
+                format!(
+                    "Failed to remove source partial {}: {e}",
+                    old_part.display()
+                )
+            })?;
+            if meta_exists {
+                fs::remove_file(old_meta).map_err(|e| {
+                    format!(
+                        "Failed to remove source chunk meta {}: {e}",
+                        old_meta.display()
+                    )
+                })?;
+            }
+            Ok(())
+        }
+        Err(e) => Err(format!(
+            "Failed to move partial {}: {e}",
+            old_part.display()
+        )),
+    }
 }
 
 /// Sanitize a user-supplied filename to a single path component
@@ -3478,6 +3552,22 @@ mod tests {
         .expect_err("orphan sidecar");
         assert!(err.contains("already exists"));
         assert!(old_dir.join("file.bin.part").exists());
+    }
+
+    #[test]
+    fn detects_cross_device_rename_errors() {
+        #[cfg(unix)]
+        {
+            let err = std::io::Error::from_raw_os_error(18);
+            assert!(is_cross_device_error(&err));
+        }
+        #[cfg(windows)]
+        {
+            let err = std::io::Error::from_raw_os_error(17);
+            assert!(is_cross_device_error(&err));
+        }
+        let other = std::io::Error::other("permission denied");
+        assert!(!is_cross_device_error(&other));
     }
 
     #[test]

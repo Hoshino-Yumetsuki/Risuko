@@ -40,6 +40,37 @@ fn next_worker_epoch() -> u64 {
     WORKER_EPOCH.fetch_add(1, Ordering::Relaxed)
 }
 
+fn publish_starting_worker(
+    starting: &parking_lot::Mutex<HashMap<String, (u64, CancellationToken)>>,
+    gid: &str,
+    epoch: u64,
+    token: CancellationToken,
+) {
+    starting.lock().insert(gid.to_string(), (epoch, token));
+}
+
+fn clear_starting_worker(
+    starting: &parking_lot::Mutex<HashMap<String, (u64, CancellationToken)>>,
+    gid: &str,
+    epoch: u64,
+) {
+    let mut guard = starting.lock();
+    if guard.get(gid).map(|(e, _)| *e) == Some(epoch) {
+        guard.remove(gid);
+    }
+}
+
+async fn register_active_download(
+    active: &Arc<RwLock<HashMap<String, ActiveDownload>>>,
+    starting: &parking_lot::Mutex<HashMap<String, (u64, CancellationToken)>>,
+    gid: String,
+    ad: ActiveDownload,
+) {
+    let epoch = ad.epoch;
+    active.write().await.insert(gid.clone(), ad);
+    clear_starting_worker(starting, &gid, epoch);
+}
+
 fn ed2k_kad_task_status(status: &KadLookupStatus) -> Ed2kKadTaskStatus {
     let state = match status.state {
         KadState::Disabled => "disabled",
@@ -449,12 +480,11 @@ impl Drop for RevWriteGuard<'_> {
 pub struct TaskManager {
     config_dir: PathBuf,
     p2p_reload_lock: tokio::sync::Mutex<()>,
-    /// Monotonic manager-side route epoch used to reject resolver jobs that
-    /// were queued before a P2P profile replacement.
     p2p_route_generation: Arc<AtomicU64>,
     tasks: Arc<RevLock>,
     saved_rev: AtomicU64,
     active_downloads: Arc<RwLock<HashMap<String, ActiveDownload>>>,
+    starting_workers: Arc<parking_lot::Mutex<HashMap<String, (u64, CancellationToken)>>>,
     torrent_ids: Arc<RwLock<HashMap<String, usize>>>,
     pending_magnets: Arc<RwLock<HashSet<String>>>,
     purged_hashes: Arc<RwLock<HashSet<String>>>,
@@ -668,6 +698,7 @@ impl TaskManager {
             // MAX so the first auto-save always runs once (rev starts at 0)
             saved_rev: AtomicU64::new(u64::MAX),
             active_downloads: Arc::new(RwLock::new(HashMap::new())),
+            starting_workers: Arc::new(parking_lot::Mutex::new(HashMap::new())),
             torrent_ids: Arc::new(RwLock::new(HashMap::new())),
             pending_magnets: Arc::new(RwLock::new(HashSet::new())),
             purged_hashes: Arc::new(RwLock::new(purged_hashes)),
@@ -1658,15 +1689,25 @@ impl TaskManager {
 
         let counters = Counters::new(task.total_length, 0);
         let worker_epoch = next_worker_epoch();
+        publish_starting_worker(
+            &self.starting_workers,
+            &gid,
+            worker_epoch,
+            counters.cancel_token.clone(),
+        );
+        let starting = self.starting_workers.clone();
         tokio::spawn(async move {
-            active.write().await.insert(
+            register_active_download(
+                &active,
+                &starting,
                 gid.clone(),
                 counters.to_active(
                     worker_epoch,
                     Vec::new(),
                     Arc::new(parking_lot::Mutex::new(None)),
                 ),
-            );
+            )
+            .await;
 
             let still_active = tasks
                 .read()
@@ -1782,15 +1823,25 @@ impl TaskManager {
         let output_paths_for_worker = output_paths.clone();
         let counters = Counters::new(task.total_length, 0);
         let worker_epoch = next_worker_epoch();
+        publish_starting_worker(
+            &self.starting_workers,
+            &gid,
+            worker_epoch,
+            counters.cancel_token.clone(),
+        );
+        let starting = self.starting_workers.clone();
         tokio::spawn(async move {
-            active.write().await.insert(
+            register_active_download(
+                &active,
+                &starting,
                 gid.clone(),
                 counters.to_active(
                     worker_epoch,
                     Vec::new(),
                     Arc::new(parking_lot::Mutex::new(None)),
                 ),
-            );
+            )
+            .await;
             let result = super::usenet_worker::run_usenet_download_with_resolver_and_capacity(
                 &task_snapshot,
                 &merged_options,
@@ -2143,15 +2194,25 @@ impl TaskManager {
             Arc::new(parking_lot::Mutex::new(None));
 
         let worker_epoch = next_worker_epoch();
+        publish_starting_worker(
+            &self.starting_workers,
+            &gid,
+            worker_epoch,
+            counters.cancel_token.clone(),
+        );
+        let starting = self.starting_workers.clone();
         tokio::spawn(async move {
-            active.write().await.insert(
+            register_active_download(
+                &active,
+                &starting,
                 gid.clone(),
                 counters.to_active(
                     worker_epoch,
                     chunk_completed.clone(),
                     adopted_filename.clone(),
                 ),
-            );
+            )
+            .await;
 
             let c = counters.clone();
             let download_result = http::run_http_download_multi(
@@ -2303,6 +2364,8 @@ impl TaskManager {
 
         let agg = Counters::new(0, 0);
         let worker_epoch = next_worker_epoch();
+        publish_starting_worker(&self.starting_workers, &gid, worker_epoch, parent.clone());
+        let starting = self.starting_workers.clone();
         tokio::spawn(async move {
             let mut ad = agg.to_active(
                 worker_epoch,
@@ -2311,7 +2374,7 @@ impl TaskManager {
             );
             ad.cancel_token = parent;
             ad.metalink_files = file_counters.clone();
-            active.write().await.insert(gid.clone(), ad);
+            register_active_download(&active, &starting, gid.clone(), ad).await;
 
             let futs = specs.into_iter().map(|spec| {
                 let gl = global_limiter.clone();
@@ -2370,6 +2433,13 @@ impl TaskManager {
 
         let counters = Counters::new(task.total_length, 0);
         let worker_epoch = next_worker_epoch();
+        publish_starting_worker(
+            &self.starting_workers,
+            &gid,
+            worker_epoch,
+            counters.cancel_token.clone(),
+        );
+        let starting = self.starting_workers.clone();
         tokio::spawn(async move {
             let mut active_download = counters.to_active(
                 worker_epoch,
@@ -2377,7 +2447,7 @@ impl TaskManager {
                 Arc::new(parking_lot::Mutex::new(None)),
             );
             active_download.kad_status = kad_status.clone();
-            active.write().await.insert(gid.clone(), active_download);
+            register_active_download(&active, &starting, gid.clone(), active_download).await;
 
             let still_active = tasks
                 .read()
@@ -2489,15 +2559,25 @@ impl TaskManager {
         });
 
         let worker_epoch = next_worker_epoch();
+        publish_starting_worker(
+            &self.starting_workers,
+            &gid,
+            worker_epoch,
+            counters.cancel_token.clone(),
+        );
+        let starting = self.starting_workers.clone();
         tokio::spawn(async move {
-            active.write().await.insert(
+            register_active_download(
+                &active,
+                &starting,
                 gid.clone(),
                 counters.to_active(
                     worker_epoch,
                     Vec::new(),
                     Arc::new(parking_lot::Mutex::new(None)),
                 ),
-            );
+            )
+            .await;
 
             // Snapshot the global limit at launch time for this yt-dlp child; runtime max-overall-download-limit changes do not reconfigure already-running media subprocesses
             let global_rate_limit = global_limiter.limit_bps();
@@ -2562,15 +2642,25 @@ impl TaskManager {
 
         let counters = Counters::new(0, 0);
         let worker_epoch = next_worker_epoch();
+        publish_starting_worker(
+            &self.starting_workers,
+            &gid,
+            worker_epoch,
+            counters.cancel_token.clone(),
+        );
+        let starting = self.starting_workers.clone();
         tokio::spawn(async move {
-            active.write().await.insert(
+            register_active_download(
+                &active,
+                &starting,
                 gid.clone(),
                 counters.to_active(
                     worker_epoch,
                     Vec::new(),
                     Arc::new(parking_lot::Mutex::new(None)),
                 ),
-            );
+            )
+            .await;
 
             let c = counters.clone();
             let download_result = super::m3u8::run_m3u8_download(
@@ -2623,15 +2713,25 @@ impl TaskManager {
 
         let counters = Counters::new(0, 1);
         let worker_epoch = next_worker_epoch();
+        publish_starting_worker(
+            &self.starting_workers,
+            &gid,
+            worker_epoch,
+            counters.cancel_token.clone(),
+        );
+        let starting = self.starting_workers.clone();
         tokio::spawn(async move {
-            active.write().await.insert(
+            register_active_download(
+                &active,
+                &starting,
                 gid.clone(),
                 counters.to_active(
                     worker_epoch,
                     Vec::new(),
                     Arc::new(parking_lot::Mutex::new(None)),
                 ),
-            );
+            )
+            .await;
 
             let c = counters.clone();
             let download_result = super::ftp::run_ftp_download(
@@ -3605,10 +3705,25 @@ impl TaskManager {
             .collect()
     }
 
-    async fn wait_for_worker_exit(&self, gid: &str) -> bool {
+    async fn worker_epoch_and_cancel(&self, gid: &str) -> Option<(u64, CancellationToken)> {
+        if let Some(ad) = self.active_downloads.read().await.get(gid) {
+            return Some((ad.epoch, ad.cancel_token.clone()));
+        }
+        self.starting_workers.lock().get(gid).cloned()
+    }
+
+    async fn wait_for_worker_epoch_exit(&self, gid: &str, epoch: u64) -> bool {
         let deadline = tokio::time::Instant::now() + WORKER_EXIT_TIMEOUT;
         loop {
-            if !self.active_downloads.read().await.contains_key(gid) {
+            let in_active = self
+                .active_downloads
+                .read()
+                .await
+                .get(gid)
+                .map(|ad| ad.epoch)
+                == Some(epoch);
+            let in_starting = self.starting_workers.lock().get(gid).map(|(e, _)| *e) == Some(epoch);
+            if !in_active && !in_starting {
                 return true;
             }
             if tokio::time::Instant::now() >= deadline {
@@ -3723,6 +3838,7 @@ impl TaskManager {
             primary_uri_changed,
             options_need_restart,
             tracker_urls_to_add,
+            old_primary_uri,
             primary_uri,
         ) = {
             let mut tasks = self.tasks.write().await;
@@ -3956,6 +4072,7 @@ impl TaskManager {
                 primary_uri_changed,
                 options_need_restart,
                 tracker_urls_to_add,
+                old_primary,
                 task.uris.first().cloned().unwrap_or_default(),
             )
         };
@@ -4008,28 +4125,29 @@ impl TaskManager {
                 }
             }
             if restarted {
-                let active = self.active_downloads.read().await;
-                if let Some(ad) = active.get(gid) {
-                    ad.cancel_token.cancel();
+                if let Some((epoch, token)) = self.worker_epoch_and_cancel(gid).await {
+                    token.cancel();
+                    if !self.wait_for_worker_epoch_exit(gid, epoch).await {
+                        {
+                            let mut tasks = self.tasks.write().await;
+                            if let Some(task) = tasks.iter_mut().find(|t| t.gid == gid) {
+                                if task.status == TaskStatus::Waiting {
+                                    task.status = TaskStatus::Active;
+                                }
+                            }
+                        }
+                        return Err(format!(
+                            "Timed out waiting for worker to stop after {WORKER_EXIT_TIMEOUT:?}"
+                        ));
+                    }
                 }
             }
-        }
-
-        // The old worker keeps writing to its `.part` until it observes the
-        // cancellation
-        let worker_stopped = !restarted || self.wait_for_worker_exit(gid).await;
-        if !worker_stopped {
-            tracing::warn!(
-                "[task:{}] cancelled worker still running after {:?}",
-                gid,
-                WORKER_EXIT_TIMEOUT
-            );
         }
 
         let mut progress_preserved = true;
         if path_changed && kind != TaskKind::Torrent {
             let relocate_old_out = if old_out.is_empty() {
-                http::sanitize_filename(&http::infer_filename_from_uri(&primary_uri))
+                http::sanitize_filename(&http::infer_filename_from_uri(&old_primary_uri))
             } else {
                 old_out.clone()
             };
@@ -4040,7 +4158,7 @@ impl TaskManager {
             };
             if relocate_old_out.is_empty() || relocate_new_out.is_empty() {
                 progress_preserved = false;
-            } else if worker_stopped {
+            } else {
                 match http::relocate_partial(
                     &old_dir,
                     &relocate_old_out,
@@ -4057,9 +4175,6 @@ impl TaskManager {
                         progress_preserved = false;
                     }
                 }
-            } else {
-                // Renaming under a live worker would race its writes
-                progress_preserved = false;
             }
         }
         // Adding mirrors while keeping the primary URL is safe
@@ -4067,7 +4182,7 @@ impl TaskManager {
             progress_preserved = false;
         }
 
-        if needs_restart && worker_stopped {
+        if needs_restart {
             self.reconcile_active_set().await;
         }
 
@@ -5429,6 +5544,7 @@ mod tests {
             tasks: Arc::new(RevLock::new(tasks)),
             saved_rev: AtomicU64::new(u64::MAX),
             active_downloads: Arc::new(RwLock::new(HashMap::new())),
+            starting_workers: Arc::new(parking_lot::Mutex::new(HashMap::new())),
             torrent_ids: Arc::new(RwLock::new(HashMap::new())),
             pending_magnets: Arc::new(RwLock::new(HashSet::new())),
             purged_hashes: Arc::new(RwLock::new(HashSet::new())),
@@ -6556,6 +6672,99 @@ mod tests {
         assert_eq!(
             std::fs::read(new_dir.join("file.bin.part")).unwrap(),
             b"partial"
+        );
+    }
+
+    #[tokio::test]
+    async fn update_task_relocates_inferred_name_using_old_uri_when_primary_changes() {
+        let root = tempfile::TempDir::new().unwrap();
+        let old_dir = root.path().join("old");
+        let new_dir = root.path().join("new");
+        std::fs::create_dir_all(&old_dir).unwrap();
+        std::fs::create_dir_all(&new_dir).unwrap();
+        std::fs::write(old_dir.join("file.bin.part"), b"partial").unwrap();
+
+        let mut task = DownloadTask::new_http(
+            "infer-uri".into(),
+            vec!["https://a.example/file.bin".into()],
+            old_dir.to_string_lossy().into_owned(),
+            None,
+            Map::new(),
+        );
+        task.out = String::new();
+        task.status = TaskStatus::Paused;
+        let mgr = make_test_manager(vec![task]);
+
+        let outcome = mgr
+            .update_task(
+                "infer-uri",
+                TaskPatch {
+                    dir: Some(new_dir.to_string_lossy().into_owned()),
+                    uris: Some(vec!["https://b.example/other.bin".into()]),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("relocate inferred with new uri");
+
+        assert!(!old_dir.join("file.bin.part").exists());
+        assert!(!new_dir.join("file.bin.part").exists());
+        assert_eq!(
+            std::fs::read(new_dir.join("other.bin.part")).unwrap(),
+            b"partial"
+        );
+        assert!(!outcome.progress_preserved);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn update_task_errors_when_cancelled_worker_does_not_exit() {
+        let mut task = DownloadTask::new_http(
+            "stuck1".into(),
+            vec!["https://a.example/file.bin".into()],
+            "/old".into(),
+            None,
+            Map::new(),
+        );
+        task.out = "file.bin".into();
+        task.status = TaskStatus::Active;
+        let mgr = make_test_manager(vec![task]);
+        let counters = Counters::new(0, 0);
+        mgr.active_downloads.write().await.insert(
+            "stuck1".into(),
+            counters.to_active(
+                next_worker_epoch(),
+                Vec::new(),
+                Arc::new(parking_lot::Mutex::new(None)),
+            ),
+        );
+
+        let update = tokio::spawn(async move {
+            mgr.update_task(
+                "stuck1",
+                TaskPatch {
+                    dir: Some("/new".into()),
+                    ..Default::default()
+                },
+            )
+            .await
+        });
+        let mut elapsed = Duration::ZERO;
+        while elapsed < WORKER_EXIT_TIMEOUT + Duration::from_secs(1) {
+            tokio::task::yield_now().await;
+            tokio::time::advance(Duration::from_millis(20)).await;
+            elapsed += Duration::from_millis(20);
+            if update.is_finished() {
+                break;
+            }
+        }
+
+        let err = update
+            .await
+            .expect("join")
+            .expect_err("stale worker must fail the restart");
+        assert!(
+            err.contains("Timed out waiting for worker to stop"),
+            "err={err}"
         );
     }
 

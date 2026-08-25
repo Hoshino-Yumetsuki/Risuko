@@ -162,7 +162,7 @@ export default {
 	"edit-tab-sources": "Nguồn",
 	"edit-tab-trackers": "Tracker",
 	"edit-tab-network": "Mạng",
-	"edit-mirrors": "Gương",
+	"edit-mirrors": "Máy chủ gương",
 	"edit-mirror-add": "Thêm",
 	"edit-trackers-hint":
 		"Thêm URL tracker (mỗi dòng một URL). Tracker mới được thông báo ngay mà không làm gián đoạn torrent.",

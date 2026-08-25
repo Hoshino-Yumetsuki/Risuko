@@ -18,6 +18,7 @@ import {
 	pick,
 } from "lodash";
 import { toKebabCasePreserveNumbers } from "./configKeyCase";
+import { buildMagnetLink } from "./magnetLink";
 
 export { bytesToSize } from "./format";
 export { formatUsenetRepairFailure } from "./usenet";
@@ -415,29 +416,6 @@ export const getTaskUri = (task, withTracker = false) => {
 	}
 
 	return result;
-};
-
-const buildMagnetLink = (task, withTracker = false) => {
-	const { bittorrent, infoHash } = task;
-	const { info } = bittorrent;
-
-	const params = [`magnet:?xt=urn:btih:${infoHash}`];
-	if (info?.name) {
-		params.push(`dn=${encodeURI(info.name)}`);
-	}
-
-	if (withTracker) {
-		(bittorrent.announceList || []).forEach((tier) => {
-			const urls = Array.isArray(tier) ? tier : [tier];
-			for (const tracker of urls) {
-				if (tracker) {
-					params.push(`tr=${encodeURI(tracker)}`);
-				}
-			}
-		});
-	}
-
-	return params.join("&");
 };
 
 export const checkTaskIsBT = (task?: Partial<DownloadTask> | null) =>

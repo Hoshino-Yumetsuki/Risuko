@@ -33,7 +33,7 @@
           <TabsContent v-if="!isBT" value="general" class="mt-0 flex flex-col gap-3">
             <div>
               <label for="edit-task-out" class="mb-1 block text-[11px] text-muted-foreground">{{ $t('task.task-out') }}</label>
-              <Input id="edit-task-out" v-model="form.out" auto-complete="off" :placeholder="$t('task.task-out-tips')" />
+              <Input id="edit-task-out" v-model="form.out" autocomplete="off" :placeholder="$t('task.task-out-tips')" />
             </div>
             <div>
               <label for="edit-task-dir" class="mb-1 block text-[11px] text-muted-foreground">{{ $t('task.task-dir') }}</label>
@@ -62,7 +62,7 @@
                 <Input
                   id="edit-task-speed-limit"
                   v-model="form.maxDownloadLimit"
-                  auto-complete="off"
+                  autocomplete="off"
                   :placeholder="$t('task.edit-speed-limit-placeholder')"
                 />
               </div>
@@ -355,6 +355,7 @@ export default {
 			snapshot: emptyForm() as Snapshot,
 			existingTrackers: [] as string[],
 			otherHeaders: [] as string[],
+			reloadGeneration: 0,
 		};
 	},
 	computed: {
@@ -514,13 +515,21 @@ export default {
 			if (!this.task) {
 				return;
 			}
+			const task = this.task;
+			const generation = ++this.reloadGeneration;
 			this.loading = true;
 			this.activeTab = this.isBT ? "trackers" : "general";
 			this.mirrorDraft = "";
 			try {
 				const options = (await useTaskStore().getTaskOption(
-					this.task.gid,
+					task.gid,
 				)) as Record<string, unknown>;
+				if (
+					generation !== this.reloadGeneration ||
+					this.task?.gid !== task.gid
+				) {
+					return;
+				}
 				const uris = this.taskUris();
 				const {
 					cookie: headerCookie,
@@ -585,12 +594,20 @@ export default {
 					mirrors: [...form.mirrors],
 				};
 			} catch (err) {
+				if (
+					generation !== this.reloadGeneration ||
+					this.task?.gid !== task.gid
+				) {
+					return;
+				}
 				this.$msg?.error?.(
 					(err as Error)?.message || this.$t("task.edit-fail"),
 				);
 				this.close();
 			} finally {
-				this.loading = false;
+				if (generation === this.reloadGeneration) {
+					this.loading = false;
+				}
 			}
 		},
 		buildPatch(): {

@@ -51,7 +51,7 @@ impl FilesystemStorage {
             !paths.is_empty()
                 && paths
                     .iter()
-                    .all(|p| std::fs::metadata(p).is_ok_and(|m| m.len() > 0))
+                    .any(|p| std::fs::metadata(p).is_ok_and(|m| m.len() > 0))
         })
         .await
         .unwrap_or(false)
@@ -393,8 +393,8 @@ mod tests {
             .await
             .unwrap();
         assert!(
-            !storage.has_existing_payload_files().await,
-            "partial payload must not skip a rescan"
+            storage.has_existing_payload_files().await,
+            "partial payload must still trigger a recovery scan"
         );
 
         tokio::fs::write(root.join("a.txt"), b"hello")
