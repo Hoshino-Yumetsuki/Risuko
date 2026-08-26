@@ -21,3 +21,19 @@ test("encodes tracker query delimiters as a single magnet parameter value", () =
 		false,
 	);
 });
+
+test("encodes display-name reserved characters as a single magnet parameter", () => {
+	const name = "a&b?c#d";
+	const uri = buildMagnetLink({
+		bittorrent: {
+			info: { name },
+			announceList: [],
+		},
+		infoHash: "abc",
+	});
+
+	assert.equal(uri, `magnet:?xt=urn:btih:abc&dn=${encodeURIComponent(name)}`);
+	assert.equal(uri.includes("&b"), false, uri);
+	assert.equal(uri.includes("?c"), false, uri);
+	assert.equal(uri.includes("#d"), false, uri);
+});

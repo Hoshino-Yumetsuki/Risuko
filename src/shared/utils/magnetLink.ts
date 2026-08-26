@@ -4,7 +4,7 @@ export const buildMagnetLink = (task, withTracker = false) => {
 
 	const params = [`magnet:?xt=urn:btih:${infoHash}`];
 	if (info?.name) {
-		params.push(`dn=${encodeURI(info.name)}`);
+		params.push(`dn=${encodeURIComponent(info.name)}`);
 	}
 
 	if (withTracker) {

@@ -196,19 +196,24 @@ fn relocate_file_pair(
                     return Err(meta_err);
                 }
             }
-            fs::remove_file(old_part).map_err(|e| {
-                format!(
+            if let Some(parent) = new_part.parent() {
+                if let Ok(directory) = fs::File::open(parent) {
+                    let _ = directory.sync_all();
+                }
+            }
+            if let Err(e) = fs::remove_file(old_part) {
+                tracing::warn!(
                     "Failed to remove source partial {}: {e}",
                     old_part.display()
-                )
-            })?;
+                );
+            }
             if meta_exists {
-                fs::remove_file(old_meta).map_err(|e| {
-                    format!(
+                if let Err(e) = fs::remove_file(old_meta) {
+                    tracing::warn!(
                         "Failed to remove source chunk meta {}: {e}",
                         old_meta.display()
-                    )
-                })?;
+                    );
+                }
             }
             Ok(())
         }

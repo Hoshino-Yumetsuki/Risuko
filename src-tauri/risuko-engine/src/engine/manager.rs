@@ -1965,7 +1965,9 @@ impl TaskManager {
         };
         let (active_count, busy_gids) = {
             let active = self.active_downloads.read().await;
-            (active.len(), active.keys().cloned().collect::<HashSet<_>>())
+            let mut busy_gids = active.keys().cloned().collect::<HashSet<_>>();
+            busy_gids.extend(self.starting_workers.lock().keys().cloned());
+            (active.len(), busy_gids)
         };
 
         if active_count >= max_concurrent {
