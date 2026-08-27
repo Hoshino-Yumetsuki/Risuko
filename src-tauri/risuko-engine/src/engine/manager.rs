@@ -1967,7 +1967,7 @@ impl TaskManager {
             let active = self.active_downloads.read().await;
             let mut busy_gids = active.keys().cloned().collect::<HashSet<_>>();
             busy_gids.extend(self.starting_workers.lock().keys().cloned());
-            (active.len(), busy_gids)
+            (busy_gids.len(), busy_gids)
         };
 
         if active_count >= max_concurrent {
@@ -3708,10 +3708,14 @@ impl TaskManager {
     }
 
     async fn worker_epoch_and_cancel(&self, gid: &str) -> Option<(u64, CancellationToken)> {
-        if let Some(ad) = self.active_downloads.read().await.get(gid) {
-            return Some((ad.epoch, ad.cancel_token.clone()));
+        if let Some(entry) = self.starting_workers.lock().get(gid).cloned() {
+            return Some(entry);
         }
-        self.starting_workers.lock().get(gid).cloned()
+        self.active_downloads
+            .read()
+            .await
+            .get(gid)
+            .map(|ad| (ad.epoch, ad.cancel_token.clone()))
     }
 
     async fn wait_for_worker_epoch_exit(&self, gid: &str, epoch: u64) -> bool {
