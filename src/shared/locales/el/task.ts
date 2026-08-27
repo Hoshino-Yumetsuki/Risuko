@@ -161,4 +161,26 @@ export default {
 	"batch-remove-item": "Αφαίρεση",
 	"torrent-preview-folder-toggle": "Εναλλαγή φακέλου",
 	"clear-filter": "Εκκαθάριση φίλτρου",
+	"edit-task": "Επεξεργασία…",
+	"edit-dialog-title": "Επεξεργασία εργασίας",
+	"edit-tab-general": "Γενικά",
+	"edit-tab-sources": "Πηγές",
+	"edit-tab-trackers": "Trackers",
+	"edit-tab-network": "Δίκτυο",
+	"edit-mirrors": "Καθρέφτες",
+	"edit-mirror-add": "Προσθήκη",
+	"edit-trackers-hint":
+		"Προσθέστε URL tracker (ένα ανά γραμμή). Οι νέοι tracker ανακοινώνονται αμέσως χωρίς διακοπή του torrent.",
+	"edit-restart-warning":
+		"Αυτή η εργασία γίνεται λήψη. Η αποθήκευση θα επανεκκινήσει σύντομα τον εργαζόμενο ώστε να εφαρμοστούν οι νέες ρυθμίσεις. Η πρόοδος διατηρείται όταν είναι δυνατό.",
+	"edit-progress-warning":
+		"Η αλλαγή του κύριου URL λήψης μπορεί να απορρίψει τα δεδομένα συνέχισης αν το νέο αρχείο δεν είναι πανομοιότυπο ανά byte (διαφορετικό ETag/μήκος).",
+	"edit-confirm": "Αποθήκευση",
+	"edit-success": "Η εργασία ενημερώθηκε",
+	"edit-fail": "Αποτυχία ενημέρωσης εργασίας",
+	"edit-no-changes": "Δεν υπάρχουν αλλαγές για αποθήκευση",
+	"edit-speed-limit": "Όριο ταχύτητας",
+	"edit-speed-limit-placeholder": "0 ή κενό = χωρίς όριο (π.χ. 500K)",
+	"edit-primary-uri": "URL λήψης",
+	"edit-primary-uri-placeholder": "Κύριο URL λήψης",
 };

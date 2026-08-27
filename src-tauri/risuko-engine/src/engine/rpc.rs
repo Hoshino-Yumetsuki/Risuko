@@ -805,6 +805,22 @@ fn dispatch_method<'a>(
                 Ok(Value::String("OK".into()))
             }
 
+            "risuko.updateTask" => {
+                let gid = resolve_gid(&params, &state.manager).await?;
+                let patch = params
+                    .get(1)
+                    .cloned()
+                    .unwrap_or(Value::Object(serde_json::Map::new()));
+                let patch: crate::engine::task::TaskPatch = serde_json::from_value(patch)
+                    .map_err(|e| RpcError::from(format!("Invalid task patch: {e}")))?;
+                let outcome = state
+                    .manager
+                    .update_task(&gid, patch)
+                    .await
+                    .map_err(RpcError::from)?;
+                serde_json::to_value(outcome).map_err(|e| RpcError::from(e.to_string()))
+            }
+
             "risuko.changeGlobalOption" => {
                 let opts = params
                     .first()
@@ -1041,6 +1057,7 @@ fn list_methods() -> Value {
         "tellStopped",
         "getGlobalStat",
         "changeOption",
+        "updateTask",
         "changeGlobalOption",
         "getOption",
         "getGlobalOption",

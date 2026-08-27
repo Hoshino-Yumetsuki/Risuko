@@ -160,4 +160,26 @@ export default {
 	"batch-remove-item": "Elimină",
 	"torrent-preview-folder-toggle": "Comută folderul",
 	"clear-filter": "Șterge filtrul",
+	"edit-task": "Editează…",
+	"edit-dialog-title": "Editează sarcina",
+	"edit-tab-general": "General",
+	"edit-tab-sources": "Surse",
+	"edit-tab-trackers": "Trackere",
+	"edit-tab-network": "Rețea",
+	"edit-mirrors": "Oglinzi",
+	"edit-mirror-add": "Adaugă",
+	"edit-trackers-hint":
+		"Adaugă URL-uri de tracker (câte unul pe linie). Trackerele noi sunt anunțate imediat, fără a întrerupe torrentul.",
+	"edit-restart-warning":
+		"Această sarcină se descarcă. Salvarea va reporni scurt procesul pentru a aplica noile setări. Progresul este păstrat când este posibil.",
+	"edit-progress-warning":
+		"Schimbarea URL-ului principal de descărcare poate elimina datele de reluare dacă fișierul nou nu este identic octet cu octet (ETag sau lungime diferite).",
+	"edit-confirm": "Salvează",
+	"edit-success": "Sarcina a fost actualizată",
+	"edit-fail": "Actualizarea sarcinii a eșuat",
+	"edit-no-changes": "Nu există modificări de salvat",
+	"edit-speed-limit": "Limită de viteză",
+	"edit-speed-limit-placeholder": "0 sau gol = nelimitat (ex. 500K)",
+	"edit-primary-uri": "URL de descărcare",
+	"edit-primary-uri-placeholder": "URL principal de descărcare",
 };

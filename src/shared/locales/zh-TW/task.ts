@@ -321,4 +321,26 @@ export default {
 	"filter-image": "選取 圖片檔案",
 	"filter-document": "選取 文件檔案",
 	"clear-filter": "清除篩選",
+	"edit-task": "編輯…",
+	"edit-dialog-title": "編輯任務",
+	"edit-tab-general": "一般",
+	"edit-tab-sources": "來源",
+	"edit-tab-trackers": "Trackers",
+	"edit-tab-network": "網路",
+	"edit-mirrors": "鏡像",
+	"edit-mirror-add": "新增",
+	"edit-trackers-hint":
+		"新增 Tracker 網址（每行一個）。新 Tracker 會立即生效，無需中斷種子下載。",
+	"edit-restart-warning":
+		"此任務正在下載。儲存後會短暫重新啟動下載執行緒以套用新設定，進度會盡量保留。",
+	"edit-progress-warning":
+		"更換主要下載網址可能導致無法續傳（若新檔案與原檔案不完全一致，例如 ETag 或長度不同）。",
+	"edit-confirm": "儲存",
+	"edit-success": "任務已更新",
+	"edit-fail": "更新任務失敗",
+	"edit-no-changes": "沒有需要儲存的變更",
+	"edit-speed-limit": "速度限制",
+	"edit-speed-limit-placeholder": "0 或留空表示不限速（例如 500K）",
+	"edit-primary-uri": "下載網址",
+	"edit-primary-uri-placeholder": "主要下載網址",
 };

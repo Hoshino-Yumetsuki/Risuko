@@ -156,4 +156,26 @@ export default {
 	"batch-remove-item": "Премахни",
 	"torrent-preview-folder-toggle": "Превключи папката",
 	"clear-filter": "Изчисти филтъра",
+	"edit-task": "Редактиране…",
+	"edit-dialog-title": "Редактиране на задача",
+	"edit-tab-general": "Общи",
+	"edit-tab-sources": "Източници",
+	"edit-tab-trackers": "Тракери",
+	"edit-tab-network": "Мрежа",
+	"edit-mirrors": "Огледала",
+	"edit-mirror-add": "Добавяне",
+	"edit-trackers-hint":
+		"Добавете URL адреси на тракери (по един на ред). Новите тракери се обявяват веднага, без да прекъсват торента.",
+	"edit-restart-warning":
+		"Тази задача се изтегля. Запазването ще рестартира за кратко работника, за да влязат в сила новите настройки. Напредъкът се запазва, когато е възможно.",
+	"edit-progress-warning":
+		"Смяната на основния URL за изтегляне може да отхвърли данните за възобновяване, ако новият файл не е идентичен байт по байт (различен ETag/дължина).",
+	"edit-confirm": "Запазване",
+	"edit-success": "Задачата е обновена",
+	"edit-fail": "Неуспешно обновяване на задачата",
+	"edit-no-changes": "Няма промени за запазване",
+	"edit-speed-limit": "Ограничение на скоростта",
+	"edit-speed-limit-placeholder": "0 или празно = без ограничение (напр. 500K)",
+	"edit-primary-uri": "URL за изтегляне",
+	"edit-primary-uri-placeholder": "Основен URL за изтегляне",
 };

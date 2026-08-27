@@ -768,6 +768,21 @@ impl TorrentEngine {
             .map_err(|e| format!("Failed to unpause: {}", e))
     }
 
+    pub async fn add_trackers(
+        &self,
+        torrent_id: usize,
+        urls: Vec<String>,
+    ) -> Result<usize, String> {
+        let session = self.get_session()?;
+        let handle = session
+            .get(bt::TorrentIdOrHash::Id(torrent_id))
+            .ok_or("Torrent not found")?;
+        session
+            .add_trackers(handle.info_hash(), urls)
+            .await
+            .map_err(|e| format!("Failed to add trackers: {}", e))
+    }
+
     pub async fn reconfigure_p2p_proxy(
         &self,
         proxy: Option<risuko_http::ProxyConnector>,

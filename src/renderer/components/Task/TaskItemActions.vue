@@ -70,6 +70,7 @@
       <Play v-else-if="action === 'RESUME' || action === 'START_NOW'" :size="14" />
       <Clock v-else-if="action === 'SCHEDULE' || action === 'RESCHEDULE'" :size="14" />
       <RotateCcw v-else-if="action === 'RESTART'" :size="14" />
+      <Pencil v-else-if="action === 'EDIT'" :size="14" />
       <Trash2 v-else-if="action === 'DELETE'" :size="14" />
       <Trash v-else-if="action === 'TRASH'" :size="14" />
       <Folder v-else-if="action === 'FOLDER'" :size="14" />
@@ -87,6 +88,7 @@ import {
 	Info,
 	Link,
 	Pause,
+	Pencil,
 	Play,
 	RotateCcw,
 	Square,
@@ -112,14 +114,14 @@ import {
 } from "@/utils/native";
 
 const taskActionsMap = {
-	[TASK_STATUS.ACTIVE]: ["PAUSE", "DELETE"],
-	[TASK_STATUS.PAUSED]: ["RESUME", "SCHEDULE", "DELETE"],
-	[TASK_STATUS.WAITING]: ["RESUME", "SCHEDULE", "DELETE"],
-	[TASK_STATUS.SCHEDULED]: ["START_NOW", "RESCHEDULE", "DELETE"],
-	[TASK_STATUS.ERROR]: ["RESTART", "TRASH"],
+	[TASK_STATUS.ACTIVE]: ["PAUSE", "EDIT", "DELETE"],
+	[TASK_STATUS.PAUSED]: ["RESUME", "EDIT", "SCHEDULE", "DELETE"],
+	[TASK_STATUS.WAITING]: ["RESUME", "EDIT", "SCHEDULE", "DELETE"],
+	[TASK_STATUS.SCHEDULED]: ["START_NOW", "EDIT", "RESCHEDULE", "DELETE"],
+	[TASK_STATUS.ERROR]: ["RESTART", "EDIT", "TRASH"],
 	[TASK_STATUS.COMPLETE]: ["RESTART", "TRASH"],
 	[TASK_STATUS.REMOVED]: ["RESTART", "TRASH"],
-	[TASK_STATUS.SEEDING]: ["STOP", "DELETE"],
+	[TASK_STATUS.SEEDING]: ["STOP", "EDIT", "DELETE"],
 };
 
 const actionIconsMap = {
@@ -130,6 +132,7 @@ const actionIconsMap = {
 	RESCHEDULE: Clock,
 	STOP: Square,
 	RESTART: RotateCcw,
+	EDIT: Pencil,
 	DELETE: Trash2,
 	TRASH: Trash,
 	FOLDER: Folder,
@@ -145,6 +148,7 @@ const actionLabelsMap: Record<string, string> = {
 	RESCHEDULE: "task.reschedule-task",
 	STOP: "task.stop-seeding",
 	RESTART: "task.restart-task",
+	EDIT: "task.edit-task",
 	DELETE: "task.delete-task",
 	TRASH: "task.remove-record",
 	FOLDER: "task.show-in-folder",
@@ -164,6 +168,7 @@ export default {
 		Clock,
 		Play,
 		Pause,
+		Pencil,
 		Square,
 		RotateCcw,
 		Trash2,
@@ -282,6 +287,9 @@ export default {
 				case "RESTART":
 					this.onRestartClick(event);
 					break;
+				case "EDIT":
+					this.onEditClick();
+					break;
 				case "DELETE":
 					this.onDeleteClick(event);
 					break;
@@ -316,6 +324,10 @@ export default {
 		onScheduleClick() {
 			const { task, taskName } = this;
 			commands.emit("schedule-task", { task, taskName });
+		},
+		onEditClick() {
+			const { task, taskName } = this;
+			commands.emit("edit-task", { task, taskName });
 		},
 		onStartNowClick() {
 			const { task, taskName } = this;

@@ -18,6 +18,7 @@ import {
 	pick,
 } from "lodash";
 import { toKebabCasePreserveNumbers } from "./configKeyCase";
+import { buildMagnetLink } from "./magnetLink";
 
 export { bytesToSize } from "./format";
 export { formatUsenetRepairFailure } from "./usenet";
@@ -417,24 +418,6 @@ export const getTaskUri = (task, withTracker = false) => {
 	return result;
 };
 
-const buildMagnetLink = (task, withTracker = false) => {
-	const { bittorrent, infoHash } = task;
-	const { info } = bittorrent;
-
-	const params = [`magnet:?xt=urn:btih:${infoHash}`];
-	if (info?.name) {
-		params.push(`dn=${encodeURI(info.name)}`);
-	}
-
-	if (withTracker) {
-		(bittorrent.announceList || []).forEach((tracker) => {
-			params.push(`tr=${encodeURI(tracker)}`);
-		});
-	}
-
-	return params.join("&");
-};
-
 export const checkTaskIsBT = (task?: Partial<DownloadTask> | null) =>
 	!!task?.bittorrent;
 
@@ -611,22 +594,33 @@ export const parseHeader = (header = "") => {
 	return result;
 };
 
-export const formatOptionsForEngine = (
+export function formatOptionsForEngine(
+	options?: Record<string, unknown>,
+	preserveNull?: false,
+): Record<string, string>;
+export function formatOptionsForEngine(
+	options: Record<string, unknown>,
+	preserveNull: true,
+): Record<string, string | null>;
+export function formatOptionsForEngine(
 	options: Record<string, unknown> = {},
-) => {
-	const result: Record<string, string> = {};
+	preserveNull = false,
+): Record<string, string | null> {
+	const result: Record<string, string | null> = {};
 
-	Object.keys(options).forEach((key) => {
+	for (const [key, value] of Object.entries(options)) {
 		const kebabCaseKey = toKebabCasePreserveNumbers(key);
-		if (Array.isArray(options[key])) {
-			result[kebabCaseKey] = options[key].join("\n");
+		if (preserveNull && value === null) {
+			result[kebabCaseKey] = null;
+		} else if (Array.isArray(value)) {
+			result[kebabCaseKey] = value.join("\n");
 		} else {
-			result[kebabCaseKey] = `${options[key]}`;
+			result[kebabCaseKey] = `${value}`;
 		}
-	});
+	}
 
 	return result;
-};
+}
 
 export const buildRpcUrl = (
 	options: { host?: string; port?: number | string; secret?: string } = {},

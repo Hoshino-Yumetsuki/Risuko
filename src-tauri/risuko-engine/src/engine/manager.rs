@@ -19,23 +19,347 @@ use super::session::SessionManager;
 use super::speed_limiter::{parse_speed_limit, SpeedLimiter};
 use super::task::{
     generate_gid, ChunkProgress, DownloadFile, DownloadTask, Ed2kKadTaskStatus, FileUri, PeerInfo,
-    TaskKind, TaskStatus, UsenetRepairFailure, UsenetTaskData, UsenetTaskFile, UsenetTaskOptions,
-    UsenetTaskSegment,
+    TaskKind, TaskPatch, TaskStatus, UpdateTaskOutcome, UsenetRepairFailure, UsenetTaskData,
+    UsenetTaskFile, UsenetTaskOptions, UsenetTaskSegment,
 };
 use super::torrent::{self, TorrentEngine};
 use super::upload::UploadFileSnapshot;
 use super::usenet::UsenetProviderProfile;
 use super::usenet_transport::{ProviderConnectionCapacityRegistry, ProviderConnectionLease};
+use super::STARTUP_ONLY_KEYS;
 use std::collections::HashSet;
 
 const MAGNET_METADATA_ATTEMPT_TIMEOUT_SECS: u64 = 60;
 const MAGNET_METADATA_RETRY_DELAY_SECS: u64 = 15;
 const P2P_RELOAD_CANCEL_TIMEOUT: Duration = Duration::from_secs(10);
+const WORKER_EXIT_TIMEOUT: Duration = Duration::from_secs(5);
 
 static WORKER_EPOCH: AtomicU64 = AtomicU64::new(1);
 
 fn next_worker_epoch() -> u64 {
     WORKER_EPOCH.fetch_add(1, Ordering::Relaxed)
+}
+
+fn publish_starting_worker(
+    starting: &parking_lot::Mutex<HashMap<String, (u64, CancellationToken)>>,
+    gid: &str,
+    epoch: u64,
+    token: CancellationToken,
+) {
+    starting.lock().insert(gid.to_string(), (epoch, token));
+}
+
+fn clear_starting_worker(
+    starting: &parking_lot::Mutex<HashMap<String, (u64, CancellationToken)>>,
+    gid: &str,
+    epoch: u64,
+) {
+    let mut guard = starting.lock();
+    if guard.get(gid).map(|(e, _)| *e) == Some(epoch) {
+        guard.remove(gid);
+    }
+}
+
+async fn register_active_download(
+    active: &Arc<RwLock<HashMap<String, ActiveDownload>>>,
+    starting: &parking_lot::Mutex<HashMap<String, (u64, CancellationToken)>>,
+    gid: String,
+    ad: ActiveDownload,
+) {
+    let epoch = ad.epoch;
+    active.write().await.insert(gid.clone(), ad);
+    clear_starting_worker(starting, &gid, epoch);
+}
+
+fn cancel_starting_worker(
+    starting: &parking_lot::Mutex<HashMap<String, (u64, CancellationToken)>>,
+    gid: &str,
+) {
+    if let Some((_, token)) = starting.lock().get(gid).cloned() {
+        token.cancel();
+    }
+}
+
+fn cancel_all_starting_workers(
+    starting: &parking_lot::Mutex<HashMap<String, (u64, CancellationToken)>>,
+) {
+    let tokens: Vec<_> = starting
+        .lock()
+        .values()
+        .map(|(_, token)| token.clone())
+        .collect();
+    for token in tokens {
+        token.cancel();
+    }
+}
+
+async fn worker_startup_aborted(
+    tasks: &Arc<RevLock>,
+    gid: &str,
+    cancel_token: &CancellationToken,
+) -> bool {
+    if cancel_token.is_cancelled() {
+        return true;
+    }
+    let still_active = tasks
+        .read()
+        .await
+        .iter()
+        .any(|task| task.gid == gid && task.status == TaskStatus::Active);
+    if still_active {
+        false
+    } else {
+        cancel_token.cancel();
+        true
+    }
+}
+
+fn decode_thunder_http_uris(uris: Vec<String>) -> Result<Vec<String>, String> {
+    uris.into_iter()
+        .map(|uri| match torrent::decode_thunder_uri(&uri) {
+            Some(decoded)
+                if torrent::is_magnet_uri(&decoded)
+                    || url::Url::parse(&decoded)
+                        .ok()
+                        .is_some_and(|parsed| matches!(parsed.scheme(), "http" | "https")) =>
+            {
+                Ok(decoded)
+            }
+            Some(_) => Err("Unsupported Thunder URI payload".to_string()),
+            None if torrent::is_thunder_uri(&uri) => Err("Invalid Thunder URI".to_string()),
+            None => Ok(uri),
+        })
+        .collect()
+}
+
+fn is_supported_http_task_uri(uri: &str) -> bool {
+    url::Url::parse(uri)
+        .ok()
+        .is_some_and(|parsed| matches!(parsed.scheme(), "http" | "https"))
+}
+
+fn refresh_persisted_file_paths(task: &mut DownloadTask) {
+    let file_count = task.files.len();
+    let task_dir = task.dir.clone();
+    let task_out = task.out.clone();
+    for file in &mut task.files {
+        let current_name = Path::new(&file.path)
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let from_path = current_name
+            .strip_suffix(".part")
+            .unwrap_or(current_name.as_str());
+        let display_out = if file_count == 1 && !task_out.is_empty() {
+            task_out.strip_suffix(".part").unwrap_or(task_out.as_str())
+        } else {
+            from_path
+        };
+        if display_out.is_empty() {
+            continue;
+        }
+        file.path = format!("{task_dir}/{display_out}");
+    }
+}
+
+const UPDATE_RESTART_OPTION_KEYS: &[&str] = &[
+    "split",
+    "max-download-limit",
+    "header",
+    "all-proxy",
+    "proxy",
+    "no-proxy",
+    "user-agent",
+    "referer",
+    "cookie",
+    "max-connection-per-server",
+    "min-split-size",
+    "checksum",
+    "ftp-user",
+    "ftp-passwd",
+    "sftp-private-key",
+    "sftp-private-key-passphrase",
+];
+
+struct AppliedTaskPatch {
+    path_changed: bool,
+    uris_changed: bool,
+    primary_uri_changed: bool,
+    options_need_restart: bool,
+    tracker_urls_to_add: Vec<String>,
+}
+
+fn apply_task_patch(
+    task: &mut DownloadTask,
+    normalized_uris: Option<Vec<String>>,
+    normalized_dir: Option<String>,
+    normalized_out: Option<String>,
+    normalized_trackers: &[String],
+    patch_options: Option<Map<String, Value>>,
+) -> AppliedTaskPatch {
+    let old_primary = task.uris.first().cloned().unwrap_or_default();
+    let mut uris_changed = false;
+    let mut primary_uri_changed = false;
+    if let Some(uris) = normalized_uris {
+        if uris != task.uris {
+            uris_changed = true;
+            primary_uri_changed = uris.first().cloned().unwrap_or_default() != old_primary;
+            task.uris = uris.clone();
+            if let Some(file) = task.files.first_mut() {
+                file.uris = uris
+                    .iter()
+                    .enumerate()
+                    .map(|(i, u)| FileUri {
+                        uri: u.clone(),
+                        status: if i == 0 {
+                            "used".to_string()
+                        } else {
+                            "waiting".to_string()
+                        },
+                    })
+                    .collect();
+            } else if !uris.is_empty() {
+                let display_out = task.out.strip_suffix(".part").unwrap_or(&task.out);
+                let path = if !display_out.is_empty() {
+                    format!("{}/{}", task.dir, display_out)
+                } else {
+                    uris.first().cloned().unwrap_or_default()
+                };
+                task.files.push(DownloadFile {
+                    index: "1".into(),
+                    path,
+                    length: "0".into(),
+                    completed_length: "0".into(),
+                    selected: "true".into(),
+                    uris: uris
+                        .iter()
+                        .enumerate()
+                        .map(|(i, u)| FileUri {
+                            uri: u.clone(),
+                            status: if i == 0 {
+                                "used".to_string()
+                            } else {
+                                "waiting".to_string()
+                            },
+                        })
+                        .collect(),
+                });
+            }
+        }
+    }
+
+    let mut path_changed = false;
+    if let Some(dir) = normalized_dir {
+        if dir != task.dir {
+            path_changed = true;
+            task.dir = dir;
+        }
+    }
+    if let Some(out) = normalized_out {
+        if out != task.out {
+            path_changed = true;
+            task.out = out;
+        }
+    }
+    if path_changed {
+        refresh_persisted_file_paths(task);
+        task.options
+            .insert("dir".into(), Value::String(task.dir.clone()));
+        if !task.out.is_empty() {
+            task.options
+                .insert("out".into(), Value::String(task.out.clone()));
+        }
+    }
+
+    let mut options_need_restart = false;
+    if let Some(opts) = patch_options {
+        for (k, v) in opts {
+            if v.is_null() {
+                if UPDATE_RESTART_OPTION_KEYS.contains(&k.as_str()) && task.options.contains_key(&k)
+                {
+                    options_need_restart = true;
+                }
+                task.options.remove(&k);
+            } else {
+                if UPDATE_RESTART_OPTION_KEYS.contains(&k.as_str()) {
+                    let changed = task.options.get(&k) != Some(&v);
+                    if changed {
+                        options_need_restart = true;
+                    }
+                }
+                if k == "dir" {
+                    if let Some(s) = v.as_str() {
+                        let s = s.trim();
+                        if !s.is_empty() && s != task.dir {
+                            path_changed = true;
+                            task.dir = s.to_string();
+                        }
+                    }
+                } else if k == "out" {
+                    if let Some(s) = v.as_str() {
+                        let trimmed = s.trim();
+                        if !trimmed.is_empty() {
+                            let s = http::sanitize_filename(trimmed);
+                            if !s.is_empty() && s != task.out {
+                                path_changed = true;
+                                task.out = s;
+                            }
+                        }
+                    }
+                }
+                task.options.insert(k, v);
+            }
+        }
+        if path_changed {
+            refresh_persisted_file_paths(task);
+        }
+    }
+
+    let mut tracker_urls_to_add = Vec::new();
+    if !normalized_trackers.is_empty() {
+        let mut existing: HashSet<String> = HashSet::new();
+        for tier in &task.bt_announce_list {
+            for url in tier {
+                existing.insert(url.clone());
+            }
+        }
+        if let Some(raw) = task.options.get("bt-tracker").and_then(|v| v.as_str()) {
+            for part in raw
+                .split([',', '\n', '\r'])
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+            {
+                existing.insert(part.to_string());
+            }
+        }
+        for url in normalized_trackers {
+            if existing.insert(url.clone()) {
+                tracker_urls_to_add.push(url.clone());
+            }
+        }
+        if !tracker_urls_to_add.is_empty() {
+            task.bt_announce_list.push(tracker_urls_to_add.clone());
+            let mut merged: Vec<String> = Vec::new();
+            let mut seen = HashSet::new();
+            for tier in &task.bt_announce_list {
+                for url in tier {
+                    if seen.insert(url.clone()) {
+                        merged.push(url.clone());
+                    }
+                }
+            }
+            task.options
+                .insert("bt-tracker".into(), Value::String(merged.join("\n")));
+        }
+    }
+
+    AppliedTaskPatch {
+        path_changed,
+        uris_changed,
+        primary_uri_changed,
+        options_need_restart,
+        tracker_urls_to_add,
+    }
 }
 
 fn ed2k_kad_task_status(status: &KadLookupStatus) -> Ed2kKadTaskStatus {
@@ -178,34 +502,43 @@ async fn finish_task(
 
         match result {
             Ok(path) => {
-                let file_completed = on_ok(task, &path);
-                tracing::info!(
-                    "[task:{}] {} download complete: {}",
-                    gid,
-                    proto_label,
-                    path.display()
-                );
-                task.status = TaskStatus::Complete;
-                if task.kind != TaskKind::Usenet {
-                    task.files = vec![DownloadFile {
-                        index: "1".to_string(),
-                        path: path.to_string_lossy().to_string(),
-                        length: task.total_length.to_string(),
-                        completed_length: file_completed.to_string(),
-                        selected: "true".to_string(),
-                        uris: task
-                            .uris
-                            .iter()
-                            .map(|u| FileUri {
-                                uri: u.clone(),
-                                status: "used".to_string(),
-                            })
-                            .collect(),
-                    }];
+                if task.status != TaskStatus::Active {
+                    tracing::debug!(
+                        "[task:{}] {} worker finished after status became {:?}; ignoring result",
+                        gid,
+                        proto_label,
+                        task.status
+                    );
+                } else {
+                    let file_completed = on_ok(task, &path);
+                    tracing::info!(
+                        "[task:{}] {} download complete: {}",
+                        gid,
+                        proto_label,
+                        path.display()
+                    );
+                    task.status = TaskStatus::Complete;
+                    if task.kind != TaskKind::Usenet {
+                        task.files = vec![DownloadFile {
+                            index: "1".to_string(),
+                            path: path.to_string_lossy().to_string(),
+                            length: task.total_length.to_string(),
+                            completed_length: file_completed.to_string(),
+                            selected: "true".to_string(),
+                            uris: task
+                                .uris
+                                .iter()
+                                .map(|u| FileUri {
+                                    uri: u.clone(),
+                                    status: "used".to_string(),
+                                })
+                                .collect(),
+                        }];
+                    }
+                    events.send(EngineEvent::DownloadComplete {
+                        gid: gid.to_string(),
+                    });
                 }
-                events.send(EngineEvent::DownloadComplete {
-                    gid: gid.to_string(),
-                });
             }
             Err(e) => {
                 if e.contains("cancelled") {
@@ -447,12 +780,11 @@ impl Drop for RevWriteGuard<'_> {
 pub struct TaskManager {
     config_dir: PathBuf,
     p2p_reload_lock: tokio::sync::Mutex<()>,
-    /// Monotonic manager-side route epoch used to reject resolver jobs that
-    /// were queued before a P2P profile replacement.
     p2p_route_generation: Arc<AtomicU64>,
     tasks: Arc<RevLock>,
     saved_rev: AtomicU64,
     active_downloads: Arc<RwLock<HashMap<String, ActiveDownload>>>,
+    starting_workers: Arc<parking_lot::Mutex<HashMap<String, (u64, CancellationToken)>>>,
     torrent_ids: Arc<RwLock<HashMap<String, usize>>>,
     pending_magnets: Arc<RwLock<HashSet<String>>>,
     purged_hashes: Arc<RwLock<HashSet<String>>>,
@@ -666,6 +998,7 @@ impl TaskManager {
             // MAX so the first auto-save always runs once (rev starts at 0)
             saved_rev: AtomicU64::new(u64::MAX),
             active_downloads: Arc::new(RwLock::new(HashMap::new())),
+            starting_workers: Arc::new(parking_lot::Mutex::new(HashMap::new())),
             torrent_ids: Arc::new(RwLock::new(HashMap::new())),
             pending_magnets: Arc::new(RwLock::new(HashSet::new())),
             purged_hashes: Arc::new(RwLock::new(purged_hashes)),
@@ -840,22 +1173,7 @@ impl TaskManager {
         uris: Vec<String>,
         options: Map<String, Value>,
     ) -> Result<String, String> {
-        let uris = uris
-            .into_iter()
-            .map(|uri| match torrent::decode_thunder_uri(&uri) {
-                Some(decoded)
-                    if torrent::is_magnet_uri(&decoded)
-                        || url::Url::parse(&decoded)
-                            .ok()
-                            .is_some_and(|url| matches!(url.scheme(), "http" | "https")) =>
-                {
-                    Ok(decoded)
-                }
-                Some(_) => Err("Unsupported Thunder URI payload".to_string()),
-                None if torrent::is_thunder_uri(&uri) => Err("Invalid Thunder URI".to_string()),
-                None => Ok(uri),
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+        let uris = decode_thunder_http_uris(uris)?;
         if let Some(magnet) = uris.iter().find(|u| torrent::is_magnet_uri(u)) {
             return self.add_magnet_task(magnet, options).await;
         }
@@ -964,40 +1282,43 @@ impl TaskManager {
 
         let mut task = DownloadTask::new_torrent(gid.clone(), dir.clone(), tag, options.clone());
 
-        // Add to torrent engine
-        let te_guard = self.torrent_engine.read().await;
-        if let Some(ref te) = *te_guard {
-            match te.add_torrent_bytes(&torrent_data, &merged).await {
-                Ok(handle) => {
-                    tracing::info!(
-                        "Torrent task {} added: id={}, info_hash={:?}",
-                        gid,
-                        handle.id,
-                        handle.info_hash
-                    );
-                    self.torrent_ids
-                        .write()
-                        .await
-                        .insert(gid.clone(), handle.id);
-                    task.info_hash = handle.info_hash;
-                    task.info_hash_v2 = handle.info_hash_v2;
-                    task.meta_version = handle.meta_version;
-                    task.status = TaskStatus::Active;
-                }
-                Err(e) => {
-                    tracing::error!("Torrent task {} failed to add: {}", gid, e);
-                    task.status = TaskStatus::Error;
-                    task.error_code = Some(classify_error(&e, "torrent").to_string());
-                    task.error_message = Some(e);
-                }
+        // Add to torrent engine; drop the engine lock before remember_torrent_id, which also reads torrent_engine
+        let add_result = {
+            let te_guard = self.torrent_engine.read().await;
+            if let Some(ref te) = *te_guard {
+                Some(te.add_torrent_bytes(&torrent_data, &merged).await)
+            } else {
+                None
             }
-        } else {
-            tracing::error!("Torrent task {} failed: engine not available", gid);
-            task.status = TaskStatus::Error;
-            task.error_code = Some(super::error_code::ErrorCode::ENGINE_NOT_RUNNING.to_string());
-            task.error_message = Some("Torrent engine not available".to_string());
+        };
+        match add_result {
+            Some(Ok(handle)) => {
+                tracing::info!(
+                    "Torrent task {} added: id={}, info_hash={:?}",
+                    gid,
+                    handle.id,
+                    handle.info_hash
+                );
+                task.info_hash = handle.info_hash.clone();
+                self.remember_torrent_id(&gid, handle.id).await;
+                task.info_hash_v2 = handle.info_hash_v2;
+                task.meta_version = handle.meta_version;
+                task.status = TaskStatus::Active;
+            }
+            Some(Err(e)) => {
+                tracing::error!("Torrent task {} failed to add: {}", gid, e);
+                task.status = TaskStatus::Error;
+                task.error_code = Some(classify_error(&e, "torrent").to_string());
+                task.error_message = Some(e);
+            }
+            None => {
+                tracing::error!("Torrent task {} failed: engine not available", gid);
+                task.status = TaskStatus::Error;
+                task.error_code =
+                    Some(super::error_code::ErrorCode::ENGINE_NOT_RUNNING.to_string());
+                task.error_message = Some("Torrent engine not available".to_string());
+            }
         }
-        drop(te_guard);
 
         self.tasks.write().await.push(task);
         self.send_download_start(&gid);
@@ -1363,12 +1684,25 @@ impl TaskManager {
                     break;
                 }
 
+                let mut resolve_options = options.clone();
+                {
+                    let guard = tasks.read().await;
+                    if let Some(task) = guard
+                        .iter()
+                        .find(|task| is_live_magnet(task, &gid, &magnet_uri))
+                    {
+                        if let Some(trackers) = task.options.get("bt-tracker") {
+                            resolve_options.insert("bt-tracker".to_string(), trackers.clone());
+                        }
+                    }
+                }
+
                 let result = match expected_engine_generation {
                     Some(engine_generation) => {
                         engine
                             .resolve_and_add_magnet_at_generation(
                                 &magnet_uri,
-                                &options,
+                                &resolve_options,
                                 MAGNET_METADATA_ATTEMPT_TIMEOUT_SECS,
                                 engine_generation,
                             )
@@ -1404,7 +1738,53 @@ impl TaskManager {
                         }
 
                         if attached {
-                            torrent_ids.write().await.insert(gid.clone(), handle.id);
+                            let still_live = {
+                                let guard = tasks.read().await;
+                                guard
+                                    .iter()
+                                    .any(|task| is_live_magnet(task, &gid, &magnet_uri))
+                            };
+                            if still_live {
+                                Self::remember_torrent_id_in(
+                                    &torrent_engine,
+                                    &torrent_ids,
+                                    &tasks,
+                                    &gid,
+                                    handle.id,
+                                )
+                                .await;
+                                let tracker_urls = {
+                                    let guard = tasks.read().await;
+                                    guard
+                                        .iter()
+                                        .find(|task| task.gid == gid)
+                                        .map(|task| {
+                                            let mut seen = HashSet::new();
+                                            let mut urls = Vec::new();
+                                            for tier in &task.bt_announce_list {
+                                                for url in tier {
+                                                    if seen.insert(url.clone()) {
+                                                        urls.push(url.clone());
+                                                    }
+                                                }
+                                            }
+                                            urls
+                                        })
+                                        .unwrap_or_default()
+                                };
+                                if !tracker_urls.is_empty() {
+                                    if let Err(e) =
+                                        engine.add_trackers(handle.id, tracker_urls).await
+                                    {
+                                        tracing::warn!(
+                                            "[task:{}] Failed to replay persisted magnet trackers: {e}",
+                                            gid
+                                        );
+                                    }
+                                }
+                            } else {
+                                let _ = engine.remove(handle.id, false).await;
+                            }
                         } else {
                             let _ = engine.remove(handle.id, false).await;
                         }
@@ -1646,15 +2026,25 @@ impl TaskManager {
 
         let counters = Counters::new(task.total_length, 0);
         let worker_epoch = next_worker_epoch();
+        publish_starting_worker(
+            &self.starting_workers,
+            &gid,
+            worker_epoch,
+            counters.cancel_token.clone(),
+        );
+        let starting = self.starting_workers.clone();
         tokio::spawn(async move {
-            active.write().await.insert(
+            register_active_download(
+                &active,
+                &starting,
                 gid.clone(),
                 counters.to_active(
                     worker_epoch,
                     Vec::new(),
                     Arc::new(parking_lot::Mutex::new(None)),
                 ),
-            );
+            )
+            .await;
 
             let still_active = tasks
                 .read()
@@ -1770,15 +2160,42 @@ impl TaskManager {
         let output_paths_for_worker = output_paths.clone();
         let counters = Counters::new(task.total_length, 0);
         let worker_epoch = next_worker_epoch();
+        publish_starting_worker(
+            &self.starting_workers,
+            &gid,
+            worker_epoch,
+            counters.cancel_token.clone(),
+        );
+        let starting = self.starting_workers.clone();
         tokio::spawn(async move {
-            active.write().await.insert(
+            register_active_download(
+                &active,
+                &starting,
                 gid.clone(),
                 counters.to_active(
                     worker_epoch,
                     Vec::new(),
                     Arc::new(parking_lot::Mutex::new(None)),
                 ),
-            );
+            )
+            .await;
+            if worker_startup_aborted(&tasks, &gid, &counters.cancel_token).await {
+                finish_task(
+                    &tasks,
+                    &active,
+                    &events,
+                    &gid,
+                    worker_epoch,
+                    "usenet",
+                    &counters,
+                    Err("cancelled".to_string()),
+                    |_| {},
+                    |task, _| task.total_length,
+                    |task, error| finish_usenet_failure(task, error, None),
+                )
+                .await;
+                return;
+            }
             let result = super::usenet_worker::run_usenet_download_with_resolver_and_capacity(
                 &task_snapshot,
                 &merged_options,
@@ -1900,7 +2317,12 @@ impl TaskManager {
                 options_guard.clone(),
             )
         };
-        let active_count = self.active_downloads.read().await.len();
+        let (active_count, busy_gids) = {
+            let active = self.active_downloads.read().await;
+            let mut busy_gids = active.keys().cloned().collect::<HashSet<_>>();
+            busy_gids.extend(self.starting_workers.lock().keys().cloned());
+            (busy_gids.len(), busy_gids)
+        };
 
         if active_count >= max_concurrent {
             return;
@@ -1915,6 +2337,9 @@ impl TaskManager {
                 break;
             }
             if task.status != TaskStatus::Waiting {
+                continue;
+            }
+            if busy_gids.contains(&task.gid) {
                 continue;
             }
             if task.kind == TaskKind::Http && !task.uris.is_empty() {
@@ -2125,15 +2550,43 @@ impl TaskManager {
             Arc::new(parking_lot::Mutex::new(None));
 
         let worker_epoch = next_worker_epoch();
+        publish_starting_worker(
+            &self.starting_workers,
+            &gid,
+            worker_epoch,
+            counters.cancel_token.clone(),
+        );
+        let starting = self.starting_workers.clone();
         tokio::spawn(async move {
-            active.write().await.insert(
+            register_active_download(
+                &active,
+                &starting,
                 gid.clone(),
                 counters.to_active(
                     worker_epoch,
                     chunk_completed.clone(),
                     adopted_filename.clone(),
                 ),
-            );
+            )
+            .await;
+
+            if worker_startup_aborted(&tasks, &gid, &counters.cancel_token).await {
+                finish_task(
+                    &tasks,
+                    &active,
+                    &events,
+                    &gid,
+                    worker_epoch,
+                    "http",
+                    &counters,
+                    Err("cancelled".to_string()),
+                    |_| {},
+                    |task, _| task.total_length,
+                    |_, e| classify_error(e, "http"),
+                )
+                .await;
+                return;
+            }
 
             let c = counters.clone();
             let download_result = http::run_http_download_multi(
@@ -2285,15 +2738,31 @@ impl TaskManager {
 
         let agg = Counters::new(0, 0);
         let worker_epoch = next_worker_epoch();
+        publish_starting_worker(&self.starting_workers, &gid, worker_epoch, parent.clone());
+        let starting = self.starting_workers.clone();
         tokio::spawn(async move {
             let mut ad = agg.to_active(
                 worker_epoch,
                 Vec::new(),
                 Arc::new(parking_lot::Mutex::new(None)),
             );
-            ad.cancel_token = parent;
+            ad.cancel_token = parent.clone();
             ad.metalink_files = file_counters.clone();
-            active.write().await.insert(gid.clone(), ad);
+            register_active_download(&active, &starting, gid.clone(), ad).await;
+
+            if worker_startup_aborted(&tasks, &gid, &parent).await {
+                metalink_finish(
+                    &tasks,
+                    &active,
+                    &events,
+                    &gid,
+                    worker_epoch,
+                    file_counters,
+                    Vec::new(),
+                )
+                .await;
+                return;
+            }
 
             let futs = specs.into_iter().map(|spec| {
                 let gl = global_limiter.clone();
@@ -2352,6 +2821,13 @@ impl TaskManager {
 
         let counters = Counters::new(task.total_length, 0);
         let worker_epoch = next_worker_epoch();
+        publish_starting_worker(
+            &self.starting_workers,
+            &gid,
+            worker_epoch,
+            counters.cancel_token.clone(),
+        );
+        let starting = self.starting_workers.clone();
         tokio::spawn(async move {
             let mut active_download = counters.to_active(
                 worker_epoch,
@@ -2359,7 +2835,7 @@ impl TaskManager {
                 Arc::new(parking_lot::Mutex::new(None)),
             );
             active_download.kad_status = kad_status.clone();
-            active.write().await.insert(gid.clone(), active_download);
+            register_active_download(&active, &starting, gid.clone(), active_download).await;
 
             let still_active = tasks
                 .read()
@@ -2471,15 +2947,43 @@ impl TaskManager {
         });
 
         let worker_epoch = next_worker_epoch();
+        publish_starting_worker(
+            &self.starting_workers,
+            &gid,
+            worker_epoch,
+            counters.cancel_token.clone(),
+        );
+        let starting = self.starting_workers.clone();
         tokio::spawn(async move {
-            active.write().await.insert(
+            register_active_download(
+                &active,
+                &starting,
                 gid.clone(),
                 counters.to_active(
                     worker_epoch,
                     Vec::new(),
                     Arc::new(parking_lot::Mutex::new(None)),
                 ),
-            );
+            )
+            .await;
+
+            if worker_startup_aborted(&tasks, &gid, &counters.cancel_token).await {
+                finish_task(
+                    &tasks,
+                    &active,
+                    &events,
+                    &gid,
+                    worker_epoch,
+                    "media",
+                    &counters,
+                    Err("cancelled".to_string()),
+                    |_| {},
+                    |task, _| task.total_length,
+                    |_, e| classify_error(e, "media"),
+                )
+                .await;
+                return;
+            }
 
             // Snapshot the global limit at launch time for this yt-dlp child; runtime max-overall-download-limit changes do not reconfigure already-running media subprocesses
             let global_rate_limit = global_limiter.limit_bps();
@@ -2544,15 +3048,43 @@ impl TaskManager {
 
         let counters = Counters::new(0, 0);
         let worker_epoch = next_worker_epoch();
+        publish_starting_worker(
+            &self.starting_workers,
+            &gid,
+            worker_epoch,
+            counters.cancel_token.clone(),
+        );
+        let starting = self.starting_workers.clone();
         tokio::spawn(async move {
-            active.write().await.insert(
+            register_active_download(
+                &active,
+                &starting,
                 gid.clone(),
                 counters.to_active(
                     worker_epoch,
                     Vec::new(),
                     Arc::new(parking_lot::Mutex::new(None)),
                 ),
-            );
+            )
+            .await;
+
+            if worker_startup_aborted(&tasks, &gid, &counters.cancel_token).await {
+                finish_task(
+                    &tasks,
+                    &active,
+                    &events,
+                    &gid,
+                    worker_epoch,
+                    "m3u8",
+                    &counters,
+                    Err("cancelled".to_string()),
+                    |_| {},
+                    |task, _| task.total_length,
+                    |_, e| classify_error(e, "m3u8"),
+                )
+                .await;
+                return;
+            }
 
             let c = counters.clone();
             let download_result = super::m3u8::run_m3u8_download(
@@ -2605,15 +3137,43 @@ impl TaskManager {
 
         let counters = Counters::new(0, 1);
         let worker_epoch = next_worker_epoch();
+        publish_starting_worker(
+            &self.starting_workers,
+            &gid,
+            worker_epoch,
+            counters.cancel_token.clone(),
+        );
+        let starting = self.starting_workers.clone();
         tokio::spawn(async move {
-            active.write().await.insert(
+            register_active_download(
+                &active,
+                &starting,
                 gid.clone(),
                 counters.to_active(
                     worker_epoch,
                     Vec::new(),
                     Arc::new(parking_lot::Mutex::new(None)),
                 ),
-            );
+            )
+            .await;
+
+            if worker_startup_aborted(&tasks, &gid, &counters.cancel_token).await {
+                finish_task(
+                    &tasks,
+                    &active,
+                    &events,
+                    &gid,
+                    worker_epoch,
+                    "ftp",
+                    &counters,
+                    Err("cancelled".to_string()),
+                    |_| {},
+                    |task, _| task.total_length,
+                    |_, e| classify_error(e, "ftp"),
+                )
+                .await;
+                return;
+            }
 
             let c = counters.clone();
             let download_result = super::ftp::run_ftp_download(
@@ -3031,11 +3591,8 @@ impl TaskManager {
 
     pub async fn pause(&self, gid: &str) -> Result<(), String> {
         // Cancel active HTTP download
-        {
-            let active = self.active_downloads.read().await;
-            if let Some(ad) = active.get(gid) {
-                ad.cancel_token.cancel();
-            }
+        if let Some((_, token)) = self.worker_epoch_and_cancel(gid).await {
+            token.cancel();
         }
 
         // Pause torrent
@@ -3304,12 +3861,9 @@ impl TaskManager {
 
     pub async fn remove(&self, gid: &str) -> Result<(), String> {
         tracing::info!("[task:{}] Removing", gid);
-        // Cancel any active download
-        {
-            let active = self.active_downloads.read().await;
-            if let Some(ad) = active.get(gid) {
-                ad.cancel_token.cancel();
-            }
+        // Cancel any active or starting download
+        if let Some((_, token)) = self.worker_epoch_and_cancel(gid).await {
+            token.cancel();
         }
 
         {
@@ -3587,6 +4141,350 @@ impl TaskManager {
             .collect()
     }
 
+    async fn worker_epoch_and_cancel(&self, gid: &str) -> Option<(u64, CancellationToken)> {
+        let starting = self.starting_workers.lock().get(gid).cloned();
+        if let Some(entry) = starting {
+            return Some(entry);
+        }
+        self.active_downloads
+            .read()
+            .await
+            .get(gid)
+            .map(|ad| (ad.epoch, ad.cancel_token.clone()))
+    }
+
+    async fn wait_for_worker_epoch_exit(&self, gid: &str, epoch: u64) -> bool {
+        let deadline = tokio::time::Instant::now() + WORKER_EXIT_TIMEOUT;
+        loop {
+            let in_active = self
+                .active_downloads
+                .read()
+                .await
+                .get(gid)
+                .map(|ad| ad.epoch)
+                == Some(epoch);
+            let in_starting = self.starting_workers.lock().get(gid).map(|(e, _)| *e) == Some(epoch);
+            if !in_active && !in_starting {
+                return true;
+            }
+            if tokio::time::Instant::now() >= deadline {
+                return false;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+
+    pub async fn update_task(
+        &self,
+        gid: &str,
+        patch: TaskPatch,
+    ) -> Result<UpdateTaskOutcome, String> {
+        let has_uris = patch.uris.is_some();
+        let has_dir = patch.dir.is_some();
+        let has_out = patch.out.is_some();
+        let has_trackers = patch
+            .trackers
+            .as_ref()
+            .is_some_and(|t| t.iter().any(|s| !s.trim().is_empty()));
+        let has_options = patch.options.as_ref().is_some_and(|o| !o.is_empty());
+        if !has_uris && !has_dir && !has_out && !has_trackers && !has_options {
+            return Err("No changes in patch".to_string());
+        }
+
+        if let Some(opts) = patch.options.as_ref() {
+            for key in opts.keys() {
+                if STARTUP_ONLY_KEYS.contains(&key.as_str()) {
+                    return Err(format!(
+                        "Option '{key}' can only be changed by restarting the engine"
+                    ));
+                }
+            }
+        }
+
+        let mut normalized_uris: Option<Vec<String>> = None;
+        if let Some(uris) = patch.uris.as_ref() {
+            let cleaned: Vec<String> = uris
+                .iter()
+                .map(|u| u.trim().to_string())
+                .filter(|u| !u.is_empty())
+                .collect();
+            if cleaned.is_empty() {
+                return Err("uris must contain at least one non-empty URL".to_string());
+            }
+            normalized_uris = Some(decode_thunder_http_uris(cleaned)?);
+        }
+
+        let normalized_dir = patch.dir.as_ref().map(|d| d.trim().to_string());
+        if let Some(d) = normalized_dir.as_ref() {
+            if d.is_empty() {
+                return Err("dir must not be empty".to_string());
+            }
+        }
+        let normalized_out = match patch.out.as_ref() {
+            Some(o) => {
+                let trimmed = o.trim();
+                if trimmed.is_empty() {
+                    return Err("out must not be empty".to_string());
+                }
+                Some(http::sanitize_filename(trimmed))
+            }
+            None => None,
+        };
+        if let Some(o) = normalized_out.as_ref() {
+            if o.is_empty() {
+                return Err("out must not be empty".to_string());
+            }
+        }
+
+        let normalized_trackers: Vec<String> = patch
+            .trackers
+            .unwrap_or_default()
+            .into_iter()
+            .flat_map(|raw| {
+                raw.split([',', '\n', '\r'])
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+
+        let mut pending_apply: Option<DownloadTask> = None;
+        let (
+            kind,
+            was_active,
+            old_dir,
+            old_out,
+            new_dir,
+            new_out,
+            path_changed,
+            uris_changed,
+            primary_uri_changed,
+            options_need_restart,
+            tracker_urls_to_add,
+            old_primary_uri,
+            primary_uri,
+        ) = {
+            let mut tasks = self.tasks.write().await;
+            let task = tasks
+                .iter_mut()
+                .find(|t| t.gid == gid)
+                .ok_or_else(|| format!("GID {gid} not found"))?;
+
+            if task.status.is_stopped() && task.status != TaskStatus::Error {
+                return Err(format!(
+                    "Task {gid} is finished ({}); edit is not supported",
+                    task.status.as_str()
+                ));
+            }
+
+            if task.kind == TaskKind::Http {
+                if let Some(uris) = normalized_uris.as_ref() {
+                    if let Some(bad) = uris.iter().find(|uri| !is_supported_http_task_uri(uri)) {
+                        return Err(format!("Unsupported URI scheme: {bad}"));
+                    }
+                }
+            }
+
+            if task.kind == TaskKind::Torrent {
+                // Reject only actual URI/dir/out changes so a full-form patch
+                // that restates the current values can still apply trackers/options.
+                if normalized_uris
+                    .as_ref()
+                    .is_some_and(|uris| uris != &task.uris)
+                {
+                    return Err("Cannot change URIs on a torrent task".to_string());
+                }
+                let option_dir = patch
+                    .options
+                    .as_ref()
+                    .and_then(|o| o.get("dir"))
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty());
+                if normalized_dir.as_ref().is_some_and(|dir| dir != &task.dir)
+                    || option_dir.is_some_and(|d| d != task.dir)
+                {
+                    return Err("Cannot change save path on a torrent task".to_string());
+                }
+                let option_out = patch
+                    .options
+                    .as_ref()
+                    .and_then(|o| o.get("out"))
+                    .and_then(|v| v.as_str())
+                    .map(|s| http::sanitize_filename(s.trim()))
+                    .filter(|s| !s.is_empty());
+                if normalized_out.as_ref().is_some_and(|out| out != &task.out)
+                    || option_out.is_some_and(|o| o != task.out)
+                {
+                    return Err("Cannot change the file name on a torrent task".to_string());
+                }
+            } else if !normalized_trackers.is_empty() {
+                return Err("Trackers can only be added to torrent tasks".to_string());
+            }
+
+            let was_active = task.status == TaskStatus::Active;
+            let old_dir = task.dir.clone();
+            let old_out = task.out.clone();
+            let old_primary = task.uris.first().cloned().unwrap_or_default();
+            let kind = task.kind;
+
+            let mut staged = task.clone();
+            let applied = apply_task_patch(
+                &mut staged,
+                normalized_uris,
+                normalized_dir,
+                normalized_out,
+                &normalized_trackers,
+                patch.options,
+            );
+            let needs_restart = was_active
+                && kind != TaskKind::Torrent
+                && (applied.uris_changed || applied.path_changed || applied.options_need_restart);
+            let snapshot = (
+                kind,
+                was_active,
+                old_dir,
+                old_out,
+                staged.dir.clone(),
+                staged.out.clone(),
+                applied.path_changed,
+                applied.uris_changed,
+                applied.primary_uri_changed,
+                applied.options_need_restart,
+                applied.tracker_urls_to_add,
+                old_primary,
+                staged.uris.first().cloned().unwrap_or_default(),
+            );
+            if needs_restart {
+                tracing::info!("[task:{}] Restarting worker to apply property edits", gid);
+                task.status = TaskStatus::Waiting;
+                task.download_speed = 0;
+                task.upload_speed = 0;
+                self.events.send(EngineEvent::DownloadPause {
+                    gid: gid.to_string(),
+                });
+                pending_apply = Some(staged);
+            } else {
+                let status = task.status;
+                *task = staged;
+                task.status = status;
+            }
+            snapshot
+        };
+
+        let mut trackers_added = 0usize;
+        if !tracker_urls_to_add.is_empty() {
+            let tid = {
+                let ids = self.torrent_ids.read().await;
+                ids.get(gid).copied()
+            };
+            if let Some(tid) = tid {
+                let te_guard = self.torrent_engine.read().await;
+                if let Some(ref te) = *te_guard {
+                    match te.add_trackers(tid, tracker_urls_to_add.clone()).await {
+                        Ok(n) => trackers_added = n,
+                        Err(e) => {
+                            tracing::warn!("[task:{}] Failed to inject trackers live: {e}", gid);
+                            // Still count as persisted; they apply after next start
+                            trackers_added = tracker_urls_to_add.len();
+                        }
+                    }
+                } else {
+                    trackers_added = tracker_urls_to_add.len();
+                }
+            } else {
+                // Magnet still resolving / torrent not in engine yet
+                trackers_added = tracker_urls_to_add.len();
+            }
+        }
+
+        let needs_restart = was_active
+            && kind != TaskKind::Torrent
+            && (uris_changed || path_changed || options_need_restart);
+
+        let mut restarted = false;
+        if needs_restart {
+            restarted = pending_apply.is_some();
+            if let Some((epoch, token)) = self.worker_epoch_and_cancel(gid).await {
+                token.cancel();
+                if !self.wait_for_worker_epoch_exit(gid, epoch).await {
+                    {
+                        let mut tasks = self.tasks.write().await;
+                        if let Some(task) = tasks.iter_mut().find(|t| t.gid == gid) {
+                            if task.status == TaskStatus::Waiting {
+                                task.status = TaskStatus::Active;
+                            }
+                        }
+                    }
+                    return Err(format!(
+                        "Timed out waiting for worker to stop after {WORKER_EXIT_TIMEOUT:?}"
+                    ));
+                }
+            }
+            if let Some(mut staged) = pending_apply.take() {
+                let mut tasks = self.tasks.write().await;
+                if let Some(task) = tasks.iter_mut().find(|t| t.gid == gid) {
+                    staged.status = task.status;
+                    staged.download_speed = 0;
+                    staged.upload_speed = 0;
+                    *task = staged;
+                }
+            }
+        }
+
+        let mut progress_preserved = true;
+        if path_changed && kind != TaskKind::Torrent {
+            let relocate_old_out = if old_out.is_empty() {
+                http::sanitize_filename(&http::infer_filename_from_uri(&old_primary_uri))
+            } else {
+                old_out.clone()
+            };
+            let relocate_new_out = if new_out.is_empty() {
+                http::sanitize_filename(&http::infer_filename_from_uri(&primary_uri))
+            } else {
+                new_out.clone()
+            };
+            if relocate_old_out.is_empty() || relocate_new_out.is_empty() {
+                progress_preserved = false;
+            } else {
+                match http::relocate_partial(
+                    &old_dir,
+                    &relocate_old_out,
+                    &new_dir,
+                    &relocate_new_out,
+                ) {
+                    Ok(moved) => {
+                        if !moved && (old_dir != new_dir || relocate_old_out != relocate_new_out) {
+                            progress_preserved = false;
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!("[task:{}] relocate_partial failed: {e}", gid);
+                        progress_preserved = false;
+                    }
+                }
+            }
+        }
+        // Adding mirrors while keeping the primary URL is safe
+        if primary_uri_changed {
+            progress_preserved = false;
+        }
+
+        if needs_restart {
+            self.reconcile_active_set().await;
+        }
+
+        if let Err(e) = self.save_session().await {
+            tracing::warn!("[task:{}] save_session after update_task failed: {e}", gid);
+        }
+
+        Ok(UpdateTaskOutcome {
+            restarted,
+            trackers_added,
+            progress_preserved,
+        })
+    }
+
     pub async fn change_option(&self, gid: &str, opts: Map<String, Value>) -> Result<(), String> {
         let mut tasks = self.tasks.write().await;
         if let Some(task) = tasks.iter_mut().find(|t| t.gid == gid) {
@@ -3739,18 +4637,24 @@ impl TaskManager {
                     if let Some(download) = active.get(gid) {
                         download.cancel_token.cancel();
                     }
+                    cancel_starting_worker(&self.starting_workers, gid);
                 }
+                let starting = self.starting_workers.lock();
                 active.keys().any(|gid| active_gids.contains(gid))
+                    || starting.keys().any(|gid| active_gids.contains(gid))
             };
             if !still_running || tokio::time::Instant::now() >= deadline {
                 break;
             }
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
-        if {
+        let still_active = {
             let active = self.active_downloads.read().await;
+            let starting = self.starting_workers.lock();
             active.keys().any(|gid| active_gids.contains(gid))
-        } {
+                || starting.keys().any(|gid| active_gids.contains(gid))
+        };
+        if still_active {
             self.mark_p2p_reload_failed(
                 &active_gids,
                 "timed out stopping the previous P2P runtime",
@@ -4024,6 +4928,7 @@ impl TaskManager {
                 if let Some(download) = active.get(gid) {
                     download.cancel_token.cancel();
                 }
+                cancel_starting_worker(&self.starting_workers, gid);
             }
         }
         if let Some(engine) = self.torrent_engine.read().await.clone() {
@@ -4424,6 +5329,65 @@ impl TaskManager {
         }
     }
 
+    async fn remember_torrent_id(&self, gid: &str, torrent_id: usize) {
+        Self::remember_torrent_id_in(
+            &self.torrent_engine,
+            &self.torrent_ids,
+            &self.tasks,
+            gid,
+            torrent_id,
+        )
+        .await;
+    }
+
+    /// Map `gid` to `torrent_id` and drop mappings whose torrent is no longer in the bt session. Replacing a finished torrent on re-add leaves the old gid pointing at a deleted id; those Active/seeder tasks must be marked Complete so the magnet resolver does not resurrect them.
+    async fn remember_torrent_id_in(
+        torrent_engine: &Arc<RwLock<Option<TorrentEngine>>>,
+        torrent_ids: &Arc<RwLock<HashMap<String, usize>>>,
+        tasks: &Arc<RevLock>,
+        gid: &str,
+        torrent_id: usize,
+    ) {
+        let managed: Option<HashSet<usize>> = {
+            let te = torrent_engine.read().await;
+            te.as_ref().map(|te| {
+                te.list_managed_torrents()
+                    .into_iter()
+                    .map(|(id, _)| id)
+                    .collect()
+            })
+        };
+        let dropped: Vec<String> = {
+            let mut ids = torrent_ids.write().await;
+            let dropped = if let Some(managed) = managed.as_ref() {
+                let dropped: Vec<String> = ids
+                    .iter()
+                    .filter(|(mapped_gid, tid)| *mapped_gid != gid && !managed.contains(tid))
+                    .map(|(mapped_gid, _)| mapped_gid.clone())
+                    .collect();
+                ids.retain(|mapped_gid, tid| mapped_gid == gid || managed.contains(tid));
+                dropped
+            } else {
+                Vec::new()
+            };
+            ids.insert(gid.to_string(), torrent_id);
+            dropped
+        };
+        if dropped.is_empty() {
+            return;
+        }
+        let mut tasks = tasks.write().await;
+        for task in tasks.iter_mut() {
+            if dropped.iter().any(|g| g == &task.gid) && task.status == TaskStatus::Active {
+                task.seeder = false;
+                task.seeding_since = 0;
+                task.status = TaskStatus::Complete;
+                task.download_speed = 0;
+                task.upload_speed = 0;
+            }
+        }
+    }
+
     /// Drop a torrent task's entry from the underlying bt session WITHOUT touching on-disk files, and clear the gid->torrent-id mapping; used by `remove_download_result`/`purge_download_result` to prevent stale `by_hash` entries from blocking re-adds of the same magnet
     async fn drop_torrent_engine_entry(&self, gid: &str) {
         let tid = {
@@ -4472,6 +5436,7 @@ impl TaskManager {
             ad.cancel_token.cancel();
         }
         drop(active);
+        cancel_all_starting_workers(&self.starting_workers);
         // Pause all active torrents
         let tid_guard = self.torrent_ids.read().await;
         let te_guard = self.torrent_engine.read().await;
@@ -4553,6 +5518,7 @@ impl TaskManager {
             ad.cancel_token.cancel();
         }
         drop(active);
+        cancel_all_starting_workers(&self.starting_workers);
 
         // Save session
         if let Err(e) = self.save_session().await {
@@ -4874,6 +5840,7 @@ mod tests {
             tasks: Arc::new(RevLock::new(tasks)),
             saved_rev: AtomicU64::new(u64::MAX),
             active_downloads: Arc::new(RwLock::new(HashMap::new())),
+            starting_workers: Arc::new(parking_lot::Mutex::new(HashMap::new())),
             torrent_ids: Arc::new(RwLock::new(HashMap::new())),
             pending_magnets: Arc::new(RwLock::new(HashSet::new())),
             purged_hashes: Arc::new(RwLock::new(HashSet::new())),
@@ -5255,10 +6222,16 @@ mod tests {
                 kad_status: Arc::new(parking_lot::Mutex::new(None)),
             },
         );
+        let starting_token = CancellationToken::new();
+        mgr.starting_workers.lock().insert(
+            "gid-starting".to_string(),
+            (next_worker_epoch(), starting_token.clone()),
+        );
 
         mgr.shutdown().await;
 
         assert!(cancel_token.is_cancelled());
+        assert!(starting_token.is_cancelled());
     }
 
     fn mk_metalink_file(index: &str, len: u64, done: u64) -> DownloadFile {
@@ -5568,5 +6541,718 @@ mod tests {
         assert_eq!(arr[0].get("gid").unwrap(), "w2");
         assert_eq!(arr[1].get("gid").unwrap(), "w3");
         assert_eq!(arr[2].get("gid").unwrap(), "w1");
+    }
+
+    #[tokio::test]
+    async fn update_task_applies_uris_dir_out_and_options() {
+        let mut task = DownloadTask::new_http(
+            "edit1".into(),
+            vec!["https://a.example/file.bin".into()],
+            "/old".into(),
+            None,
+            Map::new(),
+        );
+        task.out = "old.bin".into();
+        task.status = TaskStatus::Paused;
+        let mgr = make_test_manager(vec![task]);
+
+        let mut opts = Map::new();
+        opts.insert("split".into(), Value::from(8));
+        opts.insert(
+            "all-proxy".into(),
+            Value::String("http://proxy:8080".into()),
+        );
+
+        let outcome = mgr
+            .update_task(
+                "edit1",
+                TaskPatch {
+                    uris: Some(vec![
+                        "https://b.example/file.bin".into(),
+                        "https://c.example/file.bin".into(),
+                    ]),
+                    dir: Some("/new".into()),
+                    out: Some("new.bin".into()),
+                    trackers: None,
+                    options: Some(opts),
+                },
+            )
+            .await
+            .expect("update_task");
+
+        assert!(!outcome.restarted);
+        assert!(!outcome.progress_preserved); // primary URI changed
+        let tasks = mgr.tasks.read().await;
+        let t = tasks.iter().find(|t| t.gid == "edit1").unwrap();
+        assert_eq!(
+            t.uris,
+            vec![
+                "https://b.example/file.bin".to_string(),
+                "https://c.example/file.bin".to_string()
+            ]
+        );
+        assert_eq!(t.dir, "/new");
+        assert_eq!(t.out, "new.bin");
+        assert_eq!(t.options.get("split").and_then(|v| v.as_u64()), Some(8));
+        assert_eq!(
+            t.options.get("all-proxy").and_then(|v| v.as_str()),
+            Some("http://proxy:8080")
+        );
+        assert_eq!(t.files[0].uris.len(), 2);
+        assert_eq!(t.files[0].path, "/new/new.bin");
+    }
+
+    #[tokio::test]
+    async fn update_task_adding_mirrors_preserves_progress_flag() {
+        let mut task = DownloadTask::new_http(
+            "mirror1".into(),
+            vec!["https://a.example/file.bin".into()],
+            "/dl".into(),
+            None,
+            Map::new(),
+        );
+        task.out = "file.bin".into();
+        task.status = TaskStatus::Paused;
+        let mgr = make_test_manager(vec![task]);
+
+        let outcome = mgr
+            .update_task(
+                "mirror1",
+                TaskPatch {
+                    uris: Some(vec![
+                        "https://a.example/file.bin".into(),
+                        "https://b.example/file.bin".into(),
+                    ]),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("mirrors");
+
+        assert!(outcome.progress_preserved);
+        let tasks = mgr.tasks.read().await;
+        let t = tasks.iter().find(|t| t.gid == "mirror1").unwrap();
+        assert_eq!(t.uris.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn update_task_rejects_uris_on_torrent() {
+        let mut task = DownloadTask::new_torrent("bt1".into(), "/dl".into(), None, Map::new());
+        task.status = TaskStatus::Paused;
+        let mgr = make_test_manager(vec![task]);
+
+        let err = mgr
+            .update_task(
+                "bt1",
+                TaskPatch {
+                    uris: Some(vec!["https://example.com/x".into()]),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect_err("uris on torrent");
+        assert!(err.contains("URI") || err.contains("torrent"));
+    }
+
+    #[tokio::test]
+    async fn update_task_rejects_dir_on_torrent() {
+        let mut task = DownloadTask::new_torrent("bt2".into(), "/dl".into(), None, Map::new());
+        task.status = TaskStatus::Paused;
+        let mgr = make_test_manager(vec![task]);
+
+        let err = mgr
+            .update_task(
+                "bt2",
+                TaskPatch {
+                    dir: Some("/elsewhere".into()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect_err("dir on torrent");
+        assert!(err.contains("save path") || err.contains("torrent"));
+    }
+
+    #[tokio::test]
+    async fn update_task_allows_unchanged_torrent_dir_and_uris() {
+        let mut task = DownloadTask::new_torrent("bt-same".into(), "/dl".into(), None, Map::new());
+        task.status = TaskStatus::Paused;
+        task.uris = vec!["magnet:?xt=urn:btih:abc".into()];
+        task.bt_announce_list = vec![vec!["udp://a.example:80/announce".into()]];
+        let mgr = make_test_manager(vec![task]);
+
+        let outcome = mgr
+            .update_task(
+                "bt-same",
+                TaskPatch {
+                    uris: Some(vec!["magnet:?xt=urn:btih:abc".into()]),
+                    dir: Some("/dl".into()),
+                    trackers: Some(vec!["http://b.example/announce".into()]),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("restating current torrent fields must be allowed");
+        assert_eq!(outcome.trackers_added, 1);
+    }
+
+    #[tokio::test]
+    async fn update_task_rejects_ftp_uri_on_http_task() {
+        let mut task = DownloadTask::new_http(
+            "http1".into(),
+            vec!["https://a.example/file.bin".into()],
+            "/dl".into(),
+            None,
+            Map::new(),
+        );
+        task.status = TaskStatus::Paused;
+        let mgr = make_test_manager(vec![task]);
+
+        let err = mgr
+            .update_task(
+                "http1",
+                TaskPatch {
+                    uris: Some(vec!["ftp://example.com/file.bin".into()]),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect_err("ftp on http");
+        assert!(err.to_ascii_lowercase().contains("scheme") || err.contains("Unsupported"));
+        let tasks = mgr.tasks.read().await;
+        let t = tasks.iter().find(|t| t.gid == "http1").unwrap();
+        assert_eq!(t.uris, vec!["https://a.example/file.bin".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn update_task_rejects_magnet_uri_on_http_task() {
+        let mut task = DownloadTask::new_http(
+            "http-magnet".into(),
+            vec!["https://a.example/file.bin".into()],
+            "/dl".into(),
+            None,
+            Map::new(),
+        );
+        task.status = TaskStatus::Paused;
+        let mgr = make_test_manager(vec![task]);
+
+        let err = mgr
+            .update_task(
+                "http-magnet",
+                TaskPatch {
+                    uris: Some(vec![
+                        "magnet:?xt=urn:btih:cab507494d02ebb1178b38f2e9d7be299c86b862".into(),
+                    ]),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect_err("magnet on http");
+        assert!(err.to_ascii_lowercase().contains("scheme") || err.contains("Unsupported"));
+        let tasks = mgr.tasks.read().await;
+        let t = tasks.iter().find(|t| t.gid == "http-magnet").unwrap();
+        assert_eq!(t.kind, TaskKind::Http);
+        assert_eq!(t.uris, vec!["https://a.example/file.bin".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn update_task_relocates_every_metalink_file_path() {
+        let mut task = DownloadTask::new_http(
+            "multi1".into(),
+            vec!["https://a.example/a.bin".into()],
+            "/old".into(),
+            None,
+            Map::new(),
+        );
+        task.out = "a.bin".into();
+        task.status = TaskStatus::Paused;
+        task.files = vec![
+            DownloadFile {
+                index: "1".into(),
+                path: "/old/a.bin".into(),
+                length: "1".into(),
+                completed_length: "0".into(),
+                selected: "true".into(),
+                uris: vec![FileUri {
+                    uri: "https://a.example/a.bin".into(),
+                    status: "used".into(),
+                }],
+            },
+            DownloadFile {
+                index: "2".into(),
+                path: "/old/b.bin.part".into(),
+                length: "1".into(),
+                completed_length: "0".into(),
+                selected: "true".into(),
+                uris: vec![FileUri {
+                    uri: "https://a.example/b.bin".into(),
+                    status: "waiting".into(),
+                }],
+            },
+        ];
+        let mgr = make_test_manager(vec![task]);
+
+        mgr.update_task(
+            "multi1",
+            TaskPatch {
+                dir: Some("/new".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("dir change");
+
+        let tasks = mgr.tasks.read().await;
+        let t = tasks.iter().find(|t| t.gid == "multi1").unwrap();
+        assert_eq!(t.files[0].path, "/new/a.bin");
+        assert_eq!(t.files[1].path, "/new/b.bin");
+    }
+
+    #[tokio::test]
+    async fn update_task_appends_trackers_and_persists_bt_tracker() {
+        let mut task = DownloadTask::new_torrent("bt3".into(), "/dl".into(), None, Map::new());
+        task.status = TaskStatus::Paused;
+        task.bt_announce_list = vec![vec!["udp://a.example:80/announce".into()]];
+        let mgr = make_test_manager(vec![task]);
+
+        let outcome = mgr
+            .update_task(
+                "bt3",
+                TaskPatch {
+                    trackers: Some(vec![
+                        "udp://a.example:80/announce".into(), // dup
+                        "http://b.example/announce".into(),
+                    ]),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("trackers");
+
+        assert_eq!(outcome.trackers_added, 1);
+        let tasks = mgr.tasks.read().await;
+        let t = tasks.iter().find(|t| t.gid == "bt3").unwrap();
+        assert!(t
+            .bt_announce_list
+            .iter()
+            .flatten()
+            .any(|u| u == "http://b.example/announce"));
+        let raw = t
+            .options
+            .get("bt-tracker")
+            .and_then(|v| v.as_str())
+            .unwrap();
+        assert!(raw.contains("http://b.example/announce"));
+        assert!(raw.contains("udp://a.example:80/announce"));
+    }
+
+    #[tokio::test]
+    async fn update_task_rejects_out_on_torrent() {
+        let mut task = DownloadTask::new_torrent("bt4".into(), "/dl".into(), None, Map::new());
+        task.status = TaskStatus::Paused;
+        task.out = "movie.mkv".into();
+        let mgr = make_test_manager(vec![task]);
+
+        let err = mgr
+            .update_task(
+                "bt4",
+                TaskPatch {
+                    out: Some("renamed.mkv".into()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect_err("out on torrent");
+        assert!(err.contains("file name") || err.contains("torrent"));
+
+        // The same rename smuggled in through the option key is rejected too,
+        // and leaves the task untouched
+        let mut opts = Map::new();
+        opts.insert("split".into(), Value::from(8));
+        opts.insert("out".into(), Value::String("renamed.mkv".into()));
+        let err = mgr
+            .update_task(
+                "bt4",
+                TaskPatch {
+                    options: Some(opts),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect_err("out option on torrent");
+        assert!(err.contains("file name") || err.contains("torrent"));
+
+        let tasks = mgr.tasks.read().await;
+        let t = tasks.iter().find(|t| t.gid == "bt4").unwrap();
+        assert_eq!(t.out, "movie.mkv");
+        assert!(t.options.get("split").is_none());
+    }
+
+    /// Register a fake worker for `gid` that retires its `active_downloads`
+    /// entry once cancelled, the way `finish_task` does for a real download
+    async fn spawn_mock_worker(
+        mgr: &TaskManager,
+        gid: &str,
+        on_cancel: impl std::future::Future<Output = ()> + Send + 'static,
+    ) -> CancellationToken {
+        let counters = Counters::new(0, 0);
+        let cancel_token = counters.cancel_token.clone();
+        mgr.active_downloads.write().await.insert(
+            gid.to_string(),
+            counters.to_active(
+                next_worker_epoch(),
+                Vec::new(),
+                Arc::new(parking_lot::Mutex::new(None)),
+            ),
+        );
+        let active = mgr.active_downloads.clone();
+        let gid = gid.to_string();
+        let token = cancel_token.clone();
+        tokio::spawn(async move {
+            token.cancelled().await;
+            on_cancel.await;
+            active.write().await.remove(&gid);
+        });
+        cancel_token
+    }
+
+    #[tokio::test]
+    async fn update_task_moves_partial_after_the_worker_stops_writing() {
+        let root = tempfile::TempDir::new().unwrap();
+        let old_dir = root.path().join("old");
+        let new_dir = root.path().join("new");
+        std::fs::create_dir_all(&old_dir).unwrap();
+        std::fs::create_dir_all(&new_dir).unwrap();
+        let old_part = old_dir.join("file.bin.part");
+        std::fs::write(&old_part, b"partial").unwrap();
+
+        let mut task = DownloadTask::new_http(
+            "move1".into(),
+            vec!["https://a.example/file.bin".into()],
+            old_dir.to_string_lossy().into_owned(),
+            None,
+            Map::new(),
+        );
+        task.out = "file.bin".into();
+        task.status = TaskStatus::Active;
+        let mgr = make_test_manager(vec![task]);
+        // A real worker flushes its last bytes after observing the cancellation,
+        // so the relocation has to land after that write, not before it
+        let flushed = old_part.clone();
+        spawn_mock_worker(&mgr, "move1", async move {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            std::fs::write(&flushed, b"partial+flushed").unwrap();
+        })
+        .await;
+
+        let outcome = mgr
+            .update_task(
+                "move1",
+                TaskPatch {
+                    dir: Some(new_dir.to_string_lossy().into_owned()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("relocate");
+
+        assert!(outcome.restarted);
+        assert!(outcome.progress_preserved);
+        assert!(!old_part.exists());
+        assert_eq!(
+            std::fs::read(new_dir.join("file.bin.part")).unwrap(),
+            b"partial+flushed"
+        );
+    }
+
+    #[tokio::test]
+    async fn update_task_restarts_active_http_worker() {
+        let mut task = DownloadTask::new_http(
+            "act1".into(),
+            vec!["https://a.example/file.bin".into()],
+            "/dl".into(),
+            None,
+            Map::new(),
+        );
+        task.out = "file.bin".into();
+        task.status = TaskStatus::Active;
+        let mgr = make_test_manager(vec![task]);
+        let cancel_token = spawn_mock_worker(&mgr, "act1", async {}).await;
+
+        let mut opts = Map::new();
+        opts.insert("split".into(), Value::from(4));
+        let outcome = mgr
+            .update_task(
+                "act1",
+                TaskPatch {
+                    options: Some(opts),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("restart");
+
+        assert!(outcome.restarted);
+        assert!(cancel_token.is_cancelled());
+        let tasks = mgr.tasks.read().await;
+        let t = tasks.iter().find(|t| t.gid == "act1").unwrap();
+        // Demoted to Waiting
+        assert!(
+            t.status == TaskStatus::Waiting || t.status == TaskStatus::Active,
+            "status={:?}",
+            t.status
+        );
+        assert_eq!(t.options.get("split").and_then(|v| v.as_u64()), Some(4));
+    }
+
+    #[tokio::test]
+    async fn update_task_rejects_cleared_out_before_sanitize() {
+        let mut task = DownloadTask::new_http(
+            "empty-out".into(),
+            vec!["https://a.example/file.bin".into()],
+            "/dl".into(),
+            None,
+            Map::new(),
+        );
+        task.out = "file.bin".into();
+        task.status = TaskStatus::Paused;
+        let mgr = make_test_manager(vec![task]);
+
+        let err = mgr
+            .update_task(
+                "empty-out",
+                TaskPatch {
+                    out: Some("   ".into()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect_err("blank out");
+        assert!(err.contains("out must not be empty"));
+        let tasks = mgr.tasks.read().await;
+        let t = tasks.iter().find(|t| t.gid == "empty-out").unwrap();
+        assert_eq!(t.out, "file.bin");
+    }
+
+    #[tokio::test]
+    async fn update_task_unsetting_restart_option_restarts_active_worker() {
+        let mut opts = Map::new();
+        opts.insert(
+            "all-proxy".into(),
+            Value::String("http://proxy:8080".into()),
+        );
+        let mut task = DownloadTask::new_http(
+            "unset1".into(),
+            vec!["https://a.example/file.bin".into()],
+            "/dl".into(),
+            None,
+            opts,
+        );
+        task.out = "file.bin".into();
+        task.status = TaskStatus::Active;
+        let mgr = make_test_manager(vec![task]);
+        let cancel_token = spawn_mock_worker(&mgr, "unset1", async {}).await;
+
+        let mut patch_opts = Map::new();
+        patch_opts.insert("all-proxy".into(), Value::Null);
+        let outcome = mgr
+            .update_task(
+                "unset1",
+                TaskPatch {
+                    options: Some(patch_opts),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("unset");
+
+        assert!(outcome.restarted);
+        assert!(cancel_token.is_cancelled());
+        let tasks = mgr.tasks.read().await;
+        let t = tasks.iter().find(|t| t.gid == "unset1").unwrap();
+        assert!(t.options.get("all-proxy").is_none());
+    }
+
+    #[tokio::test]
+    async fn update_task_relocates_inferred_filename_when_out_is_empty() {
+        let root = tempfile::TempDir::new().unwrap();
+        let old_dir = root.path().join("old");
+        let new_dir = root.path().join("new");
+        std::fs::create_dir_all(&old_dir).unwrap();
+        std::fs::create_dir_all(&new_dir).unwrap();
+        std::fs::write(old_dir.join("file.bin.part"), b"partial").unwrap();
+
+        let mut task = DownloadTask::new_http(
+            "infer1".into(),
+            vec!["https://a.example/file.bin".into()],
+            old_dir.to_string_lossy().into_owned(),
+            None,
+            Map::new(),
+        );
+        task.out = String::new();
+        task.status = TaskStatus::Paused;
+        let mgr = make_test_manager(vec![task]);
+
+        let outcome = mgr
+            .update_task(
+                "infer1",
+                TaskPatch {
+                    dir: Some(new_dir.to_string_lossy().into_owned()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("relocate inferred");
+
+        assert!(outcome.progress_preserved);
+        assert!(!old_dir.join("file.bin.part").exists());
+        assert_eq!(
+            std::fs::read(new_dir.join("file.bin.part")).unwrap(),
+            b"partial"
+        );
+    }
+
+    #[tokio::test]
+    async fn update_task_relocates_inferred_name_using_old_uri_when_primary_changes() {
+        let root = tempfile::TempDir::new().unwrap();
+        let old_dir = root.path().join("old");
+        let new_dir = root.path().join("new");
+        std::fs::create_dir_all(&old_dir).unwrap();
+        std::fs::create_dir_all(&new_dir).unwrap();
+        std::fs::write(old_dir.join("file.bin.part"), b"partial").unwrap();
+
+        let mut task = DownloadTask::new_http(
+            "infer-uri".into(),
+            vec!["https://a.example/file.bin".into()],
+            old_dir.to_string_lossy().into_owned(),
+            None,
+            Map::new(),
+        );
+        task.out = String::new();
+        task.status = TaskStatus::Paused;
+        let mgr = make_test_manager(vec![task]);
+
+        let outcome = mgr
+            .update_task(
+                "infer-uri",
+                TaskPatch {
+                    dir: Some(new_dir.to_string_lossy().into_owned()),
+                    uris: Some(vec!["https://b.example/other.bin".into()]),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("relocate inferred with new uri");
+
+        assert!(!old_dir.join("file.bin.part").exists());
+        assert!(!new_dir.join("file.bin.part").exists());
+        assert_eq!(
+            std::fs::read(new_dir.join("other.bin.part")).unwrap(),
+            b"partial"
+        );
+        assert!(!outcome.progress_preserved);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn update_task_errors_when_cancelled_worker_does_not_exit() {
+        let mut task = DownloadTask::new_http(
+            "stuck1".into(),
+            vec!["https://a.example/file.bin".into()],
+            "/old".into(),
+            None,
+            Map::new(),
+        );
+        task.out = "file.bin".into();
+        task.status = TaskStatus::Active;
+        let mgr = make_test_manager(vec![task]);
+        let tasks = mgr.tasks.clone();
+        let counters = Counters::new(0, 0);
+        mgr.active_downloads.write().await.insert(
+            "stuck1".into(),
+            counters.to_active(
+                next_worker_epoch(),
+                Vec::new(),
+                Arc::new(parking_lot::Mutex::new(None)),
+            ),
+        );
+
+        let update = tokio::spawn(async move {
+            mgr.update_task(
+                "stuck1",
+                TaskPatch {
+                    dir: Some("/new".into()),
+                    ..Default::default()
+                },
+            )
+            .await
+        });
+        let mut elapsed = Duration::ZERO;
+        while elapsed < WORKER_EXIT_TIMEOUT + Duration::from_secs(1) {
+            tokio::task::yield_now().await;
+            tokio::time::advance(Duration::from_millis(20)).await;
+            elapsed += Duration::from_millis(20);
+            if update.is_finished() {
+                break;
+            }
+        }
+
+        let err = update
+            .await
+            .expect("join")
+            .expect_err("stale worker must fail the restart");
+        assert!(
+            err.contains("Timed out waiting for worker to stop"),
+            "err={err}"
+        );
+        let tasks = tasks.read().await;
+        let t = tasks.iter().find(|t| t.gid == "stuck1").unwrap();
+        assert_eq!(t.dir, "/old");
+        assert_eq!(t.status, TaskStatus::Active);
+    }
+
+    #[tokio::test]
+    async fn update_task_reports_lost_progress_when_partial_cannot_be_moved() {
+        let mut task = DownloadTask::new_http(
+            "nopath".into(),
+            vec!["https://a.example/file.bin".into()],
+            "/old".into(),
+            None,
+            Map::new(),
+        );
+        task.out = "file.bin".into();
+        task.status = TaskStatus::Paused;
+        let mgr = make_test_manager(vec![task]);
+
+        let outcome = mgr
+            .update_task(
+                "nopath",
+                TaskPatch {
+                    dir: Some("/new".into()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("dir change");
+
+        assert!(!outcome.progress_preserved);
+    }
+
+    #[tokio::test]
+    async fn remember_torrent_id_keeps_other_mappings_without_engine() {
+        let mut t1 = DownloadTask::new_torrent("g1".into(), "/dl".into(), None, Map::new());
+        t1.status = TaskStatus::Active;
+        let mut t2 = DownloadTask::new_torrent("g2".into(), "/dl".into(), None, Map::new());
+        t2.status = TaskStatus::Active;
+        let mgr = make_test_manager(vec![t1, t2]);
+
+        mgr.remember_torrent_id("g1", 1).await;
+        mgr.remember_torrent_id("g2", 2).await;
+
+        let ids = mgr.torrent_ids.read().await;
+        assert_eq!(ids.get("g1"), Some(&1));
+        assert_eq!(ids.get("g2"), Some(&2));
+        drop(ids);
+        let tasks = mgr.tasks.read().await;
+        assert!(tasks.iter().all(|t| t.status == TaskStatus::Active));
     }
 }

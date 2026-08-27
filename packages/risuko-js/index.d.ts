@@ -64,6 +64,20 @@ export function changeOption(
 	gid: string,
 	options: Record<string, unknown>,
 ): Promise<void>;
+export function updateTask(
+	gid: string,
+	patch: {
+		uris?: string[];
+		dir?: string;
+		out?: string;
+		trackers?: string[];
+		options?: Record<string, unknown>;
+	},
+): Promise<{
+	restarted: boolean;
+	trackersAdded: number;
+	progressPreserved: boolean;
+}>;
 export function changeGlobalOption(
 	options: Record<string, unknown>,
 ): Promise<void>;

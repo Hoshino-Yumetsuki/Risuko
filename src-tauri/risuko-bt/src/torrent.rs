@@ -100,6 +100,10 @@ pub enum TorrentCommand {
         event_rx: mpsc::Receiver<PeerEvent>,
         reserved: [u8; 8],
     },
+    AddTrackers {
+        urls: Vec<String>,
+        ack: oneshot::Sender<usize>,
+    },
     Pause(oneshot::Sender<()>),
     Unpause(oneshot::Sender<()>),
     ReconfigureP2p {
@@ -369,7 +373,7 @@ async fn torrent_loop(
         vec![info_hash]
     };
     let (peer_src_tx, mut peer_addr_rx) = mpsc::channel::<SocketAddr>(256);
-    let tracker_urls = collect_trackers(&init.meta);
+    let mut tracker_urls = collect_trackers(&init.meta);
     let tracker_info_hashes = announce_hashes.clone();
     let mut tracker_tasks = spawn_tracker_pollers(
         peer_src_tx.clone(),
@@ -637,6 +641,37 @@ async fn torrent_loop(
                     // defer new announces until the matching Unpause so the
                     // route swap cannot race a stale peer dial.
                     let _ = ack.send(());
+                }
+                TorrentCommand::AddTrackers { urls, ack } => {
+                    let new_urls = normalize_tracker_urls(urls, &tracker_urls);
+                    let added = new_urls.len();
+                    for url in &new_urls {
+                        tracker_urls.push(url.clone());
+                    }
+                    if !new_urls.is_empty() {
+                        if tracker_tasks.is_empty() {
+                            tracker_tasks = spawn_tracker_pollers(
+                                peer_src_tx.clone(),
+                                tracker_urls.clone(),
+                                tracker_info_hashes.clone(),
+                                our_peer_id,
+                                listen_port,
+                                Arc::clone(&stats),
+                                p2p_proxy.clone(),
+                            );
+                        } else {
+                            tracker_tasks.spawn_additional(
+                                peer_src_tx.clone(),
+                                new_urls,
+                                tracker_info_hashes.clone(),
+                                our_peer_id,
+                                listen_port,
+                                Arc::clone(&stats),
+                                p2p_proxy.clone(),
+                            );
+                        }
+                    }
+                    let _ = ack.send(added);
                 }
                 TorrentCommand::Stop(ack) => break 'torrent Some(ack),
                 }
@@ -2859,6 +2894,28 @@ fn should_send_initial_bitfield(bitfield: &[u8]) -> bool {
     bitfield.iter().any(|b| *b != 0)
 }
 
+/// Split and dedupe tracker URL strings the same way AddTrackers does
+pub(crate) fn normalize_tracker_urls<I, S>(incoming: I, existing: &[String]) -> Vec<String>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let mut out = Vec::new();
+    for raw in incoming {
+        for part in raw
+            .as_ref()
+            .split([',', '\n', '\r'])
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            if !existing.iter().any(|x| x == part) && !out.iter().any(|x: &String| x == part) {
+                out.push(part.to_string());
+            }
+        }
+    }
+    out
+}
+
 fn collect_trackers(meta: &TorrentMeta) -> Vec<String> {
     let mut v = Vec::new();
     let mut push = |raw: &str| {
@@ -2891,6 +2948,34 @@ struct TrackerPollers {
 impl TrackerPollers {
     fn is_empty(&self) -> bool {
         self.tasks.is_empty()
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn spawn_additional(
+        &mut self,
+        tx: mpsc::Sender<SocketAddr>,
+        trackers: Vec<String>,
+        info_hashes: Vec<Id20>,
+        peer_id: Id20,
+        port: u16,
+        stats: Arc<Mutex<TorrentStats>>,
+        proxy: Option<risuko_http::ProxyConnector>,
+    ) {
+        let shutdown_rx = self.shutdown_tx.subscribe();
+        for url in trackers {
+            for info_hash in &info_hashes {
+                self.tasks.spawn(run_tracker_poller(
+                    tx.clone(),
+                    url.clone(),
+                    *info_hash,
+                    peer_id,
+                    port,
+                    Arc::clone(&stats),
+                    shutdown_rx.clone(),
+                    proxy.clone(),
+                ));
+            }
+        }
     }
 
     async fn shutdown(&mut self, announce_stopped: bool) {
@@ -3832,5 +3917,109 @@ mod tests {
         assert_eq!(next_optimistic(&c, Some(3)), Some(7));
         assert_eq!(next_optimistic(&c, Some(7)), Some(1));
         assert_eq!(next_optimistic(&[], Some(7)), None);
+    }
+
+    #[test]
+    fn normalize_tracker_urls_dedupes_against_existing_and_self() {
+        let existing = vec!["udp://a.example:80/announce".to_string()];
+        let added = normalize_tracker_urls(
+            vec![
+                "udp://a.example:80/announce".to_string(),
+                "http://b.example/announce\nhttp://b.example/announce".to_string(),
+                "http://c.example/announce,udp://d.example:6969/announce".to_string(),
+            ],
+            &existing,
+        );
+        assert_eq!(
+            added,
+            vec![
+                "http://b.example/announce".to_string(),
+                "http://c.example/announce".to_string(),
+                "udp://d.example:6969/announce".to_string(),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn add_trackers_after_shutdown_uses_a_fresh_poller_set() {
+        let (tx, _rx) = mpsc::channel(8);
+        let stats = Arc::new(Mutex::new(TorrentStats::initial(0, vec![])));
+        let peer_id = Id20::new([0; 20]);
+        let hashes = vec![Id20::new([1; 20])];
+        let mut pollers = spawn_tracker_pollers(
+            tx.clone(),
+            Vec::new(),
+            hashes.clone(),
+            peer_id,
+            6881,
+            Arc::clone(&stats),
+            None,
+        );
+        // Keep a subscriber so shutdown can latch; an empty set drops the
+        // original receiver before send() otherwise.
+        let _keep_alive = pollers.shutdown_tx.subscribe();
+        pollers.shutdown(false).await;
+        assert!(pollers.is_empty());
+        assert!(pollers.shutdown_tx.borrow().is_some());
+
+        pollers = spawn_tracker_pollers(tx, Vec::new(), hashes, peer_id, 6881, stats, None);
+        assert!(pollers.is_empty());
+        assert!(
+            pollers.shutdown_tx.borrow().is_none(),
+            "recreated pollers must not inherit the previous shutdown latch"
+        );
+    }
+
+    #[tokio::test]
+    async fn scan_existing_pieces_recovers_complete_piece_when_sibling_file_is_missing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let a_bytes: Vec<u8> = (0u8..15).collect();
+        let piece0 = crate::core::hash::sha1(&a_bytes[..10]);
+        let mut pieces = Vec::with_capacity(60);
+        pieces.extend_from_slice(piece0.as_bytes());
+        pieces.extend_from_slice(&[0u8; 40]);
+
+        let info = ValidatedTorrentMetaV1Info {
+            name: "root".into(),
+            piece_length: 10,
+            pieces,
+            private: false,
+            files: vec![
+                TorrentMetaInfo {
+                    path: vec!["a".into()],
+                    length: 15,
+                },
+                TorrentMetaInfo {
+                    path: vec!["b".into()],
+                    length: 15,
+                },
+            ],
+            single_file_mode: false,
+        };
+        let storage = Arc::new(FilesystemStorage::new(&info, root));
+        tokio::fs::write(root.join("a"), &a_bytes).await.unwrap();
+        assert!(
+            storage.has_existing_payload_files().await,
+            "a complete piece in one file must still schedule a recovery scan"
+        );
+
+        let lengths = Lengths::new(30, 10).unwrap();
+        let verifier = PieceVerifier::V1Sha1 {
+            pieces: Arc::new(info.pieces.clone()),
+        };
+        let mut piece_tracker = PieceTracker::new(lengths);
+        scan_existing_pieces(&verifier, &storage, &lengths, &mut piece_tracker).await;
+
+        let v0 = lengths.validate_piece(0).unwrap();
+        let v1 = lengths.validate_piece(1).unwrap();
+        assert!(
+            piece_tracker.has_local(v0),
+            "piece fully contained in the present file must be recovered"
+        );
+        assert!(
+            !piece_tracker.has_local(v1),
+            "piece that spans the missing file must stay outstanding"
+        );
     }
 }

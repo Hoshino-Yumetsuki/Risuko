@@ -153,4 +153,26 @@ export default {
 	"batch-remove-item": "حذف",
 	"torrent-preview-folder-toggle": "تغییر پوشه",
 	"clear-filter": "پاک کردن فیلتر",
+	"edit-task": "ویرایش…",
+	"edit-dialog-title": "ویرایش وظیفه",
+	"edit-tab-general": "عمومی",
+	"edit-tab-sources": "منابع",
+	"edit-tab-trackers": "ردیاب‌ها",
+	"edit-tab-network": "شبکه",
+	"edit-mirrors": "آینه‌ها",
+	"edit-mirror-add": "افزودن",
+	"edit-trackers-hint":
+		"نشانی ردیاب‌ها را اضافه کنید (هر خط یکی). ردیاب‌های جدید بلافاصله اعلام می‌شوند و تورنت قطع نمی‌شود.",
+	"edit-restart-warning":
+		"این وظیفه در حال بارگیری است. ذخیره کردن کارگر را برای لحظه‌ای از نو راه‌اندازی می‌کند تا تنظیمات جدید اعمال شود. پیشرفت در صورت امکان حفظ می‌شود.",
+	"edit-progress-warning":
+		"تغییر نشانی اصلی بارگیری ممکن است دادهٔ ازسرگیری را دور بیندازد اگر فایل جدید بایت‌به‌بایت یکسان نباشد (ETag یا طول متفاوت).",
+	"edit-confirm": "ذخیره",
+	"edit-success": "وظیفه به‌روزرسانی شد",
+	"edit-fail": "به‌روزرسانی وظیفه ناموفق بود",
+	"edit-no-changes": "تغییری برای ذخیره نیست",
+	"edit-speed-limit": "محدودیت سرعت",
+	"edit-speed-limit-placeholder": "۰ یا خالی = نامحدود (مثلاً 500K)",
+	"edit-primary-uri": "نشانی بارگیری",
+	"edit-primary-uri-placeholder": "نشانی اصلی بارگیری",
 };

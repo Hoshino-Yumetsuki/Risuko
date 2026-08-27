@@ -449,6 +449,36 @@ impl Session {
         }
     }
 
+    async fn existing_live_torrent(
+        &self,
+        info_hash: Id20,
+    ) -> Result<Option<(usize, Arc<ManagedTorrent>)>, String> {
+        let existing = {
+            let inner = self.inner.lock();
+            inner
+                .by_hash
+                .get(&info_hash)
+                .copied()
+                .and_then(|id| inner.torrents.get(&id).cloned().map(|t| (id, t)))
+        };
+        let Some((id, handle)) = existing else {
+            return Ok(None);
+        };
+        if !managed_needs_rescan(&handle).await {
+            return Ok(Some((id, handle)));
+        }
+        tracing::info!(
+            "dropping stale torrent id={id} ({}) to re-verify local files",
+            info_hash.to_hex()
+        );
+        match self.delete(TorrentIdOrHash::Id(id), false).await {
+            Ok(()) => {}
+            Err(e) if e == "not found" => {}
+            Err(e) => return Err(e),
+        }
+        Ok(None)
+    }
+
     pub async fn add_from_meta(
         self: &Arc<Self>,
         meta: super::core::TorrentMeta,
@@ -463,11 +493,17 @@ impl Session {
             }));
         }
 
+        if let Some((id, t)) = self.existing_live_torrent(meta.info_hash).await? {
+            return Ok(AddTorrentResponse::AlreadyManaged(id, t));
+        }
         {
             let inner = self.inner.lock();
             if let Some(&id) = inner.by_hash.get(&meta.info_hash) {
-                if let Some(t) = inner.torrents.get(&id).cloned() {
-                    return Ok(AddTorrentResponse::AlreadyManaged(id, t));
+                if inner.torrents.contains_key(&id) {
+                    // Lost the race to another add that finished spawning after existing_live_torrent ran; reuse that handle rather than allocating a duplicate id
+                    if let Some(t) = inner.torrents.get(&id).cloned() {
+                        return Ok(AddTorrentResponse::AlreadyManaged(id, t));
+                    }
                 }
                 // by_hash is claimed but torrents has no entry yet: another add_from_meta for this info-hash reserved the id and is still spawning; bail out instead of racing past to allocate a duplicate id (which would spawn a second torrent and break the first task's rollback guard)
                 return Err("torrent for this info-hash is already being added".to_string());
@@ -816,6 +852,35 @@ impl Session {
             .send(TorrentCommand::AddPeer(addr))
             .await
             .map_err(|e| e.to_string())
+    }
+
+    pub async fn add_trackers(&self, info_hash: Id20, urls: Vec<String>) -> Result<usize, String> {
+        let handle = self
+            .get(TorrentIdOrHash::Hash(info_hash))
+            .ok_or_else(|| "torrent not found".to_string())?;
+        let (ack_tx, ack_rx) = tokio::sync::oneshot::channel();
+        handle
+            .cmd_tx()
+            .send(TorrentCommand::AddTrackers { urls, ack: ack_tx })
+            .await
+            .map_err(|e| e.to_string())?;
+        ack_rx.await.map_err(|e| e.to_string())
+    }
+}
+
+async fn managed_needs_rescan(handle: &ManagedTorrent) -> bool {
+    let stats = handle.stats();
+    if stats.finished {
+        return true;
+    }
+    if stats.progress_bytes == 0 {
+        return false;
+    }
+    match handle
+        .with_metadata(|meta| super::storage::FilesystemStorage::new(&meta.info, &handle.root_dir))
+    {
+        Ok(storage) => !storage.has_existing_payload_files().await,
+        Err(_) => false,
     }
 }
 

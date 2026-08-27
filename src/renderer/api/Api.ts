@@ -219,6 +219,40 @@ export default class Api {
 		return invoke("change_option", { gid, options: engineOptions });
 	}
 
+	updateTask(params: {
+		gid: string;
+		patch: {
+			uris?: string[];
+			dir?: string;
+			out?: string;
+			trackers?: string[];
+			options?: Record<string, unknown>;
+		};
+	}) {
+		const { gid, patch } = params;
+		const enginePatch: Record<string, unknown> = {};
+		if (patch.uris !== undefined) {
+			enginePatch.uris = patch.uris;
+		}
+		if (patch.dir !== undefined) {
+			enginePatch.dir = patch.dir;
+		}
+		if (patch.out !== undefined) {
+			enginePatch.out = patch.out;
+		}
+		if (patch.trackers !== undefined) {
+			enginePatch.trackers = patch.trackers;
+		}
+		if (patch.options !== undefined) {
+			enginePatch.options = formatOptionsForEngine(patch.options, true);
+		}
+		return invoke<{
+			restarted: boolean;
+			trackersAdded: number;
+			progressPreserved: boolean;
+		}>("update_task", { gid, patch: enginePatch });
+	}
+
 	getGlobalStat() {
 		return invoke<GlobalStat>("get_global_stat");
 	}

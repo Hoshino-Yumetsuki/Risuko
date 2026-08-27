@@ -156,4 +156,26 @@ export default {
 	"batch-remove-item": "Xóa",
 	"torrent-preview-folder-toggle": "Chuyển đổi lựa chọn thư mục",
 	"clear-filter": "Xóa bộ lọc",
+	"edit-task": "Sửa…",
+	"edit-dialog-title": "Sửa tác vụ",
+	"edit-tab-general": "Chung",
+	"edit-tab-sources": "Nguồn",
+	"edit-tab-trackers": "Tracker",
+	"edit-tab-network": "Mạng",
+	"edit-mirrors": "Máy chủ gương",
+	"edit-mirror-add": "Thêm",
+	"edit-trackers-hint":
+		"Thêm URL tracker (mỗi dòng một URL). Tracker mới được thông báo ngay mà không làm gián đoạn torrent.",
+	"edit-restart-warning":
+		"Tác vụ này đang tải. Lưu sẽ khởi động lại worker trong giây lát để áp dụng cài đặt mới. Tiến trình được giữ lại khi có thể.",
+	"edit-progress-warning":
+		"Đổi URL tải chính có thể hủy dữ liệu tiếp tục nếu tệp mới không giống từng byte (ETag/độ dài khác).",
+	"edit-confirm": "Lưu",
+	"edit-success": "Đã cập nhật tác vụ",
+	"edit-fail": "Không cập nhật được tác vụ",
+	"edit-no-changes": "Không có thay đổi để lưu",
+	"edit-speed-limit": "Giới hạn tốc độ",
+	"edit-speed-limit-placeholder": "0 hoặc trống = không giới hạn (ví dụ 500K)",
+	"edit-primary-uri": "URL tải xuống",
+	"edit-primary-uri-placeholder": "URL tải xuống chính",
 };

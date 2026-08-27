@@ -157,4 +157,26 @@ export default {
 	"batch-remove-item": "Удалить",
 	"torrent-preview-folder-toggle": "Переключить папку",
 	"clear-filter": "Очистить фильтр",
+	"edit-task": "Изменить…",
+	"edit-dialog-title": "Изменить задание",
+	"edit-tab-general": "Общие",
+	"edit-tab-sources": "Источники",
+	"edit-tab-trackers": "Трекеры",
+	"edit-tab-network": "Сеть",
+	"edit-mirrors": "Зеркала",
+	"edit-mirror-add": "Добавить",
+	"edit-trackers-hint":
+		"Добавьте URL трекеров (по одному в строке). Новые трекеры объявляются сразу, не прерывая торрент.",
+	"edit-restart-warning":
+		"Это задание сейчас загружается. Сохранение ненадолго перезапустит процесс, чтобы применить новые настройки. Прогресс сохраняется, когда это возможно.",
+	"edit-progress-warning":
+		"Смена основного URL загрузки может отбросить данные возобновления, если новый файл не идентичен побайтно (другой ETag или длина).",
+	"edit-confirm": "Сохранить",
+	"edit-success": "Задание обновлено",
+	"edit-fail": "Не удалось обновить задание",
+	"edit-no-changes": "Нет изменений для сохранения",
+	"edit-speed-limit": "Ограничение скорости",
+	"edit-speed-limit-placeholder": "0 или пусто = без ограничения (напр. 500K)",
+	"edit-primary-uri": "URL загрузки",
+	"edit-primary-uri-placeholder": "Основной URL загрузки",
 };

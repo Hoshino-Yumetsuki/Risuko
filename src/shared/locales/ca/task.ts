@@ -161,4 +161,26 @@ export default {
 	"batch-remove-item": "Elimina",
 	"torrent-preview-folder-toggle": "Commuta la carpeta",
 	"clear-filter": "Esborra el filtre",
+	"edit-task": "Edita…",
+	"edit-dialog-title": "Edita la tasca",
+	"edit-tab-general": "General",
+	"edit-tab-sources": "Fonts",
+	"edit-tab-trackers": "Trackers",
+	"edit-tab-network": "Xarxa",
+	"edit-mirrors": "Miralls",
+	"edit-mirror-add": "Afegeix",
+	"edit-trackers-hint":
+		"Afegiu URL de tracker (una per línia). Els trackers nous s'anuncien immediatament sense interrompre el torrent.",
+	"edit-restart-warning":
+		"Aquesta tasca s'està descarregant. En desar, el procés es reiniciarà breument per aplicar la configuració nova. El progrés es conserva sempre que sigui possible.",
+	"edit-progress-warning":
+		"Canviar l'URL principal de descàrrega pot descartar les dades de continuació si el fitxer nou no és idèntic byte a byte (ETag o longitud diferents).",
+	"edit-confirm": "Desa",
+	"edit-success": "Tasca actualitzada",
+	"edit-fail": "No s'ha pogut actualitzar la tasca",
+	"edit-no-changes": "No hi ha canvis per desar",
+	"edit-speed-limit": "Límit de velocitat",
+	"edit-speed-limit-placeholder": "0 o buit = il·limitat (p. ex. 500K)",
+	"edit-primary-uri": "URL de descàrrega",
+	"edit-primary-uri-placeholder": "URL de descàrrega principal",
 };

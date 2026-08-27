@@ -21,6 +21,7 @@ interface BitTorrentInfo {
 	infoHash?: string;
 	infoHashV2?: string;
 	metaVersion?: "v1" | "v2" | "hybrid";
+	announceList?: string[][];
 }
 
 export interface UsenetRepairFailure {

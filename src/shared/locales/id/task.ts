@@ -155,4 +155,26 @@ export default {
 	"batch-remove-item": "Hapus",
 	"torrent-preview-folder-toggle": "Alihkan folder",
 	"clear-filter": "Hapus filter",
+	"edit-task": "Sunting…",
+	"edit-dialog-title": "Sunting tugas",
+	"edit-tab-general": "Umum",
+	"edit-tab-sources": "Sumber",
+	"edit-tab-trackers": "Tracker",
+	"edit-tab-network": "Jaringan",
+	"edit-mirrors": "Cermin",
+	"edit-mirror-add": "Tambah",
+	"edit-trackers-hint":
+		"Tambahkan URL tracker (satu per baris). Tracker baru diumumkan segera tanpa menghentikan torrent.",
+	"edit-restart-warning":
+		"Tugas ini sedang diunduh. Menyimpan akan memulai ulang pekerja sebentar agar pengaturan baru berlaku. Progres dipertahankan jika memungkinkan.",
+	"edit-progress-warning":
+		"Mengubah URL unduhan utama dapat membuang data lanjut unduh jika berkas baru tidak identik per byte (ETag/panjang berbeda).",
+	"edit-confirm": "Simpan",
+	"edit-success": "Tugas diperbarui",
+	"edit-fail": "Gagal memperbarui tugas",
+	"edit-no-changes": "Tidak ada perubahan untuk disimpan",
+	"edit-speed-limit": "Batas kecepatan",
+	"edit-speed-limit-placeholder": "0 atau kosong = tak terbatas (mis. 500K)",
+	"edit-primary-uri": "URL unduhan",
+	"edit-primary-uri-placeholder": "URL unduhan utama",
 };

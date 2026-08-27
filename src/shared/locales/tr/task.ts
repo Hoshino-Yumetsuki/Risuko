@@ -157,4 +157,26 @@ export default {
 	"batch-remove-item": "Kaldır",
 	"torrent-preview-folder-toggle": "Klasörü değiştir",
 	"clear-filter": "Filtreyi temizle",
+	"edit-task": "Düzenle…",
+	"edit-dialog-title": "Görevi düzenle",
+	"edit-tab-general": "Genel",
+	"edit-tab-sources": "Kaynaklar",
+	"edit-tab-trackers": "İzleyiciler",
+	"edit-tab-network": "Ağ",
+	"edit-mirrors": "Yansıtmalar",
+	"edit-mirror-add": "Ekle",
+	"edit-trackers-hint":
+		"İzleyici URL'leri ekleyin (her satıra bir tane). Yeni izleyiciler torrenti kesintiye uğratmadan hemen duyurulur.",
+	"edit-restart-warning":
+		"Bu görev indiriliyor. Kaydetmek, yeni ayarların uygulanması için işçiyi kısa süre yeniden başlatır. İlerleme mümkün olduğunda korunur.",
+	"edit-progress-warning":
+		"Birincil indirme URL'sini değiştirmek, yeni dosya bayt bayt aynı değilse (farklı ETag/uzunluk) devam verilerini atabilir.",
+	"edit-confirm": "Kaydet",
+	"edit-success": "Görev güncellendi",
+	"edit-fail": "Görev güncellenemedi",
+	"edit-no-changes": "Kaydedilecek değişiklik yok",
+	"edit-speed-limit": "Hız sınırı",
+	"edit-speed-limit-placeholder": "0 veya boş = sınırsız (ör. 500K)",
+	"edit-primary-uri": "İndirme URL'si",
+	"edit-primary-uri-placeholder": "Birincil indirme URL'si",
 };

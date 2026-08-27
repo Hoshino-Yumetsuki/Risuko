@@ -1,6 +1,7 @@
 <template>
   <div class="number-input-wrap">
     <input
+      :id="id"
       type="number"
       class="input-number"
       :value="modelValue"
@@ -60,6 +61,7 @@ const props = withDefaults(
 		min?: number;
 		max?: number;
 		step?: number;
+		id?: string;
 	}>(),
 	{
 		modelValue: 0,

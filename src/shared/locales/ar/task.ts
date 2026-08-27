@@ -152,4 +152,26 @@ export default {
 	"batch-remove-item": "إزالة",
 	"torrent-preview-folder-toggle": "تبديل المجلد",
 	"clear-filter": "مسح عامل التصفية",
+	"edit-task": "تحرير…",
+	"edit-dialog-title": "تحرير المهمة",
+	"edit-tab-general": "عام",
+	"edit-tab-sources": "المصادر",
+	"edit-tab-trackers": "المتتبعات",
+	"edit-tab-network": "الشبكة",
+	"edit-mirrors": "المرايا",
+	"edit-mirror-add": "إضافة",
+	"edit-trackers-hint":
+		"أضف عناوين المتتبعات (عنوان في كل سطر). تُعلن المتتبعات الجديدة فورًا دون مقاطعة التورنت.",
+	"edit-restart-warning":
+		"هذه المهمة قيد التنزيل. سيُعاد تشغيل عامل التنزيل لفترة وجيزة لتطبيق الإعدادات الجديدة مع الاحتفاظ بالتقدم قدر الإمكان.",
+	"edit-progress-warning":
+		"تغيير عنوان التنزيل الرئيسي قد يُلغي بيانات الاستئناف إذا لم يكن الملف الجديد مطابقًا بايتًا بايت (ETag أو الطول مختلف).",
+	"edit-confirm": "حفظ",
+	"edit-success": "تم تحديث المهمة",
+	"edit-fail": "فشل تحديث المهمة",
+	"edit-no-changes": "لا توجد تغييرات للحفظ",
+	"edit-speed-limit": "حد السرعة",
+	"edit-speed-limit-placeholder": "0 أو فارغ = بلا حد (مثل 500K)",
+	"edit-primary-uri": "رابط التنزيل",
+	"edit-primary-uri-placeholder": "رابط التنزيل الرئيسي",
 };

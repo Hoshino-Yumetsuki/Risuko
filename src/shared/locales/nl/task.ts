@@ -160,4 +160,26 @@ export default {
 	"batch-remove-item": "Verwijderen",
 	"torrent-preview-folder-toggle": "Map wisselen",
 	"clear-filter": "Filter wissen",
+	"edit-task": "Bewerken…",
+	"edit-dialog-title": "Taak bewerken",
+	"edit-tab-general": "Algemeen",
+	"edit-tab-sources": "Bronnen",
+	"edit-tab-trackers": "Trackers",
+	"edit-tab-network": "Netwerk",
+	"edit-mirrors": "Mirrors",
+	"edit-mirror-add": "Toevoegen",
+	"edit-trackers-hint":
+		"Voeg tracker-URL's toe (één per regel). Nieuwe trackers worden meteen aangekondigd zonder de torrent te onderbreken.",
+	"edit-restart-warning":
+		"Deze taak wordt gedownload. Opslaan herstart de worker even zodat de nieuwe instellingen van kracht worden. Voortgang blijft behouden wanneer mogelijk.",
+	"edit-progress-warning":
+		"Het wijzigen van de primaire download-URL kan hervattingsgegevens verwerpen als het nieuwe bestand niet byte-identiek is (andere ETag/lengte).",
+	"edit-confirm": "Opslaan",
+	"edit-success": "Taak bijgewerkt",
+	"edit-fail": "Taak bijwerken mislukt",
+	"edit-no-changes": "Geen wijzigingen om op te slaan",
+	"edit-speed-limit": "Snelheidslimiet",
+	"edit-speed-limit-placeholder": "0 of leeg = onbeperkt (bijv. 500K)",
+	"edit-primary-uri": "Download-URL",
+	"edit-primary-uri-placeholder": "Primaire download-URL",
 };

@@ -156,4 +156,26 @@ export default {
 	"batch-remove-item": "削除",
 	"torrent-preview-folder-toggle": "フォルダーを切り替え",
 	"clear-filter": "フィルターをクリア",
+	"edit-task": "編集…",
+	"edit-dialog-title": "タスクを編集",
+	"edit-tab-general": "一般",
+	"edit-tab-sources": "ソース",
+	"edit-tab-trackers": "トラッカー",
+	"edit-tab-network": "ネットワーク",
+	"edit-mirrors": "ミラー",
+	"edit-mirror-add": "追加",
+	"edit-trackers-hint":
+		"トラッカー URL を追加します（1 行に 1 つ）。新しいトラッカーはトレントを中断せずにすぐアナウンスされます。",
+	"edit-restart-warning":
+		"このタスクはダウンロード中です。保存すると新しい設定を適用するためワーカーが短時間再起動します。可能な限り進捗は保持されます。",
+	"edit-progress-warning":
+		"メインのダウンロード URL を変更すると、新しいファイルがバイト単位で同一でない場合（ETag や長さが異なる場合）レジュームデータを破棄することがあります。",
+	"edit-confirm": "保存",
+	"edit-success": "タスクを更新しました",
+	"edit-fail": "タスクの更新に失敗しました",
+	"edit-no-changes": "保存する変更はありません",
+	"edit-speed-limit": "速度制限",
+	"edit-speed-limit-placeholder": "0 または空欄 = 無制限（例: 500K）",
+	"edit-primary-uri": "ダウンロード URL",
+	"edit-primary-uri-placeholder": "メインのダウンロード URL",
 };

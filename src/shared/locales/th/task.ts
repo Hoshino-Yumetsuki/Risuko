@@ -148,4 +148,26 @@ export default {
 	"batch-remove-item": "ลบ",
 	"torrent-preview-folder-toggle": "สลับโฟลเดอร์",
 	"clear-filter": "ล้างตัวกรอง",
+	"edit-task": "แก้ไข…",
+	"edit-dialog-title": "แก้ไขงาน",
+	"edit-tab-general": "ทั่วไป",
+	"edit-tab-sources": "แหล่งที่มา",
+	"edit-tab-trackers": "แทร็กเกอร์",
+	"edit-tab-network": "เครือข่าย",
+	"edit-mirrors": "มิเรอร์",
+	"edit-mirror-add": "เพิ่ม",
+	"edit-trackers-hint":
+		"เพิ่ม URL ของแทร็กเกอร์ (หนึ่งรายการต่อบรรทัด) แทร็กเกอร์ใหม่จะถูกประกาศทันทีโดยไม่ขัดจังหวะทอร์เรนต์",
+	"edit-restart-warning":
+		"งานนี้กำลังดาวน์โหลดอยู่ การบันทึกจะรีสตาร์ทตัวทำงานชั่วครู่เพื่อให้การตั้งค่าใหม่มีผล ความคืบหน้าจะถูกเก็บไว้เมื่อทำได้",
+	"edit-progress-warning":
+		"การเปลี่ยน URL ดาวน์โหลดหลักอาจทิ้งข้อมูลต่อเนื่อง หากไฟล์ใหม่ไม่เหมือนกันทีละไบต์ (ETag หรือความยาวต่างกัน)",
+	"edit-confirm": "บันทึก",
+	"edit-success": "อัปเดตงานแล้ว",
+	"edit-fail": "อัปเดตงานไม่สำเร็จ",
+	"edit-no-changes": "ไม่มีการเปลี่ยนแปลงที่จะบันทึก",
+	"edit-speed-limit": "จำกัดความเร็ว",
+	"edit-speed-limit-placeholder": "0 หรือว่าง = ไม่จำกัด (เช่น 500K)",
+	"edit-primary-uri": "URL ดาวน์โหลด",
+	"edit-primary-uri-placeholder": "URL ดาวน์โหลดหลัก",
 };

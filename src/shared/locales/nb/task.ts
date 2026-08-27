@@ -158,4 +158,26 @@ export default {
 	"batch-remove-item": "Fjern",
 	"torrent-preview-folder-toggle": "Bytt mappe",
 	"clear-filter": "Tøm filter",
+	"edit-task": "Rediger…",
+	"edit-dialog-title": "Rediger oppgave",
+	"edit-tab-general": "Generelt",
+	"edit-tab-sources": "Kilder",
+	"edit-tab-trackers": "Trackere",
+	"edit-tab-network": "Nettverk",
+	"edit-mirrors": "Speil",
+	"edit-mirror-add": "Legg til",
+	"edit-trackers-hint":
+		"Legg til tracker-URL-er (én per linje). Nye trackere kunngjøres med en gang uten å avbryte torrenten.",
+	"edit-restart-warning":
+		"Denne oppgaven lastes ned. Lagring starter arbeideren på nytt et øyeblikk slik at de nye innstillingene tar effekt. Fremdriften beholdes når det er mulig.",
+	"edit-progress-warning":
+		"Å endre den primære nedlastings-URL-en kan forkaste gjenopptakingsdata hvis den nye filen ikke er byte-identisk (ulik ETag/lengde).",
+	"edit-confirm": "Lagre",
+	"edit-success": "Oppgave oppdatert",
+	"edit-fail": "Kunne ikke oppdatere oppgaven",
+	"edit-no-changes": "Ingen endringer å lagre",
+	"edit-speed-limit": "Hastighetsgrense",
+	"edit-speed-limit-placeholder": "0 eller tom = ubegrenset (f.eks. 500K)",
+	"edit-primary-uri": "Nedlastings-URL",
+	"edit-primary-uri-placeholder": "Primær nedlastings-URL",
 };

@@ -159,4 +159,26 @@ export default {
 	"batch-remove-item": "Usuń",
 	"torrent-preview-folder-toggle": "Przełącz folder",
 	"clear-filter": "Wyczyść filtr",
+	"edit-task": "Edytuj…",
+	"edit-dialog-title": "Edytuj zadanie",
+	"edit-tab-general": "Ogólne",
+	"edit-tab-sources": "Źródła",
+	"edit-tab-trackers": "Trackery",
+	"edit-tab-network": "Sieć",
+	"edit-mirrors": "Lustra",
+	"edit-mirror-add": "Dodaj",
+	"edit-trackers-hint":
+		"Dodaj adresy URL trackerów (po jednym w wierszu). Nowe trackery są ogłaszane od razu bez przerywania torrenta.",
+	"edit-restart-warning":
+		"To zadanie jest pobierane. Zapisanie na chwilę zrestartuje proces, aby zastosować nowe ustawienia. Postęp zostanie zachowany, gdy to możliwe.",
+	"edit-progress-warning":
+		"Zmiana głównego adresu URL pobierania może odrzucić dane wznawiania, jeśli nowy plik nie jest identyczny bajt po bajcie (inny ETag/długość).",
+	"edit-confirm": "Zapisz",
+	"edit-success": "Zadanie zaktualizowane",
+	"edit-fail": "Nie udało się zaktualizować zadania",
+	"edit-no-changes": "Brak zmian do zapisania",
+	"edit-speed-limit": "Limit prędkości",
+	"edit-speed-limit-placeholder": "0 lub puste = bez limitu (np. 500K)",
+	"edit-primary-uri": "URL pobierania",
+	"edit-primary-uri-placeholder": "Główny URL pobierania",
 };

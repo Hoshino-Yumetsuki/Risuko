@@ -217,6 +217,30 @@ pub struct DownloadTask {
     pub chunk_progress: Vec<ChunkProgress>,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskPatch {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uris: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dir: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub out: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trackers: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub options: Option<Map<String, Value>>,
+}
+
+/// Result of applying a [`TaskPatch`]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateTaskOutcome {
+    pub restarted: bool,
+    pub trackers_added: usize,
+    pub progress_preserved: bool,
+}
+
 impl DownloadTask {
     pub fn new_http(
         gid: String,

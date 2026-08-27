@@ -499,6 +499,7 @@ pub fn run() {
         commands::engine_cmds::unpause_task,
         commands::engine_cmds::remove_task,
         commands::engine_cmds::change_option,
+        commands::engine_cmds::update_task,
         commands::engine_cmds::change_global_option_engine,
         commands::engine_cmds::get_option_engine,
         commands::engine_cmds::get_global_option_engine,

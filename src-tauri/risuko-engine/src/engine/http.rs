@@ -82,6 +82,181 @@ fn chunk_meta_path(part_path: &Path) -> PathBuf {
     PathBuf::from(p)
 }
 
+fn part_file_path(dir: &Path, out: &str) -> PathBuf {
+    let out = sanitize_filename(out);
+    let name = if out.ends_with(PART_SUFFIX) {
+        out
+    } else {
+        format!("{out}{PART_SUFFIX}")
+    };
+    dir.join(name)
+}
+
+/// Move an in-progress `.part` file and its `.chunks` resume sidecar to a new
+/// `(dir, out)` location
+pub fn relocate_partial(
+    old_dir: &str,
+    old_out: &str,
+    new_dir: &str,
+    new_out: &str,
+) -> Result<bool, String> {
+    if old_out.trim().is_empty() || new_out.trim().is_empty() {
+        return Err("Cannot relocate partial: output name is empty".to_string());
+    }
+    if old_dir == new_dir && old_out == new_out {
+        return Ok(false);
+    }
+    let old_part = part_file_path(Path::new(old_dir), old_out);
+    let new_part = part_file_path(Path::new(new_dir), new_out);
+    if !old_part.exists() {
+        return Ok(false);
+    }
+    if old_part == new_part {
+        return Ok(true);
+    }
+    let old_meta = chunk_meta_path(&old_part);
+    let new_meta = chunk_meta_path(&new_part);
+    if new_part.exists() || new_meta.exists() {
+        let dest = if new_part.exists() {
+            new_part.display().to_string()
+        } else {
+            new_meta.display().to_string()
+        };
+        return Err(format!(
+            "Cannot relocate partial: destination already exists ({dest})"
+        ));
+    }
+    if let Some(parent) = new_part.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create destination dir {}: {e}", parent.display()))?;
+    }
+    relocate_file_pair(&old_part, &new_part, &old_meta, &new_meta)?;
+    Ok(true)
+}
+
+fn is_cross_device_error(e: &std::io::Error) -> bool {
+    if e.kind() == std::io::ErrorKind::CrossesDevices {
+        return true;
+    }
+    match e.raw_os_error() {
+        #[cfg(unix)]
+        Some(18) => true,
+        #[cfg(windows)]
+        Some(17) => true,
+        _ => false,
+    }
+}
+
+fn sync_path(path: &Path) -> Result<(), String> {
+    let file = fs::File::open(path)
+        .map_err(|e| format!("Failed to open {} for sync: {e}", path.display()))?;
+    file.sync_data()
+        .map_err(|e| format!("Failed to sync {}: {e}", path.display()))
+}
+
+fn sync_directory(path: &Path) -> Result<(), String> {
+    #[cfg(unix)]
+    {
+        let directory = fs::File::open(path)
+            .map_err(|e| format!("Failed to open {} for sync: {e}", path.display()))?;
+        directory
+            .sync_all()
+            .map_err(|e| format!("Failed to sync directory {}: {e}", path.display()))
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+        Ok(())
+    }
+}
+
+fn copy_file_durable(src: &Path, dst: &Path, what: &str) -> Result<(), String> {
+    fs::copy(src, dst).map_err(|e| {
+        format!(
+            "Failed to copy {what} {} -> {}: {e}",
+            src.display(),
+            dst.display()
+        )
+    })?;
+    sync_path(dst)
+}
+
+fn relocate_file_pair(
+    old_part: &Path,
+    new_part: &Path,
+    old_meta: &Path,
+    new_meta: &Path,
+) -> Result<(), String> {
+    let meta_exists = old_meta.exists();
+    match fs::rename(old_part, new_part) {
+        Ok(()) => {
+            if meta_exists {
+                if let Err(e) = fs::rename(old_meta, new_meta) {
+                    let _ = fs::rename(new_part, old_part);
+                    return Err(format!(
+                        "Failed to move chunk meta {}: {e}",
+                        old_meta.display()
+                    ));
+                }
+            }
+            Ok(())
+        }
+        Err(e) if is_cross_device_error(&e) => {
+            copy_file_durable(old_part, new_part, "partial").inspect_err(|_| {
+                let _ = fs::remove_file(new_part);
+            })?;
+            if meta_exists {
+                if let Err(meta_err) = copy_file_durable(old_meta, new_meta, "chunk meta") {
+                    let _ = fs::remove_file(new_meta);
+                    let _ = fs::remove_file(new_part);
+                    return Err(meta_err);
+                }
+            }
+            if let Some(parent) = new_part.parent() {
+                if let Err(e) = sync_directory(parent) {
+                    let _ = fs::remove_file(new_part);
+                    if meta_exists {
+                        let _ = fs::remove_file(new_meta);
+                    }
+                    return Err(e);
+                }
+            }
+            if let Err(e) = fs::remove_file(old_part) {
+                tracing::warn!(
+                    "Failed to remove source partial {}: {e}",
+                    old_part.display()
+                );
+            }
+            if meta_exists {
+                if let Err(e) = fs::remove_file(old_meta) {
+                    tracing::warn!(
+                        "Failed to remove source chunk meta {}: {e}",
+                        old_meta.display()
+                    );
+                }
+            }
+            Ok(())
+        }
+        Err(e) => Err(format!(
+            "Failed to move partial {}: {e}",
+            old_part.display()
+        )),
+    }
+}
+
+/// Sanitize a user-supplied filename to a single path component
+pub fn sanitize_filename(name: &str) -> String {
+    let base = Path::new(name)
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "download".to_string());
+    if base.is_empty() || base == "." || base == ".." {
+        "download".to_string()
+    } else {
+        base
+    }
+}
+
 fn save_piece_meta(
     part_path: &Path,
     queue: &PieceQueue,
@@ -2744,19 +2919,6 @@ fn set_file_mtime(path: &Path, time: std::time::SystemTime) -> std::io::Result<(
     file.set_times(times)
 }
 
-/// Sanitize a filename to prevent path traversal attacks. Strips directory components, `..`, and path separators
-fn sanitize_filename(name: &str) -> String {
-    let base = Path::new(name)
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_else(|| "download".to_string());
-    if base.is_empty() || base == "." || base == ".." {
-        "download".to_string()
-    } else {
-        base
-    }
-}
-
 /// Decide whether to switch from the URL-inferred filename to one the server suggests via `Content-Disposition`. Skips the swap when the suggested name is unsafe, identical to what we already have, when an existing .part on disk would have to be moved (resume safety), or when adopting it would trample another `.part` already in progress on disk under the same name. We deliberately do *not* block adoption when a finalized file with the target name already exists — `finalize_download` dedups to "stem.N.ext" at rename time, and rejecting adoption here would silently leave the file under the placeholder name even for legitimate re-downloads. Returns the new (filename, part_path) pair when adoption fires
 fn adopt_suggested_filename(
     suggested: &str,
@@ -3318,6 +3480,119 @@ mod tests {
         assert!(matches!(error, PieceDownloadError::Storage(_)));
         assert_eq!(completed.load(Ordering::Relaxed), 0);
         assert_eq!(piece_completed.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn relocate_partial_moves_part_and_chunks_sidecar() {
+        let dir = tempfile::tempdir().unwrap();
+        let old_dir = dir.path().join("old");
+        let new_dir = dir.path().join("new");
+        std::fs::create_dir_all(&old_dir).unwrap();
+        std::fs::create_dir_all(&new_dir).unwrap();
+
+        let old_part = old_dir.join("file.bin.part");
+        let old_meta = {
+            let mut p = old_part.as_os_str().to_owned();
+            p.push(CHUNK_META_SUFFIX);
+            std::path::PathBuf::from(p)
+        };
+        std::fs::write(&old_part, b"partial-bytes").unwrap();
+        std::fs::write(&old_meta, b"{\"version\":2}").unwrap();
+
+        let moved = relocate_partial(
+            old_dir.to_str().unwrap(),
+            "file.bin",
+            new_dir.to_str().unwrap(),
+            "renamed.bin",
+        )
+        .expect("relocate");
+        assert!(moved);
+        assert!(!old_part.exists());
+        assert!(!old_meta.exists());
+        let new_part = new_dir.join("renamed.bin.part");
+        let new_meta = {
+            let mut p = new_part.as_os_str().to_owned();
+            p.push(CHUNK_META_SUFFIX);
+            std::path::PathBuf::from(p)
+        };
+        assert!(new_part.exists());
+        assert!(new_meta.exists());
+        assert_eq!(std::fs::read(&new_part).unwrap(), b"partial-bytes");
+    }
+
+    #[test]
+    fn relocate_partial_noop_when_unchanged() {
+        let dir = tempfile::tempdir().unwrap();
+        let moved = relocate_partial(
+            dir.path().to_str().unwrap(),
+            "a.bin",
+            dir.path().to_str().unwrap(),
+            "a.bin",
+        )
+        .unwrap();
+        assert!(!moved);
+    }
+
+    #[test]
+    fn relocate_partial_strips_path_separators_from_output_names() {
+        let dir = tempfile::tempdir().unwrap();
+        let old_dir = dir.path().join("old");
+        let new_dir = dir.path().join("new");
+        std::fs::create_dir_all(&old_dir).unwrap();
+        std::fs::create_dir_all(&new_dir).unwrap();
+        std::fs::write(old_dir.join("safe.bin.part"), b"partial").unwrap();
+
+        let moved = relocate_partial(
+            old_dir.to_str().unwrap(),
+            "../safe.bin",
+            new_dir.to_str().unwrap(),
+            "subdir/renamed.bin",
+        )
+        .expect("relocate sanitized names");
+        assert!(moved);
+        assert!(new_dir.join("renamed.bin.part").exists());
+        assert!(!new_dir.join("subdir").exists());
+        assert!(!dir.path().join("safe.bin.part").exists());
+    }
+
+    #[test]
+    fn relocate_partial_rejects_orphan_chunks_sidecar() {
+        let dir = tempfile::tempdir().unwrap();
+        let old_dir = dir.path().join("old");
+        let new_dir = dir.path().join("new");
+        std::fs::create_dir_all(&old_dir).unwrap();
+        std::fs::create_dir_all(&new_dir).unwrap();
+        std::fs::write(old_dir.join("file.bin.part"), b"partial").unwrap();
+        let dest_part = new_dir.join("file.bin.part");
+        let mut dest_meta = dest_part.as_os_str().to_owned();
+        dest_meta.push(CHUNK_META_SUFFIX);
+        std::fs::write(std::path::PathBuf::from(dest_meta), b"{}").unwrap();
+
+        let err = relocate_partial(
+            old_dir.to_str().unwrap(),
+            "file.bin",
+            new_dir.to_str().unwrap(),
+            "file.bin",
+        )
+        .expect_err("orphan sidecar");
+        assert!(err.contains("already exists"));
+        assert!(old_dir.join("file.bin.part").exists());
+    }
+
+    #[test]
+    fn detects_cross_device_rename_errors() {
+        #[cfg(unix)]
+        {
+            let err = std::io::Error::from_raw_os_error(18);
+            assert!(is_cross_device_error(&err));
+        }
+        #[cfg(windows)]
+        {
+            let err = std::io::Error::from_raw_os_error(17);
+            assert!(is_cross_device_error(&err));
+        }
+        let other = std::io::Error::other("permission denied");
+        assert!(!is_cross_device_error(&other));
     }
 
     #[test]

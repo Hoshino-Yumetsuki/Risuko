@@ -151,4 +151,26 @@ export default {
 	"batch-remove-item": "Eltávolítás",
 	"torrent-preview-folder-toggle": "Mappa váltása",
 	"clear-filter": "Szűrő törlése",
+	"edit-task": "Szerkesztés…",
+	"edit-dialog-title": "Feladat szerkesztése",
+	"edit-tab-general": "Általános",
+	"edit-tab-sources": "Források",
+	"edit-tab-trackers": "Trackerek",
+	"edit-tab-network": "Hálózat",
+	"edit-mirrors": "Tükrök",
+	"edit-mirror-add": "Hozzáadás",
+	"edit-trackers-hint":
+		"Adjon hozzá tracker URL-eket (soronként egyet). Az új trackerek azonnal bejelentésre kerülnek a torrent megszakítása nélkül.",
+	"edit-restart-warning":
+		"Ez a feladat letöltés alatt van. A mentés röviden újraindítja a munkafolyamatot, hogy az új beállítások érvényesüljenek. A folyamat lehetőség szerint megmarad.",
+	"edit-progress-warning":
+		"Az elsődleges letöltési URL megváltoztatása elvetheti a folytatási adatokat, ha az új fájl nem bájtazonos (eltérő ETag/hossz).",
+	"edit-confirm": "Mentés",
+	"edit-success": "Feladat frissítve",
+	"edit-fail": "A feladat frissítése sikertelen",
+	"edit-no-changes": "Nincs mentendő módosítás",
+	"edit-speed-limit": "Sebességkorlát",
+	"edit-speed-limit-placeholder": "0 vagy üres = korlátlan (pl. 500K)",
+	"edit-primary-uri": "Letöltési URL",
+	"edit-primary-uri-placeholder": "Elsődleges letöltési URL",
 };
