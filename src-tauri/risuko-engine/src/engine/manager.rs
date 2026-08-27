@@ -133,10 +133,9 @@ fn decode_thunder_http_uris(uris: Vec<String>) -> Result<Vec<String>, String> {
 }
 
 fn is_supported_http_task_uri(uri: &str) -> bool {
-    torrent::is_magnet_uri(uri)
-        || url::Url::parse(uri)
-            .ok()
-            .is_some_and(|parsed| matches!(parsed.scheme(), "http" | "https"))
+    url::Url::parse(uri)
+        .ok()
+        .is_some_and(|parsed| matches!(parsed.scheme(), "http" | "https"))
 }
 
 fn refresh_persisted_file_paths(task: &mut DownloadTask) {
@@ -6722,6 +6721,37 @@ mod tests {
         assert!(err.to_ascii_lowercase().contains("scheme") || err.contains("Unsupported"));
         let tasks = mgr.tasks.read().await;
         let t = tasks.iter().find(|t| t.gid == "http1").unwrap();
+        assert_eq!(t.uris, vec!["https://a.example/file.bin".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn update_task_rejects_magnet_uri_on_http_task() {
+        let mut task = DownloadTask::new_http(
+            "http-magnet".into(),
+            vec!["https://a.example/file.bin".into()],
+            "/dl".into(),
+            None,
+            Map::new(),
+        );
+        task.status = TaskStatus::Paused;
+        let mgr = make_test_manager(vec![task]);
+
+        let err = mgr
+            .update_task(
+                "http-magnet",
+                TaskPatch {
+                    uris: Some(vec![
+                        "magnet:?xt=urn:btih:cab507494d02ebb1178b38f2e9d7be299c86b862".into(),
+                    ]),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect_err("magnet on http");
+        assert!(err.to_ascii_lowercase().contains("scheme") || err.contains("Unsupported"));
+        let tasks = mgr.tasks.read().await;
+        let t = tasks.iter().find(|t| t.gid == "http-magnet").unwrap();
+        assert_eq!(t.kind, TaskKind::Http);
         assert_eq!(t.uris, vec!["https://a.example/file.bin".to_string()]);
     }
 
