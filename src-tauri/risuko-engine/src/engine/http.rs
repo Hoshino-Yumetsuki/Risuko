@@ -154,6 +154,22 @@ fn sync_path(path: &Path) -> Result<(), String> {
         .map_err(|e| format!("Failed to sync {}: {e}", path.display()))
 }
 
+fn sync_directory(path: &Path) -> Result<(), String> {
+    #[cfg(unix)]
+    {
+        let directory = fs::File::open(path)
+            .map_err(|e| format!("Failed to open {} for sync: {e}", path.display()))?;
+        directory
+            .sync_all()
+            .map_err(|e| format!("Failed to sync directory {}: {e}", path.display()))
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+        Ok(())
+    }
+}
+
 fn copy_file_durable(src: &Path, dst: &Path, what: &str) -> Result<(), String> {
     fs::copy(src, dst).map_err(|e| {
         format!(
@@ -197,8 +213,12 @@ fn relocate_file_pair(
                 }
             }
             if let Some(parent) = new_part.parent() {
-                if let Ok(directory) = fs::File::open(parent) {
-                    let _ = directory.sync_all();
+                if let Err(e) = sync_directory(parent) {
+                    let _ = fs::remove_file(new_part);
+                    if meta_exists {
+                        let _ = fs::remove_file(new_meta);
+                    }
+                    return Err(e);
                 }
             }
             if let Err(e) = fs::remove_file(old_part) {

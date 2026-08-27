@@ -3708,7 +3708,8 @@ impl TaskManager {
     }
 
     async fn worker_epoch_and_cancel(&self, gid: &str) -> Option<(u64, CancellationToken)> {
-        if let Some(entry) = self.starting_workers.lock().get(gid).cloned() {
+        let starting = self.starting_workers.lock().get(gid).cloned();
+        if let Some(entry) = starting {
             return Some(entry);
         }
         self.active_downloads
