@@ -29,7 +29,12 @@
                 @update:model-value="(val) => toggleRow(item, val)"
               />
             </span>
-            <span class="task-files-name" :title="item.path || item.name">{{ item.name }}</span>
+            <span
+              class="task-files-name"
+              :title="item.path || item.name"
+              @click="toggleRow(item, !isSelected(item))"
+              @dblclick.stop
+            >{{ item.name }}</span>
             <span>{{ formatExtension(item.extension) }}</span>
             <span class="task-files-num">{{ calcProgress(item.length, item.completedLength, 1) }}</span>
             <span class="task-files-num">{{ formatBytes(item.completedLength) }}</span>
@@ -70,7 +75,12 @@
                 @update:model-value="(val) => toggleRow(row, val)"
               />
             </TableCell>
-            <TableCell class="truncate max-w-50" :title="row.path || row.name">
+            <TableCell
+              class="truncate max-w-50 cursor-pointer"
+              :title="row.path || row.name"
+              @click="toggleRow(row, !isSelected(row))"
+              @dblclick.stop
+            >
               {{ row.name }}
             </TableCell>
             <TableCell>{{ formatExtension(row.extension) }}</TableCell>

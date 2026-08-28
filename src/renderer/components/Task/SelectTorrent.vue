@@ -100,7 +100,10 @@
                 }}
               </button>
               <template v-else>
-                <span class="torrent-preview-name-text">{{ row.name }}</span>
+                <span
+                  class="torrent-preview-name-text"
+                  @click="onPreviewNameClick(row)"
+                >{{ row.name }}</span>
                 <span v-if="row.loading" class="torrent-preview-loading-tag">
                   {{ $t('task.torrent-preview-folder-loading') }}
                 </span>
@@ -780,6 +783,21 @@ export default {
 							...normalizedRanges,
 						]);
 			this.emitPreviewSelectionChange();
+		},
+		onPreviewNameClick(row: PreviewTreeRow) {
+			if (row.type === "file") {
+				this.togglePreviewFileSelection(row, !this.isPreviewFileSelected(row));
+				return;
+			}
+			if (row.type === "folder") {
+				if (row.loading || !this.hasPreviewFolderSelectableRange(row)) {
+					return;
+				}
+				this.togglePreviewFolderSelection(
+					row,
+					this.previewFolderSelectionState(row) !== true,
+				);
+			}
 		},
 		togglePreviewFolderSelection(
 			row: PreviewTreeRow,

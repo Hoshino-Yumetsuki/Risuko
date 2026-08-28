@@ -464,6 +464,7 @@
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
+		cursor: pointer;
 	}
 	.task-files-num {
 		text-align: right;

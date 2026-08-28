@@ -189,6 +189,7 @@
 		overflow: hidden;
 		white-space: nowrap;
 		text-overflow: ellipsis;
+		cursor: pointer;
 	}
 	.selective-torrent .torrent-preview-load-more-btn {
 		border: none;
