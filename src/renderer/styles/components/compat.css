@@ -29,6 +29,7 @@
 		cursor: pointer;
 		user-select: none;
 		line-height: 1.3;
+		position: relative;
 	}
 	.ui-checkbox__label {
 		color: inherit;
@@ -36,6 +37,34 @@
 	.ui-checkbox.is-disabled {
 		opacity: 0.55;
 		cursor: not-allowed;
+	}
+	.settings-row:has(> .settings-row-action .ui-checkbox) {
+		position: relative;
+		z-index: 0;
+		cursor: pointer;
+	}
+	.settings-row:has(> .settings-row-action .ui-checkbox):has(
+		.ui-checkbox.is-disabled
+	) {
+		cursor: not-allowed;
+	}
+	.settings-row:has(> .settings-row-action .ui-checkbox)
+		> .settings-row-action
+		.ui-checkbox {
+		position: static;
+	}
+	.settings-row:has(> .settings-row-action .ui-checkbox)
+		> .settings-row-action
+		.ui-checkbox::after {
+		content: "";
+		position: absolute;
+		inset: 0;
+		z-index: 1;
+	}
+	.settings-row:has(> .settings-row-action .ui-checkbox)
+		:is(a, button, input, textarea, select, [data-slot="checkbox"]) {
+		position: relative;
+		z-index: 2;
 	}
 	.ui-progress {
 		height: 6px;

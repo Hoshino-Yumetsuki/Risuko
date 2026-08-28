@@ -422,8 +422,9 @@
               <strong>{{ $t('preferences.usenet-plain-warning-title') }}</strong>
               <p>{{ $t('preferences.usenet-plain-warning') }}</p>
 								<div class="plain-confirmation">
-									<ui-checkbox v-model="profileForm.allowPlain" />
-									<span>{{ $t('preferences.usenet-plain-opt-in') }}</span>
+									<ui-checkbox v-model="profileForm.allowPlain">
+										{{ $t('preferences.usenet-plain-opt-in') }}
+									</ui-checkbox>
 								</div>
             </div>
           </div>
@@ -1459,6 +1460,10 @@ export default defineComponent({
 	color: var(--text-1);
 	font-size: 12px;
 	cursor: pointer;
+}
+
+.plain-confirmation .ui-checkbox {
+	width: 100%;
 }
 
 .dialog-error {

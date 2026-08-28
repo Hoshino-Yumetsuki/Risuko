@@ -460,10 +460,27 @@
 		background: var(--primary-soft);
 	}
 	.task-files-name {
+		display: block;
+		box-sizing: border-box;
+		width: 100%;
+		max-width: 100%;
 		min-width: 0;
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
+		margin: 0;
+		padding: 0;
+		border: 0;
+		background: transparent;
+		font: inherit;
+		color: inherit;
+		text-align: start;
+		cursor: pointer;
+	}
+	.task-files-name:focus-visible {
+		outline: 2px solid var(--ring);
+		outline-offset: -2px;
+		border-radius: 4px;
 	}
 	.task-files-num {
 		text-align: right;

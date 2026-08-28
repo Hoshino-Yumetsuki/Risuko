@@ -29,7 +29,14 @@
                 @update:model-value="(val) => toggleRow(item, val)"
               />
             </span>
-            <span class="task-files-name" :title="item.path || item.name">{{ item.name }}</span>
+            <button
+              type="button"
+              class="task-files-name"
+              :title="item.path || item.name"
+              :aria-pressed="isSelected(item)"
+              @click="onNameClick(item, $event)"
+              @dblclick.stop
+            >{{ item.name }}</button>
             <span>{{ formatExtension(item.extension) }}</span>
             <span class="task-files-num">{{ calcProgress(item.length, item.completedLength, 1) }}</span>
             <span class="task-files-num">{{ formatBytes(item.completedLength) }}</span>
@@ -70,8 +77,17 @@
                 @update:model-value="(val) => toggleRow(row, val)"
               />
             </TableCell>
-            <TableCell class="truncate max-w-50" :title="row.path || row.name">
-              {{ row.name }}
+            <TableCell class="max-w-50">
+              <button
+                type="button"
+                class="task-files-name"
+                :title="row.path || row.name"
+                :aria-pressed="isSelected(row)"
+                @click="onNameClick(row, $event)"
+                @dblclick.stop
+              >
+                {{ row.name }}
+              </button>
             </TableCell>
             <TableCell>{{ formatExtension(row.extension) }}</TableCell>
             <TableCell class="text-right">{{ formatBytes(row.length) }}</TableCell>
@@ -254,6 +270,12 @@ export default {
 				next.delete(row.idx);
 			}
 			this.selectedIndices = next;
+		},
+		onNameClick(row: TaskFileRow, event: MouseEvent) {
+			if (event.detail > 1) {
+				return;
+			}
+			this.toggleRow(row, !this.isSelected(row));
 		},
 		toggleAllSelection() {
 			this.selectedIndices = new Set(

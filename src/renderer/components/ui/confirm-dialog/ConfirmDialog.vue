@@ -2,7 +2,7 @@
 import { TriangleAlert } from "@lucide/vue";
 import { ref, watch } from "vue";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
+import UiCheckbox from "@/components/ui/compat/UiCheckbox.vue";
 import {
 	Dialog,
 	DialogContent,
@@ -10,7 +10,6 @@ import {
 	DialogHeader,
 	DialogTitle,
 } from "@/components/ui/dialog";
-import { Label } from "@/components/ui/label";
 
 const props = withDefaults(
 	defineProps<{
@@ -98,18 +97,15 @@ function onOpenChange(val: boolean) {
         <p class="min-w-0 wrap-anywhere text-[13px] leading-relaxed text-muted-foreground">
           {{ message }}
         </p>
-        <label
+        <UiCheckbox
           v-if="checkboxLabel"
-          class="flex min-w-0 cursor-pointer select-none items-center gap-2 pt-1"
+          v-model="checked"
+          class="pt-1"
         >
-          <Checkbox
-            :model-value="checked"
-            @update:model-value="(val: boolean) => (checked = val)"
-          />
-          <Label class="min-w-0 cursor-pointer wrap-break-word text-[13px] font-normal">
+          <span class="min-w-0 wrap-break-word text-[13px] font-normal">
             {{ checkboxLabel }}
-          </Label>
-        </label>
+          </span>
+        </UiCheckbox>
       </div>
       <DialogFooter class="w-full flex-row flex-wrap justify-end gap-2 border-t px-5 py-3">
         <Button variant="outline" size="sm" @click="onCancel">

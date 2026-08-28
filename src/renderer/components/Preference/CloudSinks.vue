@@ -296,11 +296,10 @@
               </div>
             </div>
             <div class="dialog-field-toggle">
-              <ui-checkbox v-model="form.webdav.insecure" />
-              <div>
+              <ui-checkbox v-model="form.webdav.insecure">
                 <span class="toggle-title">{{ $t('cloudSinks.allowInsecure') }}</span>
                 <span class="toggle-hint">{{ $t('cloudSinks.allowInsecureHint') }}</span>
-              </div>
+              </ui-checkbox>
             </div>
           </template>
 
@@ -347,11 +346,10 @@
               <p class="dialog-hint">{{ $t('cloudSinks.s3PrefixHint') }}</p>
             </div>
             <div class="dialog-field-toggle">
-              <ui-checkbox v-model="form.s3.forcePathStyle" />
-              <div>
+              <ui-checkbox v-model="form.s3.forcePathStyle">
                 <span class="toggle-title">{{ $t('cloudSinks.s3PathStyle') }}</span>
                 <span class="toggle-hint">{{ $t('cloudSinks.s3PathStyleHint') }}</span>
-              </div>
+              </ui-checkbox>
             </div>
           </template>
 
@@ -444,18 +442,16 @@
               <Input v-model="form.ftp.basePath" placeholder="/uploads" autocomplete="off" />
             </div>
             <div class="dialog-field-toggle">
-              <ui-checkbox v-model="form.ftp.secure" />
-              <div>
+              <ui-checkbox v-model="form.ftp.secure">
                 <span class="toggle-title">{{ $t('cloudSinks.ftpSecure') }}</span>
                 <span class="toggle-hint">{{ $t('cloudSinks.ftpSecureHint') }}</span>
-              </div>
+              </ui-checkbox>
             </div>
             <div v-if="form.ftp.secure" class="dialog-field-toggle">
-              <ui-checkbox v-model="form.ftp.insecure" />
-              <div>
+              <ui-checkbox v-model="form.ftp.insecure">
                 <span class="toggle-title">{{ $t('cloudSinks.allowInsecure') }}</span>
                 <span class="toggle-hint">{{ $t('cloudSinks.allowInsecureHint') }}</span>
-              </div>
+              </ui-checkbox>
             </div>
           </template>
 
@@ -714,11 +710,10 @@
           <hr class="dialog-sep" />
 
           <div class="dialog-field-toggle">
-            <ui-checkbox v-model="ruleForm.enabled" />
-            <div>
+            <ui-checkbox v-model="ruleForm.enabled">
               <span class="toggle-title">{{ $t('cloudSinks.ruleEnabled') }}</span>
               <span class="toggle-hint">{{ $t('cloudSinks.ruleEnabledHint') }}</span>
-            </div>
+            </ui-checkbox>
           </div>
 
           <div v-if="ruleDialogError" class="dialog-error">
@@ -1932,7 +1927,12 @@ export default defineComponent({
 	background: hsl(var(--muted) / 0.3);
 }
 
-.dialog-field-toggle > div {
+.dialog-field-toggle .ui-checkbox {
+	width: 100%;
+	align-items: flex-start;
+}
+
+.dialog-field-toggle :deep(.ui-checkbox__label) {
 	display: flex;
 	flex-direction: column;
 	min-width: 0;
