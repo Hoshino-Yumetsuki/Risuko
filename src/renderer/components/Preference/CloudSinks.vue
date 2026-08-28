@@ -1932,7 +1932,7 @@ export default defineComponent({
 	align-items: flex-start;
 }
 
-.dialog-field-toggle .ui-checkbox__label {
+.dialog-field-toggle :deep(.ui-checkbox__label) {
 	display: flex;
 	flex-direction: column;
 	min-width: 0;

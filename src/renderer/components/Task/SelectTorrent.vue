@@ -100,10 +100,13 @@
                 }}
               </button>
               <template v-else>
-                <span
+                <button
+                  type="button"
                   class="torrent-preview-name-text"
+                  :disabled="isPreviewNameDisabled(row)"
+                  :aria-pressed="previewNameAriaPressed(row)"
                   @click="onPreviewNameClick(row)"
-                >{{ row.name }}</span>
+                >{{ row.name }}</button>
                 <span v-if="row.loading" class="torrent-preview-loading-tag">
                   {{ $t('task.torrent-preview-folder-loading') }}
                 </span>
@@ -784,13 +787,32 @@ export default {
 						]);
 			this.emitPreviewSelectionChange();
 		},
+		isPreviewNameDisabled(row: PreviewTreeRow): boolean {
+			return (
+				row.type === "folder" &&
+				(row.loading || !this.hasPreviewFolderSelectableRange(row))
+			);
+		},
+		previewNameAriaPressed(row: PreviewTreeRow): boolean | "mixed" {
+			if (row.type === "file") {
+				return this.isPreviewFileSelected(row);
+			}
+			if (row.type === "folder") {
+				const state = this.previewFolderSelectionState(row);
+				if (state === "indeterminate") {
+					return "mixed";
+				}
+				return state === true;
+			}
+			return false;
+		},
 		onPreviewNameClick(row: PreviewTreeRow) {
 			if (row.type === "file") {
 				this.togglePreviewFileSelection(row, !this.isPreviewFileSelected(row));
 				return;
 			}
 			if (row.type === "folder") {
-				if (row.loading || !this.hasPreviewFolderSelectableRange(row)) {
+				if (this.isPreviewNameDisabled(row)) {
 					return;
 				}
 				this.togglePreviewFolderSelection(

@@ -189,7 +189,22 @@
 		overflow: hidden;
 		white-space: nowrap;
 		text-overflow: ellipsis;
+		margin: 0;
+		padding: 0;
+		border: none;
+		background: transparent;
+		font: inherit;
+		color: inherit;
+		text-align: start;
 		cursor: pointer;
+	}
+	.selective-torrent .torrent-preview-name-text:disabled {
+		cursor: default;
+	}
+	.selective-torrent .torrent-preview-name-text:focus-visible {
+		outline: 2px solid var(--ring);
+		outline-offset: 2px;
+		border-radius: 4px;
 	}
 	.selective-torrent .torrent-preview-load-more-btn {
 		border: none;
