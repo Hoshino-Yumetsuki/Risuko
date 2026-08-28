@@ -145,6 +145,34 @@ pub struct PeerInfo {
     pub am_choking: String,
     pub peer_choking: String,
     pub seeder: String,
+    #[serde(default)]
+    pub peer_id: String,
+    #[serde(default)]
+    pub peer_client_name: String,
+    #[serde(default)]
+    pub am_interested: String,
+    #[serde(default)]
+    pub peer_interested: String,
+    #[serde(default)]
+    pub download_speed: u64,
+    #[serde(default)]
+    pub upload_speed: u64,
+    #[serde(default)]
+    pub downloaded: u64,
+    #[serde(default)]
+    pub uploaded: u64,
+    #[serde(default)]
+    pub progress: f64,
+    #[serde(default)]
+    pub incoming: bool,
+    #[serde(default)]
+    pub snubbed: bool,
+    #[serde(default)]
+    pub handshaking: bool,
+    #[serde(default)]
+    pub optimistic_unchoke: bool,
+    #[serde(default)]
+    pub bitfield: String,
 }
 
 #[derive(Clone, Default)]
@@ -859,6 +887,48 @@ mod tests {
         let a = generate_gid();
         let b = generate_gid();
         assert_ne!(a, b);
+    }
+
+    #[test]
+    fn peer_info_serializes_aria2next_fields() {
+        let peer = PeerInfo {
+            ip: "1.2.3.4".into(),
+            port: "6881".into(),
+            percent: 50,
+            am_choking: "true".into(),
+            peer_choking: "false".into(),
+            seeder: "false".into(),
+            peer_id: "%2DRS0001%2D0123456789ab".into(),
+            peer_client_name: "risuko-bt".into(),
+            am_interested: "true".into(),
+            peer_interested: "false".into(),
+            download_speed: 1024,
+            upload_speed: 512,
+            downloaded: 4096,
+            uploaded: 2048,
+            progress: 0.5,
+            incoming: true,
+            snubbed: false,
+            handshaking: false,
+            optimistic_unchoke: true,
+            bitfield: "ff00".into(),
+        };
+        let value = serde_json::to_value(&peer).unwrap();
+        assert_eq!(value["peerId"], "%2DRS0001%2D0123456789ab");
+        assert_eq!(value["peerClientName"], "risuko-bt");
+        assert_eq!(value["amInterested"], "true");
+        assert_eq!(value["peerInterested"], "false");
+        assert_eq!(value["downloadSpeed"], 1024);
+        assert_eq!(value["uploadSpeed"], 512);
+        assert_eq!(value["downloaded"], 4096);
+        assert_eq!(value["uploaded"], 2048);
+        assert_eq!(value["progress"], 0.5);
+        assert_eq!(value["incoming"], true);
+        assert_eq!(value["snubbed"], false);
+        assert_eq!(value["handshaking"], false);
+        assert_eq!(value["optimisticUnchoke"], true);
+        assert_eq!(value["bitfield"], "ff00");
+        assert_eq!(value["amChoking"], "true");
     }
 
     // -- TaskStatus --

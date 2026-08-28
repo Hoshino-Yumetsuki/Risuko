@@ -7,7 +7,7 @@
       v-else
       class="peers-scroller"
       :items="peerRows"
-      :item-size="52"
+      :item-size="68"
       key-field="key"
     >
       <template #default="{ item }">
@@ -15,6 +15,9 @@
           <div class="peer-card-header">
             <span class="peer-card-host">{{ item.ip }}:{{ item.port }}</span>
             <span class="peer-card-progress">{{ item.percent }}%</span>
+          </div>
+          <div v-if="item.peerClientName" class="peer-card-client">
+            {{ item.peerClientName }}
           </div>
         </div>
       </template>

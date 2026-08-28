@@ -14,8 +14,17 @@ pub struct PeerSnapshot {
     pub am_interested: bool,
     pub peer_choking: bool,
     pub peer_interested: bool,
-    /// True if the peer has all pieces (full bitfield)
     pub seeder: bool,
+    pub peer_id: Option<[u8; 20]>,
+    pub client: Option<String>,
+    pub downloaded: u64,
+    pub uploaded: u64,
+    pub dl_speed: u64,
+    pub up_speed: u64,
+    pub incoming: bool,
+    pub snubbed: bool,
+    pub progress: f64,
+    pub optimistic_unchoke: bool,
 }
 
 /// Exponential-moving-average speed tracker

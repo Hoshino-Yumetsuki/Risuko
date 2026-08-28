@@ -50,6 +50,9 @@ pub const CHUNK_META_SUFFIX: &str = ".chunks";
 pub const STARTUP_ONLY_KEYS: &[&str] = &[
     "rpc-listen-port",
     "rpc-secret",
+    "pbh-enable",
+    "pbh-listen-port",
+    "pbh-rpc-secret",
     "listen-port",
     "dht-listen-port",
     "ed2k-port",
@@ -77,7 +80,7 @@ use crate::traits::EventSink;
 use self::events::EventBroadcaster;
 use self::manager::TaskManager;
 use self::options::EngineOptions;
-use self::rpc::RpcServer;
+use self::rpc::{RpcCompatMode, RpcServer};
 use self::upload::UploadSinkManager;
 
 static ENGINE_INSTANCE: std::sync::LazyLock<Mutex<Option<EngineInstance>>> =
@@ -192,6 +195,7 @@ pub fn startup_snapshot() -> Option<std::collections::HashMap<String, serde_json
 struct EngineInstance {
     manager: Arc<TaskManager>,
     rpc_server: RpcServer,
+    pbh_rpc_server: Option<RpcServer>,
     progress_task: tokio::task::JoinHandle<()>,
     auto_save_task: tokio::task::JoinHandle<()>,
     event_bridge_task: tokio::task::JoinHandle<()>,
@@ -259,6 +263,9 @@ pub async fn start_engine(
     let rpc_host = options.rpc_host();
     let rpc_port = options.rpc_listen_port();
     let rpc_secret = options.rpc_secret();
+    let pbh_enable = options.pbh_enable();
+    let pbh_listen_port = options.pbh_listen_port();
+    let pbh_rpc_secret = options.pbh_rpc_secret();
 
     tracing::info!("Starting Risuko engine (in-process)");
 
@@ -271,17 +278,41 @@ pub async fn start_engine(
     let (rpc_shutdown_tx, mut rpc_shutdown_rx) = tokio::sync::mpsc::channel::<()>(1);
 
     let mut rpc_server = RpcServer::new(
-        rpc_host,
+        rpc_host.clone(),
         rpc_port,
         rpc_secret,
         manager.clone(),
         events.clone(),
-        rpc_shutdown_tx,
+        rpc_shutdown_tx.clone(),
     );
     rpc_server
         .start()
         .await
         .map_err(|e| format!("Failed to start RPC server: {}", e))?;
+
+    let pbh_rpc_server = if pbh_enable {
+        let mut server = RpcServer::new_with_compat(
+            rpc_host,
+            pbh_listen_port,
+            pbh_rpc_secret,
+            manager.clone(),
+            events.clone(),
+            rpc_shutdown_tx,
+            RpcCompatMode::Aria2Next,
+        );
+        server
+            .start()
+            .await
+            .map_err(|e| format!("Failed to start PeerBanHelper RPC server: {}", e))?;
+        tracing::info!(
+            "PeerBanHelper Aria2Next RPC listening on port {}",
+            pbh_listen_port
+        );
+        Some(server)
+    } else {
+        drop(rpc_shutdown_tx);
+        None
+    };
 
     // Start periodic progress update
     let mgr_for_progress = manager.clone();
@@ -380,6 +411,7 @@ pub async fn start_engine(
     let instance = EngineInstance {
         manager,
         rpc_server,
+        pbh_rpc_server,
         progress_task,
         auto_save_task,
         event_bridge_task,
@@ -428,6 +460,9 @@ pub async fn stop_engine() -> Result<(), Box<dyn std::error::Error>> {
 
         // Stop RPC server
         instance.rpc_server.stop();
+        if let Some(mut pbh) = instance.pbh_rpc_server {
+            pbh.stop();
+        }
 
         // Shutdown manager (saves session, stops downloads, closes torrent engine)
         instance.manager.shutdown().await;

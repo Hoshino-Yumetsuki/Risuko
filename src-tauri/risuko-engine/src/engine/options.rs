@@ -247,6 +247,18 @@ impl EngineOptions {
         self.get_str("rpc-secret").unwrap_or("").to_string()
     }
 
+    pub fn pbh_enable(&self) -> bool {
+        self.get_bool("pbh-enable").unwrap_or(false)
+    }
+
+    pub fn pbh_listen_port(&self) -> u16 {
+        self.get_u64("pbh-listen-port").unwrap_or(16801) as u16
+    }
+
+    pub fn pbh_rpc_secret(&self) -> String {
+        self.get_str("pbh-rpc-secret").unwrap_or("").to_string()
+    }
+
     pub fn seed_ratio(&self) -> f64 {
         self.global
             .get("seed-ratio")

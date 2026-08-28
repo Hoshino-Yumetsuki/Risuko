@@ -5075,6 +5075,17 @@ impl TaskManager {
         }
     }
 
+    pub async fn set_bt_peer_blocklist(
+        &self,
+        entries: Vec<String>,
+    ) -> Result<risuko_bt::BlocklistApplyResult, String> {
+        let te_guard = self.torrent_engine.read().await;
+        let Some(engine) = te_guard.as_ref() else {
+            return Err("Torrent engine not initialized".to_string());
+        };
+        engine.set_peer_blocklist(entries).await
+    }
+
     pub async fn get_uris(&self, gid: &str) -> Result<Value, String> {
         let tasks = self.tasks.read().await;
         let task = tasks
@@ -5632,6 +5643,26 @@ fn sync_peer_infos(target: &mut Vec<PeerInfo>, peers: &[torrent::PeerSnapshot], 
                 am_choking: p.am_choking.to_string(),
                 peer_choking: p.peer_choking.to_string(),
                 seeder: p.seeder.to_string(),
+                peer_id: p
+                    .peer_id
+                    .map(|id| {
+                        percent_encoding::percent_encode(&id, percent_encoding::NON_ALPHANUMERIC)
+                            .to_string()
+                    })
+                    .unwrap_or_default(),
+                peer_client_name: p.client.clone().unwrap_or_default(),
+                am_interested: p.am_interested.to_string(),
+                peer_interested: p.peer_interested.to_string(),
+                download_speed: p.dl_speed,
+                upload_speed: p.up_speed,
+                downloaded: p.downloaded,
+                uploaded: p.uploaded,
+                progress: p.progress,
+                incoming: p.incoming,
+                snubbed: p.snubbed,
+                handshaking: false,
+                optimistic_unchoke: p.optimistic_unchoke,
+                bitfield: hex::encode(p.bitfield.as_ref()),
             }
         })
         .collect();
@@ -5685,6 +5716,16 @@ mod tests {
             peer_choking: false,
             peer_interested: false,
             seeder: false,
+            peer_id: Some(*b"-RS0001-0123456789ab"),
+            client: Some("risuko-bt".into()),
+            downloaded: 100,
+            uploaded: 50,
+            dl_speed: 10,
+            up_speed: 5,
+            incoming: false,
+            snubbed: false,
+            progress: 0.92,
+            optimistic_unchoke: false,
         };
         let peers = [snap];
         let mut target = Vec::new();
@@ -5693,6 +5734,17 @@ mod tests {
         assert_eq!(target[0].percent, 92);
         assert_eq!(target[0].ip, "1.2.3.4");
         assert_eq!(target[0].port, "6881");
+        assert_eq!(target[0].peer_client_name, "risuko-bt");
+        assert_eq!(target[0].peer_id, "%2DRS0001%2D0123456789ab");
+        assert_eq!(target[0].downloaded, 100);
+        assert_eq!(target[0].uploaded, 50);
+        assert_eq!(target[0].download_speed, 10);
+        assert_eq!(target[0].upload_speed, 5);
+        assert!(!target[0].incoming);
+        let json = serde_json::to_value(&target[0]).unwrap();
+        assert_eq!(json["peerClientName"], "risuko-bt");
+        assert_eq!(json["downloadSpeed"], 10);
+        assert_eq!(json["incoming"], false);
 
         sync_peer_infos(&mut target, &peers, 0);
         assert_eq!(target[0].percent, 0);
@@ -5705,6 +5757,16 @@ mod tests {
             peer_choking: false,
             peer_interested: false,
             seeder: false,
+            peer_id: None,
+            client: None,
+            downloaded: 0,
+            uploaded: 0,
+            dl_speed: 0,
+            up_speed: 0,
+            incoming: true,
+            snubbed: false,
+            progress: 0.0,
+            optimistic_unchoke: false,
         };
         sync_peer_infos(&mut target, &[padded], 13);
         assert_eq!(target[0].percent, 61);

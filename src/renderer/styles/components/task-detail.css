@@ -602,7 +602,7 @@
 		min-height: 0;
 	}
 	.peer-card {
-		height: 44px;
+		height: 60px;
 		box-sizing: border-box;
 		margin-bottom: 8px;
 		overflow: hidden;
@@ -626,5 +626,12 @@
 		font-weight: 500;
 		font-variant-numeric: tabular-nums;
 		color: var(--primary);
+	}
+	.peer-card-client {
+		font-size: 12px;
+		color: var(--muted-foreground);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 }

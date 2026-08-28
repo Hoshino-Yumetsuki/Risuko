@@ -7,7 +7,7 @@ use risuko_engine::config::defaults;
 use risuko_engine::engine::events::EventBroadcaster;
 use risuko_engine::engine::manager::TaskManager;
 use risuko_engine::engine::options::EngineOptions;
-use risuko_engine::engine::rpc::RpcServer;
+use risuko_engine::engine::rpc::{RpcCompatMode, RpcServer};
 
 use crate::{
     ConfigAction, ConfigCommand, DownloadArgs, GidArgs, PauseArgs, RemoveArgs, ResumeArgs, RpcArgs,
@@ -562,6 +562,7 @@ pub async fn shutdown(args: RpcArgs) -> Result<(), Box<dyn std::error::Error>> {
 struct HeadlessEngine {
     manager: Arc<TaskManager>,
     rpc_server: RpcServer,
+    pbh_rpc_server: Option<RpcServer>,
     progress_task: tokio::task::JoinHandle<()>,
     auto_save_task: tokio::task::JoinHandle<()>,
     shutdown_notify: Arc<tokio::sync::Notify>,
@@ -577,6 +578,9 @@ impl HeadlessEngine {
         self.progress_task.abort();
         self.auto_save_task.abort();
         self.rpc_server.stop();
+        if let Some(mut pbh) = self.pbh_rpc_server {
+            pbh.stop();
+        }
         self.manager.shutdown().await;
         tracing::info!("Headless engine stopped");
     }
@@ -605,6 +609,9 @@ async fn start_headless_engine(
     let events = EventBroadcaster::default();
     let rpc_host = options.rpc_host();
     let rpc_secret = options.rpc_secret();
+    let pbh_enable = options.pbh_enable();
+    let pbh_listen_port = options.pbh_listen_port();
+    let pbh_rpc_secret = options.pbh_rpc_secret();
 
     tracing::info!("Initializing task manager");
 
@@ -624,12 +631,37 @@ async fn start_headless_engine(
         rpc_secret,
         manager.clone(),
         events.clone(),
-        rpc_shutdown_tx,
+        rpc_shutdown_tx.clone(),
     );
     rpc_server
         .start()
         .await
         .map_err(|e| format!("Failed to start RPC server: {}", e))?;
+
+    let pbh_rpc_server = if pbh_enable {
+        let mut server = RpcServer::new_with_compat(
+            rpc_host.clone(),
+            pbh_listen_port,
+            pbh_rpc_secret,
+            manager.clone(),
+            events.clone(),
+            rpc_shutdown_tx,
+            RpcCompatMode::Aria2Next,
+        );
+        server
+            .start()
+            .await
+            .map_err(|e| format!("Failed to start PeerBanHelper RPC server: {}", e))?;
+        tracing::info!(
+            "PeerBanHelper Aria2Next RPC listening on {}:{}",
+            rpc_host,
+            pbh_listen_port
+        );
+        Some(server)
+    } else {
+        drop(rpc_shutdown_tx);
+        None
+    };
 
     tracing::info!("RPC server listening on {}:{}", rpc_host, rpc_port);
 
@@ -666,6 +698,7 @@ async fn start_headless_engine(
     Ok(HeadlessEngine {
         manager,
         rpc_server,
+        pbh_rpc_server,
         progress_task,
         auto_save_task,
         shutdown_notify,

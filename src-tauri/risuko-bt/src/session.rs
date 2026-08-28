@@ -7,11 +7,12 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use bytes::Bytes;
-use parking_lot::Mutex;
+use parking_lot::{Mutex, RwLock as ParkingRwLock};
 use tokio::net::TcpListener;
 use tokio::sync::{mpsc, RwLock};
 
 use super::api::TorrentIdOrHash;
+use super::blocklist::{BlockList, BlocklistApplyResult};
 use super::core::metainfo::{parse_torrent, FileDetails};
 use super::core::{generate_peer_id, Id20, Lengths};
 use super::peer::{KnownInfoHash, PeerCommand, PeerEvent};
@@ -104,6 +105,7 @@ pub struct Session {
     lsd_router_handle: Mutex<Option<tokio::task::JoinHandle<()>>>,
     dht: Mutex<Option<Arc<super::dht::Dht>>>,
     dht_bootstrap_handle: Mutex<Option<tokio::task::JoinHandle<()>>>,
+    blocklist: Arc<ParkingRwLock<BlockList>>,
 }
 
 impl Drop for Session {
@@ -232,6 +234,7 @@ impl Session {
             lsd_router_handle: Mutex::new(None),
             dht: Mutex::new(None),
             dht_bootstrap_handle: Mutex::new(None),
+            blocklist: Arc::new(ParkingRwLock::new(BlockList::default())),
         });
 
         if !session.opts.disable_local_service_discovery {
@@ -309,14 +312,19 @@ impl Session {
         let Some(first) = event_rx.recv().await else {
             return;
         };
-        let (info_hash, reserved) = match &first {
+        let (info_hash, reserved, peer_id) = match &first {
             PeerEvent::Handshook {
                 info_hash,
                 reserved,
+                peer_id,
                 ..
-            } => (*info_hash, *reserved),
+            } => (*info_hash, *reserved, *peer_id),
             _ => return,
         };
+        if self.blocklist.read().contains(addr.ip()) {
+            let _ = cmd_tx.send(PeerCommand::Disconnect).await;
+            return;
+        }
         let target = {
             let inner = self.inner.lock();
             inner
@@ -336,6 +344,7 @@ impl Session {
                 cmd_tx,
                 event_rx,
                 reserved,
+                peer_id,
             })
             .await;
     }
@@ -597,6 +606,7 @@ impl Session {
             },
             p2p_proxy: route_proxy,
             p2p_proxy_is_task_override: opts.p2p_proxy_is_task_override,
+            blocklist: self.blocklist.clone(),
         };
         let handle = match spawn_torrent(id, init, self.peer_id, self.listen_port).await {
             Ok(h) => h,
@@ -866,6 +876,31 @@ impl Session {
             .map_err(|e| e.to_string())?;
         ack_rx.await.map_err(|e| e.to_string())
     }
+
+    pub async fn set_peer_blocklist(&self, entries: Vec<String>) -> BlocklistApplyResult {
+        let mut meta = {
+            let mut list = self.blocklist.write();
+            list.replace(&entries)
+        };
+        let handles: Vec<Arc<ManagedTorrent>> =
+            self.with_torrents(|iter| iter.map(|(_, handle)| handle.clone()).collect());
+        for handle in handles {
+            let (ack_tx, ack_rx) = tokio::sync::oneshot::channel();
+            if handle
+                .cmd_tx()
+                .send(TorrentCommand::ApplyBlocklist { ack: ack_tx })
+                .await
+                .is_err()
+            {
+                continue;
+            }
+            if let Ok((disconnected, removed)) = ack_rx.await {
+                meta.disconnected_peers = meta.disconnected_peers.saturating_add(disconnected);
+                meta.removed_peers = meta.removed_peers.saturating_add(removed);
+            }
+        }
+        meta
+    }
 }
 
 async fn managed_needs_rescan(handle: &ManagedTorrent) -> bool {
@@ -929,6 +964,9 @@ async fn run_accept_loop(listener: TcpListener, weak: std::sync::Weak<Session>) 
                 let Some(s) = weak.upgrade() else {
                     return;
                 };
+                if s.blocklist.read().contains(addr.ip()) {
+                    continue;
+                }
                 tokio::spawn(async move {
                     let allowed = known_infohashes(&s);
                     let policy = s.opts.encryption;
@@ -970,6 +1008,9 @@ async fn run_utp_accept_loop(utp: Arc<super::utp::UtpSocket>, weak: std::sync::W
             return;
         };
         let addr = stream.peer_addr();
+        if s.blocklist.read().contains(addr.ip()) {
+            continue;
+        }
         tokio::spawn(async move {
             let allowed = known_infohashes(&s);
             // No managed torrents—nothing this peer could be after, so drop the stream (its driver tears the connection down)

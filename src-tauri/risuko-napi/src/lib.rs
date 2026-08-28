@@ -10,13 +10,14 @@ use risuko_engine::config::defaults;
 use risuko_engine::engine::events::EventBroadcaster;
 use risuko_engine::engine::manager::TaskManager;
 use risuko_engine::engine::options::EngineOptions;
-use risuko_engine::engine::rpc::RpcServer;
+use risuko_engine::engine::rpc::{RpcCompatMode, RpcServer};
 
 // Global engine singleton
 
 struct NapiEngine {
     manager: Arc<TaskManager>,
     rpc_server: RpcServer,
+    pbh_rpc_server: Option<RpcServer>,
     events: EventBroadcaster,
     progress_task: tokio::task::JoinHandle<()>,
     auto_save_task: tokio::task::JoinHandle<()>,
@@ -78,6 +79,9 @@ pub async fn start_engine(config: Option<EngineConfig>) -> Result<()> {
     let rpc_host = options.rpc_host();
     let rpc_port = options.rpc_listen_port();
     let rpc_secret = options.rpc_secret();
+    let pbh_enable = options.pbh_enable();
+    let pbh_listen_port = options.pbh_listen_port();
+    let pbh_rpc_secret = options.pbh_rpc_secret();
 
     let manager = Arc::new(
         TaskManager::new(&config_dir, options, events.clone())
@@ -88,12 +92,12 @@ pub async fn start_engine(config: Option<EngineConfig>) -> Result<()> {
     let (rpc_shutdown_tx, rpc_shutdown_rx) = tokio::sync::mpsc::channel::<()>(1);
 
     let mut rpc_server = RpcServer::new(
-        rpc_host,
+        rpc_host.clone(),
         rpc_port,
         rpc_secret,
         manager.clone(),
         events.clone(),
-        rpc_shutdown_tx,
+        rpc_shutdown_tx.clone(),
     );
 
     let enable_rpc = config.as_ref().and_then(|c| c.enable_rpc).unwrap_or(true);
@@ -103,6 +107,26 @@ pub async fn start_engine(config: Option<EngineConfig>) -> Result<()> {
             .await
             .map_err(|e| Error::from_reason(format!("Failed to start RPC: {}", e)))?;
     }
+
+    let pbh_rpc_server = if enable_rpc && pbh_enable {
+        let mut server = RpcServer::new_with_compat(
+            rpc_host,
+            pbh_listen_port,
+            pbh_rpc_secret,
+            manager.clone(),
+            events.clone(),
+            rpc_shutdown_tx,
+            RpcCompatMode::Aria2Next,
+        );
+        server
+            .start()
+            .await
+            .map_err(|e| Error::from_reason(format!("Failed to start PeerBanHelper RPC: {}", e)))?;
+        Some(server)
+    } else {
+        drop(rpc_shutdown_tx);
+        None
+    };
 
     let mgr = manager.clone();
     let progress_task = tokio::spawn(async move {
@@ -127,6 +151,7 @@ pub async fn start_engine(config: Option<EngineConfig>) -> Result<()> {
     *guard = Some(NapiEngine {
         manager,
         rpc_server,
+        pbh_rpc_server,
         events,
         progress_task,
         auto_save_task,
@@ -149,6 +174,9 @@ pub async fn stop_engine() -> Result<()> {
         handle.abort();
     }
     engine.rpc_server.stop();
+    if let Some(mut pbh) = engine.pbh_rpc_server {
+        pbh.stop();
+    }
     engine.manager.shutdown().await;
     Ok(())
 }

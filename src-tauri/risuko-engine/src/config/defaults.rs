@@ -55,6 +55,9 @@ pub fn system_defaults() -> Map<String, Value> {
     m.insert("p2p-udp-no-proxy".into(), json!(""));
     m.insert("rpc-listen-port".into(), json!(16800));
     m.insert("rpc-secret".into(), json!(""));
+    m.insert("pbh-enable".into(), json!(false));
+    m.insert("pbh-listen-port".into(), json!(16801));
+    m.insert("pbh-rpc-secret".into(), json!(""));
     m.insert("remote-time".into(), json!(false));
     m.insert("seed-ratio".into(), json!(0));
     m.insert("seed-time".into(), json!(0));
@@ -222,6 +225,9 @@ mod tests {
             "max-concurrent-downloads",
             "rpc-listen-port",
             "rpc-secret",
+            "pbh-enable",
+            "pbh-listen-port",
+            "pbh-rpc-secret",
             "seed-ratio",
             "seed-time",
             "split",
@@ -247,6 +253,8 @@ mod tests {
         assert_eq!(sys.get("rpc-listen-port").unwrap(), 16800);
         assert_eq!(sys.get("split").unwrap(), 16);
         assert_eq!(sys.get("rpc-secret").unwrap(), "");
+        assert_eq!(sys.get("pbh-enable").unwrap(), false);
+        assert_eq!(sys.get("pbh-listen-port").unwrap(), 16801);
         // BT defaults
         assert_eq!(sys.get("bt-enable-upnp").unwrap(), true);
         assert!(sys.contains_key("bt-upnp-lease"), "missing bt-upnp-lease");

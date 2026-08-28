@@ -2,6 +2,7 @@
 
 pub mod api;
 pub mod bencode;
+pub mod blocklist;
 pub mod core;
 pub mod dht;
 pub mod limiter;
@@ -18,6 +19,7 @@ pub mod utp;
 pub mod wire;
 
 pub use api::TorrentIdOrHash;
+pub use blocklist::{BlockList, BlocklistApplyResult};
 pub use core::metainfo::{
     parse_torrent, FileDetails, TorrentMeta, TorrentMetaInfo, ValidatedTorrentMetaV1Info,
 };

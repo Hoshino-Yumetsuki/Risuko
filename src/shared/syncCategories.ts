@@ -160,6 +160,9 @@ const namedCategories: SyncCategory[] = [
 			"engine-overrides",
 			"rpc-listen-port",
 			"rpc-secret",
+			"pbh-enable",
+			"pbh-listen-port",
+			"pbh-rpc-secret",
 		],
 	},
 	{

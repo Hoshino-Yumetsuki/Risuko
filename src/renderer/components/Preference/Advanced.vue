@@ -1056,6 +1056,86 @@
           </div>
         </div>
 
+        <div
+          class="settings-section"
+          data-preference-search-target="preferences.pbh preferences.pbh-enable preferences.pbh-listen-port preferences.pbh-rpc-secret"
+        >
+          <div class="settings-section-header">
+            <div class="section-icon"><Shield :size="16" /></div>
+            <div class="section-title">
+              <h3>{{ $t('preferences.pbh') }}</h3>
+            </div>
+          </div>
+          <div class="settings-section-content">
+            <div class="settings-row" style="margin-bottom: 8px">
+              <div class="settings-row-content">
+                <div class="settings-row-title">{{ $t('preferences.pbh-enable') }}</div>
+                <div class="settings-row-description">
+                  {{ $t('preferences.pbh-enable-tips') }}
+                </div>
+              </div>
+              <div class="settings-row-action">
+                <ui-checkbox
+                  :model-value="!!form.pbhEnable"
+                  :disabled="form.externalEngineEnabled"
+                  @change="(val) => setAdvancedBoolean('pbhEnable', val)"
+                />
+              </div>
+            </div>
+            <div v-if="form.pbhEnable && !form.externalEngineEnabled" class="settings-select-group">
+              <div class="settings-select-item">
+                <label class="settings-select-item-label">{{
+                  $t('preferences.pbh-listen-port')
+                }}</label>
+                <div class="input-group">
+                  <Input
+                    :placeholder="String(pbhDefaultPort)"
+                    :maxlength="8"
+                    v-model="form.pbhListenPort"
+                    @blur="onPbhListenPortBlur"
+                  />
+                  <span class="input-append">
+                    <button
+                      type="button"
+                      class="input-append-action"
+                      :title="$t('preferences.randomize-port')"
+                      :aria-label="$t('preferences.randomize-port')"
+                      @click.prevent="rollPort('pbhListenPort', pbhDefaultPort, 20000)"
+                    >
+                      <Dices :size="12" />
+                    </button>
+                  </span>
+                </div>
+              </div>
+              <div class="settings-select-item">
+                <label class="settings-select-item-label">{{ $t('preferences.pbh-rpc-secret') }}</label>
+                <div class="input-group">
+                  <Input
+                    :type="hidePbhRpcSecret ? 'password' : 'text'"
+                    placeholder="RPC Token"
+                    :maxlength="64"
+                    v-model="form.pbhRpcSecret"
+                  />
+                  <span class="input-append">
+                    <button
+                      type="button"
+                      class="input-append-action"
+                      :title="$t('preferences.generate-pbh-rpc-secret')"
+                      :aria-label="$t('preferences.generate-pbh-rpc-secret')"
+                      @click.prevent="onPbhRpcSecretDiceClick"
+                    >
+                      <Dices :size="12" />
+                    </button>
+                  </span>
+                </div>
+              </div>
+            </div>
+            <div class="form-info" style="margin-top: 8px">
+              {{ $t('preferences.pbh-endpoint-hint', { port: form.pbhListenPort || pbhDefaultPort }) }}
+            </div>
+          </div>
+        </div>
+
         <div class="settings-section">
           <div class="settings-section-header">
             <div class="section-icon"><Network :size="16" /></div>
@@ -1493,6 +1573,7 @@ import {
 	ScrollText,
 	Server,
 	Settings,
+	Shield,
 	Terminal,
 	UserCircle,
 	Video,
@@ -1502,6 +1583,7 @@ import {
 	DEFAULT_ED2K_SERVERS,
 	DOH_PROVIDER_OPTIONS,
 	DOH_PROVIDERS,
+	ENGINE_PBH_RPC_PORT,
 	ENGINE_RPC_HOST,
 	ENGINE_RPC_PORT,
 	LOG_LEVELS,
@@ -1632,6 +1714,9 @@ const initForm = (config) => {
 		proxy,
 		rpcListenPort,
 		rpcSecret,
+		pbhEnable,
+		pbhListenPort,
+		pbhRpcSecret,
 		trackerSource,
 		userAgent,
 		completionScriptEnabled,
@@ -1708,6 +1793,9 @@ const initForm = (config) => {
 		},
 		rpcListenPort,
 		rpcSecret,
+		pbhEnable: parseBooleanConfig(pbhEnable, false),
+		pbhListenPort: pbhListenPort || ENGINE_PBH_RPC_PORT,
+		pbhRpcSecret: pbhRpcSecret || "",
 		trackerSource: Array.isArray(trackerSource) ? [...trackerSource] : [],
 		userAgent,
 		completionScriptEnabled: parseBooleanConfig(completionScriptEnabled, false),
@@ -1785,6 +1873,7 @@ const ADVANCED_BOOLEAN_KEYS = [
 	"externalEngineEnabled",
 	"completionScriptEnabled",
 	"ed2kEnableKad",
+	"pbhEnable",
 ];
 
 const ADVANCED_NUMERIC_KEYS = [
@@ -1796,6 +1885,7 @@ const ADVANCED_NUMERIC_KEYS = [
 	"nzbBodyTimeout",
 	"lowestSpeedLimit",
 	"lowestSpeedLimitTimeout",
+	"pbhListenPort",
 ];
 
 const effectiveP2pProxyProfile = (proxy: unknown) => {
@@ -1871,6 +1961,8 @@ const normalizeAdvancedConfig = (data, rpcDefaultPort) => {
 			let ok: boolean;
 			if (key === "ed2kKadPort") {
 				ok = Number.isInteger(n) && n >= 1 && n <= 65535;
+			} else if (key === "pbhListenPort") {
+				ok = Number.isInteger(n) && n >= 1 && n <= 65535;
 			} else if (key === "btUpnpLease") {
 				ok = Number.isFinite(n) && n >= 60 && n <= 86400;
 			} else if (key === "connectTimeout") {
@@ -1904,6 +1996,10 @@ const normalizeAdvancedConfig = (data, rpcDefaultPort) => {
 
 	if (data.rpcListenPort === "") {
 		data.rpcListenPort = rpcDefaultPort;
+	}
+
+	if (data.pbhListenPort === "") {
+		data.pbhListenPort = ENGINE_PBH_RPC_PORT;
 	}
 
 	if (data.externalEnginePort !== undefined) {
@@ -1956,6 +2052,7 @@ export default {
 		AlertTriangle,
 		Settings,
 		Server,
+		Shield,
 		Terminal,
 		X,
 		ChevronDown,
@@ -1982,6 +2079,7 @@ export default {
 			formOriginal,
 			updaterState,
 			hideRpcSecret: true,
+			hidePbhRpcSecret: true,
 			hideExternalRpcSecret: true,
 			proxyScopeOptions: PROXY_SCOPE_OPTIONS,
 			dohProviderOptions: DOH_PROVIDER_OPTIONS,
@@ -1992,6 +2090,7 @@ export default {
 			completionScriptTestResult: "",
 			cookieEntries: [] as CookieEntryView[],
 			rpcSecretTimer: null as ReturnType<typeof setTimeout> | null,
+			pbhRpcSecretTimer: null as ReturnType<typeof setTimeout> | null,
 		};
 	},
 	watch: {
@@ -2038,6 +2137,9 @@ export default {
 		},
 		rpcDefaultPort() {
 			return ENGINE_RPC_PORT;
+		},
+		pbhDefaultPort() {
+			return ENGINE_PBH_RPC_PORT;
 		},
 		externalRpcDefaultHost() {
 			return ENGINE_RPC_HOST;
@@ -2228,6 +2330,23 @@ export default {
 			this.rpcSecretTimer = setTimeout(() => {
 				this.hideRpcSecret = true;
 				this.rpcSecretTimer = null;
+			}, 2000);
+		},
+		onPbhListenPortBlur() {
+			if ("" === this.form.pbhListenPort || !this.form.pbhListenPort) {
+				this.form.pbhListenPort = this.pbhDefaultPort;
+			}
+		},
+		onPbhRpcSecretDiceClick() {
+			this.hidePbhRpcSecret = false;
+			this.form.pbhRpcSecret = crypto.randomUUID().replaceAll("-", "");
+
+			if (this.pbhRpcSecretTimer) {
+				clearTimeout(this.pbhRpcSecretTimer);
+			}
+			this.pbhRpcSecretTimer = setTimeout(() => {
+				this.hidePbhRpcSecret = true;
+				this.pbhRpcSecretTimer = null;
 			}, 2000);
 		},
 		async onSessionResetClick() {
@@ -2457,6 +2576,10 @@ export default {
 		if (this.rpcSecretTimer) {
 			clearTimeout(this.rpcSecretTimer);
 			this.rpcSecretTimer = null;
+		}
+		if (this.pbhRpcSecretTimer) {
+			clearTimeout(this.pbhRpcSecretTimer);
+			this.pbhRpcSecretTimer = null;
 		}
 	},
 	async beforeRouteLeave(to, _from) {
