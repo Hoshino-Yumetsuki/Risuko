@@ -15,7 +15,7 @@ use super::api::TorrentIdOrHash;
 use super::blocklist::{BlockList, BlocklistApplyResult};
 use super::core::metainfo::{parse_torrent, FileDetails};
 use super::core::{generate_peer_id, Id20, Lengths};
-use super::peer::{KnownInfoHash, PeerCommand, PeerEvent};
+use super::peer::{KnownInfoHash, PeerCommand, PeerEvent, PeerHandle};
 use super::torrent::{spawn as spawn_torrent, ManagedTorrent, TorrentCommand, TorrentInit};
 
 #[derive(Debug, Clone, Copy)]
@@ -307,7 +307,7 @@ impl Session {
     async fn route_inbound_peer(
         self: &Arc<Self>,
         addr: SocketAddr,
-        cmd_tx: mpsc::Sender<PeerCommand>,
+        handle: PeerHandle,
         mut event_rx: mpsc::Receiver<PeerEvent>,
     ) {
         // Consuming the Handshook event here is fine: adopting a peer does not depend on it being re-delivered to the torrent loop
@@ -324,7 +324,8 @@ impl Session {
             _ => return,
         };
         if self.blocklist.read().contains(addr.ip()) {
-            let _ = cmd_tx.send(PeerCommand::Disconnect).await;
+            handle.io_abort.abort();
+            let _ = handle.tx.try_send(PeerCommand::Disconnect);
             return;
         }
         let target = {
@@ -336,17 +337,19 @@ impl Session {
         };
         let Some(t) = target else {
             // Peer handshook for a torrent that is no longer managed, close
-            let _ = cmd_tx.send(PeerCommand::Disconnect).await;
+            handle.io_abort.abort();
+            let _ = handle.tx.try_send(PeerCommand::Disconnect);
             return;
         };
         let _ = t
             .cmd_tx()
             .send(TorrentCommand::AddInboundPeer {
                 addr,
-                cmd_tx,
+                cmd_tx: handle.tx,
                 event_rx,
                 reserved,
                 peer_id,
+                io_abort: handle.io_abort,
             })
             .await;
     }
@@ -983,7 +986,7 @@ async fn run_accept_loop(listener: TcpListener, weak: std::sync::Weak<Session>) 
                     .await;
                     match res {
                         Ok((handle, rx)) => {
-                            s.route_inbound_peer(addr, handle.tx, rx).await;
+                            s.route_inbound_peer(addr, handle, rx).await;
                         }
                         Err(e) => {
                             tracing::debug!("inbound peer handshake failed: {e}")
@@ -1029,7 +1032,7 @@ async fn run_utp_accept_loop(utp: Arc<super::utp::UtpSocket>, weak: std::sync::W
             .await;
             match res {
                 Ok((handle, rx)) => {
-                    s.route_inbound_peer(addr, handle.tx, rx).await;
+                    s.route_inbound_peer(addr, handle, rx).await;
                 }
                 Err(e) => {
                     tracing::debug!("inbound µTP peer handshake failed: {e}");

@@ -68,6 +68,9 @@ impl EngineOptions {
             "usenet-profiles",
             "usenet-archive-limits",
             "usenet-cleanup-mode",
+            "pbh-enable",
+            "pbh-listen-port",
+            "pbh-rpc-secret",
         ] {
             if let Some(v) = user.get(key) {
                 global.insert(key.into(), v.clone());
@@ -1033,6 +1036,18 @@ mod tests {
         let opts = EngineOptions::from_config(&sys, &Map::new());
         let err = opts.pbh_rpc_config(16800).unwrap_err();
         assert!(err.contains("pbh-rpc-secret"));
+    }
+
+    #[test]
+    fn from_config_forwards_user_pbh_overrides() {
+        let mut user = Map::new();
+        user.insert("pbh-enable".into(), json!(true));
+        user.insert("pbh-listen-port".into(), json!(16802));
+        user.insert("pbh-rpc-secret".into(), json!("user-token"));
+        let opts = EngineOptions::from_config(&Map::new(), &user);
+        let cfg = opts.pbh_rpc_config(16800).unwrap().unwrap();
+        assert_eq!(cfg.port, 16802);
+        assert_eq!(cfg.secret, "user-token");
     }
 
     #[test]

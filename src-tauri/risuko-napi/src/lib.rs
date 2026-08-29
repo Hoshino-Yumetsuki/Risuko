@@ -77,9 +77,14 @@ pub async fn start_engine(config: Option<EngineConfig>) -> Result<()> {
     let rpc_host = options.rpc_host();
     let rpc_port = options.rpc_listen_port();
     let rpc_secret = options.rpc_secret();
-    let pbh_config = options
-        .pbh_rpc_config(rpc_port)
-        .map_err(Error::from_reason)?;
+    let enable_rpc = config.as_ref().and_then(|c| c.enable_rpc).unwrap_or(true);
+    let pbh_config = if enable_rpc {
+        options
+            .pbh_rpc_config(rpc_port)
+            .map_err(Error::from_reason)?
+    } else {
+        None
+    };
 
     let manager = Arc::new(
         TaskManager::new(&config_dir, options, events.clone())
@@ -98,7 +103,6 @@ pub async fn start_engine(config: Option<EngineConfig>) -> Result<()> {
         rpc_shutdown_tx.clone(),
     );
 
-    let enable_rpc = config.as_ref().and_then(|c| c.enable_rpc).unwrap_or(true);
     if enable_rpc {
         rpc_server
             .start()
@@ -130,7 +134,6 @@ pub async fn start_engine(config: Option<EngineConfig>) -> Result<()> {
             None
         }
     } else {
-        drop(pbh_config);
         drop(rpc_shutdown_tx);
         None
     };

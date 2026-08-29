@@ -98,7 +98,7 @@ export default {
 	"pbh-rpc-secret": "PeerBanHelper RPC 토큰",
 	"generate-pbh-rpc-secret": "새 토큰 생성",
 	"pbh-endpoint-hint":
-		"PeerBanHelper에서 http://127.0.0.1:{{port}}/jsonrpc 을 가리키는 Aria2Next 다운로더를 추가하세요",
+		"PeerBanHelper에서 http://127.0.0.1:{{port}}/jsonrpc을 가리키는 Aria2Next 다운로더를 추가하세요",
 	"engine-overrides": "엔진 오버라이드 (JSON)",
 	"engine-overrides-placeholder":
 		'{\n  "piece-length": "1M",\n  "timeout": 60\n}',

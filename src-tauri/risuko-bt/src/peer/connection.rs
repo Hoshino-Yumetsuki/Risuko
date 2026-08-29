@@ -51,6 +51,7 @@ pub enum PeerCommand {
 pub struct PeerHandle {
     pub addr: SocketAddr,
     pub tx: mpsc::Sender<PeerCommand>,
+    pub io_abort: tokio::task::AbortHandle,
 }
 
 /// Builds the BEP-10 extended handshake bytes for a peer given that peer's IP, invoked once per dial/accept after the remote BT handshake so the message can set `yourip`
@@ -1026,7 +1027,7 @@ fn finish_spawn(
         .map_err(|e| std::io::Error::other(format!("{e}")))?;
 
     let reader_events = event_tx.clone();
-    tokio::spawn(async move {
+    let io_task = tokio::spawn(async move {
         let reason = {
             let reader = reader_task(reader, reader_events);
             let writer = writer_task(writer, cmd_rx);
@@ -1040,7 +1041,14 @@ fn finish_spawn(
         let _ = event_tx.send(PeerEvent::Disconnected { reason }).await;
     });
 
-    Ok((PeerHandle { addr, tx: cmd_tx }, event_rx))
+    Ok((
+        PeerHandle {
+            addr,
+            tx: cmd_tx,
+            io_abort: io_task.abort_handle(),
+        },
+        event_rx,
+    ))
 }
 
 /// RC4-encrypting read half. Any residual bytes we already pulled from the socket while scanning the MSE handshake are replayed via the chained cursor prefix; they are *still encrypted* under the peer's key, so the same cipher applies to everything the chain yields
