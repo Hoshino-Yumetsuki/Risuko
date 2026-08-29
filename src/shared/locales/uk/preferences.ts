@@ -99,14 +99,14 @@ export default {
 	"rpc-secret": "RPC Secret",
 	"rpc-secret-tips": "Дивитись інструкцію RPC Secret",
 	pbh: "PeerBanHelper",
-	"pbh-enable": "Enable PeerBanHelper API",
+	"pbh-enable": "Увімкнути API PeerBanHelper",
 	"pbh-enable-tips":
-		"Expose an Aria2Next-compatible JSON-RPC listener so PeerBanHelper can monitor and ban BitTorrent peers",
-	"pbh-listen-port": "PeerBanHelper Listen Port",
-	"pbh-rpc-secret": "PeerBanHelper RPC Token",
-	"generate-pbh-rpc-secret": "Generate a new token",
+		"Відкриває JSON-RPC слухач, сумісний з Aria2Next, щоб PeerBanHelper міг стежити за пірами BitTorrent і блокувати їх",
+	"pbh-listen-port": "Порт прослуховування PeerBanHelper",
+	"pbh-rpc-secret": "RPC-токен PeerBanHelper",
+	"generate-pbh-rpc-secret": "Згенерувати новий токен",
 	"pbh-endpoint-hint":
-		"In PeerBanHelper, add an Aria2Next downloader pointed at http://127.0.0.1:{{port}}/jsonrpc",
+		"У PeerBanHelper додайте завантажувач Aria2Next, спрямований на http://127.0.0.1:{{port}}/jsonrpc",
 	"engine-overrides": "Перевизначення двигуна (JSON)",
 	"engine-overrides-placeholder":
 		'{\n  "piece-length": "1M",\n  "timeout": 60\n}',

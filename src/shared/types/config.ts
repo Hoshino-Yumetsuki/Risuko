@@ -749,5 +749,16 @@ export const redactProxySettings = (
 			result[key] = redactProxyUrl(result[key] as string);
 		}
 	}
+	for (const key of [
+		"pbhRpcSecret",
+		"pbh-rpc-secret",
+		"rpcSecret",
+		"rpc-secret",
+		"externalEngineSecret",
+	]) {
+		if (key in result && result[key] != null && result[key] !== "") {
+			result[key] = "[REDACTED]";
+		}
+	}
 	return result;
 };

@@ -886,19 +886,27 @@ fn dispatch_method<'a>(
 
             "risuko.getPeers" => {
                 let gid = resolve_gid(&params, &state.manager).await?;
-                Ok(state.manager.get_peers(&gid).await)
+                let peers = state.manager.get_peers(&gid).await;
+                Ok(match state.compat {
+                    RpcCompatMode::Aria2Next => stringify_aria2_peer_speeds(peers),
+                    RpcCompatMode::Standard => peers,
+                })
             }
 
             "risuko.setBtPeerBlocklist" => {
-                let entries = params
-                    .first()
-                    .and_then(|v| v.as_array())
-                    .map(|arr| {
-                        arr.iter()
-                            .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                            .collect::<Vec<_>>()
-                    })
-                    .unwrap_or_default();
+                let entries = match params.first() {
+                    Some(Value::Array(arr)) => arr
+                        .iter()
+                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                        .collect::<Vec<_>>(),
+                    _ => {
+                        return Err(RpcError {
+                            code: INVALID_PARAMS,
+                            message: "setBtPeerBlocklist requires an array of IP/CIDR strings"
+                                .into(),
+                        });
+                    }
+                };
                 let result = state
                     .manager
                     .set_bt_peer_blocklist(entries)
@@ -1212,6 +1220,23 @@ fn get_keys(params: &[Value], index: usize) -> Vec<String> {
         .unwrap_or_default()
 }
 
+fn stringify_aria2_peer_speeds(peers: Value) -> Value {
+    let Value::Array(mut items) = peers else {
+        return peers;
+    };
+    for item in &mut items {
+        let Some(obj) = item.as_object_mut() else {
+            continue;
+        };
+        for key in ["downloadSpeed", "uploadSpeed"] {
+            if let Some(n) = obj.get(key).and_then(Value::as_u64) {
+                obj.insert(key.to_string(), Value::String(n.to_string()));
+            }
+        }
+    }
+    Value::Array(items)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1221,10 +1246,19 @@ mod tests {
     async fn make_rpc_state(secret: &str) -> (RpcState, TempDir) {
         let events = EventBroadcaster::default();
         let config_dir = TempDir::new().unwrap();
-        let options = super::super::options::EngineOptions::from_config(
-            &serde_json::Map::new(),
-            &serde_json::Map::new(),
+        let mut system = serde_json::Map::new();
+        system.insert(
+            "dir".into(),
+            json!(config_dir
+                .path()
+                .join("downloads")
+                .to_string_lossy()
+                .to_string()),
         );
+        system.insert("bt-enable-upnp".into(), json!(false));
+        system.insert("bt-enable-lsd".into(), json!(false));
+        let options =
+            super::super::options::EngineOptions::from_config(&system, &serde_json::Map::new());
         let manager = Arc::new(
             TaskManager::new(config_dir.path(), options, events.clone())
                 .await
@@ -1596,22 +1630,48 @@ mod tests {
             "params": ["token:secret", ["1.2.3.4", "10.0.0.0/8"]]
         });
         let response = process_single_request(&state, request).await.unwrap();
-        if let Some(result) = response.get("result") {
-            assert_eq!(result.get("ruleCount").and_then(|v| v.as_u64()), Some(2));
-            assert!(result.get("revision").and_then(|v| v.as_u64()).is_some());
-            assert!(result
-                .get("disconnectedPeers")
-                .and_then(|v| v.as_u64())
-                .is_some());
-            assert!(result
-                .get("removedPeers")
-                .and_then(|v| v.as_u64())
-                .is_some());
-        } else {
-            assert!(
-                response.get("error").is_some(),
-                "expected result or error, got {response}"
-            );
-        }
+        let result = response
+            .get("result")
+            .unwrap_or_else(|| panic!("expected result, got {response}"));
+        assert_eq!(result.get("ruleCount").and_then(|v| v.as_u64()), Some(2));
+        assert!(result.get("revision").and_then(|v| v.as_u64()).is_some());
+        assert!(result
+            .get("disconnectedPeers")
+            .and_then(|v| v.as_u64())
+            .is_some());
+        assert!(result
+            .get("removedPeers")
+            .and_then(|v| v.as_u64())
+            .is_some());
+    }
+
+    #[test]
+    fn stringify_aria2_peer_speeds_converts_numeric_counters() {
+        let peers = json!([{
+            "downloadSpeed": 1024,
+            "uploadSpeed": 512,
+            "ip": "1.2.3.4"
+        }]);
+        let out = stringify_aria2_peer_speeds(peers);
+        assert_eq!(out[0]["downloadSpeed"], "1024");
+        assert_eq!(out[0]["uploadSpeed"], "512");
+        assert_eq!(out[0]["ip"], "1.2.3.4");
+    }
+
+    #[tokio::test]
+    async fn set_bt_peer_blocklist_rejects_missing_array() {
+        let (state, _config_dir) = make_rpc_state("secret").await;
+        let request = json!({
+            "jsonrpc": "2.0",
+            "id": "1",
+            "method": "aria2.setBtPeerBlocklist",
+            "params": ["token:secret"]
+        });
+        let response = process_single_request(&state, request).await.unwrap();
+        let error = response.get("error").expect("expected parameter error");
+        assert_eq!(
+            error.get("code").and_then(|v| v.as_i64()),
+            Some(INVALID_PARAMS)
+        );
     }
 }

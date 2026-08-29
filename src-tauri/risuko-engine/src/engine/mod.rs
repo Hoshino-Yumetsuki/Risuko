@@ -263,9 +263,7 @@ pub async fn start_engine(
     let rpc_host = options.rpc_host();
     let rpc_port = options.rpc_listen_port();
     let rpc_secret = options.rpc_secret();
-    let pbh_enable = options.pbh_enable();
-    let pbh_listen_port = options.pbh_listen_port();
-    let pbh_rpc_secret = options.pbh_rpc_secret();
+    let pbh_config = options.pbh_rpc_config(rpc_port)?;
 
     tracing::info!("Starting Risuko engine (in-process)");
 
@@ -290,20 +288,22 @@ pub async fn start_engine(
         .await
         .map_err(|e| format!("Failed to start RPC server: {}", e))?;
 
-    let pbh_rpc_server = if pbh_enable {
+    let pbh_rpc_server = if let Some(pbh) = pbh_config {
+        let pbh_listen_port = pbh.port;
         let mut server = RpcServer::new_with_compat(
             rpc_host,
-            pbh_listen_port,
-            pbh_rpc_secret,
+            pbh.port,
+            pbh.secret,
             manager.clone(),
             events.clone(),
             rpc_shutdown_tx,
             RpcCompatMode::Aria2Next,
         );
-        server
-            .start()
-            .await
-            .map_err(|e| format!("Failed to start PeerBanHelper RPC server: {}", e))?;
+        if let Err(e) = server.start().await {
+            rpc_server.stop();
+            manager.shutdown().await;
+            return Err(format!("Failed to start PeerBanHelper RPC server: {e}").into());
+        }
         tracing::info!(
             "PeerBanHelper Aria2Next RPC listening on port {}",
             pbh_listen_port

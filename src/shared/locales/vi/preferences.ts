@@ -92,14 +92,14 @@ export default {
 	"rpc-secret": "RPC bí mật",
 	"rpc-secret-tips": "Xem RPC bí mật thủ công",
 	pbh: "PeerBanHelper",
-	"pbh-enable": "Enable PeerBanHelper API",
+	"pbh-enable": "Bật API PeerBanHelper",
 	"pbh-enable-tips":
-		"Expose an Aria2Next-compatible JSON-RPC listener so PeerBanHelper can monitor and ban BitTorrent peers",
-	"pbh-listen-port": "PeerBanHelper Listen Port",
-	"pbh-rpc-secret": "PeerBanHelper RPC Token",
-	"generate-pbh-rpc-secret": "Generate a new token",
+		"Mở listener JSON-RPC tương thích Aria2Next để PeerBanHelper có thể theo dõi và cấm các peer BitTorrent",
+	"pbh-listen-port": "Cổng lắng nghe PeerBanHelper",
+	"pbh-rpc-secret": "Token RPC PeerBanHelper",
+	"generate-pbh-rpc-secret": "Tạo token mới",
 	"pbh-endpoint-hint":
-		"In PeerBanHelper, add an Aria2Next downloader pointed at http://127.0.0.1:{{port}}/jsonrpc",
+		"Trong PeerBanHelper, thêm trình tải Aria2Next trỏ tới http://127.0.0.1:{{port}}/jsonrpc",
 	"engine-overrides": "Ghi đè engine (JSON)",
 	"engine-overrides-placeholder":
 		'{\n  "piece-length": "1M",\n  "timeout": 60\n}',

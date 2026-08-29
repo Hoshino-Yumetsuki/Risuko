@@ -15,6 +15,7 @@ use parking_lot::{Mutex, RwLock};
 
 use super::blocklist::BlockList;
 use tokio::sync::{mpsc, oneshot, watch};
+use tokio::task::AbortHandle;
 use tokio::time::{interval, MissedTickBehavior};
 
 use super::core::{supports_v2_wire, Id20, Lengths, MerkleProofTable, PieceVerifier, TorrentMeta};
@@ -484,6 +485,7 @@ async fn torrent_loop(
     let upload_tick: Arc<AtomicU64> = Arc::new(AtomicU64::new(0));
     let mut write_tasks: tokio::task::JoinSet<VerifyResult> = tokio::task::JoinSet::new();
     let mut outbound_tasks: tokio::task::JoinSet<()> = tokio::task::JoinSet::new();
+    let mut outbound_aborts: HashMap<u32, AbortHandle> = HashMap::new();
     let mut dht_poll_handle: Option<tokio::task::JoinHandle<()>> = dht.clone().map(|initial_dht| {
         spawn_dht_poller(initial_dht, info_hash, listen_port, peer_src_tx.clone())
     });
@@ -529,6 +531,7 @@ async fn torrent_loop(
                             &outbound_utp,
                             &p2p_proxy,
                             &mut outbound_tasks,
+                            &mut outbound_aborts,
                             &blocklist,
                         );
                     }
@@ -689,6 +692,7 @@ async fn torrent_loop(
                             &outbound_utp,
                             &p2p_proxy,
                             &mut outbound_tasks,
+                            &mut outbound_aborts,
                             &blocklist,
                         );
                     let _ = ack.send(());
@@ -753,6 +757,7 @@ async fn torrent_loop(
                         &blocklist,
                         &mut peers,
                         &mut pending_dials,
+                        &mut outbound_aborts,
                         &mut known_addrs,
                         &mut priority_backlog,
                         &mut peer_backlog,
@@ -807,6 +812,7 @@ async fn torrent_loop(
                             &outbound_utp,
                             &p2p_proxy,
                             &mut outbound_tasks,
+                            &mut outbound_aborts,
                             &blocklist,
                         );
                 }
@@ -818,7 +824,9 @@ async fn torrent_loop(
                     &lengths, &storage, &stats, &mut bytes_this_tick,
                     &upload_tick,
                     &mut write_tasks,
-                    &mut pending_dials, &mut known_addrs,
+                    &mut pending_dials,
+                    &mut outbound_aborts,
+                    &mut known_addrs,
                     &mut priority_backlog,
                     &mut peer_backlog,
                     &mut dial_retries,
@@ -888,6 +896,7 @@ async fn torrent_loop(
                             &outbound_utp,
                             &p2p_proxy,
                             &mut outbound_tasks,
+                            &mut outbound_aborts,
                             &blocklist,
                         );
                 }
@@ -1169,6 +1178,7 @@ async fn torrent_loop(
                             &outbound_utp,
                             &p2p_proxy,
                             &mut outbound_tasks,
+                            &mut outbound_aborts,
                             &blocklist,
                         );
                     drive_requests(&mut peers, &mut piece_tracker, &mut chunk_tracker).await;
@@ -1473,6 +1483,7 @@ async fn process_peer_event(
     upload_tick: &Arc<AtomicU64>,
     write_tasks: &mut tokio::task::JoinSet<VerifyResult>,
     pending_dials: &mut HashMap<u32, SocketAddr>,
+    outbound_aborts: &mut HashMap<u32, AbortHandle>,
     known_addrs: &mut HashSet<SocketAddr>,
     priority_backlog: &mut VecDeque<SocketAddr>,
     peer_backlog: &mut VecDeque<SocketAddr>,
@@ -1499,12 +1510,11 @@ async fn process_peer_event(
         match ev {
             PeerEvent::Handshook { .. } => {
                 pending_dials.remove(&pid);
-                if let Some((cmd_tx, _)) = peer_registry::take(torrent_id, pid, registry_scope) {
-                    let _ = cmd_tx.send(PeerCommand::Disconnect).await;
-                }
+                cancel_peer_io(pid, None, outbound_aborts, torrent_id, registry_scope);
             }
             PeerEvent::Disconnected { .. } => {
                 pending_dials.remove(&pid);
+                outbound_aborts.remove(&pid);
                 peer_registry::remove(torrent_id, pid, registry_scope);
             }
             PeerEvent::Message(_) => {}
@@ -2018,6 +2028,7 @@ async fn process_peer_event(
             }
 
             peer_registry::remove(torrent_id, pid, registry_scope);
+            outbound_aborts.remove(&pid);
             if let Some(dead) = dead {
                 *choke_dirty = true;
                 release_peer_scheduler_state(
@@ -2401,6 +2412,7 @@ fn drain_peer_backlog(
     utp: &Option<Arc<UtpSocket>>,
     proxy: &Option<risuko_http::ProxyConnector>,
     outbound_tasks: &mut tokio::task::JoinSet<()>,
+    outbound_aborts: &mut HashMap<u32, AbortHandle>,
     blocklist: &RwLock<BlockList>,
 ) {
     // Promote due useful-peer redials into the priority backlog
@@ -2426,12 +2438,13 @@ fn drain_peer_backlog(
     let spawn_one = |addr: SocketAddr,
                      pending_dials: &mut HashMap<u32, SocketAddr>,
                      next_pid: &mut u32,
-                     outbound_tasks: &mut tokio::task::JoinSet<()>| {
+                     outbound_tasks: &mut tokio::task::JoinSet<()>,
+                     outbound_aborts: &mut HashMap<u32, AbortHandle>| {
         let pid = *next_pid;
         *next_pid += 1;
         pending_dials.insert(pid, addr);
         let known_useful = useful_peers.contains_key(&addr);
-        outbound_tasks.spawn(run_outbound_peer(
+        let abort = outbound_tasks.spawn(run_outbound_peer(
             torrent_id,
             pid,
             addr,
@@ -2446,6 +2459,7 @@ fn drain_peer_backlog(
             known_useful,
             proxy.clone(),
         ));
+        outbound_aborts.insert(pid, abort);
     };
 
     while dial_slot_available(
@@ -2464,7 +2478,13 @@ fn drain_peer_backlog(
             known_addrs.remove(&addr);
             continue;
         }
-        spawn_one(addr, pending_dials, next_pid, outbound_tasks);
+        spawn_one(
+            addr,
+            pending_dials,
+            next_pid,
+            outbound_tasks,
+            outbound_aborts,
+        );
     }
 
     // Cold backlog leaves PRIORITY_DIAL_RESERVE free when the swarm is thin
@@ -2484,7 +2504,13 @@ fn drain_peer_backlog(
             known_addrs.remove(&addr);
             continue;
         }
-        spawn_one(addr, pending_dials, next_pid, outbound_tasks);
+        spawn_one(
+            addr,
+            pending_dials,
+            next_pid,
+            outbound_tasks,
+            outbound_aborts,
+        );
     }
 }
 
@@ -2702,7 +2728,6 @@ fn run_choke_eval(
     let unchoke = select_unchoked(candidates, optimistic, UPLOAD_SLOTS);
     for (&pid, p) in peers.iter_mut() {
         let should_unchoke = unchoke.contains(&pid);
-        p.optimistic_unchoke = optimistic == Some(pid);
         if should_unchoke
             && p.am_choking
             && p.cmd_tx
@@ -2716,6 +2741,7 @@ fn run_choke_eval(
         {
             p.am_choking = true;
         }
+        p.optimistic_unchoke = should_unchoke && !p.am_choking && optimistic == Some(pid);
         if reset_windows {
             p.downloaded_window = 0;
             p.uploaded_window.store(0, Ordering::Relaxed);
@@ -3003,11 +3029,31 @@ fn peer_bitfield_progress(bitfield: &[u8], total_pieces: usize) -> f64 {
     ones as f64 / total_pieces as f64
 }
 
+/// Abort the outbound JoinSet task (drops the extra `Sender` held by `run_outbound_peer`)
+fn cancel_peer_io(
+    pid: u32,
+    cmd_tx: Option<&mpsc::Sender<PeerCommand>>,
+    outbound_aborts: &mut HashMap<u32, AbortHandle>,
+    torrent_id: usize,
+    registry_scope: &Arc<()>,
+) {
+    if let Some(handle) = outbound_aborts.remove(&pid) {
+        handle.abort();
+    }
+    if let Some((registry_tx, _)) = peer_registry::take(torrent_id, pid, registry_scope) {
+        let _ = registry_tx.try_send(PeerCommand::Disconnect);
+    }
+    if let Some(tx) = cmd_tx {
+        let _ = tx.try_send(PeerCommand::Disconnect);
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn apply_blocklist_to_torrent(
     blocklist: &RwLock<BlockList>,
     peers: &mut HashMap<u32, Peer>,
     pending_dials: &mut HashMap<u32, SocketAddr>,
+    outbound_aborts: &mut HashMap<u32, AbortHandle>,
     known_addrs: &mut HashSet<SocketAddr>,
     priority_backlog: &mut VecDeque<SocketAddr>,
     peer_backlog: &mut VecDeque<SocketAddr>,
@@ -3037,7 +3083,13 @@ fn apply_blocklist_to_torrent(
         .collect();
     for pid in to_kick {
         if let Some(p) = peers.remove(&pid) {
-            let _ = p.cmd_tx.try_send(PeerCommand::Disconnect);
+            cancel_peer_io(
+                pid,
+                Some(&p.cmd_tx),
+                outbound_aborts,
+                torrent_id,
+                registry_scope,
+            );
             known_addrs.remove(&p.addr);
             useful_peers.remove(&p.addr);
             pex_source.retain(|addr, relay| *relay != pid && !is_blocked(*addr));
@@ -3088,9 +3140,7 @@ fn apply_blocklist_to_torrent(
     pending_dials.retain(|pid, addr| {
         if is_blocked(*addr) {
             known_addrs.remove(addr);
-            if let Some((cmd_tx, _)) = peer_registry::take(torrent_id, *pid, registry_scope) {
-                let _ = cmd_tx.try_send(PeerCommand::Disconnect);
-            }
+            cancel_peer_io(*pid, None, outbound_aborts, torrent_id, registry_scope);
             removed += 1;
             false
         } else {
@@ -4052,6 +4102,88 @@ mod tests {
         assert!(peer_registry::take(torrent_a, 1, &scope_a).is_none());
         assert!(peer_registry::take(torrent_a, 2, &scope_b).is_some());
         assert!(peer_registry::take(torrent_b, 1, &scope_a).is_some());
+    }
+
+    #[tokio::test]
+    async fn apply_blocklist_cancels_peers_when_command_channel_is_full() {
+        let mut list = BlockList::default();
+        list.replace(&["127.0.0.1".into()]);
+        let blocklist = RwLock::new(list);
+
+        let live_addr: SocketAddr = "127.0.0.1:6881".parse().unwrap();
+        let pending_addr: SocketAddr = "127.0.0.1:6882".parse().unwrap();
+        let (tx, _rx) = mpsc::channel(1);
+        tx.try_send(PeerCommand::Send(Message::KeepAlive)).unwrap();
+        let extra = tx.clone();
+
+        let mut peers = HashMap::new();
+        peers.insert(
+            1,
+            Peer::connected(live_addr, tx, 1, 1, 1, true, false, None),
+        );
+
+        let mut pending_dials = HashMap::new();
+        pending_dials.insert(2, pending_addr);
+        let mut known_addrs = HashSet::from([live_addr, pending_addr]);
+        let mut priority_backlog = VecDeque::new();
+        let mut peer_backlog = VecDeque::new();
+        let mut dial_retries = VecDeque::new();
+        let mut useful_redials = VecDeque::new();
+        let mut useful_peers = HashMap::new();
+        let mut pex_source = HashMap::new();
+        let mut holepunch_attempted = HashSet::new();
+        let (lengths, _) = two_file_layout();
+        let mut piece_tracker = PieceTracker::new(lengths);
+        let mut chunk_tracker = ChunkTracker::new(lengths);
+        let mut piece_assemblies = HashMap::new();
+        let registry_scope = Arc::new(());
+
+        let mut outbound_tasks: tokio::task::JoinSet<()> = tokio::task::JoinSet::new();
+        let mut outbound_aborts = HashMap::new();
+        outbound_aborts.insert(
+            1,
+            outbound_tasks.spawn(async move {
+                extra.closed().await;
+            }),
+        );
+        outbound_aborts.insert(2, outbound_tasks.spawn(std::future::pending::<()>()));
+
+        let (disconnected, removed) = apply_blocklist_to_torrent(
+            &blocklist,
+            &mut peers,
+            &mut pending_dials,
+            &mut outbound_aborts,
+            &mut known_addrs,
+            &mut priority_backlog,
+            &mut peer_backlog,
+            &mut dial_retries,
+            &mut useful_redials,
+            &mut useful_peers,
+            &mut pex_source,
+            &mut holepunch_attempted,
+            &mut piece_tracker,
+            &mut chunk_tracker,
+            &mut piece_assemblies,
+            &lengths,
+            42,
+            &registry_scope,
+        );
+
+        assert_eq!(disconnected, 1);
+        assert_eq!(removed, 1);
+        assert!(peers.is_empty());
+        assert!(pending_dials.is_empty());
+        assert!(!known_addrs.contains(&live_addr));
+        assert!(!known_addrs.contains(&pending_addr));
+        assert!(outbound_aborts.is_empty());
+
+        for _ in 0..2 {
+            let joined = tokio::time::timeout(Duration::from_secs(1), outbound_tasks.join_next())
+                .await
+                .expect("blocklist abort should finish the outbound task");
+            let result = joined.expect("joinset should still have a task");
+            assert!(result.is_ok() || result.unwrap_err().is_cancelled());
+        }
     }
 
     #[test]

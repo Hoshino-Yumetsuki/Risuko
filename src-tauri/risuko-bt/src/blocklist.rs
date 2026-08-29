@@ -26,9 +26,7 @@ impl Prefix {
                 None => false,
             },
             (Prefix::V6 { network, mask }, IpAddr::V6(addr)) => u128::from(addr) & mask == network,
-            (Prefix::V6 { network, mask }, IpAddr::V4(addr)) => {
-                u128::from(addr.to_ipv6_mapped()) & mask == network
-            }
+            (Prefix::V6 { .. }, IpAddr::V4(_)) => false,
         }
     }
 }
@@ -58,12 +56,10 @@ impl BlockList {
             return false;
         }
         let canonical = canonicalize_ip(ip);
-        if self.exact.contains(&canonical) || self.exact.contains(&ip) {
+        if self.exact.contains(&canonical) {
             return true;
         }
-        self.prefixes
-            .iter()
-            .any(|prefix| prefix.contains(canonical))
+        self.prefixes.iter().any(|prefix| prefix.contains(ip))
     }
 
     /// Full-replace semantics: parse `entries` (plain IPs or CIDR strings) and bump `revision`
@@ -116,7 +112,7 @@ fn parse_entry(raw: &str) -> Option<ParsedEntry> {
 }
 
 fn parse_prefix(ip: IpAddr, prefix: u8) -> Option<Prefix> {
-    match canonicalize_ip(ip) {
+    match ip {
         IpAddr::V4(addr) => {
             if prefix > 32 {
                 return None;
@@ -203,5 +199,33 @@ mod tests {
         let list = BlockList::default();
         assert!(!list.contains("127.0.0.1".parse().unwrap()));
         assert!(list.is_empty());
+    }
+
+    #[test]
+    fn ipv6_unspecified_cidr_does_not_block_ipv4_peers() {
+        let mut list = BlockList::default();
+        list.replace(&["::/0".into()]);
+        assert!(list.contains("2001:db8::1".parse().unwrap()));
+        assert!(!list.contains("1.2.3.4".parse().unwrap()));
+        assert!(list.contains("::ffff:1.2.3.4".parse().unwrap()));
+    }
+
+    #[test]
+    fn ipv4_cidr_still_matches_mapped_ipv6_peers() {
+        let mut list = BlockList::default();
+        list.replace(&["10.0.0.0/8".into()]);
+        assert!(list.contains("10.1.2.3".parse().unwrap()));
+        assert!(list.contains("::ffff:10.1.2.3".parse().unwrap()));
+    }
+
+    #[test]
+    fn mapped_ipv6_cidr_keeps_ipv6_prefix_length() {
+        let mut list = BlockList::default();
+        list.replace(&["::ffff:10.1.2.0/120".into()]);
+        assert!(list.contains("::ffff:10.1.2.1".parse().unwrap()));
+        assert!(list.contains("::ffff:10.1.2.255".parse().unwrap()));
+        assert!(!list.contains("::ffff:10.1.3.1".parse().unwrap()));
+        assert!(!list.contains("10.1.2.1".parse().unwrap()));
+        assert_eq!(list.rule_count(), 1);
     }
 }

@@ -1954,6 +1954,10 @@ const normalizeAdvancedConfig = (data, rpcDefaultPort) => {
 					data[key] = 4672;
 					continue;
 				}
+				if (key === "pbhListenPort") {
+					data[key] = ENGINE_PBH_RPC_PORT;
+					continue;
+				}
 				delete data[key];
 				continue;
 			}
@@ -1980,6 +1984,8 @@ const normalizeAdvancedConfig = (data, rpcDefaultPort) => {
 				data[key] = n;
 			} else if (key === "ed2kKadPort") {
 				data[key] = 4672;
+			} else if (key === "pbhListenPort") {
+				data[key] = ENGINE_PBH_RPC_PORT;
 			} else {
 				delete data[key];
 			}
@@ -1996,10 +2002,6 @@ const normalizeAdvancedConfig = (data, rpcDefaultPort) => {
 
 	if (data.rpcListenPort === "") {
 		data.rpcListenPort = rpcDefaultPort;
-	}
-
-	if (data.pbhListenPort === "") {
-		data.pbhListenPort = ENGINE_PBH_RPC_PORT;
 	}
 
 	if (data.externalEnginePort !== undefined) {

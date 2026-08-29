@@ -93,14 +93,14 @@ export default {
 	"rpc-secret": "RPCシークレット",
 	"rpc-secret-tips": "RPCシークレットマニュアルの閲覧",
 	pbh: "PeerBanHelper",
-	"pbh-enable": "Enable PeerBanHelper API",
+	"pbh-enable": "PeerBanHelper API を有効にする",
 	"pbh-enable-tips":
-		"Expose an Aria2Next-compatible JSON-RPC listener so PeerBanHelper can monitor and ban BitTorrent peers",
-	"pbh-listen-port": "PeerBanHelper Listen Port",
-	"pbh-rpc-secret": "PeerBanHelper RPC Token",
-	"generate-pbh-rpc-secret": "Generate a new token",
+		"PeerBanHelper が BitTorrent ピアを監視して禁止できるよう、Aria2Next 互換の JSON-RPC リスナーを公開します",
+	"pbh-listen-port": "PeerBanHelper 待ち受けポート",
+	"pbh-rpc-secret": "PeerBanHelper RPC トークン",
+	"generate-pbh-rpc-secret": "新しいトークンを生成",
 	"pbh-endpoint-hint":
-		"In PeerBanHelper, add an Aria2Next downloader pointed at http://127.0.0.1:{{port}}/jsonrpc",
+		"PeerBanHelper で、http://127.0.0.1:{{port}}/jsonrpc を指す Aria2Next ダウンローダーを追加してください",
 	"engine-overrides": "エンジン上書き設定（JSON）",
 	"engine-overrides-placeholder":
 		'{\n  "piece-length": "1M",\n  "timeout": 60\n}',

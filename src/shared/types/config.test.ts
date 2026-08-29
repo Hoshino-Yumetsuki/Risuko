@@ -227,10 +227,15 @@ test("normalizes bypass entries and redacts proxy credentials", () => {
 		allProxy: "http://alice:s3cret@proxy.example:8080",
 		p2pProxy: "socks5://bob:secret@proxy.example:1080",
 		p2pUdpProxy: "socks5h://carol:udp-secret@udp.example:1080",
+		pbhRpcSecret: "pbh-token-secret",
+		rpcSecret: "rpc-token-secret",
 	});
 	assert.equal(camelSettings.allProxy, "http://proxy.example:8080/");
 	assert.equal(camelSettings.p2pProxy, "socks5://proxy.example:1080");
 	assert.equal(camelSettings.p2pUdpProxy, "socks5h://udp.example:1080");
+	assert.equal(camelSettings.pbhRpcSecret, "[REDACTED]");
+	assert.equal(camelSettings.rpcSecret, "[REDACTED]");
+	assert.notEqual(JSON.stringify(camelSettings).includes("pbh-token-secret"), true);
 });
 
 test("normalizes IP networks and rejects malformed bypass entries", () => {

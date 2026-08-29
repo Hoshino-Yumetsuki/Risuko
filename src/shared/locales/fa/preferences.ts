@@ -92,14 +92,14 @@ export default {
 	"rpc-secret": "رمز RPC",
 	"rpc-secret-tips": "مشاهده راهنمای رمز RPC",
 	pbh: "PeerBanHelper",
-	"pbh-enable": "Enable PeerBanHelper API",
+	"pbh-enable": "فعال‌سازی API مربوط به PeerBanHelper",
 	"pbh-enable-tips":
-		"Expose an Aria2Next-compatible JSON-RPC listener so PeerBanHelper can monitor and ban BitTorrent peers",
-	"pbh-listen-port": "PeerBanHelper Listen Port",
-	"pbh-rpc-secret": "PeerBanHelper RPC Token",
-	"generate-pbh-rpc-secret": "Generate a new token",
+		"یک شنونده JSON-RPC سازگار با Aria2Next در دسترس می‌گذارد تا PeerBanHelper بتواند همتایان بیت‌تورنت را پایش و مسدود کند",
+	"pbh-listen-port": "درگاه شنود PeerBanHelper",
+	"pbh-rpc-secret": "توکن RPC مربوط به PeerBanHelper",
+	"generate-pbh-rpc-secret": "تولید توکن جدید",
 	"pbh-endpoint-hint":
-		"In PeerBanHelper, add an Aria2Next downloader pointed at http://127.0.0.1:{{port}}/jsonrpc",
+		"در PeerBanHelper یک دانلودر Aria2Next با آدرس http://127.0.0.1:{{port}}/jsonrpc اضافه کنید",
 	"engine-overrides": "جایگزینی تنظیمات موتور (JSON)",
 	"engine-overrides-placeholder":
 		'{\n  "piece-length": "1M",\n  "timeout": 60\n}',

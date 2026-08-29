@@ -9,7 +9,7 @@ use std::sync::Arc;
 use bytes::Bytes;
 use parking_lot::{Mutex, RwLock as ParkingRwLock};
 use tokio::net::TcpListener;
-use tokio::sync::{mpsc, RwLock};
+use tokio::sync::{mpsc, Mutex as TokioMutex, RwLock};
 
 use super::api::TorrentIdOrHash;
 use super::blocklist::{BlockList, BlocklistApplyResult};
@@ -106,6 +106,7 @@ pub struct Session {
     dht: Mutex<Option<Arc<super::dht::Dht>>>,
     dht_bootstrap_handle: Mutex<Option<tokio::task::JoinHandle<()>>>,
     blocklist: Arc<ParkingRwLock<BlockList>>,
+    blocklist_apply: TokioMutex<()>,
 }
 
 impl Drop for Session {
@@ -235,6 +236,7 @@ impl Session {
             dht: Mutex::new(None),
             dht_bootstrap_handle: Mutex::new(None),
             blocklist: Arc::new(ParkingRwLock::new(BlockList::default())),
+            blocklist_apply: TokioMutex::new(()),
         });
 
         if !session.opts.disable_local_service_discovery {
@@ -878,6 +880,7 @@ impl Session {
     }
 
     pub async fn set_peer_blocklist(&self, entries: Vec<String>) -> BlocklistApplyResult {
+        let _apply_guard = self.blocklist_apply.lock().await;
         let mut meta = {
             let mut list = self.blocklist.write();
             list.replace(&entries)

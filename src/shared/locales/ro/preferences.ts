@@ -97,14 +97,14 @@ export default {
 	"rpc-secret": "Secret RPC",
 	"rpc-secret-tips": "Vizualizați manualul pentru secret RPC",
 	pbh: "PeerBanHelper",
-	"pbh-enable": "Enable PeerBanHelper API",
+	"pbh-enable": "Activează API-ul PeerBanHelper",
 	"pbh-enable-tips":
-		"Expose an Aria2Next-compatible JSON-RPC listener so PeerBanHelper can monitor and ban BitTorrent peers",
-	"pbh-listen-port": "PeerBanHelper Listen Port",
-	"pbh-rpc-secret": "PeerBanHelper RPC Token",
-	"generate-pbh-rpc-secret": "Generate a new token",
+		"Expune un listener JSON-RPC compatibil Aria2Next, astfel încât PeerBanHelper să poată monitoriza și bloca peerii BitTorrent",
+	"pbh-listen-port": "Port de ascultare PeerBanHelper",
+	"pbh-rpc-secret": "Token RPC PeerBanHelper",
+	"generate-pbh-rpc-secret": "Generează un token nou",
 	"pbh-endpoint-hint":
-		"In PeerBanHelper, add an Aria2Next downloader pointed at http://127.0.0.1:{{port}}/jsonrpc",
+		"În PeerBanHelper, adaugă un downloader Aria2Next îndreptat către http://127.0.0.1:{{port}}/jsonrpc",
 	"engine-overrides": "Suprascrieri motor (JSON)",
 	"engine-overrides-placeholder":
 		'{\n  "piece-length": "1M",\n  "timeout": 60\n}',
