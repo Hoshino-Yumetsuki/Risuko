@@ -2008,6 +2008,7 @@ async fn process_peer_event(
                                 dial_retries,
                                 useful_redials,
                                 known_addrs,
+                                blocklist,
                             );
                         }
                     }
@@ -2146,9 +2147,13 @@ fn handle_holepunch(
     dial_retries: &mut VecDeque<(SocketAddr, Instant)>,
     useful_redials: &mut VecDeque<(SocketAddr, Instant)>,
     known_addrs: &mut HashSet<SocketAddr>,
+    blocklist: &RwLock<BlockList>,
 ) {
     match hp.msg_type {
         holepunch_type::CONNECT => {
+            if blocklist.read().contains(hp.addr.ip()) {
+                return;
+            }
             let active_addrs = peers
                 .values()
                 .map(|peer| peer.addr)
@@ -3854,6 +3859,46 @@ mod tests {
             .chain(useful_redials.iter().map(|(addr, _)| *addr))
             .collect::<HashSet<_>>();
         assert_eq!(known_addrs, expected);
+    }
+
+    #[test]
+    fn holepunch_connect_skips_blocked_target() {
+        let target = test_peer(14_001);
+        let mut list = BlockList::default();
+        list.replace(&[target.ip().to_string()]);
+        let (from_cmd, _rx) = mpsc::channel(1);
+        let peers = HashMap::new();
+        let pending_dials = HashMap::new();
+        let mut priority_backlog = VecDeque::new();
+        let mut peer_backlog = VecDeque::new();
+        let mut dial_retries = VecDeque::new();
+        let mut useful_redials = VecDeque::new();
+        let mut known_addrs = HashSet::new();
+
+        handle_holepunch(
+            HolepunchMsg {
+                msg_type: holepunch_type::CONNECT,
+                addr: target,
+                err_code: 0,
+            },
+            test_peer(14_002),
+            None,
+            &from_cmd,
+            &peers,
+            &pending_dials,
+            &mut priority_backlog,
+            &mut peer_backlog,
+            &mut dial_retries,
+            &mut useful_redials,
+            &mut known_addrs,
+            &RwLock::new(list),
+        );
+
+        assert!(priority_backlog.is_empty());
+        assert!(peer_backlog.is_empty());
+        assert!(dial_retries.is_empty());
+        assert!(useful_redials.is_empty());
+        assert!(known_addrs.is_empty());
     }
 
     #[test]
