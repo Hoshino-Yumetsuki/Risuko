@@ -43,6 +43,7 @@ export const MAX_NUM_OF_SAVED_CREDENTIALS = 50;
 
 export const ENGINE_RPC_HOST = "127.0.0.1";
 export const ENGINE_RPC_PORT = 16800;
+export const ENGINE_PBH_RPC_PORT = 16801;
 export const ENGINE_MAX_CONCURRENT_DOWNLOADS = 10;
 
 export const ONE_SECOND = 1000;

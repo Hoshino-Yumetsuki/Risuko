@@ -225,6 +225,15 @@ export default {
 	"rpc-listen-port": "RPC 監聽埠",
 	"rpc-secret": "RPC 授權密鑰",
 	"rpc-secret-tips": "查看說明手冊",
+	pbh: "PeerBanHelper",
+	"pbh-enable": "啟用 PeerBanHelper API",
+	"pbh-enable-tips":
+		"提供 Aria2Next 相容的 JSON-RPC 介面，供 PeerBanHelper 監控並封鎖 BT 對等節點",
+	"pbh-listen-port": "PeerBanHelper 監聽埠",
+	"pbh-rpc-secret": "PeerBanHelper RPC 權杖",
+	"generate-pbh-rpc-secret": "產生新權杖",
+	"pbh-endpoint-hint":
+		"在 PeerBanHelper 中新增 Aria2Next 下載器，位址填 http://127.0.0.1:{{port}}/jsonrpc",
 	"engine-overrides": "引擎覆寫設定（JSON）",
 	"engine-overrides-placeholder":
 		'{\n  "piece-length": "1M",\n  "timeout": 60\n}',

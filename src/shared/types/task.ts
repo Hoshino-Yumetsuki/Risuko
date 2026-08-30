@@ -97,6 +97,20 @@ export interface PeerInfo {
 	amChoking: string;
 	peerChoking: string;
 	seeder: string;
+	peerId?: string;
+	peerClientName?: string;
+	amInterested?: string;
+	peerInterested?: string;
+	downloadSpeed?: number;
+	uploadSpeed?: number;
+	downloaded?: number;
+	uploaded?: number;
+	progress?: number;
+	incoming?: boolean;
+	snubbed?: boolean;
+	handshaking?: boolean;
+	optimisticUnchoke?: boolean;
+	bitfield?: string;
 }
 
 export interface GlobalStat {

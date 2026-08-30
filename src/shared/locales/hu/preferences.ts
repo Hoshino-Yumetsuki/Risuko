@@ -96,6 +96,15 @@ export default {
 	"rpc-listen-port": "RPC-hallgató-port",
 	"rpc-secret": "RPC Secret",
 	"rpc-secret-tips": "RPC Secret kézikönyv megnyitasa",
+	pbh: "PeerBanHelper",
+	"pbh-enable": "PeerBanHelper API engedélyezése",
+	"pbh-enable-tips":
+		"Aria2Next-kompatibilis JSON-RPC figyelőt indít, hogy a PeerBanHelper figyelhesse és tilthassa a BitTorrent peer-eket",
+	"pbh-listen-port": "PeerBanHelper figyelőport",
+	"pbh-rpc-secret": "PeerBanHelper RPC token",
+	"generate-pbh-rpc-secret": "Új token generálása",
+	"pbh-endpoint-hint":
+		"A PeerBanHelperben adjon hozzá egy Aria2Next letöltőt a következő címre: http://127.0.0.1:{{port}}/jsonrpc",
 	"engine-overrides": "Motorfelülbírálások (JSON)",
 	"engine-overrides-placeholder":
 		'{\n  "piece-length": "1M",\n  "timeout": 60\n}',

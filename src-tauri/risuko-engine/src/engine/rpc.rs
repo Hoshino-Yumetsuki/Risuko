@@ -14,12 +14,20 @@ use super::events::EventBroadcaster;
 use super::manager::TaskManager;
 
 const ENGINE_VERSION: &str = concat!("risuko-engine/", env!("CARGO_PKG_VERSION"));
+const ARIA2NEXT_PRODUCT: &str = "aria2-next";
+const ARIA2NEXT_VERSION: &str = "1.37.0";
 
 // JSON-RPC 2.0 error codes
 const PARSE_ERROR: i64 = -32700;
 const INVALID_REQUEST: i64 = -32600;
 const METHOD_NOT_FOUND: i64 = -32601;
 const INVALID_PARAMS: i64 = -32602;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RpcCompatMode {
+    Standard,
+    Aria2Next,
+}
 
 pub struct RpcServer {
     host: String,
@@ -30,6 +38,7 @@ pub struct RpcServer {
     events: EventBroadcaster,
     shutdown_tx: Option<tokio::sync::oneshot::Sender<()>>,
     rpc_shutdown_tx: tokio::sync::mpsc::Sender<()>,
+    compat: RpcCompatMode,
 }
 
 #[derive(Clone)]
@@ -41,6 +50,7 @@ struct RpcState {
     /// Configured bind host, lets a Host header matching an explicitly-configured hostname through the DNS-rebinding guard
     bind_host: String,
     rpc_shutdown_tx: tokio::sync::mpsc::Sender<()>,
+    compat: RpcCompatMode,
 }
 
 impl RpcServer {
@@ -51,6 +61,26 @@ impl RpcServer {
         manager: Arc<TaskManager>,
         events: EventBroadcaster,
         rpc_shutdown_tx: tokio::sync::mpsc::Sender<()>,
+    ) -> Self {
+        Self::new_with_compat(
+            host,
+            port,
+            secret,
+            manager,
+            events,
+            rpc_shutdown_tx,
+            RpcCompatMode::Standard,
+        )
+    }
+
+    pub fn new_with_compat(
+        host: String,
+        port: u16,
+        secret: String,
+        manager: Arc<TaskManager>,
+        events: EventBroadcaster,
+        rpc_shutdown_tx: tokio::sync::mpsc::Sender<()>,
+        compat: RpcCompatMode,
     ) -> Self {
         let session_id = uuid::Uuid::new_v4().simple().to_string();
 
@@ -63,6 +93,7 @@ impl RpcServer {
             events,
             shutdown_tx: None,
             rpc_shutdown_tx,
+            compat,
         }
     }
 
@@ -74,6 +105,7 @@ impl RpcServer {
             session_id: self.session_id.clone(),
             bind_host: self.host.clone(),
             rpc_shutdown_tx: self.rpc_shutdown_tx.clone(),
+            compat: self.compat,
         };
 
         let cors = CorsLayer::new()
@@ -82,11 +114,14 @@ impl RpcServer {
             .allow_headers(Any)
             .max_age(std::time::Duration::from_secs(1728000));
 
-        let app = Router::new()
-            .route(
-                "/jsonrpc",
-                post(handle_http_post).get(handle_http_get_or_ws),
-            )
+        let mut app = Router::new().route(
+            "/jsonrpc",
+            post(handle_http_post).get(handle_http_get_or_ws),
+        );
+        if matches!(self.compat, RpcCompatMode::Aria2Next) {
+            app = app.route("/", post(handle_http_post));
+        }
+        let app = app
             .layer(axum::middleware::from_fn_with_state(
                 state.clone(),
                 dns_rebind_guard,
@@ -851,7 +886,38 @@ fn dispatch_method<'a>(
 
             "risuko.getPeers" => {
                 let gid = resolve_gid(&params, &state.manager).await?;
-                Ok(state.manager.get_peers(&gid).await)
+                let peers = state.manager.get_peers(&gid).await;
+                Ok(match state.compat {
+                    RpcCompatMode::Aria2Next => stringify_aria2_peer_speeds(peers),
+                    RpcCompatMode::Standard => peers,
+                })
+            }
+
+            "risuko.setBtPeerBlocklist" => {
+                let entries = match params.first() {
+                    Some(Value::Array(arr)) => arr
+                        .iter()
+                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                        .collect::<Vec<_>>(),
+                    _ => {
+                        return Err(RpcError {
+                            code: INVALID_PARAMS,
+                            message: "setBtPeerBlocklist requires an array of IP/CIDR strings"
+                                .into(),
+                        });
+                    }
+                };
+                let result = state
+                    .manager
+                    .set_bt_peer_blocklist(entries)
+                    .await
+                    .map_err(RpcError::from)?;
+                Ok(json!({
+                    "revision": result.revision,
+                    "ruleCount": result.rule_count,
+                    "disconnectedPeers": result.disconnected_peers,
+                    "removedPeers": result.removed_peers,
+                }))
             }
 
             "risuko.getUris" => {
@@ -916,18 +982,34 @@ fn dispatch_method<'a>(
                 Ok(Value::String("OK".into()))
             }
 
-            "risuko.getVersion" => Ok(json!({
-                "version": ENGINE_VERSION,
-                "enabledFeatures": [
-                    "HTTP",
-                    "HTTPS",
-                    "FTP",
-                    "FTPS",
-                    "SFTP",
-                    "BitTorrent",
-                    "JSON-RPC",
-                ]
-            })),
+            "risuko.getVersion" => Ok(match state.compat {
+                RpcCompatMode::Aria2Next => json!({
+                    "version": ARIA2NEXT_VERSION,
+                    "product": ARIA2NEXT_PRODUCT,
+                    "rpcVersion": "1",
+                    "enabledFeatures": [
+                        "HTTP",
+                        "HTTPS",
+                        "FTP",
+                        "FTPS",
+                        "SFTP",
+                        "BitTorrent",
+                        "JSON-RPC",
+                    ]
+                }),
+                RpcCompatMode::Standard => json!({
+                    "version": ENGINE_VERSION,
+                    "enabledFeatures": [
+                        "HTTP",
+                        "HTTPS",
+                        "FTP",
+                        "FTPS",
+                        "SFTP",
+                        "BitTorrent",
+                        "JSON-RPC",
+                    ]
+                }),
+            }),
 
             "risuko.listRoutingRules" => {
                 let rules = state.manager.list_routing_rules().await;
@@ -1063,6 +1145,7 @@ fn list_methods() -> Value {
         "getGlobalOption",
         "changePosition",
         "getPeers",
+        "setBtPeerBlocklist",
         "getUris",
         "getFiles",
         "getServers",
@@ -1137,6 +1220,23 @@ fn get_keys(params: &[Value], index: usize) -> Vec<String> {
         .unwrap_or_default()
 }
 
+fn stringify_aria2_peer_speeds(peers: Value) -> Value {
+    let Value::Array(mut items) = peers else {
+        return peers;
+    };
+    for item in &mut items {
+        let Some(obj) = item.as_object_mut() else {
+            continue;
+        };
+        for key in ["downloadSpeed", "uploadSpeed"] {
+            if let Some(n) = obj.get(key).and_then(Value::as_u64) {
+                obj.insert(key.to_string(), Value::String(n.to_string()));
+            }
+        }
+    }
+    Value::Array(items)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1146,10 +1246,19 @@ mod tests {
     async fn make_rpc_state(secret: &str) -> (RpcState, TempDir) {
         let events = EventBroadcaster::default();
         let config_dir = TempDir::new().unwrap();
-        let options = super::super::options::EngineOptions::from_config(
-            &serde_json::Map::new(),
-            &serde_json::Map::new(),
+        let mut system = serde_json::Map::new();
+        system.insert(
+            "dir".into(),
+            json!(config_dir
+                .path()
+                .join("downloads")
+                .to_string_lossy()
+                .to_string()),
         );
+        system.insert("bt-enable-upnp".into(), json!(false));
+        system.insert("bt-enable-lsd".into(), json!(false));
+        let options =
+            super::super::options::EngineOptions::from_config(&system, &serde_json::Map::new());
         let manager = Arc::new(
             TaskManager::new(config_dir.path(), options, events.clone())
                 .await
@@ -1165,6 +1274,7 @@ mod tests {
                 session_id: "test-session".to_string(),
                 bind_host: "127.0.0.1".to_string(),
                 rpc_shutdown_tx,
+                compat: RpcCompatMode::Standard,
             },
             config_dir,
         )
@@ -1453,5 +1563,115 @@ mod tests {
             .unwrap()
             .iter()
             .any(|method| method.as_str() == Some("risuko.addNzb")));
+    }
+
+    #[test]
+    fn list_methods_advertises_set_bt_peer_blocklist() {
+        let methods = list_methods();
+        assert!(methods
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|method| method.as_str() == Some("risuko.setBtPeerBlocklist")));
+        assert!(methods
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|method| method.as_str() == Some("aria2.setBtPeerBlocklist")));
+    }
+
+    #[tokio::test]
+    async fn get_version_aria2next_reports_product() {
+        let (mut state, _config_dir) = make_rpc_state("secret").await;
+        state.compat = RpcCompatMode::Aria2Next;
+        let request = json!({
+            "jsonrpc": "2.0",
+            "id": "1",
+            "method": "aria2.getVersion",
+            "params": ["token:secret"]
+        });
+        let response = process_single_request(&state, request).await.unwrap();
+        let result = response.get("result").and_then(|v| v.as_object()).unwrap();
+        assert_eq!(
+            result.get("product").and_then(|v| v.as_str()),
+            Some("aria2-next")
+        );
+        assert_eq!(
+            result.get("version").and_then(|v| v.as_str()),
+            Some("1.37.0")
+        );
+    }
+
+    #[tokio::test]
+    async fn get_version_standard_omits_aria2next_product() {
+        let (state, _config_dir) = make_rpc_state("secret").await;
+        let request = json!({
+            "jsonrpc": "2.0",
+            "id": "1",
+            "method": "aria2.getVersion",
+            "params": ["token:secret"]
+        });
+        let response = process_single_request(&state, request).await.unwrap();
+        let result = response.get("result").and_then(|v| v.as_object()).unwrap();
+        assert!(result.get("product").is_none());
+        assert_eq!(
+            result.get("version").and_then(|v| v.as_str()),
+            Some(ENGINE_VERSION)
+        );
+    }
+
+    #[tokio::test]
+    async fn set_bt_peer_blocklist_returns_counters() {
+        let (state, _config_dir) = make_rpc_state("secret").await;
+        let request = json!({
+            "jsonrpc": "2.0",
+            "id": "1",
+            "method": "aria2.setBtPeerBlocklist",
+            "params": ["token:secret", ["1.2.3.4", "10.0.0.0/8"]]
+        });
+        let response = process_single_request(&state, request).await.unwrap();
+        let result = response
+            .get("result")
+            .unwrap_or_else(|| panic!("expected result, got {response}"));
+        assert_eq!(result.get("ruleCount").and_then(|v| v.as_u64()), Some(2));
+        assert!(result.get("revision").and_then(|v| v.as_u64()).is_some());
+        assert!(result
+            .get("disconnectedPeers")
+            .and_then(|v| v.as_u64())
+            .is_some());
+        assert!(result
+            .get("removedPeers")
+            .and_then(|v| v.as_u64())
+            .is_some());
+    }
+
+    #[test]
+    fn stringify_aria2_peer_speeds_converts_numeric_counters() {
+        let peers = json!([{
+            "downloadSpeed": 1024,
+            "uploadSpeed": 512,
+            "ip": "1.2.3.4"
+        }]);
+        let out = stringify_aria2_peer_speeds(peers);
+        assert_eq!(out[0]["downloadSpeed"], "1024");
+        assert_eq!(out[0]["uploadSpeed"], "512");
+        assert_eq!(out[0]["ip"], "1.2.3.4");
+    }
+
+    #[tokio::test]
+    async fn set_bt_peer_blocklist_rejects_missing_array() {
+        let (state, _config_dir) = make_rpc_state("secret").await;
+        let request = json!({
+            "jsonrpc": "2.0",
+            "id": "1",
+            "method": "aria2.setBtPeerBlocklist",
+            "params": ["token:secret"]
+        });
+        let response = process_single_request(&state, request).await.unwrap();
+        let error = response.get("error").expect("expected parameter error");
+        assert_eq!(
+            error.get("code").and_then(|v| v.as_i64()),
+            Some(INVALID_PARAMS)
+        );
     }
 }

@@ -88,6 +88,7 @@ const ADVANCED_PREFIXES = [
 	"m3u8-",
 	"media-",
 	"rpc",
+	"pbh",
 	"external-engine-",
 	"port",
 	"bt-port",
@@ -110,6 +111,7 @@ const ADVANCED_PREFIXES = [
 	"factory-reset",
 	"randomize-port",
 	"generate-rpc-secret",
+	"generate-pbh-rpc-secret",
 	"copy-rpc-url",
 ];
 
@@ -398,6 +400,10 @@ const ADVANCED_KEYS = [
 	"preferences.rpc-host",
 	"preferences.rpc-listen-port",
 	"preferences.rpc-secret",
+	"preferences.pbh",
+	"preferences.pbh-enable",
+	"preferences.pbh-listen-port",
+	"preferences.pbh-rpc-secret",
 	"preferences.port",
 	"preferences.bt-port",
 	"preferences.dht-port",

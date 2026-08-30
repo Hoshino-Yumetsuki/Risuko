@@ -314,6 +314,13 @@ impl TorrentEngine {
         })
     }
 
+    pub async fn set_peer_blocklist(
+        &self,
+        entries: Vec<String>,
+    ) -> Result<bt::BlocklistApplyResult, String> {
+        Ok(self.get_session()?.set_peer_blocklist(entries).await)
+    }
+
     fn parse_select_files(options: &Map<String, Value>) -> Option<Vec<usize>> {
         let raw = options.get("select-file").and_then(|v| v.as_str())?.trim();
         if raw.is_empty() {
@@ -698,6 +705,16 @@ impl TorrentEngine {
                         peer_choking: p.peer_choking,
                         peer_interested: p.peer_interested,
                         seeder: p.seeder,
+                        peer_id: p.peer_id,
+                        client: p.client.clone(),
+                        downloaded: p.downloaded,
+                        uploaded: p.uploaded,
+                        dl_speed: p.dl_speed,
+                        up_speed: p.up_speed,
+                        incoming: p.incoming,
+                        snubbed: p.snubbed,
+                        progress: p.progress,
+                        optimistic_unchoke: p.optimistic_unchoke,
                     })
                     .collect();
                 let seeders = mapped.iter().filter(|p| p.seeder).count() as u32;
@@ -896,6 +913,16 @@ pub struct PeerSnapshot {
     pub peer_choking: bool,
     pub peer_interested: bool,
     pub seeder: bool,
+    pub peer_id: Option<[u8; 20]>,
+    pub client: Option<String>,
+    pub downloaded: u64,
+    pub uploaded: u64,
+    pub dl_speed: u64,
+    pub up_speed: u64,
+    pub incoming: bool,
+    pub snubbed: bool,
+    pub progress: f64,
+    pub optimistic_unchoke: bool,
 }
 
 pub struct MagnetInfo {

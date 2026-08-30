@@ -95,6 +95,15 @@ export default {
 	"rpc-listen-port": "RPC Dinleme Portu",
 	"rpc-secret": "RPC sırrı",
 	"rpc-secret-tips": "RPC gizli kılavuzunu görüntüle",
+	pbh: "PeerBanHelper",
+	"pbh-enable": "PeerBanHelper API'sini etkinleştir",
+	"pbh-enable-tips":
+		"PeerBanHelper'ın BitTorrent eşlerini izleyip yasaklayabilmesi için Aria2Next uyumlu bir JSON-RPC dinleyicisi açar",
+	"pbh-listen-port": "PeerBanHelper dinleme bağlantı noktası",
+	"pbh-rpc-secret": "PeerBanHelper RPC jetonu",
+	"generate-pbh-rpc-secret": "Yeni bir jeton oluştur",
+	"pbh-endpoint-hint":
+		"PeerBanHelper'da http://127.0.0.1:{{port}}/jsonrpc adresine yönelen bir Aria2Next indiricisi ekleyin",
 	"engine-overrides": "Motor geçersiz kılmaları (JSON)",
 	"engine-overrides-placeholder":
 		'{\n  "piece-length": "1M",\n  "timeout": 60\n}',

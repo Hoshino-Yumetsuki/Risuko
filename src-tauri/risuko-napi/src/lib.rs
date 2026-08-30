@@ -10,18 +10,17 @@ use risuko_engine::config::defaults;
 use risuko_engine::engine::events::EventBroadcaster;
 use risuko_engine::engine::manager::TaskManager;
 use risuko_engine::engine::options::EngineOptions;
-use risuko_engine::engine::rpc::RpcServer;
+use risuko_engine::engine::rpc::{RpcCompatMode, RpcServer};
 
 // Global engine singleton
 
 struct NapiEngine {
     manager: Arc<TaskManager>,
     rpc_server: RpcServer,
+    pbh_rpc_server: Option<RpcServer>,
     events: EventBroadcaster,
     progress_task: tokio::task::JoinHandle<()>,
     auto_save_task: tokio::task::JoinHandle<()>,
-    // Kept alive so any in-band `RpcServer::stop` send through `rpc_shutdown_tx` succeeds
-    _rpc_shutdown_rx: tokio::sync::mpsc::Receiver<()>,
     event_task: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
 }
 
@@ -78,6 +77,14 @@ pub async fn start_engine(config: Option<EngineConfig>) -> Result<()> {
     let rpc_host = options.rpc_host();
     let rpc_port = options.rpc_listen_port();
     let rpc_secret = options.rpc_secret();
+    let enable_rpc = config.as_ref().and_then(|c| c.enable_rpc).unwrap_or(true);
+    let pbh_config = if enable_rpc {
+        options
+            .pbh_rpc_config(rpc_port)
+            .map_err(Error::from_reason)?
+    } else {
+        None
+    };
 
     let manager = Arc::new(
         TaskManager::new(&config_dir, options, events.clone())
@@ -85,24 +92,51 @@ pub async fn start_engine(config: Option<EngineConfig>) -> Result<()> {
             .map_err(|e| Error::from_reason(format!("Failed to create task manager: {}", e)))?,
     );
 
-    let (rpc_shutdown_tx, rpc_shutdown_rx) = tokio::sync::mpsc::channel::<()>(1);
+    let (rpc_shutdown_tx, mut rpc_shutdown_rx) = tokio::sync::mpsc::channel::<()>(1);
 
     let mut rpc_server = RpcServer::new(
-        rpc_host,
+        rpc_host.clone(),
         rpc_port,
         rpc_secret,
         manager.clone(),
         events.clone(),
-        rpc_shutdown_tx,
+        rpc_shutdown_tx.clone(),
     );
 
-    let enable_rpc = config.as_ref().and_then(|c| c.enable_rpc).unwrap_or(true);
     if enable_rpc {
         rpc_server
             .start()
             .await
             .map_err(|e| Error::from_reason(format!("Failed to start RPC: {}", e)))?;
     }
+
+    let pbh_rpc_server = if enable_rpc {
+        if let Some(pbh) = pbh_config {
+            let mut server = RpcServer::new_with_compat(
+                rpc_host,
+                pbh.port,
+                pbh.secret,
+                manager.clone(),
+                events.clone(),
+                rpc_shutdown_tx,
+                RpcCompatMode::Aria2Next,
+            );
+            if let Err(e) = server.start().await {
+                rpc_server.stop();
+                manager.shutdown().await;
+                return Err(Error::from_reason(format!(
+                    "Failed to start PeerBanHelper RPC: {e}"
+                )));
+            }
+            Some(server)
+        } else {
+            drop(rpc_shutdown_tx);
+            None
+        }
+    } else {
+        drop(rpc_shutdown_tx);
+        None
+    };
 
     let mgr = manager.clone();
     let progress_task = tokio::spawn(async move {
@@ -127,11 +161,21 @@ pub async fn start_engine(config: Option<EngineConfig>) -> Result<()> {
     *guard = Some(NapiEngine {
         manager,
         rpc_server,
+        pbh_rpc_server,
         events,
         progress_task,
         auto_save_task,
-        _rpc_shutdown_rx: rpc_shutdown_rx,
         event_task: Arc::new(Mutex::new(None)),
+    });
+    drop(guard);
+
+    tokio::spawn(async move {
+        if rpc_shutdown_rx.recv().await.is_some() {
+            tracing::info!("Shutdown requested via RPC (napi)");
+            if let Err(e) = stop_engine().await {
+                tracing::error!("Failed to stop engine via RPC shutdown: {}", e);
+            }
+        }
     });
 
     Ok(())
@@ -149,6 +193,9 @@ pub async fn stop_engine() -> Result<()> {
         handle.abort();
     }
     engine.rpc_server.stop();
+    if let Some(mut pbh) = engine.pbh_rpc_server {
+        pbh.stop();
+    }
     engine.manager.shutdown().await;
     Ok(())
 }

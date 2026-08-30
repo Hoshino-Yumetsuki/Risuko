@@ -7,7 +7,7 @@ use risuko_engine::config::defaults;
 use risuko_engine::engine::events::EventBroadcaster;
 use risuko_engine::engine::manager::TaskManager;
 use risuko_engine::engine::options::EngineOptions;
-use risuko_engine::engine::rpc::RpcServer;
+use risuko_engine::engine::rpc::{RpcCompatMode, RpcServer};
 
 fn init_headless_tracing() {
     use tracing_subscriber::EnvFilter;
@@ -47,6 +47,7 @@ pub async fn start_headless_engine(
     let rpc_host = options.rpc_host();
     let rpc_secret = options.rpc_secret();
     let rpc_secret_clone = rpc_secret.clone();
+    let pbh_config = options.pbh_rpc_config(rpc_port)?;
 
     tracing::info!("Starting headless engine on port {}", rpc_port);
 
@@ -59,17 +60,38 @@ pub async fn start_headless_engine(
     let (rpc_shutdown_tx, mut rpc_shutdown_rx) = tokio::sync::mpsc::channel::<()>(1);
 
     let mut rpc_server = RpcServer::new(
-        rpc_host,
+        rpc_host.clone(),
         rpc_port,
         rpc_secret,
         manager.clone(),
         events.clone(),
-        rpc_shutdown_tx,
+        rpc_shutdown_tx.clone(),
     );
     rpc_server
         .start()
         .await
         .map_err(|e| format!("Failed to start RPC server: {}", e))?;
+
+    let pbh_rpc_server = if let Some(pbh) = pbh_config {
+        let mut server = RpcServer::new_with_compat(
+            rpc_host,
+            pbh.port,
+            pbh.secret,
+            manager.clone(),
+            events.clone(),
+            rpc_shutdown_tx,
+            RpcCompatMode::Aria2Next,
+        );
+        if let Err(e) = server.start().await {
+            rpc_server.stop();
+            manager.shutdown().await;
+            return Err(format!("Failed to start PeerBanHelper RPC server: {e}").into());
+        }
+        Some(server)
+    } else {
+        drop(rpc_shutdown_tx);
+        None
+    };
 
     // Start periodic progress update
     let mgr_progress = manager.clone();
@@ -106,6 +128,7 @@ pub async fn start_headless_engine(
     Ok(HeadlessEngine {
         manager,
         rpc_server,
+        pbh_rpc_server,
         progress_task,
         auto_save_task,
         shutdown_notify,
@@ -120,6 +143,7 @@ pub async fn start_headless_engine(
 pub struct HeadlessEngine {
     manager: Arc<TaskManager>,
     rpc_server: RpcServer,
+    pbh_rpc_server: Option<RpcServer>,
     progress_task: tokio::task::JoinHandle<()>,
     auto_save_task: tokio::task::JoinHandle<()>,
     shutdown_notify: Arc<tokio::sync::Notify>,
@@ -141,6 +165,9 @@ impl HeadlessEngine {
         self.progress_task.abort();
         self.auto_save_task.abort();
         self.rpc_server.stop();
+        if let Some(mut pbh) = self.pbh_rpc_server {
+            pbh.stop();
+        }
         self.manager.shutdown().await;
         tracing::info!("Headless engine stopped");
     }

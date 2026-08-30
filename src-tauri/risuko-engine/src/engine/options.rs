@@ -5,6 +5,7 @@ use super::speed_limiter::parse_speed_limit;
 
 pub const DEFAULT_ED2K_PORT: u16 = 4662;
 pub const DEFAULT_ED2K_KAD_PORT: u16 = 4672;
+pub const DEFAULT_PBH_LISTEN_PORT: u16 = 16801;
 pub(crate) const TASK_P2P_PROXY_OVERRIDE_KEY: &str = "risuko-task-p2p-proxy-override";
 
 fn is_reserved_engine_key(key: &str) -> bool {
@@ -31,6 +32,12 @@ fn apply_engine_overrides(global: &mut Map<String, Value>, user: &Map<String, Va
 }
 
 /// Default global options and per-task option management, mapping aria2 option names to internal config values
+
+#[derive(Debug, Clone)]
+pub struct PbhRpcConfig {
+    pub port: u16,
+    pub secret: String,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EngineOptions {
@@ -61,6 +68,9 @@ impl EngineOptions {
             "usenet-profiles",
             "usenet-archive-limits",
             "usenet-cleanup-mode",
+            "pbh-enable",
+            "pbh-listen-port",
+            "pbh-rpc-secret",
         ] {
             if let Some(v) = user.get(key) {
                 global.insert(key.into(), v.clone());
@@ -245,6 +255,62 @@ impl EngineOptions {
 
     pub fn rpc_secret(&self) -> String {
         self.get_str("rpc-secret").unwrap_or("").to_string()
+    }
+
+    pub fn pbh_enable(&self) -> bool {
+        self.get_bool("pbh-enable").unwrap_or(false)
+    }
+
+    pub fn pbh_listen_port_checked(&self) -> Result<u16, String> {
+        let Some(value) = self.global.get("pbh-listen-port") else {
+            return Ok(DEFAULT_PBH_LISTEN_PORT);
+        };
+
+        let parsed = match value {
+            Value::Number(number) => number.as_u64().ok_or_else(|| {
+                format!("invalid pbh-listen-port value {number}: expected an integer")
+            }),
+            Value::String(text) => text.trim().parse::<u64>().map_err(|_| {
+                format!("invalid pbh-listen-port value {text:?}: expected an integer in 1..=65535")
+            }),
+            other => Err(format!(
+                "invalid pbh-listen-port value {other}: expected an integer in 1..=65535"
+            )),
+        }?;
+
+        if parsed == 0 || parsed > u16::MAX as u64 {
+            return Err(format!(
+                "invalid pbh-listen-port value {parsed}: expected an integer in 1..=65535"
+            ));
+        }
+
+        Ok(parsed as u16)
+    }
+
+    pub fn pbh_listen_port(&self) -> u16 {
+        self.pbh_listen_port_checked()
+            .unwrap_or(DEFAULT_PBH_LISTEN_PORT)
+    }
+
+    pub fn pbh_rpc_secret(&self) -> String {
+        self.get_str("pbh-rpc-secret").unwrap_or("").to_string()
+    }
+
+    pub fn pbh_rpc_config(&self, rpc_port: u16) -> Result<Option<PbhRpcConfig>, String> {
+        if !self.pbh_enable() {
+            return Ok(None);
+        }
+        let port = self.pbh_listen_port_checked()?;
+        if port == rpc_port {
+            return Err(format!(
+                "pbh-listen-port ({port}) must differ from rpc-listen-port ({rpc_port})"
+            ));
+        }
+        let secret = self.pbh_rpc_secret();
+        if secret.is_empty() {
+            return Err("pbh-rpc-secret must be non-empty when pbh-enable is true".to_string());
+        }
+        Ok(Some(PbhRpcConfig { port, secret }))
     }
 
     pub fn seed_ratio(&self) -> f64 {
@@ -809,6 +875,9 @@ mod tests {
         assert!(opts.ed2k_enable_kad());
         assert_eq!(opts.ed2k_kad_port_checked().unwrap(), 4672);
         assert_eq!(opts.ed2k_kad_port(), 4672);
+        assert_eq!(opts.pbh_listen_port_checked().unwrap(), 16801);
+        assert_eq!(opts.pbh_listen_port(), 16801);
+        assert!(opts.pbh_rpc_config(16800).unwrap().is_none());
     }
 
     #[test]
@@ -934,6 +1003,51 @@ mod tests {
             assert!(opts.ed2k_kad_port_checked().is_err());
             assert_eq!(opts.ed2k_kad_port(), 4672);
         }
+    }
+
+    #[test]
+    fn pbh_options_validate_port_secret_and_collision() {
+        let mut sys = Map::new();
+        sys.insert("pbh-enable".into(), json!(true));
+        sys.insert("pbh-listen-port".into(), json!(16802));
+        sys.insert("pbh-rpc-secret".into(), json!("token"));
+        let opts = EngineOptions::from_config(&sys, &Map::new());
+        let cfg = opts.pbh_rpc_config(16800).unwrap().unwrap();
+        assert_eq!(cfg.port, 16802);
+        assert_eq!(cfg.secret, "token");
+
+        for invalid in [json!(0), json!(65536), json!("not-a-port"), json!(-1)] {
+            let mut sys = Map::new();
+            sys.insert("pbh-listen-port".into(), invalid);
+            let opts = EngineOptions::from_config(&sys, &Map::new());
+            assert!(opts.pbh_listen_port_checked().is_err());
+            assert_eq!(opts.pbh_listen_port(), DEFAULT_PBH_LISTEN_PORT);
+        }
+
+        let mut sys = Map::new();
+        sys.insert("pbh-enable".into(), json!(true));
+        sys.insert("pbh-rpc-secret".into(), json!("token"));
+        let opts = EngineOptions::from_config(&sys, &Map::new());
+        let err = opts.pbh_rpc_config(16801).unwrap_err();
+        assert!(err.contains("must differ"));
+
+        let mut sys = Map::new();
+        sys.insert("pbh-enable".into(), json!(true));
+        let opts = EngineOptions::from_config(&sys, &Map::new());
+        let err = opts.pbh_rpc_config(16800).unwrap_err();
+        assert!(err.contains("pbh-rpc-secret"));
+    }
+
+    #[test]
+    fn from_config_forwards_user_pbh_overrides() {
+        let mut user = Map::new();
+        user.insert("pbh-enable".into(), json!(true));
+        user.insert("pbh-listen-port".into(), json!(16802));
+        user.insert("pbh-rpc-secret".into(), json!("user-token"));
+        let opts = EngineOptions::from_config(&Map::new(), &user);
+        let cfg = opts.pbh_rpc_config(16800).unwrap().unwrap();
+        assert_eq!(cfg.port, 16802);
+        assert_eq!(cfg.secret, "user-token");
     }
 
     #[test]
