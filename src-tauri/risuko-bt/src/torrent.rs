@@ -583,26 +583,16 @@ async fn torrent_loop(
                 }
                 TorrentCommand::Pause(ack) => {
                     paused = true;
-                    let mut paused_candidates = Vec::with_capacity(peers.len() + pending_dials.len());
-                    for (pid, p) in peers.drain() {
-                        if p.downloaded_total > 0 {
-                            useful_peers.insert(
-                                p.addr,
-                                p.max_outstanding.clamp(pipeline_floor, pipeline_cap),
-                            );
-                        }
-                        paused_candidates.push(p.addr);
-                        let _ = p.cmd_tx.send(PeerCommand::Disconnect).await;
-                        release_peer_scheduler_state(
-                            pid,
-                            &p.bitfield,
-                            &mut piece_tracker,
-                            &mut chunk_tracker,
-                            &mut piece_assemblies,
-                            &lengths,
-                        );
-                    }
-
+                    let mut paused_candidates = pause_teardown_live_peers(
+                        &mut peers,
+                        &mut useful_peers,
+                        &mut piece_tracker,
+                        &mut chunk_tracker,
+                        &mut piece_assemblies,
+                        &lengths,
+                        pipeline_floor,
+                        pipeline_cap,
+                    );
                     paused_candidates.extend(pending_dials.drain().map(|(_, addr)| addr));
                     outbound_tasks.shutdown().await;
                     outbound_aborts.clear();
@@ -610,10 +600,7 @@ async fn torrent_loop(
                         peer_registry::drain_scope(torrent_id, &registry_scope)
                     {
                         paused_candidates.push(registry_addr);
-                        if let Some(handle) = io_abort {
-                            handle.abort();
-                        }
-                        let _ = cmd_tx.try_send(PeerCommand::Disconnect);
+                        abort_peer_io(io_abort.as_ref(), &cmd_tx);
                     }
 
                     for addr in paused_candidates {
@@ -1202,7 +1189,7 @@ async fn torrent_loop(
     }
 
     for (pid, peer) in peers.drain() {
-        let _ = peer.cmd_tx.try_send(PeerCommand::Disconnect);
+        abort_peer_io(peer.io_abort.as_ref(), &peer.cmd_tx);
         release_peer_scheduler_state(
             pid,
             &peer.bitfield,
@@ -1215,10 +1202,7 @@ async fn torrent_loop(
 
     outbound_tasks.shutdown().await;
     for (_, cmd_tx, _, io_abort) in peer_registry::drain_scope(torrent_id, &registry_scope) {
-        if let Some(handle) = io_abort {
-            handle.abort();
-        }
-        let _ = cmd_tx.try_send(PeerCommand::Disconnect);
+        abort_peer_io(io_abort.as_ref(), &cmd_tx);
     }
     pending_dials.clear();
 
@@ -1563,10 +1547,14 @@ async fn process_peer_event(
                     let addr = pending_dials.remove(&pid).unwrap_or(registry_addr);
 
                     if blocklist.read().contains(addr.ip()) {
-                        if let Some(handle) = io_abort {
-                            handle.abort();
-                        }
-                        let _ = cmd_tx.try_send(PeerCommand::Disconnect);
+                        reject_handshook_peer(
+                            pid,
+                            &cmd_tx,
+                            io_abort,
+                            outbound_aborts,
+                            torrent_id,
+                            registry_scope,
+                        );
                         known_addrs.remove(&addr);
                         return false;
                     }
@@ -1574,10 +1562,14 @@ async fn process_peer_event(
                     if peers.len() >= max_peers {
                         let known_useful = useful_peers.contains_key(&addr);
                         schedule_peer_retry(addr, known_useful, dial_retries, useful_redials);
-                        if let Some(handle) = io_abort {
-                            handle.abort();
-                        }
-                        let _ = cmd_tx.try_send(PeerCommand::Disconnect);
+                        reject_handshook_peer(
+                            pid,
+                            &cmd_tx,
+                            io_abort,
+                            outbound_aborts,
+                            torrent_id,
+                            registry_scope,
+                        );
                         refresh_peer_queue_state(
                             priority_backlog,
                             peer_backlog,
@@ -3060,6 +3052,58 @@ fn peer_bitfield_progress(bitfield: &[u8], total_pieces: usize) -> f64 {
     ones as f64 / total_pieces as f64
 }
 
+fn abort_peer_io(io_abort: Option<&AbortHandle>, cmd_tx: &mpsc::Sender<PeerCommand>) {
+    if let Some(handle) = io_abort {
+        handle.abort();
+    }
+    let _ = cmd_tx.try_send(PeerCommand::Disconnect);
+}
+
+fn reject_handshook_peer(
+    pid: u32,
+    cmd_tx: &mpsc::Sender<PeerCommand>,
+    io_abort: Option<AbortHandle>,
+    outbound_aborts: &mut HashMap<u32, AbortHandle>,
+    torrent_id: usize,
+    registry_scope: &Arc<()>,
+) {
+    abort_peer_io(io_abort.as_ref(), cmd_tx);
+    cancel_peer_io(pid, None, outbound_aborts, torrent_id, registry_scope);
+}
+
+#[allow(clippy::too_many_arguments)]
+fn pause_teardown_live_peers(
+    peers: &mut HashMap<u32, Peer>,
+    useful_peers: &mut HashMap<SocketAddr, usize>,
+    piece_tracker: &mut PieceTracker,
+    chunk_tracker: &mut ChunkTracker,
+    piece_assemblies: &mut HashMap<u32, PieceAssembly>,
+    lengths: &Lengths,
+    pipeline_floor: usize,
+    pipeline_cap: usize,
+) -> Vec<SocketAddr> {
+    let mut paused_candidates = Vec::with_capacity(peers.len());
+    for (pid, p) in peers.drain() {
+        if p.downloaded_total > 0 {
+            useful_peers.insert(
+                p.addr,
+                p.max_outstanding.clamp(pipeline_floor, pipeline_cap),
+            );
+        }
+        paused_candidates.push(p.addr);
+        abort_peer_io(p.io_abort.as_ref(), &p.cmd_tx);
+        release_peer_scheduler_state(
+            pid,
+            &p.bitfield,
+            piece_tracker,
+            chunk_tracker,
+            piece_assemblies,
+            lengths,
+        );
+    }
+    paused_candidates
+}
+
 fn cancel_peer_io(
     pid: u32,
     cmd_tx: Option<&mpsc::Sender<PeerCommand>>,
@@ -4311,6 +4355,90 @@ mod tests {
         let joined = tokio::time::timeout(Duration::from_secs(1), io_task)
             .await
             .expect("blocklist abort should finish the inbound I/O task");
+        assert!(joined.is_ok() || joined.unwrap_err().is_cancelled());
+    }
+
+    #[tokio::test]
+    async fn handshake_rejection_aborts_outbound_task_when_command_channel_is_full() {
+        let (tx, _rx) = mpsc::channel(1);
+        tx.try_send(PeerCommand::Send(Message::KeepAlive)).unwrap();
+        let io_extra = tx.clone();
+        let outbound_extra = tx.clone();
+
+        let io_task = tokio::spawn(async move {
+            io_extra.closed().await;
+        });
+        let mut outbound_tasks: tokio::task::JoinSet<()> = tokio::task::JoinSet::new();
+        let mut outbound_aborts = HashMap::new();
+        outbound_aborts.insert(
+            1,
+            outbound_tasks.spawn(async move {
+                outbound_extra.closed().await;
+            }),
+        );
+        let registry_scope = Arc::new(());
+
+        reject_handshook_peer(
+            1,
+            &tx,
+            Some(io_task.abort_handle()),
+            &mut outbound_aborts,
+            42,
+            &registry_scope,
+        );
+
+        assert!(outbound_aborts.is_empty());
+
+        let joined = tokio::time::timeout(Duration::from_secs(1), io_task)
+            .await
+            .expect("handshake rejection should finish the peer I/O task");
+        assert!(joined.is_ok() || joined.unwrap_err().is_cancelled());
+
+        let outbound = tokio::time::timeout(Duration::from_secs(1), outbound_tasks.join_next())
+            .await
+            .expect("handshake rejection should finish the outbound task")
+            .expect("joinset should still have a task");
+        assert!(outbound.is_ok() || outbound.unwrap_err().is_cancelled());
+    }
+
+    #[tokio::test]
+    async fn pause_aborts_inbound_peer_when_command_channel_is_full() {
+        let live_addr: SocketAddr = "127.0.0.1:6881".parse().unwrap();
+        let (tx, _rx) = mpsc::channel(1);
+        tx.try_send(PeerCommand::Send(Message::KeepAlive)).unwrap();
+        let extra = tx.clone();
+
+        let mut peer = Peer::connected(live_addr, tx, 1, 1, 1, false, false, None);
+        let io_task = tokio::spawn(async move {
+            extra.closed().await;
+        });
+        peer.io_abort = Some(io_task.abort_handle());
+
+        let mut peers = HashMap::new();
+        peers.insert(1, peer);
+        let mut useful_peers = HashMap::new();
+        let (lengths, _) = two_file_layout();
+        let mut piece_tracker = PieceTracker::new(lengths);
+        let mut chunk_tracker = ChunkTracker::new(lengths);
+        let mut piece_assemblies = HashMap::new();
+
+        let paused_candidates = pause_teardown_live_peers(
+            &mut peers,
+            &mut useful_peers,
+            &mut piece_tracker,
+            &mut chunk_tracker,
+            &mut piece_assemblies,
+            &lengths,
+            1,
+            1,
+        );
+
+        assert!(peers.is_empty());
+        assert_eq!(paused_candidates, vec![live_addr]);
+
+        let joined = tokio::time::timeout(Duration::from_secs(1), io_task)
+            .await
+            .expect("pause should finish the inbound I/O task");
         assert!(joined.is_ok() || joined.unwrap_err().is_cancelled());
     }
 
