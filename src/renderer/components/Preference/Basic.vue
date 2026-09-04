@@ -875,6 +875,7 @@ const initForm = (config) => {
 		keepWindowState: parseBooleanConfig(keepWindowState),
 		locale,
 		lowSpeedThreshold: normalizePositiveInt(lowSpeedThreshold, 20, 1, 10240),
+		maxConcurrentDownloads,
 		split: normalizePositiveInt(split, 16, 1, 128),
 		maxOverallDownloadLimit,
 		maxOverallUploadLimit,
