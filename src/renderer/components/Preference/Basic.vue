@@ -775,6 +775,15 @@ const normalizeBasicConfig = (data) => {
 		data.split = normalizePositiveInt(data.split, 16, 1, 128);
 	}
 
+	if ("maxConcurrentDownloads" in data) {
+		data.maxConcurrentDownloads = normalizePositiveInt(
+			data.maxConcurrentDownloads,
+			5,
+			1,
+			ENGINE_MAX_CONCURRENT_DOWNLOADS,
+		);
+	}
+
 	if ("lowSpeedThreshold" in data) {
 		data.lowSpeedThreshold = normalizePositiveInt(
 			data.lowSpeedThreshold,
@@ -875,7 +884,12 @@ const initForm = (config) => {
 		keepWindowState: parseBooleanConfig(keepWindowState),
 		locale,
 		lowSpeedThreshold: normalizePositiveInt(lowSpeedThreshold, 20, 1, 10240),
-		maxConcurrentDownloads,
+		maxConcurrentDownloads: normalizePositiveInt(
+			maxConcurrentDownloads,
+			5,
+			1,
+			ENGINE_MAX_CONCURRENT_DOWNLOADS,
+		),
 		split: normalizePositiveInt(split, 16, 1, 128),
 		maxOverallDownloadLimit,
 		maxOverallUploadLimit,
